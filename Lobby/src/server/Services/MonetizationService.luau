@@ -4,8 +4,8 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local MarketplaceService = game:GetService("MarketplaceService")
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
-local Vendor = ReplicatedStorage:WaitForChild("Vendor")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Vendor = Shared:WaitForChild("Vendor")
 
 local Configs = Shared:WaitForChild("Config")
 
@@ -15,7 +15,7 @@ local ServerConfig = require(Configs.Server)
 local Maid = require(Vendor.Maid)
 local Promise = require(Packages.Promise)
 local Warp = require(Vendor.Warp)
-local Me = require(Shared.Me)
+local Me = require(Vendor.Me)
 
 local Framework = Me.new()
 

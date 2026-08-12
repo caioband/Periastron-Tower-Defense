@@ -14,11 +14,11 @@ rojo serve           # conecta pelo plugin do Rojo no Studio
 
 | Pasta | Vai para | O que é |
 |---|---|---|
-| `src/shared/` | `ReplicatedStorage.Shared` | Config, Util, Classes e o framework `Me` |
+| `src/shared/` | `ReplicatedStorage.Shared` | Config, Util e Classes |
 | `src/server/Server/` | `ServerScriptService.Server` | Script de entrada do servidor |
 | `src/server/Services/` | `ServerScriptService.Services` | Serviços carregados pelo `Me` |
 | `src/client/` | `StarterPlayer.StarterPlayerScripts.Client` | LocalScript de entrada + Controllers + Satchel |
-| `vendor/shared/` | `ReplicatedStorage.Vendor` | Libs de terceiros que não estão no Wally |
+| `vendor/shared/` | `ReplicatedStorage.Shared.Vendor` | Libs de terceiros que não estão no Wally + o framework `Me` |
 | `vendor/ReplicaShared/` | `ReplicatedStorage.ReplicaShared` | Parte compartilhada do Replica (caminho fixo, não mover) |
 | `vendor/server/` | `ServerScriptService.Vendor` | ProfileStore e ReplicaServer |
 | `Packages/` | `ReplicatedStorage.Packages` | Gerado pelo `wally install` (gitignorado) |
@@ -40,6 +40,7 @@ Estavam instalados no place mas **nenhum script first-party requer**, então sa�
 
 | Lib | Onde | Origem |
 |---|---|---|
+| Me (framework) | `vendor/shared/Me.luau` | @raiarxyzdev |
 | Warp 1.0.14 | `vendor/shared/Warp` | @Eternity_Devs |
 | Maid | `vendor/shared/Maid.luau` | Quenty-style |
 | Spring (`spr`) | `vendor/shared/Spring.luau` | Fraktality/spr |
@@ -54,8 +55,9 @@ Estavam instalados no place mas **nenhum script first-party requer**, então sa�
 ## Readaptações feitas na extração
 
 O `Me` não é pacote Wally, então saiu de `ReplicatedStorage.Packages` (pasta que o
-`wally install` sobrescreve) e foi para `ReplicatedStorage.Shared.Me`. As libs
-vendorizadas saíram de `Packages` pelo mesmo motivo e foram para `Vendor`.
+`wally install` sobrescreve) e foi para `ReplicatedStorage.Shared.Vendor.Me`. As libs
+vendorizadas saíram de `Packages` pelo mesmo motivo e foram para o mesmo
+`ReplicatedStorage.Shared.Vendor`.
 
 ```lua
 -- antes
@@ -66,10 +68,10 @@ local Warp  = require(Packages.Warp)
 
 -- depois
 local Packages = ReplicatedStorage:WaitForChild("Packages")   -- wally
-local Vendor   = ReplicatedStorage:WaitForChild("Vendor")     -- vendorizado
-local Shared   = ReplicatedStorage:WaitForChild("Shared")
+local Shared   = ReplicatedStorage:WaitForChild("Shared")     -- codigo do jogo
+local Vendor   = Shared:WaitForChild("Vendor")                -- vendorizado
 
-local Me    = require(Shared.Me)
+local Me    = require(Vendor.Me)
 local Maid  = require(Vendor.Maid)
 local Warp  = require(Vendor.Warp)
 local Promise = require(Packages.Promise)                     -- continua no wally

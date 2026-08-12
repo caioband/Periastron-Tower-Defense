@@ -11,10 +11,6 @@
         "$path": "Packages"
       },
 
-      "Vendor": {
-        "$path": "vendor/shared"
-      },
-
       "ReplicaShared": {
         "$path": "vendor/ReplicaShared"
       },
@@ -23,7 +19,7 @@
         "$className": "Folder",
         "$ignoreUnknownInstances": true,
 
-        "Me": { "$path": "src/shared/Me.luau" },
+        "Vendor": { "$path": "vendor/shared" },
         "Config": { "$path": "src/shared/Config" },
         "Util": { "$path": "src/shared/Util" },
         "Classes": { "$path": "src/shared/Classes" }
@@ -36,6 +32,7 @@
 
       "Server": { "$path": "src/server/Server" },
       "Services": { "$path": "src/server/Services" },
+      "CmdrDefinitions": { "$path": "src/server/Cmdr" },
       "Vendor": { "$path": "vendor/server" }
     },
 

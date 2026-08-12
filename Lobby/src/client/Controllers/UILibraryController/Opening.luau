@@ -1,4 +1,4 @@
-local Spring = require(game.ReplicatedStorage.Vendor.Spring)
+local Spring = require(game.ReplicatedStorage.Shared.Vendor.Spring)
 return {
 	["Shop"] = {
 		OpeningAnimation = function(Frame : Frame)

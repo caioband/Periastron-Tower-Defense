@@ -1,10 +1,18 @@
 
+local Config = script.Parent.Parent
+local CrateConfig = require(Config:WaitForChild("SharedConfig"):WaitForChild("CrateConfig"))
+
 return {
 	PROFILE_KEY = "profi555",
 	Template = {
 		Stats = {
 			Wins = 0,
 			Cash = 0,
+		},
+
+		Inventory = {
+			-- { [Rarity] = amount } for every rarity in CrateConfig.RARITIES
+			Crates = CrateConfig.createEmptyCrates(),
 		},
 
 		PurchaseHistory = {},

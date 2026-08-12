@@ -1,10 +1,11 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Vendor = Shared:WaitForChild("Vendor")
 local Configs = Shared:WaitForChild("Config")
 
 local SharedConfig = require(Configs.SharedConfig)
-local Me = require(Shared.Me)
+local Me = require(Vendor.Me)
 local Framework = Me.new()
 
 local ROTATION_SPEED = 8

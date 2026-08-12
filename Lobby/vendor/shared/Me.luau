@@ -20,7 +20,8 @@ local ReplicatedFirst = game:GetService("ReplicatedFirst")
 local Players = game:GetService("Players")
 
 --[[ VARIABLES --]]
-local Vendor = ReplicatedStorage:WaitForChild("Vendor")
+-- Me lives inside the Vendor folder itself (ReplicatedStorage.Shared.Vendor).
+local Vendor = script.Parent
 
 --[[ PACKAGES --]]
 local Warp = require(Vendor.Warp)

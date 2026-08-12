@@ -4,6 +4,7 @@ type Shared = {
 	Wave : typeof(require(script.Wave)),
 	Difficulty : typeof(require(script.Difficulty)),
 	Summon : typeof(require(script.Summon)),
+	Cmdr : typeof(require(script.Cmdr)),
 }
 
 local Shared : Shared = {}

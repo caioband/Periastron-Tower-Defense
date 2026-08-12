@@ -1,7 +1,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Vendor = ReplicatedStorage:WaitForChild("Vendor")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Vendor = Shared:WaitForChild("Vendor")
 
 local Spring = require(Vendor.Spring)
 local Observers = require(Vendor.Observers)

@@ -1,5 +1,6 @@
 type Shared = {
 	UnitStats : typeof(require(script.UnitStats)),
+	CrateConfig : typeof(require(script.CrateConfig)),
 	SellValue : number,
 	SellRefundRatio : number,
 }

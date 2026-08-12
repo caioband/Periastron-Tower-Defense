@@ -1,7 +1,8 @@
 local ReplicatedStorage = game.ReplicatedStorage
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
-local Vendor = ReplicatedStorage:WaitForChild("Vendor")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Vendor = Shared:WaitForChild("Vendor")
 
 local Signal = require(Packages.Signal)
 local Promise = require(Packages.Promise)

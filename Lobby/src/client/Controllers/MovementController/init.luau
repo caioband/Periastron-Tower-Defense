@@ -4,8 +4,8 @@ local Players = game:GetService("Players")
 local Player = Players.LocalPlayer
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
-local Vendor = ReplicatedStorage:WaitForChild("Vendor")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Vendor = Shared:WaitForChild("Vendor")
 local Assets = Shared:WaitForChild("Assets")
 local Animations = Assets:WaitForChild("Animations")
 
@@ -17,7 +17,7 @@ local ClientConfig = require(Configs.Client)
 local Maid = require(Vendor.Maid)
 local Promise = require(Packages.Promise)
 local Warp = require(Vendor.Warp)
-local Me = require(Shared.Me)
+local Me = require(Vendor.Me)
 
 local Framework = Me.new()
 

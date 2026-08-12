@@ -3,10 +3,10 @@ local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 
-local Vendor = ReplicatedStorage:WaitForChild("Vendor")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Vendor = Shared:WaitForChild("Vendor")
 
-local Me = require(Shared.Me)
+local Me = require(Vendor.Me)
 local Warp = require(Vendor.Warp)
 
 local Framework = Me.new()
