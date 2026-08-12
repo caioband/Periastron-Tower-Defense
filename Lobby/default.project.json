@@ -1,0 +1,54 @@
+{
+  "name": "Periastron-Tower-Defense-Lobby",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "$ignoreUnknownInstances": true,
+
+      "Packages": {
+        "$path": "Packages"
+      },
+
+      "Vendor": {
+        "$path": "vendor/shared"
+      },
+
+      "ReplicaShared": {
+        "$path": "vendor/ReplicaShared"
+      },
+
+      "Shared": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+
+        "Me": { "$path": "src/shared/Me.luau" },
+        "Config": { "$path": "src/shared/Config" },
+        "Util": { "$path": "src/shared/Util" },
+        "Classes": { "$path": "src/shared/Classes" }
+      }
+    },
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "$ignoreUnknownInstances": true,
+
+      "Server": { "$path": "src/server/Server" },
+      "Services": { "$path": "src/server/Services" },
+      "Vendor": { "$path": "vendor/server" }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "$ignoreUnknownInstances": true,
+
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "$ignoreUnknownInstances": true,
+
+        "Client": { "$path": "src/client" }
+      }
+    }
+  }
+}
