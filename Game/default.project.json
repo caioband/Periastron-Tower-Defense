@@ -1,0 +1,50 @@
+{
+  "name": "Periastron-Tower-Defense-Game",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "$ignoreUnknownInstances": true,
+
+      "Packages": {
+        "$path": "Packages"
+      },
+
+      "ReplicaShared": {
+        "$path": "vendor/ReplicaShared"
+      },
+
+      "Shared": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+
+        "Vendor": { "$path": "vendor/shared" },
+        "Config": { "$path": "src/shared/Config" },
+        "Util": { "$path": "src/shared/Util" },
+        "Classes": { "$path": "src/shared/Classes" }
+      }
+    },
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "$ignoreUnknownInstances": true,
+
+      "Server": { "$path": "src/server/Server" },
+      "Services": { "$path": "src/server/Services" },
+      "Vendor": { "$path": "vendor/server" }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "$ignoreUnknownInstances": true,
+
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "$ignoreUnknownInstances": true,
+
+        "Client": { "$path": "src/client" }
+      }
+    }
+  }
+}

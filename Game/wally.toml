@@ -1,0 +1,23 @@
+[package]
+name = "periastron/game"
+version = "0.1.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+
+# Somente as dependencias wally que o codigo do jogo REALMENTE requer.
+#
+# Versoes tiradas de ReplicatedStorage.Packages._Index no place, entao sao exatas:
+#   Promise    -> _Index["evaera_promise@4.0.0"]
+#   Signal     -> _Index["sleitnick_signal@2.0.1"]
+#   topbarplus -> Client.Satchel.Packages._Index["1foreverhd_topbarplus@3.4.0"]
+#
+# Me / Warp / Maid / Spring / Observers / ReplicaClient NAO sao wally: vivem em
+# vendor/shared e sao montados em ReplicatedStorage.Shared.Vendor (igual ao Lobby).
+#
+# Estavam instaladas no place mas NENHUM script first-party requer -> ficaram de fora
+# (foram movidas para ServerStorage._Backup_UnusedCode):
+#   Knit, Comm, Component, EnumList, Input, Option, Streamable, TableUtil, Timer, Trove
+[dependencies]
+Promise = "evaera/promise@4.0.0"
+Signal = "sleitnick/signal@2.0.1"
+topbarplus = "1foreverhd/topbarplus@3.4.0"
