@@ -16,12 +16,15 @@ module.RARITIES = {
 	"Legendary",
 }
 
+-- Model is the name of the model inside ReplicatedStorage.Shared.Assets.CratesModel
+-- that the unboxing spawns for that rarity.
 module.CRATES = {
 	["Common"] = {
 		DisplayName = "Common Crate",
 		Order = 1,
 		Image = "rbxassetid://135726334725408",
 		Color = Color3.fromRGB(29, 33, 250),
+		Model = "CommonCrate",
 	},
 
 	["Rare"] = {
@@ -29,6 +32,7 @@ module.CRATES = {
 		Order = 2,
 		Image = "rbxassetid://125866367274436",
 		Color = Color3.fromRGB(31, 230, 74),
+		Model = "RareCrate",
 	},
 
 	["Epic"] = {
@@ -36,6 +40,7 @@ module.CRATES = {
 		Order = 3,
 		Image = "rbxassetid://135666773191804",
 		Color = Color3.fromRGB(227, 19, 255),
+		Model = "EpicCrate",
 	},
 
 	["Legendary"] = {
@@ -43,6 +48,7 @@ module.CRATES = {
 		Order = 4,
 		Image = "rbxassetid://96648127627723",
 		Color = Color3.fromRGB(255, 191, 51),
+		Model = "LegendaryCrate",
 	},
 }
 
@@ -69,6 +75,19 @@ function module.resolveRarity(rarity: string?): string?
 	end
 
 	return nil
+end
+
+--[=[
+	Name of the model in Assets.CratesModel for a rarity, or nil when the rarity
+	does not exist.
+]=]
+function module.getModelName(rarity: string?): string?
+	local resolvedRarity = module.resolveRarity(rarity)
+	if not resolvedRarity then
+		return nil
+	end
+
+	return module.CRATES[resolvedRarity].Model
 end
 
 --[=[

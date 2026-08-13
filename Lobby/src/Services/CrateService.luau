@@ -118,6 +118,24 @@ function CrateService:GiveCrates(Player : Player, rarity : string, amount : numb
 	return self:SetCrates(Player, resolvedRarity, currentAmount + delta)
 end
 
+--[=[
+	Plays the unboxing animation of a rarity on the player's client (crate model in
+	front of them + the reel above it).
+
+	Visual only for now: it does not spend a crate and it does not roll a reward --
+	that lands on top of this once the reward pool exists.
+]=]
+function CrateService:PlayUnboxing(Player : Player, rarity : string) : boolean
+	local resolvedRarity = CrateConfig.resolveRarity(rarity)
+	if not resolvedRarity then
+		warn(string.format("[CrateService]: %q is not a valid crate rarity.", tostring(rarity)))
+		return false
+	end
+
+	Framework:Fire("PlayUnboxing", Player, resolvedRarity)
+	return true
+end
+
 function CrateService:construct()
 
 end
@@ -131,7 +149,10 @@ function CrateService:start()
 end
 
 function CrateService:init()
-
+	-- The client connects to "PlayUnboxing" during its own init, but the server would
+	-- only create the event when it first fires it -- and Warp complains that it "is
+	-- taking too long to retrieve". Declared here like the other server-only events.
+	Framework:Listen("PlayUnboxing", function() end)
 end
 
 return CrateService
