@@ -12,17 +12,17 @@
       },
 
       "ReplicaShared": {
-        "$path": "vendor/ReplicaShared"
+        "$path": "../vendor/ReplicaShared"
       },
 
       "Shared": {
         "$className": "Folder",
         "$ignoreUnknownInstances": true,
 
-        "Vendor": { "$path": "vendor/shared" },
-        "Config": { "$path": "src/shared/Config" },
-        "Util": { "$path": "src/shared/Util" },
-        "Classes": { "$path": "src/shared/Classes" }
+        "Vendor": { "$path": "../vendor/shared" },
+        "Config": { "$path": "../common/shared/Config" },
+        "Util": { "$path": "../common/shared/Util" },
+        "Classes": { "$path": "../common/shared/Classes" }
       }
     },
 
@@ -30,10 +30,17 @@
       "$className": "ServerScriptService",
       "$ignoreUnknownInstances": true,
 
-      "Server": { "$path": "src/server/Server" },
-      "Services": { "$path": "src/server/Services" },
-      "CmdrDefinitions": { "$path": "src/server/Cmdr" },
-      "Vendor": { "$path": "vendor/server" }
+      "Server": { "$path": "../common/server/Server" },
+      "Config": { "$path": "../common/server/Config" },
+      "Vendor": { "$path": "../vendor/server" },
+      "CmdrDefinitions": { "$path": "src/CmdrDefinitions" },
+
+      "Services": {
+        "$className": "Folder",
+
+        "Common": { "$path": "../common/server/Services" },
+        "Lobby": { "$path": "src/Services" }
+      }
     },
 
     "StarterPlayer": {
@@ -44,7 +51,18 @@
         "$className": "StarterPlayerScripts",
         "$ignoreUnknownInstances": true,
 
-        "Client": { "$path": "src/client" }
+        "Client": {
+          "$path": "src/ClientBoot",
+
+          "Satchel": { "$path": "../common/client/Satchel" },
+
+          "Controllers": {
+            "$className": "Folder",
+
+            "Common": { "$path": "../common/client/Controllers" },
+            "Lobby": { "$path": "src/Controllers" }
+          }
+        }
       }
     }
   }
