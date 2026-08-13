@@ -36,6 +36,7 @@
 
       "Services": {
         "$className": "Folder",
+        "$ignoreUnknownInstances": false,
 
         "Common": { "$path": "../common/server/Services" },
         "Game": { "$path": "src/Services" }
@@ -57,6 +58,7 @@
 
           "Controllers": {
             "$className": "Folder",
+            "$ignoreUnknownInstances": false,
 
             "Common": { "$path": "../common/client/Controllers" },
             "Game": { "$path": "src/Controllers" }

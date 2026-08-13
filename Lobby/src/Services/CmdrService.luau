@@ -86,6 +86,12 @@ function CmdrService:construct()
 end
 
 function CmdrService:init()
+	-- O cliente conecta em "CmdrAccess" logo no init dele, mas o servidor so criaria
+	-- esse evento na hora de responder -- ai o Warp reclama que ele "is taking too
+	-- long to retrieve". Declarar aqui, como os outros services fazem com os eventos
+	-- que so o servidor dispara.
+	Framework:Listen("CmdrAccess", function() end)
+
 	self:construct()
 end
 

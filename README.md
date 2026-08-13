@@ -60,6 +60,13 @@ ReplicatedStorage
 > Folders declarados com duas subpastas, e que `src/ClientBoot/` contém *apenas*
 > o `init.client.luau`.
 
+> ⚠️ `$ignoreUnknownInstances` tem default **`true`** em nó sem `$path` e `false`
+> em nó com `$path`. Como `Controllers` e `Services` são declarados só com
+> `$className`, eles herdariam `true` — o Rojo adicionaria as subpastas novas mas
+> **nunca removeria** os scripts antigos soltos, e a place rodaria com as duas
+> versões ao mesmo tempo. Por isso os dois nós trazem `"$ignoreUnknownInstances": false`
+> explícito. Vale a regra: todo nó container do projeto declara o flag na mão.
+
 ## Configuração: o que é replicado e o que não é
 
 Antes, `ReplicatedStorage.Shared.Config.Server` era replicado para todo cliente —
