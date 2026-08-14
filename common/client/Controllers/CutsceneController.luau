@@ -1,279 +1,230 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ContentProvider = game:GetService("ContentProvider")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
+local Util = Shared:WaitForChild("Util")
 
+local CutsceneFormat = require(Util.CutsceneFormat)
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
 
 local Framework = Me.new()
 
 --[[
-	Toca cutscenes montadas no Moon Animator.
+	Player das cutscenes do Moon Animator.
 
-	Cada cena é um Model em ReplicatedStorage.Shared.Assets.Cutscenes:
+	A leitura do arquivo mora em Shared.Util.CutsceneFormat, que entende tanto a
+	árvore de Folders exportada quanto o blob comprimido. Aqui fica só o que
+	precisa de instância viva e de frame a frame.
 
 		<NomeDaCena>              Model
-		├── SceneReferenceCFrame  Part obrigatória — a cena é plantada onde ela
-		│                         estiver; mover ela move a cena inteira
-		├── RootPart              Part âncora do rig; define o espaço em que a
-		│                         cena foi autorada
-		├── CamPart               Part ligado ao RootPart por Motor6D — é o que
-		│                         a animação move e o que a câmera segue
-		├── AnimSaves             save do Moon Animator com o KeyframeSequence
-		│                         da câmera; filho direto da cena
-		├── FieldOfView           Folder (opcional)
-		│   ├── default           NumberValue com o FOV base da cena
-		│   └── Frames            Folder com um NumberValue por frame, nomeados
-		│                         0, 1, 2, ...; opcional
-		└── Actors                Folder (opcional)
-		    └── <ator>            ObjectValue apontando pro rig, ou o Model do
-		        └── <anim>        rig. A Animation é filha direta da entrada.
+		├── SceneReferenceCFrame  Part — o centro de coordenadas da cena. Tudo é
+		│                         medido a partir dela, e é ela que vai parar na
+		│                         origem passada pra playCutscene
+		├── <rig da câmera>       uma Part raiz ligada à CamPart por Motor6D
+		├── <rigs dos atores>     os Models que o Moon Animator anima
+		├── SceneData             StringValue com o blob, depois do bake
+		└── 1, 2, 3, ...          os Folders do save, se ainda não passou no bake
 
-	Rig fora do Workspace entra clonado e sai destruído; rig que já vive no
-	mundo é usado no lugar e devolvido à posição no fim.
+	A câmera sai do rig, não da faixa `CFrame` do item de câmera. Aquela faixa
+	guarda CFrames de mundo já bakeados na hora da exportação: se a cena for
+	arrastada no Studio, as Parts andam e os valores bakeados ficam pra trás. O
+	rig é C1 relativo à Part raiz, então acompanha a cena pra onde ela for.
 
-	A câmera é lida direto do KeyframeSequence em vez de um AnimationId: a
-	animação de câmera da EnterCutscene nunca foi publicada, e ler o save evita
-	depender de upload. As animações dos atores são AnimationIds normais.
-
-	Tudo é montado em espaço local relativo ao RootPart, então a cena inteira —
-	câmera e atores — é plantada num CFrame só: o da SceneReferenceCFrame, ou o
-	que for passado pra playCutscene.
+	Não há AnimationId em lugar nenhum: as juntas são animadas escrevendo C1, do
+	mesmo jeito que o Moon Animator faz no editor.
 --]]
 
 local DEFAULT_CUTSCENE = "EnterCutscene"
 local DEBUG_KEYBIND = Enum.KeyCode.L
 
 local SCENE_REFERENCE = "SceneReferenceCFrame"
-local ROOT_PART = "RootPart"
 local CAMERA_PART = "CamPart"
-local ANIM_SAVES = "AnimSaves"
-local ACTORS_FOLDER = "Actors"
-local FIELD_OF_VIEW_FOLDER = "FieldOfView"
-local FOV_FRAMES_FOLDER = "Frames"
-local BASE_FOV_VALUE = "default"
 
-local FALLBACK_FOV = 70
--- Frames por segundo em que a faixa de FOV foi exportada (Moon Animator usa 60).
-local FOV_TRACK_FPS = 60
+local SCENE_FPS = 60
+
+-- O Moon Animator usa nomes próprios pra dois estilos, e "Constant" não é um
+-- estilo de tween: é degrau, o valor segura até a próxima key.
+local CONSTANT_EASE = "Constant"
+local EASE_ALIASES = {
+	Expo = "Exponential",
+	Circ = "Circular",
+}
+
+local EASING_STYLES = {}
+for _, style in Enum.EasingStyle:GetEnumItems() do
+	EASING_STYLES[style.Name] = style
+end
+
+local EASING_DIRECTIONS = {}
+for _, direction in Enum.EasingDirection:GetEnumItems() do
+	EASING_DIRECTIONS[direction.Name] = direction
+end
+
+local warnedEases = {}
 
 local CutsceneController = {
 	Controllers = {}
 }
 
---[[
-	Onde a cena vai ser plantada. É o CFrame da SceneReferenceCFrame, que toda
-	cena precisa ter — mover ela move a cutscene inteira.
---]]
-function CutsceneController:readSceneOrigin(asset: Instance)
-	local reference = asset:FindFirstChild(SCENE_REFERENCE)
-	if not reference then return nil end
+local function lerpValue(from, to, alpha: number)
+	if typeof(from) == "CFrame" then
+		return from:Lerp(to, alpha)
+	end
 
-	if reference:IsA("BasePart") then return reference.CFrame end
-	if reference:IsA("CFrameValue") then return reference.Value end
+	return from + (to - from) * alpha
+end
+
+--[[ CENA ]]
+
+function CutsceneController:findMotor(root: Instance, partName: string)
+	for _, descendant in root:GetDescendants() do
+		if descendant:IsA("Motor6D") and descendant.Part1 and descendant.Part1.Name == partName then
+			return descendant
+		end
+	end
 
 	return nil
 end
 
 --[[
-	Acha o save do Moon Animator da câmera.
-
-	A busca é rasa de propósito: rig de ator costuma carregar o próprio AnimSaves
-	junto, e uma busca recursiva pegaria a animação do ator no lugar da câmera.
+	Lê a cena uma vez e guarda o resultado: o dado vem do CutsceneFormat, e aqui
+	resolvemos as instâncias vivas que ele não pode carregar.
 --]]
-function CutsceneController:findCameraSequence(asset: Instance)
-	local saves = asset:FindFirstChild(ANIM_SAVES)
-	local sequence = saves and saves:FindFirstChildWhichIsA("KeyframeSequence")
+function CutsceneController:parseScene(asset: Instance)
+	local cached = self.scenes[asset]
+	if cached then return cached end
 
-	return sequence or asset:FindFirstChildWhichIsA("KeyframeSequence")
+	local data, source = CutsceneFormat.Read(asset)
+	if not data then return nil end
+
+	local motor = self:findMotor(asset, CAMERA_PART)
+	if not motor or not motor.Part0 then return nil end
+
+	local rigs = {}
+	for _, entry in data.rigs do
+		local rig = asset:FindFirstChild(entry.target) or workspace:FindFirstChild(entry.target)
+		if rig and rig:IsA("Model") then
+			table.insert(rigs, { rig = rig, joints = entry.joints })
+		else
+			warn(string.format("[CutsceneController]: Cutscene %q has no rig named %q.", asset.Name, entry.target))
+		end
+	end
+
+	local scene = {
+		cameraMotor = motor,
+		cameraKeys = data.camera,
+		cameraFov = data.fov,
+		rigs = rigs,
+		duration = data.lastFrame / SCENE_FPS,
+		source = source,
+	}
+
+	self.scenes[asset] = scene
+	return scene
+end
+
+--[[ AMOSTRAGEM ]]
+
+function CutsceneController:easeAlpha(alpha: number, ease: string?)
+	if not ease then return alpha end
+
+	local name, direction = string.match(ease, "^([^|]+)|(.+)$")
+	name = name or ease
+
+	if name == "Linear" then return alpha end
+	if name == CONSTANT_EASE then return 0 end
+
+	local style = EASING_STYLES[EASE_ALIASES[name] or name]
+	if not style then
+		if not warnedEases[name] then
+			warnedEases[name] = true
+			warn(string.format("[CutsceneController]: Unknown Moon Animator ease %q, falling back to Linear.", name))
+		end
+		return alpha
+	end
+
+	return TweenService:GetValue(alpha, style, EASING_DIRECTIONS[direction or "In"] or Enum.EasingDirection.In)
 end
 
 --[[
-	Monta a trilha da câmera a partir do KeyframeSequence salvo no asset.
-	Devolve os keyframes em espaço local e a origem autoral da cena.
+	Amostra uma faixa. O cursor só anda pra frente, então o custo por frame é
+	constante em vez de varrer a lista inteira.
 --]]
-function CutsceneController:buildCameraTrack(asset: Instance)
-	local sequence = self:findCameraSequence(asset)
-	local rootPart = asset:FindFirstChild(ROOT_PART)
-	if not sequence or not rootPart then return nil end
+function CutsceneController:sampleTrack(track, frame: number)
+	local keys = track.keys
+	local cursor = track.cursor
 
-	local motor
-	for _, joint in rootPart:GetChildren() do
-		if joint:IsA("Motor6D") and joint.Part1 and joint.Part1.Name == CAMERA_PART then
-			motor = joint
-			break
-		end
+	while cursor < #keys and keys[cursor + 1].frame <= frame do
+		cursor += 1
 	end
+	track.cursor = cursor
 
-	if not motor then return nil end
+	local from = keys[cursor]
+	local to = keys[cursor + 1]
+	if not to or frame <= from.frame then return from.value end
 
-	local inverseC1 = motor.C1:Inverse()
-
-	local keyframes = {}
-	for _, keyframe in sequence:GetChildren() do
-		local pose = keyframe:IsA("Keyframe") and keyframe:FindFirstChild(CAMERA_PART, true)
-		if pose and pose:IsA("Pose") then
-			table.insert(keyframes, {
-				time = keyframe.Time,
-				offset = motor.C0 * pose.CFrame * inverseC1,
-			})
-		end
-	end
-
-	if #keyframes < 2 then return nil end
-
-	table.sort(keyframes, function(a, b) return a.time < b.time end)
-	return keyframes, rootPart.CFrame
+	local span = to.frame - from.frame
+	local alpha = span > 0 and (frame - from.frame) / span or 1
+	return lerpValue(from.value, to.value, self:easeAlpha(alpha, to.ease))
 end
 
-function CutsceneController:sampleCameraTrack(keyframes, elapsed: number)
-	if elapsed <= keyframes[1].time then return keyframes[1].offset end
-
-	local last = keyframes[#keyframes]
-	if elapsed >= last.time then return last.offset end
-
-	for i = 2, #keyframes do
-		local to = keyframes[i]
-		if elapsed <= to.time then
-			local from = keyframes[i - 1]
-			local span = to.time - from.time
-			local alpha = span > 0 and (elapsed - from.time) / span or 0
-			return from.offset:Lerp(to.offset, alpha)
-		end
-	end
-
-	return last.offset
-end
+--[[ ATORES ]]
 
 --[[
-	Lê a pasta FieldOfView do asset.
-	`default` é o FOV base; os NumberValue numerados dentro de Frames formam a
-	faixa por frame. Sem faixa, o FOV fica travado no base durante a cutscene.
+	Coloca um rig em cena e devolve as juntas prontas pra receber C1 por frame.
+
+	Rig guardado junto da cena é template: entra clonado e sai destruído. Rig que
+	já vive no mundo é usado no lugar, com posição e C1 devolvidos no fim.
 --]]
-function CutsceneController:readFieldOfView(asset: Instance)
-	local folder = asset:FindFirstChild(FIELD_OF_VIEW_FOLDER)
-	if not folder then return FALLBACK_FOV, nil end
-
-	local default = folder:FindFirstChild(BASE_FOV_VALUE)
-	local baseFov = (default and default:IsA("NumberValue")) and default.Value or FALLBACK_FOV
-
-	local frames = {}
-	for _, value in (folder:FindFirstChild(FOV_FRAMES_FOLDER) or folder):GetChildren() do
-		local index = tonumber(value.Name)
-		if index and value:IsA("NumberValue") then
-			table.insert(frames, { index = index, fov = value.Value })
-		end
-	end
-
-	if #frames < 2 then return baseFov, nil end
-
-	table.sort(frames, function(a, b) return a.index < b.index end)
-	return baseFov, frames
-end
-
-function CutsceneController:sampleFieldOfView(frames, elapsed: number)
-	local frame = elapsed * FOV_TRACK_FPS
-
-	if frame <= frames[1].index then return frames[1].fov end
-
-	local last = frames[#frames]
-	if frame >= last.index then return last.fov end
-
-	for i = 2, #frames do
-		local to = frames[i]
-		if frame <= to.index then
-			local from = frames[i - 1]
-			local span = to.index - from.index
-			local alpha = span > 0 and (frame - from.index) / span or 0
-			return from.fov + (to.fov - from.fov) * alpha
-		end
-	end
-
-	return last.fov
-end
-
---[[
-	Coloca um ator em cena.
-
-	ObjectValue: usa o rig que já vive no mundo e devolve ele ao lugar no fim.
-	Model: clona o template e joga fora no fim.
-	Nos dois casos o rig é posicionado relativo à origem da cena, então mover a
-	cena move os atores junto.
---]]
-function CutsceneController:playActor(entry: Instance, sessionMaid, origin: CFrame, authoredOrigin: CFrame)
-	local rig
-	if entry:IsA("ObjectValue") then
-		rig = entry.Value
-	elseif entry:IsA("Model") then
-		rig = entry
-	end
-
-	if not rig then return end
-
-	-- Rig guardado junto da cena é template; só o que já vive no mundo é usado
-	-- no lugar.
+function CutsceneController:prepareRig(parsed, sessionMaid, origin: CFrame, reference: CFrame)
+	local rig = parsed.rig
 	local isClone = not rig:IsDescendantOf(workspace)
 	if isClone then
 		rig = rig:Clone()
 	end
 
-	local animation = entry:FindFirstChildWhichIsA("Animation")
-	if not animation then return end
-
-	local animator = rig:FindFirstChildWhichIsA("Animator", true)
-	if not animator then
-		local host = rig:FindFirstChildWhichIsA("Humanoid") or rig:FindFirstChildWhichIsA("AnimationController")
-		if not host then return end
-
-		animator = Instance.new("Animator")
-		animator.Parent = host
+	local motors = {}
+	for _, descendant in rig:GetDescendants() do
+		if descendant:IsA("Motor6D") and descendant.Part1 then
+			motors[descendant.Part1.Name] = descendant
+		end
 	end
 
-	local offset = authoredOrigin:ToObjectSpace(rig:GetPivot())
+	local tracks = {}
+	for _, joint in parsed.joints do
+		local motor = motors[joint.partName]
+		if not motor then continue end
+
+		local restC1 = motor.C1
+		sessionMaid:GiveTask(function()
+			motor.C1 = restC1
+		end)
+
+		table.insert(tracks, { motor = motor, keys = joint.keys, cursor = 1 })
+	end
+
+	local offset = reference:ToObjectSpace(rig:GetPivot())
 
 	if isClone then
 		sessionMaid:GiveTask(rig)
 		rig.Parent = workspace
 	else
-		local previousPivot = rig:GetPivot()
+		local restPivot = rig:GetPivot()
 		sessionMaid:GiveTask(function()
-			rig:PivotTo(previousPivot)
+			rig:PivotTo(restPivot)
 		end)
 	end
 
 	rig:PivotTo(origin * offset)
-
-	local track = animator:LoadAnimation(animation)
-	track.Looped = false
-
-	sessionMaid:GiveTask(function()
-		track:Stop(0)
-
-		-- O Animator para de escrever mas deixa o último Transform aplicado; sem
-		-- zerar as juntas o rig congela na pose final da animação.
-		for _, joint in rig:GetDescendants() do
-			if joint:IsA("Motor6D") then
-				joint.Transform = CFrame.identity
-			end
-		end
-	end)
-
-	track:Play(0)
+	return tracks
 end
 
-function CutsceneController:playActors(asset: Instance, sessionMaid, origin: CFrame, authoredOrigin: CFrame)
-	local folder = asset:FindFirstChild(ACTORS_FOLDER)
-	if not folder then return end
-
-	for _, entry in folder:GetChildren() do
-		self:playActor(entry, sessionMaid, origin, authoredOrigin)
-	end
-end
+--[[ CONTROLE ]]
 
 function CutsceneController:lockControls(sessionMaid)
 	local playerScripts = self.player:FindFirstChild("PlayerScripts")
@@ -292,24 +243,33 @@ function CutsceneController:lockControls(sessionMaid)
 	end)
 end
 
+--[[
+	O centro de coordenadas da cena, lido ao vivo: arrastar a cena no Studio move
+	essa Part junto com o resto, e a cutscene vai junto.
+--]]
+function CutsceneController:readSceneReference(asset: Instance)
+	local reference = asset:FindFirstChild(SCENE_REFERENCE)
+	if not reference then return nil end
+
+	if reference:IsA("BasePart") then return reference.CFrame end
+	if reference:IsA("CFrameValue") then return reference.Value end
+
+	return nil
+end
+
 function CutsceneController:construct()
 	self.maid = Maid.new()
 	self.player = Players.LocalPlayer
 	self.cutsceneActive = false
+	self.scenes = {}
 
 	self.cutscenes = Shared:WaitForChild("Assets"):WaitForChild("Cutscenes")
 
-	-- Sem isso o primeiro Play paga o download do asset e o ator entra atrasado.
+	-- Adianta a leitura pra primeira cutscene não pagar o parse.
 	task.spawn(function()
-		local animations = {}
-		for _, descendant in self.cutscenes:GetDescendants() do
-			if descendant:IsA("Animation") then
-				table.insert(animations, descendant)
-			end
-		end
-
-		if #animations > 0 then
-			ContentProvider:PreloadAsync(animations)
+		for _, asset in self.cutscenes:GetChildren() do
+			self:parseScene(asset)
+			task.wait()
 		end
 	end)
 end
@@ -329,8 +289,8 @@ end
 
 --[[
 	Toca uma cutscene e devolve a duração dela, ou nil se não deu pra tocar.
-	`origin` planta a cena em qualquer CFrame; sem ela, a cena vai pra onde a
-	SceneReferenceCFrame estiver.
+	`origin` é onde a SceneReferenceCFrame vai parar; sem ela, a cena toca onde
+	estiver montada.
 --]]
 function CutsceneController:playCutscene(cutsceneName: string?, origin: CFrame?)
 	if self.cutsceneActive then return nil end
@@ -345,20 +305,17 @@ function CutsceneController:playCutscene(cutsceneName: string?, origin: CFrame?)
 		return nil
 	end
 
-	local keyframes, authoredOrigin = self:buildCameraTrack(asset)
-	if not keyframes then
-		warn(string.format("[CutsceneController]: Cutscene %q has no usable camera track.", name))
+	local scene = self:parseScene(asset)
+	if not scene then
+		warn(string.format("[CutsceneController]: Cutscene %q has no data or no rig driving a %q part.", name, CAMERA_PART))
 		return nil
 	end
 
-	local sceneOrigin = origin or self:readSceneOrigin(asset)
-	if not sceneOrigin then
+	local reference = self:readSceneReference(asset)
+	if not reference then
 		warn(string.format("[CutsceneController]: Cutscene %q has no %s part.", name, SCENE_REFERENCE))
 		return nil
 	end
-
-	local duration = keyframes[#keyframes].time
-	local baseFov, fovFrames = self:readFieldOfView(asset)
 
 	self.cutsceneActive = true
 
@@ -374,14 +331,39 @@ function CutsceneController:playCutscene(cutsceneName: string?, origin: CFrame?)
 
 	self:lockControls(sessionMaid)
 
-	-- Os atores entram junto com o primeiro frame da câmera, sem fade.
-	self:playActors(asset, sessionMaid, sceneOrigin, authoredOrigin)
+	local sceneOrigin = origin or reference
 
+	-- A câmera é a Part1 do Motor6D: Part0 * C0 * Transform * C1:Inverse(), com
+	-- Transform parado. Tudo antes do C1 é constante, então resolve uma vez só.
+	local motor = scene.cameraMotor
+	local cameraBase = sceneOrigin * reference:ToObjectSpace(motor.Part0.CFrame * motor.C0)
+
+	local cameraTrack = { keys = scene.cameraKeys, cursor = 1 }
+	local fovTrack = scene.cameraFov and { keys = scene.cameraFov, cursor = 1 }
+
+	local jointTracks = {}
+	for _, parsed in scene.rigs do
+		for _, track in self:prepareRig(parsed, sessionMaid, sceneOrigin, reference) do
+			table.insert(jointTracks, track)
+		end
+	end
+
+	local duration = scene.duration
 	local elapsed = 0
+
 	sessionMaid:GiveTask(RunService.RenderStepped:Connect(function(deltaTime)
 		elapsed = math.min(elapsed + deltaTime, duration)
-		camera.CFrame = sceneOrigin * self:sampleCameraTrack(keyframes, elapsed)
-		camera.FieldOfView = fovFrames and self:sampleFieldOfView(fovFrames, elapsed) or baseFov
+		local frame = elapsed * SCENE_FPS
+
+		camera.CFrame = cameraBase * self:sampleTrack(cameraTrack, frame):Inverse()
+
+		if fovTrack then
+			camera.FieldOfView = self:sampleTrack(fovTrack, frame)
+		end
+
+		for _, track in jointTracks do
+			track.motor.C1 = self:sampleTrack(track, frame)
+		end
 	end))
 
 	sessionMaid:GiveTask(function()
