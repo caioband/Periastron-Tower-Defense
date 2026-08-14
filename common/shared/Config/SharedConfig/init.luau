@@ -8,6 +8,7 @@
 
 type Shared = {
 	UnitStats : typeof(require(script.UnitStats)),
+	RarityConfig : typeof(require(script.RarityConfig)),
 	CrateConfig : typeof(require(script.CrateConfig)),
 	Mob : typeof(require(script.Mob)),
 	Cmdr : typeof(require(script.Cmdr)),

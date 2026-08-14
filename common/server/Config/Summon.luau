@@ -20,15 +20,17 @@ return {
 		},
 	},
 
+	-- A raridade de cada unit não fica aqui: ela vem do `Rarity` do UnitStats, que é
+	-- a fonte única (os pools das crates leem de lá também). Aqui só o peso no banner.
 	ITEMS = {
 		[Keys.BASIC_DEFAULT_BANNER_KEY] = {
-			{ Name = "Slasher", Rarity = "Common", Weight = 50, UnlockedAsRobux = false },
-			{ Name = "Sword", Rarity = "Uncommon", Weight = 25, UnlockedAsRobux = false },
-			{ Name = "Slingshot", Rarity = "Rare", Weight = 14, UnlockedAsRobux = false },
-			{ Name = "Entrepreneur", Rarity = "Epic", Weight = 6, UnlockedAsRobux = false },
-			{ Name = "Subspace Tripminer", Rarity = "Epic", Weight = 3, UnlockedAsRobux = false },
-			{ Name = "Rocket", Rarity = "Legendary", Weight = 1.5, UnlockedAsRobux = false },
-			{ Name = "Azure", Rarity = "Legendary", Weight = 0.5, UnlockedAsRobux = false },
+			{ Name = "Slasher", Weight = 50, UnlockedAsRobux = false },
+			{ Name = "Sword", Weight = 25, UnlockedAsRobux = false },
+			{ Name = "Slingshot", Weight = 14, UnlockedAsRobux = false },
+			{ Name = "Entrepreneur", Weight = 6, UnlockedAsRobux = false },
+			{ Name = "Subspace Tripminer", Weight = 3, UnlockedAsRobux = false },
+			{ Name = "Rocket", Weight = 1.5, UnlockedAsRobux = false },
+			{ Name = "Azure", Weight = 0.5, UnlockedAsRobux = false },
 		},
 	},
 }

@@ -1,5 +1,6 @@
 local UnitStats = {
 	["Azure"] = {
+		Rarity = "Legendary",
 		Cost = 250,
 		Damage = 5,
 		Range = 3,
@@ -12,6 +13,7 @@ local UnitStats = {
 	},
 
 	["Subspace Tripminer"] = {
+		Rarity = "Epic",
 		Cost = 350,
 		Damage = 70,
 		Range = 8,
@@ -32,6 +34,7 @@ local UnitStats = {
 	},
 
 	["Entrepreneur"] = {
+		Rarity = "Epic",
 		Cost = 200,
 		Damage = 0,
 		Range = 3,
@@ -45,6 +48,7 @@ local UnitStats = {
 	},
 
 	["Sword"] = {
+		Rarity = "Common",
 		Cost = 175,
 		Damage = 35,
 		Range = 3,
@@ -55,6 +59,7 @@ local UnitStats = {
 	},
 
 	["Slasher"] = {
+		Rarity = "Common",
 		Cost = 100,
 		Damage = 20,
 		Range = 3,
@@ -65,6 +70,7 @@ local UnitStats = {
 	},
 
 	["Slingshot"] = {
+		Rarity = "Rare",
 		Cost = 150,
 		Damage = 20,
 		Range = 14,
@@ -80,6 +86,7 @@ local UnitStats = {
 	},
 
 	["Rocket"] = {
+		Rarity = "Legendary",
 		Cost = 500,
 		Damage = 50,
 		Range = 3,

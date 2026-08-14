@@ -36,9 +36,14 @@ local GAIN_POP_SCALE = 1.15
 local GAIN_POP_INFO = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local GAIN_RETURN_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
+-- The server is the one that spends the crate; this only stops a burst of requests
+-- from going out while the first one is still in flight.
+local REQUEST_COOLDOWN = 0.5
+
 local CrateController = {
 	Controllers = {
 		DataController = {},
+		CrateUIController = {},
 	},
 
 	Signals = {
@@ -72,6 +77,14 @@ function CrateController:_buildEntries(wrapper : Instance, template : ImageButto
 		local scale = Instance.new("UIScale")
 		scale.Name = "CrateScale"
 		scale.Parent = entry
+
+		-- cratetemplate is an ImageButton: each entry is what the player clicks to open
+		-- that rarity.
+		if entry:IsA("GuiButton") then
+			self.UiMaid:GiveTask(entry.Activated:Connect(function()
+				self:RequestOpen(rarity)
+			end))
+		end
 
 		entry.Parent = wrapper
 
@@ -224,6 +237,36 @@ function CrateController:GetCrates() : { [string]: number }
 	return getCratesFromData(replica and replica.Data)
 end
 
+--[=[
+	Asks the server to open one crate of a rarity and gets the panel out of the way so
+	the player can watch the unboxing.
+
+	The amount check here is only to keep the UI from firing pointless requests -- the
+	server reads the profile and is what actually spends the crate.
+]=]
+function CrateController:RequestOpen(rarity : string) : boolean
+	local resolvedRarity = CrateConfig.resolveRarity(rarity)
+	if not resolvedRarity then
+		return false
+	end
+
+	if self:GetCrateAmount(resolvedRarity) <= 0 then
+		return false
+	end
+
+	local now = os.clock()
+	if now - self.LastRequest < REQUEST_COOLDOWN then
+		return false
+	end
+
+	self.LastRequest = now
+
+	Framework:Fire("RequestOpenCrate", resolvedRarity)
+	self.Controllers.CrateUIController:Close()
+
+	return true
+end
+
 function CrateController:GetCrateAmount(rarity : string) : number
 	local resolvedRarity = CrateConfig.resolveRarity(rarity)
 	if not resolvedRarity then
@@ -266,6 +309,7 @@ function CrateController:init()
 	self.Cache = {}
 	self.Entries = nil
 	self.Wrapper = nil
+	self.LastRequest = 0
 
 	for Controller, _ in self.Controllers do
 		self.Controllers[Controller] = Framework:Get(Controller, false, true)

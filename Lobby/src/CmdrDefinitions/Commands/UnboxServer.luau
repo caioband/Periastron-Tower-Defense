@@ -9,17 +9,31 @@ local Framework = Me.new()
 return function(_context, players : { Player }, rarity : string)
 	local CrateService = Framework:Get("CrateService", false, true)
 
-	local played = {}
+	local rolled = {}
 
 	for _, player in players do
-		if CrateService:PlayUnboxing(player, rarity) then
-			table.insert(played, player.Name)
+		local result = CrateService:PlayUnboxing(player, rarity)
+		if result then
+			local chain = { result.Crate }
+			for _, upgrade in result.Upgrades do
+				table.insert(chain, upgrade)
+			end
+
+			local crate = table.concat(chain, " -> ")
+
+			table.insert(rolled, string.format(
+				"%s: [%s] %s%s",
+				player.Name,
+				crate,
+				result.Rarity,
+				result.Unit and (" / " .. result.Unit) or ""
+			))
 		end
 	end
 
-	if #played == 0 then
+	if #rolled == 0 then
 		return string.format("Could not play a %s unboxing for anyone.", rarity)
 	end
 
-	return string.format("Playing a %s unboxing for %s.", rarity, table.concat(played, ", "))
+	return table.concat(rolled, "\n")
 end

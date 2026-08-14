@@ -5,6 +5,10 @@
 	Both the server (validation / granting) and the client (UI order, labels and
 	images) read from here, so adding a new rarity only requires editing RARITIES
 	and CRATES -- the data template, the cmdr type and the crate UI follow along.
+
+	Only what belongs to the crate itself is here. The tier the four names refer to
+	(colour, ordering against Cosmic, which units sit in it) is in RarityConfig, and
+	what each crate can drop is server side, in ServerScriptService.Config.Crate.
 ]]
 
 local module = {}
@@ -23,7 +27,6 @@ module.CRATES = {
 		DisplayName = "Common Crate",
 		Order = 1,
 		Image = "rbxassetid://135726334725408",
-		Color = Color3.fromRGB(29, 33, 250),
 		Model = "CommonCrate",
 	},
 
@@ -31,7 +34,6 @@ module.CRATES = {
 		DisplayName = "Rare Crate",
 		Order = 2,
 		Image = "rbxassetid://125866367274436",
-		Color = Color3.fromRGB(31, 230, 74),
 		Model = "RareCrate",
 	},
 
@@ -39,7 +41,6 @@ module.CRATES = {
 		DisplayName = "Epic Crate",
 		Order = 3,
 		Image = "rbxassetid://135666773191804",
-		Color = Color3.fromRGB(227, 19, 255),
 		Model = "EpicCrate",
 	},
 
@@ -47,12 +48,16 @@ module.CRATES = {
 		DisplayName = "Legendary Crate",
 		Order = 4,
 		Image = "rbxassetid://96648127627723",
-		Color = Color3.fromRGB(255, 191, 51),
 		Model = "LegendaryCrate",
 	},
 }
 
 module.MAX_CRATES_PER_RARITY = 9999
+
+-- Display only: how often the "this crate upgrades" card shows up as filler on the
+-- unboxing reel, against the ReelWeight of the tiers in RarityConfig. It is not the
+-- chance of upgrading -- that is server side, in ServerScriptService.Config.Crate.
+module.UPGRADE_REEL_WEIGHT = 12
 
 --[=[
 	Returns the canonical rarity name for the passed string (case insensitive),
@@ -88,6 +93,29 @@ function module.getModelName(rarity: string?): string?
 	end
 
 	return module.CRATES[resolvedRarity].Model
+end
+
+--[=[
+	The crate this one can turn into during an unboxing, or nil for the top one.
+
+	Derived from the order of RARITIES, which is the same adjacent chain the server
+	rolls in ServerScriptService.Config.Crate.UPGRADES -- what stays server side is
+	the chance of it happening, not the fact that it can.
+]=]
+function module.getNextRarity(rarity: string?): string?
+	local resolvedRarity = module.resolveRarity(rarity)
+	if not resolvedRarity then
+		return nil
+	end
+
+	local ordered = module.getOrderedRarities()
+	for index, rarityName in ordered do
+		if rarityName == resolvedRarity then
+			return ordered[index + 1]
+		end
+	end
+
+	return nil
 end
 
 --[=[

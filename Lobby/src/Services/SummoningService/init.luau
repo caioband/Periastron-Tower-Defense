@@ -61,7 +61,8 @@ function SummoningService:summonUnit(Player : Player, bannerName : string)
 			Success = true,
 			Banner = bannerName,
 			Unit = rolledUnit.Name,
-			Rarity = rolledUnit.Rarity,
+			-- O banner só define o peso; a raridade é a da própria unit.
+			Rarity = SharedConfig.UnitStats[rolledUnit.Name].Rarity,
 		})
 	end)
 end
