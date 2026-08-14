@@ -1,0 +1,485 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+
+local Packages = ReplicatedStorage:WaitForChild("Packages")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Vendor = Shared:WaitForChild("Vendor")
+
+local Configs = Shared:WaitForChild("Config")
+
+local SharedConfig = require(Configs.SharedConfig)
+
+local Maid = require(Vendor.Maid)
+local Me = require(Vendor.Me)
+local Signal = require(Packages.Signal)
+
+local MapConfig = SharedConfig.MapConfig
+local PortalConfig = SharedConfig.PortalConfig
+
+local Framework = Me.new()
+
+--[[ CONSTANTS ]]
+local CHOOSE_MAPS_UI_NAME = "ChooseMaps"
+
+local PANEL_NAME = "Lobby"
+local BACKGROUND_NAME = "Background"
+local SCROLL_NAME = "Scroll"
+local TEMPLATE_NAME = "Map"
+local ICON_NAME = "Icon"
+
+local COUNT_LABEL_NAME = "MaxPlrs"
+local INCREASE_NAME = "IncreasePlrs"
+local LOWER_NAME = "LowerPlrs"
+local ACTIONS_NAME = "Frame"
+local CLOSE_NAME = "Exit"
+local CONFIRM_NAME = "Confirm"
+
+local ENTRY_NAME_PREFIX = "Map_"
+local HIGHLIGHT_NAME = "SelectionHighlight"
+local ENTRY_SCALE_NAME = "SelectionScale"
+
+-- Same curves the crate panel uses, so both panels read as the same UI.
+local OPEN_INFO = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local CLOSE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local FADE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local SELECT_INFO = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+local OPEN_FROM_SCALE = 0.85
+local CLOSE_TO_SCALE = 0.9
+
+-- The ring around the picked map: a frame slightly wider than the card, so the
+-- outline sits just outside the artwork instead of on top of it.
+local SELECTED_SCALE = 1.05
+local HIGHLIGHT_OVERSIZE = 1.08
+local HIGHLIGHT_CORNER = UDim.new(0.1, 0)
+local HIGHLIGHT_THICKNESS = 3
+local HIGHLIGHT_COLOR = Color3.fromRGB(255, 214, 92)
+
+--[=[
+	Owns the ChooseMaps panel: the map list, the player-count stepper and the open /
+	close animation.
+
+	Picking a card only selects it -- it gets the ring and Confirm shows up, and the
+	map is not sent anywhere until Confirm is pressed. It does not talk to the server
+	either: PortalController is the one that opens the panel, and it hears back
+	through MapChosen.
+]=]
+local ChooseMapsController = {
+	Controllers = {},
+
+	Signals = {
+		-- (mapName : string, maxPlayers : number) -- fired by Confirm, not by the card
+		MapChosen = Signal.new(),
+		-- (mapName : string?)
+		SelectionChanged = Signal.new(),
+		-- (isOpen : boolean)
+		OpenChanged = Signal.new(),
+	},
+}
+
+--[[ INTERNAL ]]
+
+function ChooseMapsController:_playTween(object : Instance, info : TweenInfo, goal : { [string]: any }, maid) : Tween
+	local tween = TweenService:Create(object, info, goal)
+
+	;(maid or self.TweenMaid):GiveTask(function()
+		tween:Cancel()
+	end)
+
+	tween:Play()
+	return tween
+end
+
+--[=[
+	The ImageLabel a map thumbnail goes into. The template nests it as
+	Map.ImageLabel.Icon.ImageLabel, and it falls back to the button itself so a
+	simpler template still shows something.
+]=]
+function ChooseMapsController:_findIcon(entry : Instance) : ImageLabel?
+	local icon = entry:FindFirstChild(ICON_NAME, true)
+	local target = icon and icon:FindFirstChildWhichIsA("ImageLabel")
+
+	if target then
+		return target
+	end
+
+	return entry:IsA("ImageButton") and entry or nil
+end
+
+--[=[
+	The ring that marks the picked map. It is built here instead of in the template so
+	every entry gets the same one, whatever the designer does to the card art.
+]=]
+function ChooseMapsController:_buildHighlight(entry : GuiObject)
+	local highlight = Instance.new("Frame")
+	highlight.Name = HIGHLIGHT_NAME
+	highlight.AnchorPoint = Vector2.new(0.5, 0.5)
+	highlight.Position = UDim2.fromScale(0.5, 0.5)
+	highlight.Size = UDim2.fromScale(HIGHLIGHT_OVERSIZE, HIGHLIGHT_OVERSIZE)
+	highlight.BackgroundTransparency = 1
+	highlight.BorderSizePixel = 0
+	-- Above the card and everything inside it, so the ring is never cut in half.
+	highlight.ZIndex = entry.ZIndex + 10
+	highlight.Visible = false
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = HIGHLIGHT_CORNER
+	corner.Parent = highlight
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = HIGHLIGHT_THICKNESS
+	stroke.Color = HIGHLIGHT_COLOR
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = highlight
+
+	highlight.Parent = entry
+	return highlight
+end
+
+--[=[
+	Rebuilds one entry per configured map, using the first template inside Scroll as
+	the source. The extra copies the designer left in there are dropped: the list is
+	whatever MapConfig says it is.
+]=]
+function ChooseMapsController:_buildEntries(scroll : Instance, template : Instance)
+	for _, child in scroll:GetChildren() do
+		if child ~= template and child.Name == TEMPLATE_NAME then
+			child:Destroy()
+		end
+	end
+
+	template.Visible = false
+	self.Entries = {}
+
+	for _, mapName in MapConfig.getOrderedMaps() do
+		local info = MapConfig.MAPS[mapName]
+
+		local entry = template:Clone()
+		entry.Name = ENTRY_NAME_PREFIX .. mapName
+		entry.LayoutOrder = info.Order or 0
+		entry.Visible = true
+
+		local icon = self:_findIcon(entry)
+		if icon and info.Image and info.Image ~= "" then
+			icon.Image = info.Image
+		end
+
+		-- Optional: a template that grows a label named MapName gets it filled in.
+		local nameLabel = entry:FindFirstChild("MapName", true)
+		if nameLabel and nameLabel:IsA("TextLabel") then
+			nameLabel.Text = info.DisplayName or mapName
+		end
+
+		local scale = Instance.new("UIScale")
+		scale.Name = ENTRY_SCALE_NAME
+		scale.Parent = entry
+
+		if entry:IsA("GuiButton") then
+			self.UiMaid:GiveTask(entry.Activated:Connect(function()
+				self:Select(mapName)
+			end))
+		end
+
+		entry.Parent = scroll
+
+		self.Entries[mapName] = {
+			Button = entry,
+			Highlight = self:_buildHighlight(entry),
+			Scale = scale,
+		}
+
+		self.UiMaid:GiveTask(entry)
+	end
+end
+
+--[=[
+	Paints the selection: the picked card wears the ring and stands a little proud of
+	the others, and Confirm only exists once there is something to confirm.
+]=]
+function ChooseMapsController:_renderSelection(immediate : boolean?)
+	self.SelectionMaid:DoCleaning()
+
+	for mapName, entry in self.Entries do
+		local isSelected = mapName == self.Selected
+
+		entry.Highlight.Visible = isSelected
+
+		local goal = isSelected and SELECTED_SCALE or 1
+		if immediate then
+			entry.Scale.Scale = goal
+		elseif entry.Scale.Scale ~= goal then
+			self:_playTween(entry.Scale, SELECT_INFO, { Scale = goal }, self.SelectionMaid)
+		end
+	end
+
+	if self.ConfirmButton then
+		self.ConfirmButton.Visible = self.Selected ~= nil
+	end
+end
+
+function ChooseMapsController:_renderCount()
+	local count = self.PlayerCount
+
+	if self.CountLabel and self.CountLabel:IsA("TextLabel") then
+		self.CountLabel.Text = tostring(count)
+	end
+
+	-- At either end the step that cannot happen is not greyed out, it is gone.
+	if self.IncreaseButton then
+		self.IncreaseButton.Visible = count < PortalConfig.MAX_PLAYERS
+	end
+
+	if self.LowerButton then
+		self.LowerButton.Visible = count > PortalConfig.MIN_PLAYERS
+	end
+end
+
+function ChooseMapsController:_step(delta : number)
+	local count = math.clamp(self.PlayerCount + delta, PortalConfig.MIN_PLAYERS, PortalConfig.MAX_PLAYERS)
+	if count == self.PlayerCount then
+		return
+	end
+
+	self.PlayerCount = count
+	self:_renderCount()
+end
+
+function ChooseMapsController:_setOpen(open : boolean)
+	local panel = self.Panel
+	if not panel or not panel.Parent or not self.PanelScale then
+		return
+	end
+
+	if open == self.IsOpenState then
+		return
+	end
+
+	self.IsOpenState = open
+	self.TweenMaid:DoCleaning()
+
+	if open then
+		-- Every opening starts over at one player and no map picked, like the panel
+		-- was never used.
+		self.PlayerCount = PortalConfig.MIN_PLAYERS
+		self.Selected = nil
+
+		self:_renderCount()
+		self:_renderSelection(true)
+
+		self.ScreenGui.Enabled = true
+
+		self.PanelScale.Scale = OPEN_FROM_SCALE
+		panel.Visible = true
+
+		self:_playTween(self.PanelScale, OPEN_INFO, { Scale = 1 })
+
+		if self.Background then
+			self.Background.ImageTransparency = 1
+			self:_playTween(self.Background, FADE_INFO, { ImageTransparency = 0 })
+		end
+	else
+		self:_playTween(self.PanelScale, CLOSE_INFO, { Scale = CLOSE_TO_SCALE })
+
+		local fade = self.Background and self:_playTween(self.Background, CLOSE_INFO, { ImageTransparency = 1 })
+		local function finish(state : Enum.PlaybackState)
+			-- Reopened mid-fade: the open tween owns the panel now.
+			if state == Enum.PlaybackState.Completed and not self.IsOpenState then
+				panel.Visible = false
+				self.ScreenGui.Enabled = false
+			end
+		end
+
+		if fade then
+			fade.Completed:Once(finish)
+		else
+			task.delay(CLOSE_INFO.Time, finish, Enum.PlaybackState.Completed)
+		end
+	end
+
+	self.Signals.OpenChanged:Fire(open)
+end
+
+--[=[
+	Binds to a ChooseMaps instance. The ScreenGui has ResetOnSpawn enabled, so this
+	runs again for every fresh copy the engine parents into PlayerGui.
+]=]
+function ChooseMapsController:_bindUI(screenGui : ScreenGui)
+	self.UiMaid:DoCleaning()
+	self.TweenMaid:DoCleaning()
+
+	local panel = screenGui:WaitForChild(PANEL_NAME, 10)
+	local scroll = panel and panel:WaitForChild(SCROLL_NAME, 10)
+	local template = scroll and scroll:WaitForChild(TEMPLATE_NAME, 10)
+
+	if not panel or not scroll or not template then
+		warn(`[ChooseMapsController]: Could not find {CHOOSE_MAPS_UI_NAME}.{PANEL_NAME}.{SCROLL_NAME}.{TEMPLATE_NAME}.`)
+		return
+	end
+
+	local panelScale = panel:FindFirstChildWhichIsA("UIScale")
+	if not panelScale then
+		panelScale = Instance.new("UIScale")
+		panelScale.Name = "PanelScale"
+		panelScale.Parent = panel
+	end
+
+	self.ScreenGui = screenGui
+	self.Panel = panel
+	self.PanelScale = panelScale
+	self.Background = panel:FindFirstChild(BACKGROUND_NAME)
+
+	self.CountLabel = panel:FindFirstChild(COUNT_LABEL_NAME)
+	self.IncreaseButton = panel:FindFirstChild(INCREASE_NAME)
+	self.LowerButton = panel:FindFirstChild(LOWER_NAME)
+
+	if self.IncreaseButton and self.IncreaseButton:IsA("GuiButton") then
+		self.UiMaid:GiveTask(self.IncreaseButton.Activated:Connect(function()
+			self:_step(1)
+		end))
+	end
+
+	if self.LowerButton and self.LowerButton:IsA("GuiButton") then
+		self.UiMaid:GiveTask(self.LowerButton.Activated:Connect(function()
+			self:_step(-1)
+		end))
+	end
+
+	local actions = panel:FindFirstChild(ACTIONS_NAME)
+	local closeButton = actions and actions:FindFirstChild(CLOSE_NAME)
+	if closeButton and closeButton:IsA("GuiButton") then
+		self.UiMaid:GiveTask(closeButton.Activated:Connect(function()
+			self:Close()
+		end))
+	end
+
+	self.ConfirmButton = actions and actions:FindFirstChild(CONFIRM_NAME)
+	if self.ConfirmButton and self.ConfirmButton:IsA("GuiButton") then
+		self.UiMaid:GiveTask(self.ConfirmButton.Activated:Connect(function()
+			self:Confirm()
+		end))
+	end
+
+	self:_buildEntries(scroll, template)
+
+	-- The panel starts closed: the portal is what opens it.
+	self.IsOpenState = false
+	self.PlayerCount = PortalConfig.MIN_PLAYERS
+	self.Selected = nil
+
+	self:_renderCount()
+	self:_renderSelection(true)
+
+	panel.Visible = false
+	screenGui.Enabled = false
+end
+
+function ChooseMapsController:_observeUI()
+	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+	local function onChild(child : Instance)
+		if child.Name ~= CHOOSE_MAPS_UI_NAME or not child:IsA("ScreenGui") then
+			return
+		end
+
+		self:_bindUI(child)
+	end
+
+	self.Maid:GiveTask(playerGui.ChildAdded:Connect(onChild))
+
+	for _, child in playerGui:GetChildren() do
+		task.spawn(onChild, child)
+	end
+end
+
+--[[ EXTERNAL ]]
+
+function ChooseMapsController:IsOpen() : boolean
+	return self.IsOpenState == true
+end
+
+--[=[
+	How many players the panel is currently set to bring along.
+]=]
+function ChooseMapsController:GetPlayerCount() : number
+	return self.PlayerCount or PortalConfig.MIN_PLAYERS
+end
+
+--[=[
+	The map the player picked, or nil while nothing is picked.
+]=]
+function ChooseMapsController:GetSelected() : string?
+	return self.Selected
+end
+
+--[=[
+	Picks a map. Nothing is sent yet -- Confirm is what closes the deal.
+]=]
+function ChooseMapsController:Select(mapName : string?)
+	local resolvedMap = MapConfig.resolveMap(mapName)
+	if resolvedMap == self.Selected then
+		return
+	end
+
+	self.Selected = resolvedMap
+	self:_renderSelection()
+
+	self.Signals.SelectionChanged:Fire(resolvedMap)
+end
+
+--[=[
+	Sends the picked map off. Does nothing while no map is picked -- which is also
+	when Confirm is not on screen.
+]=]
+function ChooseMapsController:Confirm() : boolean
+	if not self.Selected then
+		return false
+	end
+
+	self.Signals.MapChosen:Fire(self.Selected, self.PlayerCount)
+	return true
+end
+
+function ChooseMapsController:Open()
+	self:_setOpen(true)
+end
+
+function ChooseMapsController:Close()
+	self:_setOpen(false)
+end
+
+function ChooseMapsController:Toggle()
+	self:_setOpen(not self.IsOpenState)
+end
+
+function ChooseMapsController:construct()
+	self:_observeUI()
+end
+
+function ChooseMapsController:start()
+
+end
+
+function ChooseMapsController:init()
+	self.Maid = Maid.new()
+	self.UiMaid = Maid.new()
+	self.TweenMaid = Maid.new()
+	self.SelectionMaid = Maid.new()
+
+	self.Maid:GiveTask(self.UiMaid)
+	self.Maid:GiveTask(self.TweenMaid)
+	self.Maid:GiveTask(self.SelectionMaid)
+
+	self.IsOpenState = false
+	self.PlayerCount = PortalConfig.MIN_PLAYERS
+	self.Entries = {}
+	self.Selected = nil
+
+	for Controller, _ in self.Controllers do
+		self.Controllers[Controller] = Framework:Get(Controller, false, true)
+	end
+
+	self:construct()
+end
+
+return ChooseMapsController

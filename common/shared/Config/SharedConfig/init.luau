@@ -10,6 +10,8 @@ type Shared = {
 	UnitStats : typeof(require(script.UnitStats)),
 	RarityConfig : typeof(require(script.RarityConfig)),
 	CrateConfig : typeof(require(script.CrateConfig)),
+	MapConfig : typeof(require(script.MapConfig)),
+	PortalConfig : typeof(require(script.PortalConfig)),
 	Mob : typeof(require(script.Mob)),
 	Cmdr : typeof(require(script.Cmdr)),
 	SellValue : number,
