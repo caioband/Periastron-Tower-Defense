@@ -43,6 +43,188 @@ local RING_SPIN_SPEED = 40
 local DOTTED_LINE_SPIN_SPEED = 25
 local SELECT_SCALE = 1.3
 
+-- Como o caminho fica marcado enquanto o jogador posiciona uma unidade.
+local GRID_PREVIEW_COLOR = Color3.fromRGB(255, 0, 0)
+local GRID_PREVIEW_MATERIAL = Enum.Material.Neon
+
+--[[
+	A entrada e em cascata, e o que se configura e o TEMPO TOTAL dela — nao o
+	intervalo entre parts. O intervalo sai da divisao pela quantidade de parts do
+	mapa carregado, entao a animacao dura o mesmo no Default (5 parts) e no
+	Mountain (206), em vez de esticar de 0.25s para 10s conforme o mapa.
+
+	GRID_PAINT_TOTAL_TIME conta do inicio ate a ultima part terminar de ficar
+	vermelha, ou seja, ja inclui o tween final.
+]]
+local GRID_PAINT_TOTAL_TIME = 0.75
+local GRID_PAINT_TIME = 0.25
+
+local function getPaintStagger(count : number)
+	if count <= 1 then
+		return 0
+	end
+	return math.max(0, GRID_PAINT_TOTAL_TIME - GRID_PAINT_TIME) / (count - 1)
+end
+
+--[[
+	Aparencia original das parts do caminho, guardada na primeira vez que cada uma
+	e pintada e devolvida quando o posicionamento acaba.
+
+	Chaves fracas: o mapa pode ser trocado entre rounds, e as parts do mapa antigo
+	nao devem ficar presas aqui.
+]]
+local gridOriginals = setmetatable({}, { __mode = "k" })
+
+local cachedGridParts = nil
+
+local function invalidateGridParts()
+	cachedGridParts = nil
+end
+
+--[[
+	Parts do caminho do mapa que esta carregado, e so dele.
+
+	O escopo e o clone que o MapService coloca em `workspace.Map`. `GetTagged("Grid")`
+	sozinho devolve tambem as parts dos outros mapas, que seguem em
+	ReplicatedStorage — hoje sao mais de 500 no total, de cinco mapas.
+
+	O resultado e calculado uma vez por mapa e reaproveitado em todo
+	posicionamento; o cache cai no RoundRestarted, quando o mapa pode ter mudado.
+]]
+local function getWorldGridParts()
+	if cachedGridParts then
+		return cachedGridParts
+	end
+
+	local mapRoot = workspace:FindFirstChild("Map")
+
+	local parts = {}
+	for _, part in CollectionService:GetTagged("Grid") do
+		if part:IsA("BasePart") and part:IsDescendantOf(mapRoot or workspace) then
+			table.insert(parts, part)
+		end
+	end
+
+	-- Sem o mapa em workspace a lista pode estar incompleta (replicacao a caminho),
+	-- entao ela nao e guardada — senao um vazio ficaria congelado para sempre.
+	if mapRoot then
+		cachedGridParts = parts
+	end
+
+	return parts
+end
+
+-- Cascata em andamento e os tweens de cor vivos, para poder cortar os dois na
+-- hora em que o jogador larga a unidade.
+local gridPaintThread = nil
+local gridTweens = {}
+
+local function stopGridPaint()
+	if gridPaintThread then
+		pcall(task.cancel, gridPaintThread)
+		gridPaintThread = nil
+	end
+
+	for part, tween in gridTweens do
+		tween:Cancel()
+		gridTweens[part] = nil
+	end
+end
+
+-- Acende uma part: Material de uma vez, cor por tween.
+local function paintOneGridPart(part)
+	if not part.Parent then
+		return
+	end
+
+	-- Capturado no momento em que a part entra: quem a cascata ainda nao
+	-- alcancou continua intocado e sem snapshot.
+	if not gridOriginals[part] then
+		gridOriginals[part] = { material = part.Material, color = part.Color }
+	end
+
+	part.Material = GRID_PREVIEW_MATERIAL
+
+	local tween = TweenService:Create(
+		part,
+		TweenInfo.new(GRID_PAINT_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Color = GRID_PREVIEW_COLOR }
+	)
+
+	gridTweens[part] = tween
+	tween.Completed:Once(function()
+		if gridTweens[part] == tween then
+			gridTweens[part] = nil
+		end
+	end)
+	tween:Play()
+end
+
+--[[
+	Acende o caminho em cascata: cada part troca para Neon e puxa a cor ate o
+	vermelho por tween, escalonadas para caber em GRID_PAINT_TOTAL_TIME.
+
+	O avanco e por tempo decorrido, e nao um `task.wait(intervalo)` por part. Com
+	107 parts em 0.75s o intervalo da ~0.005s, bem abaixo de um frame — e
+	`task.wait` sempre gasta um frame inteiro, o que faria a cascata levar 107
+	frames (~1.8s) em vez dos 0.75s pedidos. Aqui cada frame pinta todas as parts
+	cujo horario ja chegou, o que tambem e o que produz a sensacao de batch.
+
+	O Material nao da para interpolar (e enum), entao ele troca de uma vez no
+	instante em que a part entra — e isso que a faz "acender". So a cor anda.
+]]
+local function paintGridParts(parts)
+	stopGridPaint()
+
+	local total = #parts
+	if total == 0 then
+		return
+	end
+
+	local stagger = getPaintStagger(total)
+
+	gridPaintThread = task.spawn(function()
+		local startedAt = os.clock()
+		local nextIndex = 1
+
+		while nextIndex <= total do
+			local elapsed = os.clock() - startedAt
+
+			while nextIndex <= total and (nextIndex - 1) * stagger <= elapsed do
+				paintOneGridPart(parts[nextIndex])
+				nextIndex += 1
+			end
+
+			if nextIndex <= total then
+				RunService.Heartbeat:Wait()
+			end
+		end
+
+		gridPaintThread = nil
+	end)
+end
+
+--[[
+	Volta tudo de uma vez, sem tween.
+
+	A cascata e os tweens de cor sao cortados primeiro: um tween sobrevivente
+	continuaria escrevendo Color depois da restauracao e deixaria a part vermelha.
+]]
+local function restoreGridParts(parts)
+	stopGridPaint()
+
+	for _, part in parts do
+		local original = gridOriginals[part]
+		if original then
+			if part.Parent then
+				part.Material = original.material
+				part.Color = original.color
+			end
+			gridOriginals[part] = nil
+		end
+	end
+end
+
 local TILT_MAX = math.rad(16)
 local TILT_PER_STUD = 0.08
 local TILT_LERP_SPEED = 10
@@ -484,17 +666,10 @@ function UnitPlacementController:visualize(unitName : string)
 		ringScaleValue:Destroy()
 	end)
 
-	local gridHighlights = {}
-	for _, part in ipairs(CollectionService:GetTagged("Grid")) do
-		local h = Instance.new("Highlight")
-		h.FillColor = INVALID_COLOR
-		h.OutlineColor = INVALID_COLOR
-		h.FillTransparency = 0.35
-		h.OutlineTransparency = 0
-		h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-		h.Parent = part
-		table.insert(gridHighlights, h)
-	end
+	-- Nome distinto de proposito: o loop de validacao la embaixo tem o proprio
+	-- `gridParts`, que e o resultado de um GetPartsInPart e nao tem relacao.
+	local paintedGridParts = getWorldGridParts()
+	paintGridParts(paintedGridParts)
 
 	local raycastParams = RaycastParams.new()
 	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -622,10 +797,8 @@ function UnitPlacementController:visualize(unitName : string)
 			if canPlace then
 				Framework:Fire("PlaceUnit", unitName, ghostCF)
 
-				for _, h in (gridHighlights) do
-					h:Destroy()
-				end
-
+				-- A devolucao da aparencia do caminho fica a cargo do maid, logo
+				-- abaixo: um dono so para os dois caminhos de saida.
 				placementRing:Destroy()
 				ringScaleValue:Destroy()
 				self.isPlacing = false
@@ -638,9 +811,7 @@ function UnitPlacementController:visualize(unitName : string)
 	end))
 
 	maid:GiveTask(function()
-		for _, h in ipairs(gridHighlights) do
-			h:Destroy()
-		end
+		restoreGridParts(paintedGridParts)
 		if placementRing and placementRing.Parent then
 			placementRing:Destroy()
 		end
@@ -657,6 +828,25 @@ function UnitPlacementController:unequip()
 	if self._maid then
 		self._maid:Destroy()
 		self._maid = nil
+	end
+end
+
+--[=[
+	Larga tudo que o jogador tinha em mao: o fantasma que segue o mouse, a unidade
+	selecionada (com anel, linha pontilhada e painel de upgrade) e a carta equipada
+	na hotbar.
+
+	O fantasma e um Model no workspace, nao GUI — desligar a Interface no fim do
+	round nao o faz sumir, ele continuaria seguindo o mouse por cima da tela de
+	resultado. Por isso a limpeza e explicita.
+]=]
+function UnitPlacementController:clearInteraction()
+	self:unequip()
+	self:deselectCurrent()
+
+	local cardController = self.Controllers.CardController
+	if cardController and cardController.setUnequipState then
+		cardController:setUnequipState()
 	end
 end
 
@@ -714,6 +904,15 @@ function UnitPlacementController:construct()
 				self:deselectCurrent()
 			end
 		end
+	end)
+
+	-- Rede de seguranca: se o round reiniciar sem passar pela tela de resultado,
+	-- o jogador nao fica com fantasma nem carta equipada de uma partida que acabou.
+	Framework:Listen("RoundRestarted", function()
+		self:clearInteraction()
+		-- O mapa pode ter mudado; a lista de parts do caminho e remontada no
+		-- proximo posicionamento.
+		invalidateGridParts()
 	end)
 
 	Framework:Listen("RemoveUnit", function(unitId)

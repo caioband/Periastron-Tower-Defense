@@ -85,6 +85,64 @@ function UnitService:initPlayerCards(player)
 	end)
 end
 
+--[=[
+	Devolve o service ao estado de antes da partida: derruba tudo que foi colocado
+	no mapa e recarrega as cartas de cada jogador a partir do perfil.
+
+	Cada unidade sai por `RemoveUnit`, o mesmo evento da venda — entao os clientes
+	limpam modelo, linha pontilhada, minas e selecao pelo caminho que ja existe.
+]=]
+function UnitService:ResetRound()
+	for _, entry in ipairs(self.PlacedUnits) do
+		for _, player in ipairs(Players:GetPlayers()) do
+			Framework:Fire("RemoveUnit", player, entry.unitId)
+		end
+	end
+
+	table.clear(self.PlacedUnits)
+	table.clear(self.UnitsById)
+
+	-- O mapa pode ter mudado entre rounds.
+	self.GridParts = nil
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		self:initPlayerCards(player)
+	end
+end
+
+--[=[
+	Parts do caminho do mapa em jogo.
+
+	No servidor `GetTagged("Grid")` devolve tambem as parts dos mapas guardados em
+	`ServerStorage.Maps` — sao 585 hoje, de seis mapas, contra a centena do mapa
+	carregado. Elas nunca poderiam ser atingidas por um `GetPartsInPart` (nao estao
+	no Workspace), entao o resultado da validacao nao muda; o que muda e nao montar
+	uma lista de 585 entradas a cada tentativa de colocar uma unidade.
+
+	O cache cai no ResetRound, junto com a possibilidade de o mapa ter mudado.
+]=]
+function UnitService:getGridParts()
+	if self.GridParts then
+		return self.GridParts
+	end
+
+	local mapRoot = workspace:FindFirstChild("Map")
+
+	local parts = {}
+	for _, part in CollectionService:GetTagged("Grid") do
+		if part:IsA("BasePart") and part:IsDescendantOf(mapRoot or workspace) then
+			table.insert(parts, part)
+		end
+	end
+
+	-- Sem o mapa no Workspace a lista pode estar incompleta; nao guarda.
+	if mapRoot then
+		self.GridParts = parts
+	end
+
+	return parts
+end
+
 function UnitService:StunRandomUnit(duration)
 	if #self.PlacedUnits == 0 then return end
 
@@ -195,7 +253,7 @@ function UnitService:construct()
 		local checkSize = Vector3.new(unitSizeX, 6, unitSizeX)
 		local overlapParams = OverlapParams.new()
 		overlapParams.FilterType = Enum.RaycastFilterType.Include
-		overlapParams.FilterDescendantsInstances = CollectionService:GetTagged("Grid")
+		overlapParams.FilterDescendantsInstances = self:getGridParts()
 		local gridProbe = Instance.new("Part")
 		gridProbe.Size = checkSize
 		gridProbe.Anchored = true
@@ -318,29 +376,36 @@ function UnitService:getActiveMineCount(entry)
 end
 
 function UnitService:getRandomPathPointInRange(entry)
-	local smooth = self.Services.MobService:getSmoothPath()
-	if not smooth or not smooth.points or #smooth.points < 2 or smooth.length <= 0 then return nil end
-
 	local unitPosition = entry.cf.Position
 	local range = SharedConfig.UnitUpgradeConfig:GetRange(entry.unitName, entry.upgrades or 0)
 
 	local step = 1
 	local candidates = {}
-	local d = 0
-	while d <= smooth.length do
-		local p = PathUtil.GetPositionAtDistance(smooth, d)
-		if p then
-			local flat = Vector3.new(p.X - unitPosition.X, 0, p.Z - unitPosition.Z)
-			if flat.Magnitude <= range then
-				table.insert(candidates, d)
+
+	-- Varre todas as rotas: uma mina pode cair em qualquer lado da bifurcacao que
+	-- estiver no alcance, e o gatilho ja testa todos os mobs independente da rota.
+	for _, route in self.Services.MobService:getRoutes() do
+		local routeSmooth = route.smooth
+		if routeSmooth and routeSmooth.points and #routeSmooth.points >= 2 and routeSmooth.length > 0 then
+			local d = 0
+			while d <= routeSmooth.length do
+				local p = PathUtil.GetPositionAtDistance(routeSmooth, d)
+				if p then
+					local flat = Vector3.new(p.X - unitPosition.X, 0, p.Z - unitPosition.Z)
+					if flat.Magnitude <= range then
+						table.insert(candidates, { smooth = routeSmooth, distance = d })
+					end
+				end
+				d += step
 			end
 		end
-		d += step
 	end
+
 	if #candidates == 0 then return nil end
 
-	local distance = candidates[math.random(1, #candidates)] + (math.random() - 0.5) * step
-	distance = math.clamp(distance, 0, smooth.length)
+	local pick = candidates[math.random(1, #candidates)]
+	local smooth = pick.smooth
+	local distance = math.clamp(pick.distance + (math.random() - 0.5) * step, 0, smooth.length)
 
 	local point = PathUtil.GetPositionAtDistance(smooth, distance)
 	local ahead = PathUtil.GetPositionAtDistance(smooth, math.min(smooth.length, distance + 0.5))

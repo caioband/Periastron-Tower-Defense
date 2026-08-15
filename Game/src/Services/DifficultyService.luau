@@ -135,6 +135,19 @@ function DifficultyService:RunSelection(duration)
 	return preset
 end
 
+--[=[
+	Devolve o service ao estado de antes da votacao. A dificuldade escolhida cai
+	junto: o proximo round vota de novo.
+]=]
+function DifficultyService:ResetRound()
+	table.clear(self.Votes)
+	self.Selected = nil
+	self.SelectionActive = false
+	self.SelectionEndsAt = nil
+
+	self:broadcastSelectionState(0)
+end
+
 function DifficultyService:construct()
 	Framework:Listen("SelectDifficulty", function(player, difficultyName)
 		if not self.SelectionActive then return end

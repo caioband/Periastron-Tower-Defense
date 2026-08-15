@@ -2,13 +2,19 @@
 	Single source of truth for the maps a lobby group can pick.
 
 	The key of each entry is the map *name*, and it has to match the folder inside
-	`ReplicatedStorage.Shared.Assets.Maps` -- that is the name `MapService:LoadMap`
-	takes in the Game place, and it is what the portal hands over when the group
-	leaves the lobby.
+	`ServerStorage.Maps` in the Game place -- that is the name `MapService:LoadMap`
+	takes, and it is what the portal hands over when the group leaves the lobby.
 
-	`Image` is what the map template in `ChooseMaps` and the portal billboard show.
-	The two entries below carry the placeholder icon that shipped with the UI: swap
-	them for the real thumbnails.
+	The map folders live in ServerStorage precisely so they do not replicate: the
+	client only ever sees the one map the server cloned into `workspace.Map`. That
+	means this config is the *only* thing the lobby can read about maps, so an
+	entry missing here is a map the lobby cannot offer.
+
+	`DisplayName` is the only part players read, so it is free to differ from the
+	key -- which is not. `Image` is what the map template in `ChooseMaps` and the
+	portal billboard show.
+
+	`Order` is just the sort for the picker; renumber freely.
 ]]
 
 local module = {}
@@ -17,13 +23,34 @@ module.MAPS = {
 	["Snowy"] = {
 		DisplayName = "Snowy",
 		Order = 1,
-		Image = "rbxassetid://137712595982446",
+		Image = "rbxassetid://110763146643497",
 	},
 
-	["Default"] = {
-		DisplayName = "Default",
+	["SnowyCastle"] = {
+		DisplayName = "Snowy Castle",
 		Order = 2,
-		Image = "rbxassetid://137712595982446",
+		Image = "rbxassetid://82438762834917",
+	},
+
+	["Dessert"] = {
+		DisplayName = "Dessert",
+		Order = 3,
+		Image = "rbxassetid://115008998327555",
+	},
+
+	-- A pasta em `ServerStorage.Maps` se chama "Mountain", no singular, e a chave
+	-- tem de bater com ela ou o `LoadMap` nao acha o mapa. O plural fica so no
+	-- nome que o jogador ve.
+	["Mountain"] = {
+		DisplayName = "Mountains",
+		Order = 4,
+		Image = "rbxassetid://111816748733146",
+	},
+
+	["Volcano"] = {
+		DisplayName = "Volcano",
+		Order = 5,
+		Image = "rbxassetid://102911300807811",
 	},
 }
 

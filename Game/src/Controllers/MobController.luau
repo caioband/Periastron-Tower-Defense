@@ -267,6 +267,20 @@ local function checkIsOnGrid(position, size)
 	return result ~= nil
 end
 
+--[=[
+	Rotas do mapa atual, iguaizinhas as do servidor — os dois lados montam a
+	partir dos mesmos nodes replicados, entao o indice sorteado la vale aqui.
+
+	Antes o caminho era reconstruido a cada spawn de mob; agora e uma vez so por
+	mapa, e o cache cai no restart do round.
+]=]
+function MobController:getRoutes()
+	if not self.Routes then
+		self.Routes = PathUtil.BuildRoutes(workspace.PathScriptable.Nodes)
+	end
+	return self.Routes
+end
+
 function MobController:createEntity(entityData)
 	local mobName = entityData.Name or "CourageBearer"
 	local speed = entityData.Speed or 6
@@ -310,20 +324,26 @@ function MobController:createEntity(entityData)
 	updateHealthBar(mobClone, self.MobHealth[mobId].current, self.MobHealth[mobId].max, true)
 
 	local nodesFolder = workspace.PathScriptable.Nodes
-	local startNode = nodesFolder:WaitForChild("1")
+	-- Espera a replicacao dos nodes antes de montar as rotas.
+	nodesFolder:WaitForChild("1")
+
+	-- A rota vem do servidor: com bifurcacao, cliente e servidor precisam andar
+	-- exatamente pela mesma polilinha, senao as duas simulacoes divergem.
+	local routes = self:getRoutes()
+	local route = routes[entityData.Route or 1] or routes[1]
+	local smooth = route.smooth
+	local startPosition = smooth.points[1]
 
 	self.Controllers.TargetingController:RegisterMob(mobClone)
 
 	local _, currentSize = mobClone:GetBoundingBox()
 	local currentPivot = mobClone:GetPivot()
 	local bottomOffset = currentPivot.Position.Y - (currentSize.Y / 2)
-	local targetHeight = startNode.Position.Y + (currentSize.Y / 2)
+	local targetHeight = startPosition.Y + (currentSize.Y / 2)
 	local verticalAdjustment = targetHeight - bottomOffset
 
 	mobClone:PivotTo(currentPivot * CFrame.new(0, verticalAdjustment, 0))
-	mobClone:PivotTo(CFrame.new(startNode.Position.X, targetHeight, startNode.Position.Z) * mobClone:GetPivot().Rotation)
-
-	local smooth = PathUtil.BuildSmoothPath(nodesFolder)
+	mobClone:PivotTo(CFrame.new(startPosition.X, targetHeight, startPosition.Z) * mobClone:GetPivot().Rotation)
 
 	self.MobMovement[mobId] = {
 		model = mobClone,
@@ -575,6 +595,12 @@ function MobController:construct()
 	end)
 
 	Framework:Listen("GameOver", function()
+		self:clearAllMobs()
+	end)
+
+	-- O mapa pode ter mudado entre rounds; as rotas sao remontadas no proximo mob.
+	Framework:Listen("RoundRestarted", function()
+		self.Routes = nil
 		self:clearAllMobs()
 	end)
 

@@ -24,13 +24,13 @@ local Framework = Me.new()
 local BASE_MAX_HEALTH = 100
 local MOB_DAMAGE = 20
 
-local function computeTurnDistances(sortedNodes)
+local function computeTurnDistances(positions)
 	local turnDistances = {}
 	local total = 0
 
-	for i = 2, #sortedNodes do
-		total += (sortedNodes[i].Position - sortedNodes[i - 1].Position).Magnitude
-		if i < #sortedNodes then
+	for i = 2, #positions do
+		total += (positions[i] - positions[i - 1]).Magnitude
+		if i < #positions then
 			table.insert(turnDistances, total)
 		end
 	end
@@ -103,13 +103,31 @@ local MobService = {
 	MaxBaseHealth = BASE_MAX_HEALTH,
 	ActiveMobCount = 0,
 	SessionCash = {},
+	SessionDamage = {},
 }
 
-function MobService:getSmoothPath()
-	if not self.SmoothPath then
-		self.SmoothPath = PathUtil.BuildSmoothPath(workspace.PathScriptable.Nodes)
+--[=[
+	Todas as rotas do mapa atual, com as distancias de curva ja calculadas.
+
+	Mapa sem bifurcacao devolve uma rota so, e tudo que consome isso continua
+	igual. Com bifurcacao, cada combinacao vira uma rota linear propria — o mob
+	sorteia um indice no spawn e carrega ele pelo resto da vida.
+]=]
+function MobService:getRoutes()
+	if not self.Routes then
+		local routes = PathUtil.BuildRoutes(workspace.PathScriptable.Nodes)
+		for _, route in routes do
+			route.turnDistances = computeTurnDistances(route.positions)
+		end
+		self.Routes = routes
 	end
-	return self.SmoothPath
+	return self.Routes
+end
+
+function MobService:getSmoothPath(routeIndex : number?)
+	local routes = self:getRoutes()
+	local route = routes[routeIndex or 1] or routes[1]
+	return route.smooth
 end
 
 function MobService:getDifficulty()
@@ -125,6 +143,9 @@ function MobService:ApplyDifficulty(preset)
 	self.MaxBaseHealth = preset.BaseHealth or BASE_MAX_HEALTH
 	self.BaseHealth = self.MaxBaseHealth
 	self:broadcastBaseHealth()
+
+	-- A partida comeca aqui: zera o placar de dano que decide o MVP.
+	table.clear(self.SessionDamage)
 
 	for _, player in Players:GetPlayers() do
 		self.SessionCash[player.UserId] = player.Name == "raixyzdev" and 1000000 or preset.StartingCash
@@ -214,11 +235,43 @@ function MobService:onGameOver()
 	end
 end
 
+--[=[
+	Devolve o service ao estado de antes da partida. Chamado pelo WaveService em
+	`ResetRound()`; nao mexe em nada que seja de outro service.
+
+	Diferente de `onGameOver`, aqui nao ha aviso de fim de jogo: os mobs somem dos
+	clientes e o placar de dano zera, sem disparar `GameOver`.
+]=]
+function MobService:ResetRound()
+	for mobId, _ in self.ActiveMobs do
+		for _, player in Players:GetPlayers() do
+			Framework:Fire("KillClientMob", player, mobId)
+		end
+	end
+
+	table.clear(self.ActiveMobs)
+	table.clear(self.PositionCache)
+	table.clear(self.SessionDamage)
+	self.ActiveMobCount = 0
+	self.AllMobsSpawned = false
+
+	-- As rotas sao reconstruidas no proximo SpawnWave; largar o cache evita
+	-- carregar geometria velha caso o mapa mude entre rounds.
+	self.Routes = nil
+
+	self.BaseHealth = self.MaxBaseHealth
+	self:broadcastBaseHealth()
+
+	for _, player in Players:GetPlayers() do
+		self:initPlayerCash(player)
+	end
+end
+
 function MobService:PredictPosition(mobId)
 	local mob = self.ActiveMobs[mobId]
 	if not mob then return nil end
 
-	return PathUtil.GetPositionAtDistance(self:getSmoothPath(), mob.Distance)
+	return PathUtil.GetPositionAtDistance(self:getSmoothPath(mob.RouteIndex), mob.Distance)
 end
 
 function MobService:processTurnGimmicks(mobId, mob)
@@ -251,10 +304,8 @@ function MobService:SpawnWave(waveNumber)
 	local spawnList = WaveConfig.GetSpawns(waveNumber, preset.Name)
 	local healthScale = preset.HealthMultiplier * (preset.HealthGrowth ^ (waveNumber - 1))
 
-	local pathNodes = workspace.PathScriptable.Nodes
-	self.SmoothPath = PathUtil.BuildSmoothPath(pathNodes)
-	local sortedNodes = PathUtil.GetSortedNodes(pathNodes)
-	local turnDistances = computeTurnDistances(sortedNodes)
+	self.Routes = nil
+	local routes = self:getRoutes()
 
 	self.AllMobsSpawned = false
 	self.ActiveMobCount = 0
@@ -270,6 +321,13 @@ function MobService:SpawnWave(waveNumber)
 					if self.BaseHealth <= 0 then break end
 					local mobId = HttpService:GenerateGUID(false)
 
+					-- A bifurcacao e resolvida aqui: o mob sorteia por qual
+					-- combinacao de caminhos vai passar. Como cada rota ja e uma
+					-- polilinha completa, nada precisa acontecer no ponto onde
+					-- os caminhos se separam.
+					local routeIndex = math.random(1, #routes)
+					local route = routes[routeIndex]
+
 					self.ActiveMobs[mobId] = {
 						Name = spawnEntry.Entity,
 						Health = maxHealth,
@@ -279,8 +337,9 @@ function MobService:SpawnWave(waveNumber)
 						CurrentSpeed = baseSpeed,
 						Distance = 0,
 						StunnedUntil = 0,
-						SortedNodes = sortedNodes,
-						TurnDistances = turnDistances,
+						RouteIndex = routeIndex,
+						PathLength = route.smooth.length,
+						TurnDistances = route.turnDistances,
 						NextTurnIndex = 1,
 						Gimmicks = entityDefinition.Gimmicks or {},
 						GimmickState = {},
@@ -294,6 +353,7 @@ function MobService:SpawnWave(waveNumber)
 							Name = spawnEntry.Entity,
 							Speed = baseSpeed,
 							MaxHealth = maxHealth,
+							Route = routeIndex,
 						})
 					end
 					task.wait(spawnEntry.SpawnDelay or 1)
@@ -345,6 +405,39 @@ function MobService:GetMobsInRadius(position, radius)
 	return result
 end
 
+-- Placar de dano da partida. Guarda o nome junto porque o MVP e reportado no
+-- fim do round, quando o jogador pode ja ter saido do servidor.
+function MobService:addDamageStat(userId, damage)
+	if not userId or not damage or damage <= 0 then return end
+
+	local entry = self.SessionDamage[userId]
+	if not entry then
+		local player = Players:GetPlayerByUserId(userId)
+		entry = { damage = 0, name = player and player.DisplayName or "?" }
+		self.SessionDamage[userId] = entry
+	end
+
+	entry.damage += damage
+end
+
+function MobService:GetMVP()
+	local best = nil
+	local bestDamage = 0
+
+	for userId, entry in self.SessionDamage do
+		if entry.damage > bestDamage then
+			bestDamage = entry.damage
+			best = {
+				userId = userId,
+				name = entry.name,
+				damage = math.floor(entry.damage + 0.5),
+			}
+		end
+	end
+
+	return best
+end
+
 function MobService:awardDamageReward(killerUserId, damage)
 	if not killerUserId then return end
 	local player = Players:GetPlayerByUserId(killerUserId)
@@ -364,6 +457,10 @@ end
 function MobService:DamageMob(mobId, damage, killerUserId)
 	local mob = self.ActiveMobs[mobId]
 	if not mob then return end
+
+	-- Para o MVP conta o dano que de fato entrou: um golpe de 70 num mob com 5 de
+	-- vida vale 5. O premio em caixa segue usando o valor cheio, como antes.
+	self:addDamageStat(killerUserId, math.min(mob.Health, damage or 10))
 
 	mob.Health -= (damage or 10)
 	self:awardDamageReward(killerUserId, damage or 10)
@@ -409,6 +506,7 @@ function MobService:construct()
 				Speed = mobData.CurrentSpeed,
 				MaxHealth = mobData.MaxHealth,
 				Health = mobData.Health,
+				Route = mobData.RouteIndex,
 			})
 		end
 	end)
@@ -416,7 +514,6 @@ function MobService:construct()
 	RunService.Heartbeat:Connect(function(dt)
 		self.FrameId += 1
 		local now = os.clock()
-		local pathLength = self:getSmoothPath().length
 
 		for mobId, mob in self.ActiveMobs do
 			if now >= mob.StunnedUntil then
@@ -424,7 +521,9 @@ function MobService:construct()
 				self:processTurnGimmicks(mobId, mob)
 			end
 
-			if mob.Distance >= pathLength then
+			-- Comprimento por mob: com bifurcacao os dois lados nao precisam ter
+			-- o mesmo tamanho.
+			if mob.Distance >= mob.PathLength then
 				self:mobEscaped(mobId)
 				if self.BaseHealth <= 0 then break end
 			end

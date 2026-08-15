@@ -78,12 +78,17 @@ function WaveController:playArrows()
 	local nodesFolder = pathScriptable and pathScriptable:FindFirstChild("Nodes")
 	if not nodesFolder then return end
 
-	local smooth = PathUtil.BuildSmoothPath(nodesFolder)
-	if smooth.length <= 0 then return end
+	-- Uma leva de setas por rota: num mapa com bifurcacao os dois lados sao
+	-- sinalizados, senao o jogador so ve um deles.
+	local routes = PathUtil.BuildRoutes(nodesFolder)
 
 	task.spawn(function()
 		for i = 1, ARROW_COUNT do
-			self:spawnPathArrow(smooth)
+			for _, route in routes do
+				if route.smooth.length > 0 then
+					self:spawnPathArrow(route.smooth)
+				end
+			end
 			if i < ARROW_COUNT then
 				task.wait(ARROW_STAGGER)
 			end
@@ -114,6 +119,13 @@ end
 
 function WaveController:construct()
 	Framework:Listen("SetWave", function(...) self:OnWave(...) end)
+
+	-- Zera o contador sem som nem setas: nao e o comeco de uma wave, e a limpeza
+	-- do round anterior.
+	Framework:Listen("RoundRestarted", function()
+		self.Controllers.UILibraryController:doComponent("Wave", "set", 0)
+	end)
+
 	Framework:Fire("Loaded", true)
 end
 

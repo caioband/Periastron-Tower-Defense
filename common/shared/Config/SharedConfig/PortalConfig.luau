@@ -44,6 +44,10 @@ module.FLASH_LEAD_FRAMES = 5
 -- Where the group lands: the "Periastron TD: Main Game" place. Public id.
 module.GAME_PLACE_ID = 109030368179494
 
+-- The way back: the "Periastron Tower Defense" place, which is the lobby and the
+-- start place of the universe. Used by the result screen's "back to lobby".
+module.LOBBY_PLACE_ID = 132304466547289
+
 --[[ MUNDO ]]
 
 -- How close the player has to get to PortalEnterCFrame for the portal to answer.

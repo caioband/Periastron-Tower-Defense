@@ -28,9 +28,19 @@ Estavam instalados no place mas nenhum script requer, então foram movidos para
 
 ## Fora do repo (fica só no place)
 
-`ReplicatedStorage.Shared.Assets` (~8.200 instâncias: modelos, UI, VFX,
-animações) e as ScreenGuis do `StarterGui`. São conteúdo binário, não código —
-por isso os nós do `default.project.json` usam `$ignoreUnknownInstances: true`.
+`ReplicatedStorage.Shared.Assets` (~6.500 instâncias: modelos, UI, VFX,
+animações), `ServerStorage.Maps` (~25.900 instâncias, seis mapas) e as ScreenGuis
+do `StarterGui`. São conteúdo binário, não código — por isso os nós do
+`default.project.json` usam `$ignoreUnknownInstances: true`. `ServerStorage` nem
+aparece no `default.project.json`: o Rojo só administra o que está declarado,
+então a pasta de mapas fica intocada.
+
+Os mapas ficam em `ServerStorage` de propósito — assim não replicam, e o cliente
+só conhece o mapa que o `MapService` clonou para `workspace.Map`. Consequência
+prática: `CollectionService:GetTagged("Grid")` no cliente devolve exatamente as
+parts do caminho em jogo. No servidor, não: lá as 585 parts dos seis mapas
+guardados também aparecem, e quem consulta a tag precisa filtrar por
+`workspace.Map` (é o que `UnitService:getGridParts` faz).
 
 ## Bug conhecido (não corrigido)
 
