@@ -16,7 +16,22 @@ local DifficultyController = {
 	Buttons = {}
 }
 
+local function formatClock(seconds : number)
+	seconds = math.max(0, math.floor(seconds))
+	return string.format("%d:%02d", seconds // 60, seconds % 60)
+end
+
+function DifficultyController:updateClock(state)
+	local clock = self.clock
+	if not clock then return end
+
+	clock.Visible = state.active == true
+	clock.Time.Text = formatClock(state.timeLeft or 0)
+end
+
 function DifficultyController:updateUI(state)
+	self:updateClock(state)
+
 	local board = self.board
 	if not board then return end
 
@@ -46,6 +61,13 @@ function DifficultyController:updateUI(state)
 end
 
 function DifficultyController:construct()
+	local Interface = PlayerGui:WaitForChild("Interface", 60)
+	local clock = Interface and Interface:WaitForChild("Clock", 60)
+	if clock and clock:FindFirstChild("Time") then
+		self.clock = clock
+		clock.Visible = false
+	end
+
 	local screen = PlayerGui:WaitForChild("Difficulty", 60)
 	if not screen then return end
 
@@ -71,6 +93,10 @@ function DifficultyController:construct()
 	Framework:Listen("DifficultyLocked", function(difficultyName)
 		self.Locked = difficultyName
 		self.board.Visible = false
+
+		if self.clock then
+			self.clock.Visible = false
+		end
 	end)
 end
 

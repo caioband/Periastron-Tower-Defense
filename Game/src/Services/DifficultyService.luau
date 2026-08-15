@@ -16,6 +16,8 @@ local DifficultyConfig = ServerConfig.Difficulty
 
 local Framework = Me.new()
 
+local ALL_VOTED_GRACE = 2
+
 local DifficultyService = {
 	Services = {
 		MobService = {}
@@ -47,6 +49,19 @@ function DifficultyService:tally()
 	end
 
 	return counts
+end
+
+function DifficultyService:allVoted()
+	local players = Players:GetPlayers()
+	if #players == 0 then return false end
+
+	for _, player in players do
+		if not self.Votes[player.UserId] then
+			return false
+		end
+	end
+
+	return true
 end
 
 function DifficultyService:winner()
@@ -87,7 +102,13 @@ function DifficultyService:RunSelection(duration)
 	self:broadcastSelectionState(self:timeLeft())
 
 	local lastShown = nil
+	local shortened = false
 	while os.clock() < self.SelectionEndsAt do
+		if not shortened and self:allVoted() then
+			shortened = true
+			self.SelectionEndsAt = math.min(self.SelectionEndsAt, os.clock() + ALL_VOTED_GRACE)
+		end
+
 		local remaining = self:timeLeft()
 		if remaining ~= lastShown then
 			lastShown = remaining

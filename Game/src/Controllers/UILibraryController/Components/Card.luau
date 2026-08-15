@@ -124,6 +124,9 @@ function module:set(Cards : {}, Counts : {}, callbackDo : (string) -> ())
 	if #Cards > 0 then
 		for i = 1, #Cards do
 			local button = TowerContainer:FindFirstChild("Card" .. i)
+			-- O TowerContainer so tem Card1..Card5; o jogador pode possuir mais
+			-- unidades que isso, entao as excedentes nao tem slot.
+			if not button then continue end
 
 			local name = Cards[i]
 			button:SetAttribute("Unit", name)
@@ -131,10 +134,8 @@ function module:set(Cards : {}, Counts : {}, callbackDo : (string) -> ())
 			setCardCount(button, Counts and Counts[name])
 			restoreRotation(button)
 
-			if button then
-				button.Visible = true
-				task.wait(.25)
-			end
+			button.Visible = true
+			task.wait(.25)
 		end
 
 		self.maid:GiveTask(UserInputService.InputBegan:Connect(function(input, gpe)
