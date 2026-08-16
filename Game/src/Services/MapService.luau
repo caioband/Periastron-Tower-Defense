@@ -26,6 +26,8 @@ local ServerConfig = require(ServerConfigs)
 
 local MapConfig = SharedConfig.MapConfig
 
+local PathUtil = require(Shared.Util.PathUtil)
+
 local Maid = require(Vendor.Maid)
 local Promise = require(Packages.Promise)
 local Warp = require(Vendor.Warp)
@@ -165,6 +167,10 @@ function ExampleService:LoadMap(Name : string)
 
 			Clone.Parent = workspace.PathScriptable.Nodes
 		end
+
+		-- O cliente monta as rotas a partir destes nodes replicados e precisa
+		-- saber quando parou de faltar peca. Ver `PathUtil.WaitForNodes`.
+		PathUtil.PublishNodeCounts(workspace.PathScriptable.Nodes)
 	end
 
 	local Lighting = MapInstance:FindFirstChild("Lighting")

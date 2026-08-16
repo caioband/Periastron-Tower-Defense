@@ -273,10 +273,22 @@ end
 
 	Antes o caminho era reconstruido a cada spawn de mob; agora e uma vez so por
 	mapa, e o cache cai no restart do round.
+
+	Yield: espera os nodes chegarem inteiros antes do primeiro build. Se nao
+	chegarem, monta o que der mas nao cacheia — assim o proximo mob tenta de novo
+	em vez de arrastar um caminho truncado pelo round todo.
 ]=]
 function MobController:getRoutes()
 	if not self.Routes then
-		self.Routes = PathUtil.BuildRoutes(workspace.PathScriptable.Nodes)
+		local nodesFolder = workspace.PathScriptable.Nodes
+		local complete = PathUtil.WaitForNodes(nodesFolder)
+		local routes = PathUtil.BuildRoutes(nodesFolder)
+
+		if not complete then
+			return routes
+		end
+
+		self.Routes = routes
 	end
 	return self.Routes
 end
@@ -322,10 +334,6 @@ function MobController:createEntity(entityData)
 
 	self.MobHealth[mobId] = { current = entityData.Health or entityData.MaxHealth or 100, max = entityData.MaxHealth or 100 }
 	updateHealthBar(mobClone, self.MobHealth[mobId].current, self.MobHealth[mobId].max, true)
-
-	local nodesFolder = workspace.PathScriptable.Nodes
-	-- Espera a replicacao dos nodes antes de montar as rotas.
-	nodesFolder:WaitForChild("1")
 
 	-- A rota vem do servidor: com bifurcacao, cliente e servidor precisam andar
 	-- exatamente pela mesma polilinha, senao as duas simulacoes divergem.

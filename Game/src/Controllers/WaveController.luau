@@ -84,11 +84,13 @@ function WaveController:playArrows()
 	local nodesFolder = pathScriptable and pathScriptable:FindFirstChild("Nodes")
 	if not nodesFolder then return end
 
-	-- Uma leva de setas por rota: num mapa com bifurcacao os dois lados sao
-	-- sinalizados, senao o jogador so ve um deles.
-	local routes = PathUtil.BuildRoutes(nodesFolder)
-
 	task.spawn(function()
+		-- Uma leva de setas por rota: num mapa com bifurcacao os dois lados sao
+		-- sinalizados, senao o jogador so ve um deles. A espera vem antes do
+		-- build para nenhum lado ficar de fora por replicacao pela metade.
+		PathUtil.WaitForNodes(nodesFolder)
+		local routes = PathUtil.BuildRoutes(nodesFolder)
+
 		for i = 1, ARROW_COUNT do
 			for _, route in routes do
 				if route.smooth.length > 0 then

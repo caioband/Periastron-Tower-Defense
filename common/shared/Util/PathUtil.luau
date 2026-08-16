@@ -7,6 +7,12 @@ local DEFAULT_SAMPLES_PER_CORNER = 10
 -- sao 32 rotas, e cada uma custa uma suavizacao inteira.
 local MAX_ROUTES = 32
 
+-- Contagens que o servidor publica na pasta de nodes para o cliente saber
+-- quando a replicacao terminou. Ver `PublishNodeCounts` / `WaitForNodes`.
+local NODE_COUNT_ATTRIBUTE = "NodeCount"
+local POINT_COUNT_ATTRIBUTE = "PointCount"
+local DEFAULT_WAIT_TIMEOUT = 10
+
 function PathUtil.GetSortedNodes(nodesFolder)
 	local nodes = {}
 	for _, n in nodesFolder:GetChildren() do
@@ -40,6 +46,98 @@ local function expandStep(instance) : { Vector3 }
 	end
 
 	return positions
+end
+
+--[[
+	Duas alternativas do mesmo passo tem o mesmo nome, entao a ordem em que
+	`GetChildren` as devolve e o unico criterio que sobra — e essa ordem nao e
+	garantida entre servidor e cliente.
+
+	Isso importa porque o indice da rota atravessa a rede: o servidor sorteia um
+	numero no spawn e o cliente monta as rotas por conta propria e indexa por ele.
+	Com os indices trocados o mob apareceria andando por um lado da bifurcacao
+	enquanto o servidor o simula pelo outro.
+
+	Comparar as proprias posicoes resolve: os dois lados leem as mesmas Parts
+	replicadas, entao chegam sempre a mesma ordem.
+]]
+local function comparePositions(a : Vector3, b : Vector3) : boolean
+	if a.X ~= b.X then return a.X < b.X end
+	if a.Y ~= b.Y then return a.Y < b.Y end
+	return a.Z < b.Z
+end
+
+local function compareAlternatives(a : { Vector3 }, b : { Vector3 }) : boolean
+	for i = 1, math.min(#a, #b) do
+		if a[i] ~= b[i] then
+			return comparePositions(a[i], b[i])
+		end
+	end
+	return #a < #b
+end
+
+--[=[
+	Quantos pontos a pasta de nodes descreve, contando os que estao dentro dos
+	trechos de bifurcacao.
+]=]
+function PathUtil.CountPoints(nodesFolder) : number
+	local count = 0
+	for _, child in nodesFolder:GetChildren() do
+		if child:IsA("BasePart") then
+			count += 1
+		else
+			for _, descendant in child:GetDescendants() do
+				if descendant:IsA("BasePart") then
+					count += 1
+				end
+			end
+		end
+	end
+	return count
+end
+
+--[=[
+	Publica o tamanho da pasta de nodes para o cliente conferir. Chamado pelo
+	servidor depois de clonar os nodes do mapa.
+]=]
+function PathUtil.PublishNodeCounts(nodesFolder)
+	nodesFolder:SetAttribute(NODE_COUNT_ATTRIBUTE, #nodesFolder:GetChildren())
+	nodesFolder:SetAttribute(POINT_COUNT_ATTRIBUTE, PathUtil.CountPoints(nodesFolder))
+end
+
+--[=[
+	Espera a pasta de nodes chegar inteira no cliente.
+
+	Esperar por um node especifico nao basta: um passo com bifurcacao tem dois
+	filhos de mesmo nome, e cada um e um Folder com os proprios pontos dentro.
+	Montar as rotas cedo demais daria uma bifurcacao com um lado so, ou um trecho
+	truncado — e como o resultado fica em cache, o erro duraria o round inteiro.
+
+	Conferir contagem em vez de escutar um sinal deixa a espera imune a ordem em
+	que a replicacao entrega as coisas: enquanto faltar peca, o loop continua.
+
+	Devolve `false` se estourar o tempo, para quem chamou nao cachear um caminho
+	incompleto.
+]=]
+function PathUtil.WaitForNodes(nodesFolder, timeout : number?) : boolean
+	local deadline = os.clock() + (timeout or DEFAULT_WAIT_TIMEOUT)
+
+	repeat
+		local nodeCount = nodesFolder:GetAttribute(NODE_COUNT_ATTRIBUTE)
+		local pointCount = nodesFolder:GetAttribute(POINT_COUNT_ATTRIBUTE)
+
+		if nodeCount and pointCount
+			and #nodesFolder:GetChildren() >= nodeCount
+			and PathUtil.CountPoints(nodesFolder) >= pointCount
+		then
+			return true
+		end
+
+		task.wait()
+	until os.clock() >= deadline
+
+	warn("[PathUtil]: os nodes do mapa nao chegaram completos a tempo.")
+	return false
 end
 
 --[=[
@@ -83,13 +181,16 @@ function PathUtil.BuildRoutes(nodesFolder, cornerRadius, samplesPerCorner)
 		total = 1
 	end
 
-	-- Cada alternativa e expandida uma vez so e reaproveitada entre as rotas.
+	-- Cada alternativa e expandida uma vez so e reaproveitada entre as rotas. A
+	-- ordenacao e o que faz o indice da rota significar a mesma coisa nos dois
+	-- lados da rede.
 	local expanded = {}
 	for _, key in stepOrder do
 		expanded[key] = {}
 		for index, alternative in steps[key] do
 			expanded[key][index] = expandStep(alternative)
 		end
+		table.sort(expanded[key], compareAlternatives)
 	end
 
 	local routes = {}

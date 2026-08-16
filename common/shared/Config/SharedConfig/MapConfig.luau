@@ -52,6 +52,18 @@ module.MAPS = {
 		Order = 5,
 		Image = "rbxassetid://102911300807811",
 	},
+
+	["Cave"] = {
+		DisplayName = "Cave",
+		Order = 6,
+		Image = "rbxassetid://90052719869168",
+	},
+
+	["Farm"] = {
+		DisplayName = "Farm",
+		Order = 7,
+		Image = "rbxassetid://91827512669644",
+	},
 }
 
 --[=[
