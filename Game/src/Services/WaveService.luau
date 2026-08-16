@@ -77,8 +77,12 @@ local WaveService = {
 function WaveService:setWave(waveCount : number)
 	self.WaveCount = waveCount
 
+	-- A composicao da wave e segredo de servidor; o cliente so precisa do "tem
+	-- boss?" para trocar a musica junto com o comeco da wave.
+	local hasBoss = WaveConfig.HasBoss(waveCount)
+
 	for _, Player in Players:GetPlayers() do
-		Framework:Fire("SetWave", Player, self.WaveCount)
+		Framework:Fire("SetWave", Player, self.WaveCount, hasBoss)
 	end
 
 end

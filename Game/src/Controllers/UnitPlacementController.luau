@@ -291,7 +291,8 @@ local UnitPlacementController = {
 		UILibraryController = {},
 		CardController = {},
 		VFXController = {},
-		MobController = {}
+		MobController = {},
+		MusicController = {}
 	},
 	selectedUnit = nil,
 	selectionHighlight = nil,
@@ -500,7 +501,7 @@ function UnitPlacementController:selectUnit(unitModel)
 
 	table.insert(self.AOE, Ring)
 
-	game.SoundService.SelectSound:Play()
+	self.Controllers.MusicController:PlaySFX("SelectSound")
 end
 
 function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFrame, ownerUserId : number, unitId : string, upgrades : number)
@@ -584,7 +585,7 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 		self.Controllers.VFXController:Trigger(unitName, "OnPlace", { unitModel = unit })
 	end
 
-	game.SoundService.UnitPlace:Play()
+	self.Controllers.MusicController:PlaySFX("UnitPlace")
 end
 
 function UnitPlacementController:visualize(unitName : string)
@@ -954,7 +955,7 @@ function UnitPlacementController:construct()
 					self:tweenSelectionRing(newScale)
 				end
 
-				game.SoundService.UnitUpgrade:Play()
+				self.Controllers.MusicController:PlaySFX("UnitUpgrade")
 				break
 			end
 		end

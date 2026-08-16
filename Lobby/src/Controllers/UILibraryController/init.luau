@@ -145,7 +145,7 @@ function UILibraryController.addHoverAnimation(Button : GuiButton)
 			})
 		end
 
-	--	game.SoundService.UIHover:Play()
+	--	require(Vendor.Me).new():Get("MusicController"):PlaySFX("UIHover")   -- falta o UIHover em SharedSounds.SFX
 	end))
 	table.insert(conn, Button.MouseLeave:Connect(function()
 		Spring.target(UIScale, .65, 4, {
@@ -198,7 +198,7 @@ function UILibraryController.addClickAnimation(Button : GuiButton, clickCallback
 			clickCallback()
 		end
 
-		--game.SoundService.UIClick:Play()
+		--require(Vendor.Me).new():Get("MusicController"):PlaySFX("UIClick")   -- falta o UIClick em SharedSounds.SFX
 	end))
 
 	return conn

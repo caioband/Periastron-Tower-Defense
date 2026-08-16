@@ -67,6 +67,27 @@ ReplicatedStorage
 > versões ao mesmo tempo. Por isso os dois nós trazem `"$ignoreUnknownInstances": false`
 > explícito. Vale a regra: todo nó container do projeto declara o flag na mão.
 
+### Som
+
+`SoundService.SharedSounds` é um Package (não passa pelo Rojo) com `Musics` e
+`SFX` dentro. Todo áudio passa pelo `MusicController`
+(`common/client/Controllers`), que acha o `Sound` pelo nome em qualquer subpasta
+— nada mais lê a raiz do `SoundService` direto.
+
+```lua
+local Sound = Framework:Get("MusicController")
+
+Sound:Transition("Snowy", 2)                              -- crossfade de música
+Sound:Duck(0.3)                                           -- abaixa pra cutscene, :Unduck() devolve
+Sound:PlaySFX("UnitPlace")                                -- efeito 2D
+Sound:PlaySFX("SubspaceTripmineSFX", { Parent = root,     -- 3D, e a Key derruba
+                                       Key = "Tripmine" })--   o som anterior da mesma chave
+```
+
+Música toca a instância original (o volume do Studio é o base; fade, master,
+mute e duck multiplicam em cima). SFX sempre toca um clone que se destrói no
+fim, pra dois efeitos iguais poderem se sobrepor.
+
 ## Configuração: o que é replicado e o que não é
 
 Antes, `ReplicatedStorage.Shared.Config.Server` era replicado para todo cliente —

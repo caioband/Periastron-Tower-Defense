@@ -51,9 +51,22 @@ local function buildSpawnEntry(entity : string, amount : number, waveNumber : nu
 	}
 end
 
+local function positionInCycle(waveNumber : number)
+	return ((waveNumber - 1) % CYCLE_LENGTH) + 1
+end
+
+--[=[
+	Se a wave traz o boss. O cliente nao ve esta config (ela e so de servidor),
+	entao quem precisa saber recebe a resposta junto do evento `SetWave` — e a
+	musica de boss depende disso.
+]=]
+function Wave.HasBoss(waveNumber : number)
+	return CYCLE_ENTITIES[positionInCycle(waveNumber)] == BOSS_ENTITY
+end
+
 function Wave.GetSpawns(waveNumber : number, difficultyName : string?)
 	local preset = Difficulty.Get(difficultyName)
-	local position = ((waveNumber - 1) % CYCLE_LENGTH) + 1
+	local position = positionInCycle(waveNumber)
 	local entity = CYCLE_ENTITIES[position]
 
 	if entity == BOSS_ENTITY then

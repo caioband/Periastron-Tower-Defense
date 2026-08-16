@@ -1,6 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local SoundService = game:GetService("SoundService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -15,11 +14,11 @@ local EXPLOSION_LIFETIME = 5
 
 local TripmineController = {
 	Controllers = {
-		UnitPlacementController = {}
+		UnitPlacementController = {},
+		MusicController = {}
 	},
 	Mines = {},
 	MinesByUnit = {},
-	ActiveSound = nil,
 }
 
 function TripmineController:getTemplate()
@@ -37,27 +36,11 @@ function TripmineController:getUnitModel(unitId)
 end
 
 function TripmineController:playTriggerSound(parent)
-	if self.ActiveSound and self.ActiveSound.Parent then
-		self.ActiveSound:Stop()
-		self.ActiveSound:Destroy()
-	end
-
-	local template = SoundService:FindFirstChild("SubspaceTripmineSFX")
-	if not template then return end
-
-	local sound = template:Clone()
-	sound.Parent = parent or SoundService
-	sound:Play()
-	self.ActiveSound = sound
-
-	sound.Ended:Once(function()
-		if self.ActiveSound == sound then
-			self.ActiveSound = nil
-		end
-		if sound.Parent then
-			sound:Destroy()
-		end
-	end)
+	-- A Key faz o papel do ActiveSound antigo: só uma mina soando por vez.
+	self.Controllers.MusicController:PlaySFX("SubspaceTripmineSFX", {
+		Parent = parent,
+		Key = "SubspaceTripmine",
+	})
 end
 
 function TripmineController:throwMine(mineModel, startCF, endCF)
