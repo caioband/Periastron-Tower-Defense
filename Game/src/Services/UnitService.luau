@@ -25,6 +25,19 @@ local Framework = Me.new()
 local TARGET_SCANS_PER_FRAME = 8
 local MAX_PLACE_DISTANCE = 2048
 
+-- Log de posicionamento: so no Studio, para nao poluir o console de producao.
+local IS_STUDIO = RunService:IsStudio()
+
+local function placementPrint(...)
+	if not IS_STUDIO then return end
+	print("[UnitService/Place]", ...)
+end
+
+local function formatVector(v : Vector3?)
+	if not v then return "nil" end
+	return string.format("(%.2f, %.2f, %.2f)", v.X, v.Y, v.Z)
+end
+
 local UnitService = {
 	Services = {
 		MobService = {},
@@ -34,6 +47,7 @@ local UnitService = {
 	PlacedUnits = {},
 	UnitsById = {},
 	UnitSizes = {},
+	UnitBounds = {},
 	SessionCards = {},
 	SessionCardMax = {}
 }
@@ -41,6 +55,7 @@ local UnitService = {
 for _, model in Units:GetChildren() do
 	local _, size = model:GetBoundingBox()
 	UnitService.UnitSizes[model.Name] = size.X
+	UnitService.UnitBounds[model.Name] = size
 end
 
 function UnitService:getCardCount(player, unitName)
@@ -233,24 +248,51 @@ function UnitService:construct()
 	end)
 
 	Framework:Listen("PlaceUnit", function(player, unitName, cf)
-		if typeof(unitName) ~= "string" or typeof(cf) ~= "CFrame" then return end
+		if typeof(unitName) ~= "string" or typeof(cf) ~= "CFrame" then
+			placementPrint(player.Name, "recusado: argumentos invalidos", typeof(unitName), typeof(cf))
+			return
+		end
 
 		local position = cf.Position
-		if position.X ~= position.X or position.Y ~= position.Y or position.Z ~= position.Z then return end
-		if position.Magnitude > MAX_PLACE_DISTANCE then return end
+		if position.X ~= position.X or position.Y ~= position.Y or position.Z ~= position.Z then
+			placementPrint(player.Name, unitName, "recusado: posicao NaN")
+			return
+		end
+		if position.Magnitude > MAX_PLACE_DISTANCE then
+			placementPrint(player.Name, unitName, "recusado: longe demais", formatVector(position),
+				string.format("magnitude %.2f > %d", position.Magnitude, MAX_PLACE_DISTANCE))
+			return
+		end
 
 		local stats = SharedConfig.UnitStats[unitName]
-		if not stats then return end
+		if not stats then
+			placementPrint(player.Name, unitName, "recusado: unidade sem stats no SharedConfig")
+			return
+		end
 
 		local placeCost = stats.Cost or 0
-		if self.Services.MobService:getCash(player) < placeCost then return end
+		local cash = self.Services.MobService:getCash(player)
+		if cash < placeCost then
+			placementPrint(player.Name, unitName, "recusado: sem dinheiro",
+				string.format("tem %d, custa %d", cash, placeCost))
+			return
+		end
 
-		if self:getCardCount(player, unitName) <= 0 then return end
+		local cardCount = self:getCardCount(player, unitName)
+		if cardCount <= 0 then
+			placementPrint(player.Name, unitName, "recusado: sem unidades no card", "count", cardCount)
+			return
+		end
 
 		local unitSizeX = self.UnitSizes[unitName] or 2
 		local isValid = true
 
-		local checkSize = Vector3.new(unitSizeX, 6, unitSizeX)
+		-- A caixa de teste tem que ser a mesma que o cliente usa para pintar o
+		-- fantasma de verde: a bounding box real do modelo, girada pelo CFrame que
+		-- ele mandou. Uma caixa maior (ex.: um cubo de 6 studs de altura) desce
+		-- abaixo do chao e encosta nos trilhos finos do caminho, recusando
+		-- posicionamentos que o cliente ja tinha aprovado.
+		local checkSize = self.UnitBounds[unitName] or Vector3.new(unitSizeX, 2, unitSizeX)
 		local overlapParams = OverlapParams.new()
 		overlapParams.FilterType = Enum.RaycastFilterType.Include
 		overlapParams.FilterDescendantsInstances = self:getGridParts()
@@ -261,12 +303,15 @@ function UnitService:construct()
 		gridProbe.CanQuery = false
 		gridProbe.CanTouch = false
 		gridProbe.Transparency = 1
-		gridProbe.CFrame = CFrame.new(cf.Position)
+		gridProbe.CFrame = cf
 		gridProbe.Parent = workspace
 		local gridParts = workspace:GetPartsInPart(gridProbe, overlapParams)
 		gridProbe:Destroy()
 		if #gridParts > 0 then
 			isValid = false
+			placementPrint(player.Name, unitName, "recusado: em cima do caminho", formatVector(position),
+				"caixa de teste", formatVector(checkSize),
+				string.format("%d part(s) de Grid, primeira: %s em %s", #gridParts, gridParts[1]:GetFullName(), formatVector(gridParts[1].Position)))
 		end
 
 		if isValid then
@@ -275,8 +320,11 @@ function UnitService:construct()
 				local minDist = (unitSizeX + otherSizeX) / 2
 				local posA = Vector3.new(cf.Position.X, 0, cf.Position.Z)
 				local posB = Vector3.new(entry.cf.Position.X, 0, entry.cf.Position.Z)
-				if (posA - posB).Magnitude < minDist then
+				local dist = (posA - posB).Magnitude
+				if dist < minDist then
 					isValid = false
+					placementPrint(player.Name, unitName, "recusado: perto demais de outra unidade",
+						formatVector(position), string.format("%s a %.2f studs (minimo %.2f)", entry.unitName, dist, minDist))
 					break
 				end
 			end
@@ -290,6 +338,9 @@ function UnitService:construct()
 
 			self.Services.MobService:spendCash(player, placeCost)
 			self:decrementCardCount(player, unitName)
+
+			placementPrint(player.Name, unitName, "aceito", "CFrame recebido do cliente:", formatVector(position),
+				"unitId", unitId)
 
 			for _, plr in ipairs(Players:GetPlayers()) do
 				Framework:Fire("ReplicateUnit", plr, unitName, cf, player.UserId, unitId, 0)

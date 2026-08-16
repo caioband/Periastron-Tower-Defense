@@ -35,6 +35,19 @@ local VALID_COLOR = Color3.fromRGB(0, 255, 0)
 local INVALID_COLOR = Color3.fromRGB(255, 0, 0)
 local COLOR_LERP_SPEED = 10
 
+-- Log de posicionamento: so no Studio, para nao poluir o console de producao.
+local IS_STUDIO = RunService:IsStudio()
+
+local function placementPrint(...)
+	if not IS_STUDIO then return end
+	print("[UnitPlacement]", ...)
+end
+
+local function formatVector(v : Vector3?)
+	if not v then return "nil" end
+	return string.format("(%.2f, %.2f, %.2f)", v.X, v.Y, v.Z)
+end
+
 local TILT_MAX = math.rad(16)
 local TILT_PER_STUD = 0.08
 local TILT_LERP_SPEED = 10
@@ -276,8 +289,11 @@ local function raycastGroundY(position : Vector3, excludeInstances : {Instance}?
 	end
 	raycastParams.FilterDescendantsInstances = excludeList
 
-	local origin = Vector3.new(position.X, position.Y + 300, position.Z)
-	local result = workspace:Raycast(origin, Vector3.new(0, -1000, 0), raycastParams)
+	-- O raio parte do proprio ponto, nao de um ponto acima dele: o que interessa e
+	-- o chao EMBAIXO da unidade. Comecando la em cima, a primeira coisa atingida
+	-- passa a ser qualquer coisa que estiver por cima — a copa de uma arvore, uma
+	-- saliencia de rocha — e a unidade era erguida ate la.
+	local result = workspace:Raycast(position, Vector3.new(0, -1000, 0), raycastParams)
 	if result then
 		return result.Position.Y
 	end
@@ -538,6 +554,10 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 
 	local unitPos = unit:GetPivot().Position
 
+	placementPrint(unitName, "unidade posicionada em", formatVector(unitPos),
+		"(CFrame do servidor:", formatVector(CF and CF.Position) .. ")",
+		"dono", ownerUserId, "unitId", unitId)
+
 	local DottedLine = UIAssets.AOE.DottedLine:Clone()
 	local dottedPivot = DottedLine:GetPivot()
 	DottedLine:PivotTo(CFrame.new(unitPos.X, groundSurfaceY, unitPos.Z) * dottedPivot.Rotation)
@@ -589,9 +609,15 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 end
 
 function UnitPlacementController:visualize(unitName : string)
-	if self.isPlacing then return end
+	if self.isPlacing then
+		placementPrint(unitName, "nao pode posicionar: ja existe um fantasma ativo")
+		return
+	end
 	local unitModel = Units:FindFirstChild(unitName)
-	if not unitModel then return end
+	if not unitModel then
+		placementPrint(unitName, "nao pode posicionar: modelo nao existe em Assets.Units")
+		return
+	end
 	self.isPlacing = true
 
 	local maid = Maid.new()
@@ -600,6 +626,8 @@ function UnitPlacementController:visualize(unitName : string)
 	local currentRotation = 0
 	local currentColor = VALID_COLOR
 	local canPlace = false
+	-- Guardado so para o log do Studio dizer o motivo do bloqueio.
+	local blockReason = "mouse fora de qualquer superficie"
 
 	local scale = ghost:GetScale()
 	ghost:ScaleTo(scale * 0.8)
@@ -729,6 +757,11 @@ function UnitPlacementController:visualize(unitName : string)
 				local onGrid = #gridParts > 0
 
 				local isObstructed = false
+				local reason = ""
+
+				if onGrid then
+					reason = string.format("em cima do caminho (%d part(s) de Grid, primeira: %s)", #gridParts, gridParts[1]:GetFullName())
+				end
 
 				if not onGrid then
 					local overlapParams = OverlapParams.new()
@@ -738,6 +771,7 @@ function UnitPlacementController:visualize(unitName : string)
 					for _, part in ipairs(parts) do
 						if part ~= raycastResult.Instance then
 							isObstructed = true
+							reason = "obstruido por " .. part:GetFullName()
 							break
 						end
 					end
@@ -749,14 +783,17 @@ function UnitPlacementController:visualize(unitName : string)
 						local otherTemplate = Units:FindFirstChild(placedUnit.Name)
 						local otherSizeX = otherTemplate and select(2, otherTemplate:GetBoundingBox()).X or unitSizeX
 						local minDist = (unitSizeX + otherSizeX) / 2
-						if (Vector3.new(placedPosition.X, 0, placedPosition.Z) - Vector3.new(placedPos.X, 0, placedPos.Z)).Magnitude < minDist then
+						local dist = (Vector3.new(placedPosition.X, 0, placedPosition.Z) - Vector3.new(placedPos.X, 0, placedPos.Z)).Magnitude
+						if dist < minDist then
 							isObstructed = true
+							reason = string.format("perto demais de %s: %.2f studs (minimo %.2f)", placedUnit.Name, dist, minDist)
 							break
 						end
 					end
 				end
 
 				canPlace = not onGrid and not isObstructed
+				blockReason = reason
 			end
 		end
 
@@ -795,19 +832,24 @@ function UnitPlacementController:visualize(unitName : string)
 		end
 
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			if canPlace then
-				Framework:Fire("PlaceUnit", unitName, ghostCF)
-
-				-- A devolucao da aparencia do caminho fica a cargo do maid, logo
-				-- abaixo: um dono so para os dois caminhos de saida.
-				placementRing:Destroy()
-				ringScaleValue:Destroy()
-				self.isPlacing = false
-				maid:Destroy()
-				ghost:Destroy()
-
-				self.Controllers.CardController:setUnequipState()
+			if not canPlace then
+				placementPrint(unitName, "nao pode posicionar aqui:", blockReason ~= "" and blockReason or "motivo desconhecido",
+					"fantasma em", formatVector(ghostCF.Position))
+				return
 			end
+
+			placementPrint(unitName, "fantasma enviado ao servidor em", formatVector(ghostCF.Position))
+			Framework:Fire("PlaceUnit", unitName, ghostCF)
+
+			-- A devolucao da aparencia do caminho fica a cargo do maid, logo
+			-- abaixo: um dono so para os dois caminhos de saida.
+			placementRing:Destroy()
+			ringScaleValue:Destroy()
+			self.isPlacing = false
+			maid:Destroy()
+			ghost:Destroy()
+
+			self.Controllers.CardController:setUnequipState()
 		end
 	end))
 

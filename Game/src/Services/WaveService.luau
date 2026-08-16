@@ -169,9 +169,19 @@ end
 	entram depois de `SHARD_WAVE_THRESHOLD` e dai seguem uma curva, entao a moeda
 	cara se concentra em quem chega perto do fim.
 ]=]
+--[=[
+	Quantas waves a partida tem. Cada dificuldade define a sua (`MaxWaves`);
+	`DataConfig.MAX_WAVES` fica so como fallback para preset sem o campo.
+]=]
+function WaveService:getMaxWaves(preset)
+	preset = preset or self.Difficulty
+	return (preset and preset.MaxWaves) or MAX_WAVES
+end
+
 function WaveService:computeReward(preset)
-	local wavesSurvived = math.clamp(self.WaveCount or 0, 0, MAX_WAVES)
-	local progress = MAX_WAVES > 0 and (wavesSurvived / MAX_WAVES) or 0
+	local maxWaves = self:getMaxWaves(preset)
+	local wavesSurvived = math.clamp(self.WaveCount or 0, 0, maxWaves)
+	local progress = maxWaves > 0 and (wavesSurvived / maxWaves) or 0
 
 	local coins = BASE_WINNING_CASH * progress * (preset and preset.WinCashMultiplier or 1)
 	local xp = BASE_WINNING_XP * progress * (preset and preset.WinXpMultiplier or 1)
@@ -194,6 +204,7 @@ end
 
 function WaveService:onRoundEnded(won : boolean)
 	local preset = self.Difficulty or self.Services.DifficultyService:GetSelected()
+	local maxWaves = self:getMaxWaves(preset)
 	local rewards = self:computeReward(preset)
 	local dataService = self.Services.DataService
 
@@ -217,8 +228,8 @@ function WaveService:onRoundEnded(won : boolean)
 		Framework:Fire("RoundReward", player, {
 			won = won,
 			rewards = rewards,
-			wavesSurvived = math.clamp(self.WaveCount or 0, 0, MAX_WAVES),
-			maxWaves = MAX_WAVES,
+			wavesSurvived = math.clamp(self.WaveCount or 0, 0, maxWaves),
+			maxWaves = maxWaves,
 			mvp = mvp,
 		})
 	end
@@ -306,7 +317,7 @@ function WaveService:runRound(generation : number)
 		if not self:awaitWaveEnd(generation) then return end
 		if self.GameOver then break end
 
-		if self.WaveCount >= MAX_WAVES then
+		if self.WaveCount >= self:getMaxWaves(preset) then
 			won = true
 			self.GameOver = true
 			break

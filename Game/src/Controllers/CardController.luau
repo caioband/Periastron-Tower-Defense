@@ -32,6 +32,7 @@ local ExampleController = {
 		UILibraryController = {},
 	},
 	CardCounts = {},
+	Cash = 0,
 }
 
 function ExampleController:setUnequipState()
@@ -84,6 +85,13 @@ function ExampleController:construct()
 		self.Controllers.UILibraryController:doComponent("Card", "setCount", unitName, count)
 	end)
 	Framework:Fire("RequestCardCounts")
+
+	-- O dinheiro da sessao decide se a carta aparece em vermelho (sem grana).
+	Framework:Listen("UpdateCash", function(amount)
+		self.Cash = amount or 0
+		self.Controllers.UILibraryController:doComponent("Card", "setCash", self.Cash)
+	end)
+	Framework:Fire("RequestCash")
 
 	task.spawn(function()
 		onDataPacketReceived()

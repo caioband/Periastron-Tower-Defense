@@ -16,8 +16,22 @@ local SharedConfig = require(Configs.SharedConfig)
 local Maid = require(Vendor.Maid)
 local Spring = require(Vendor.Spring)
 
+-- Cores originais da UI (StarterGui.Interface.TowerContainer.CardN.Frame).
+local DEFAULT_COST_STROKE = Color3.fromRGB(98, 82, 139)
+local DEFAULT_COUNT_STROKE = Color3.fromRGB(81, 38, 141)
+local DEFAULT_COUNT_IMAGE = Color3.fromRGB(255, 255, 255)
+
+-- Sem unidades sobrando: carta apagada em cinza claro.
+local NO_STOCK_STROKE = Color3.fromRGB(190, 190, 190)
+local NO_STOCK_TRANSPARENCY = 0.25
+
+-- Sem dinheiro para o custo: carta em vermelho, mas sem apagar.
+local NO_CASH_COLOR = Color3.fromRGB(255, 70, 70)
+
 local module = {}
 module.baseRotations = nil
+module.counts = {}
+module.cash = 0
 
 local function ensureBaseRotations()
 	if module.baseRotations then return end
@@ -52,20 +66,81 @@ local function setCardCost(button, unitName)
 	costLabel.Text = "$" .. cost
 end
 
-local function setCardCount(button, count)
+local function getCardParts(button)
 	local frame = button:FindFirstChild("Frame")
-	if not frame then return end
+	if not frame then return nil end
 
 	local imageLabel = frame:FindFirstChild("ImageLabel")
-	if not imageLabel then return end
+	local countHolder = imageLabel and imageLabel:FindFirstChild("Count")
+	local countLabel = countHolder and countHolder:FindFirstChild("Count")
+	local costLabel = frame:FindFirstChild("Cost")
 
-	local countHolder = imageLabel:FindFirstChild("Count")
-	if not countHolder then return end
+	return {
+		Cost = costLabel,
+		CostStroke = costLabel and costLabel:FindFirstChildOfClass("UIStroke"),
+		Image = imageLabel,
+		CountHolder = countHolder,
+		CountLabel = countLabel,
+		CountStroke = countLabel and countLabel:FindFirstChildOfClass("UIStroke"),
+	}
+end
 
-	local countLabel = countHolder:FindFirstChild("Count")
-	if not countLabel then return end
+-- Estado visual da carta: sem estoque tem prioridade sobre falta de dinheiro,
+-- ja que sem unidade a carta nao pode ser usada de jeito nenhum.
+local function resolveCardState(unitName)
+	if not unitName then return "Available" end
 
-	countLabel.Text = tostring(count or 0) .. "x"
+	local count = module.counts[unitName] or 0
+	if count <= 0 then return "NoStock" end
+
+	local stats = SharedConfig.UnitStats[unitName]
+	local cost = stats and stats.Cost or 0
+	if module.cash < cost then return "NoCash" end
+
+	return "Available"
+end
+
+local function applyCardState(button, parts)
+	local unitName = button:GetAttribute("Unit")
+	if not unitName then return end
+
+	parts = parts or getCardParts(button)
+	if not parts then return end
+
+	local state = resolveCardState(unitName)
+	if button:GetAttribute("CardState") == state then return end
+	button:SetAttribute("CardState", state)
+
+	local transparency = state == "NoStock" and NO_STOCK_TRANSPARENCY or 0
+	if parts.Image then parts.Image.ImageTransparency = transparency end
+	if parts.CountHolder then parts.CountHolder.ImageTransparency = transparency end
+
+	local costStrokeColor = DEFAULT_COST_STROKE
+	local countImageColor = DEFAULT_COUNT_IMAGE
+	local countStrokeColor = DEFAULT_COUNT_STROKE
+
+	if state == "NoStock" then
+		costStrokeColor = NO_STOCK_STROKE
+	elseif state == "NoCash" then
+		costStrokeColor = NO_CASH_COLOR
+		countImageColor = NO_CASH_COLOR
+		countStrokeColor = NO_CASH_COLOR
+	end
+
+	if parts.CostStroke then parts.CostStroke.Color = costStrokeColor end
+	if parts.CountHolder then parts.CountHolder.ImageColor3 = countImageColor end
+	if parts.CountStroke then parts.CountStroke.Color = countStrokeColor end
+end
+
+local function setCardCount(button, count)
+	local parts = getCardParts(button)
+	if not parts then return end
+
+	if parts.CountLabel then
+		parts.CountLabel.Text = tostring(count or 0) .. "x"
+	end
+
+	applyCardState(button, parts)
 end
 
 local supportedKeybinds = {
@@ -91,6 +166,8 @@ function module:set(Cards : {}, Counts : {}, callbackDo : (string) -> ())
 	self:clean()
 
 	ensureBaseRotations()
+
+	self.counts = Counts or {}
 
 	print(Cards, "is the equipped cards")
 
@@ -130,8 +207,10 @@ function module:set(Cards : {}, Counts : {}, callbackDo : (string) -> ())
 
 			local name = Cards[i]
 			button:SetAttribute("Unit", name)
+			-- A carta pode ter trocado de unidade; invalida o estado visual antigo.
+			button:SetAttribute("CardState", nil)
 			setCardCost(button, name)
-			setCardCount(button, Counts and Counts[name])
+			setCardCount(button, self.counts[name])
 			restoreRotation(button)
 
 			button.Visible = true
@@ -155,9 +234,21 @@ function module:set(Cards : {}, Counts : {}, callbackDo : (string) -> ())
 end
 
 function module:setCount(unitName : string, count : number)
+	self.counts[unitName] = count
+
 	for _, button in TowerContainer:GetChildren() do
 		if button:IsA("TextButton") and button:GetAttribute("Unit") == unitName then
 			setCardCount(button, count)
+		end
+	end
+end
+
+function module:setCash(cash : number)
+	self.cash = cash or 0
+
+	for _, button in TowerContainer:GetChildren() do
+		if button:IsA("TextButton") then
+			applyCardState(button)
 		end
 	end
 end

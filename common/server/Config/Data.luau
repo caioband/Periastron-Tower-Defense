@@ -48,11 +48,13 @@ return {
 
 	-- Shards so comecam a cair depois desta fracao da run, e dai crescem por uma
 	-- curva em vez de linearmente: e a moeda cara, entao quase todo o ganho vem de
-	-- chegar perto do fim. Com 0.5 e curva 2, largar na metade rende zero e a
-	-- wave 12 de 15 rende ~36% do total.
+	-- chegar perto do fim. Com 0.5 e curva 2, largar na metade rende zero e chegar
+	-- a 80% da run rende ~36% do total.
 	SHARD_WAVE_THRESHOLD = 0.5,
 	SHARD_CURVE = 2,
 
+	-- Fallback: o numero de waves de verdade vem do `MaxWaves` da dificuldade
+	-- (Config/Difficulty.luau). Isto so vale se um preset nao definir o campo.
 	MAX_WAVES = 15,
 	CASH_PER_DAMAGE = 1,
 	CASH_PER_KILL_MIN = 3,

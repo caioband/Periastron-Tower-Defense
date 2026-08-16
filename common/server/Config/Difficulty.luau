@@ -29,6 +29,7 @@ Difficulty.Presets = {
 		MobDamage = 15,
 		IntermissionTime = 60,
 		WaveInterval = 5,
+		MaxWaves = 15,
 	},
 
 	Medium = {
@@ -49,6 +50,7 @@ Difficulty.Presets = {
 		MobDamage = 20,
 		IntermissionTime = 60,
 		WaveInterval = 3,
+		MaxWaves = 20,
 	},
 
 	Hard = {
@@ -69,6 +71,7 @@ Difficulty.Presets = {
 		MobDamage = 25,
 		IntermissionTime = 45,
 		WaveInterval = 3,
+		MaxWaves = 20,
 	},
 
 	Extreme = {
@@ -89,6 +92,7 @@ Difficulty.Presets = {
 		MobDamage = 25,
 		IntermissionTime = 40,
 		WaveInterval = 2,
+		MaxWaves = 25,
 	},
 
 	Impossible = {
@@ -109,6 +113,7 @@ Difficulty.Presets = {
 		MobDamage = 25,
 		IntermissionTime = 30,
 		WaveInterval = 1.5,
+		MaxWaves = 30,
 	},
 }
 
