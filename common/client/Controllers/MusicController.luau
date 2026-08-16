@@ -626,6 +626,17 @@ function MusicController:_advancePlaylist()
 		index = 1
 		if opts.Shuffle then
 			self:_shuffle(list)
+
+			--[[
+				A volta da fila é a única emenda em que a mesma faixa pode tocar
+				duas vezes seguidas: o embaralhamento novo não sabe qual foi a
+				última da rodada anterior e pode sortear justo ela para a posição
+				1. Com duas ou mais faixas, troca de lugar com outra qualquer.
+			]]
+			if #list > 1 and list[1] == self.CurrentName then
+				local swap = math.random(2, #list)
+				list[1], list[swap] = list[swap], list[1]
+			end
 		end
 	end
 

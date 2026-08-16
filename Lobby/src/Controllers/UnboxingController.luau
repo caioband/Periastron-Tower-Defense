@@ -25,6 +25,29 @@ local Framework = Me.new()
 --[[ CONSTANTS ]]
 local CRATES_FOLDER_NAME = "UnboxingCrates"
 local TARGET_PART_NAME = "TargetPart"
+local HEAD_PART_NAME = "Head"
+
+--[[
+	VFX do estouro e da aura, e o display que fica sobre a cabeça da unidade.
+
+	O estouro é um Emit único que vive só o tempo pedido; a aura fica ligada
+	enquanto a unidade estiver em cena, pintada com a cor da raridade dela.
+]]
+local CRATE_OPEN_VFX_NAME = "CrateOpen"
+local UNIT_AURA_VFX_NAME = "CrateUnitAura"
+local UNIT_DISPLAY_NAME = "UnitCrateDisplay"
+
+-- Acima do maior Lifetime dos emissores do CrateOpen (o "Pixel smoke" vai até
+-- 1s): destruir antes disso mataria as partículas ainda vivas no meio do voo.
+local CRATE_OPEN_LIFETIME = 1
+
+-- Quanto a caixa ainda fica no ar depois do estouro. Ela some por baixo do
+-- efeito, em vez de o efeito aparecer sobre um lugar já vazio.
+local CRATE_BURST_LEAD = 0.2
+
+-- Quantas partículas cada emissor solta no estouro. Um emissor pode pedir outro
+-- número com o atributo `EmitCount`, sem precisar mexer aqui.
+local CRATE_OPEN_EMIT_COUNT = 16
 
 -- Placement: the crate lands this far in front of the character, on whatever ground
 -- the down ray finds. Everything else here is the "that spot is taken" recovery.
@@ -127,6 +150,19 @@ local UnboxingController = {
 }
 
 --[[ INTERNAL ]]
+
+--[=[
+	Both VFX parts are authored unanchored and colliding, which is fine sitting in
+	ReplicatedStorage but not in the world: a clone would fall, and shove whatever
+	it touched on the way. Purely decorative, so it also stops answering queries.
+]=]
+local function prepareVFXPart(part : BasePart)
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Massless = true
+end
 
 local function flatten(vector : Vector3, fallback : Vector3) : Vector3
 	local flat = Vector3.new(vector.X, 0, vector.Z)
@@ -419,15 +455,133 @@ function UnboxingController:_playOpenAnimation(session, onComplete : () -> ())
 
 		crate:PivotTo(baseCFrame)
 
-		local burst = self:_tweenScale(crate, OPEN_BURST_INFO, OPEN_BURST_SCALE, session.Maid)
-		burst.Completed:Once(function(burstState : Enum.PlaybackState)
-			if session.Closed or burstState ~= Enum.PlaybackState.Completed then
+		-- Junto com o início do estufão, não no fim dele: o efeito é o estouro.
+		self:_playCrateBurstVFX(session)
+
+		self:_tweenScale(crate, OPEN_BURST_INFO, OPEN_BURST_SCALE, session.Maid)
+
+		--[[
+			O prazo conta do estouro, não do fim do estufão: é o estouro que a
+			caixa tem que sobreviver. O tween dura menos que `CRATE_BURST_LEAD`,
+			então ele termina de qualquer jeito antes daqui — e se a sessão fechar
+			no meio, o `Closed` segura.
+		]]
+		task.delay(CRATE_BURST_LEAD, function()
+			if session.Closed then
 				return
 			end
 
 			onComplete()
 		end)
 	end)
+end
+
+--[=[
+	O estouro da caixa: um Emit único de tudo que houver dentro do CrateOpen,
+	no CFrame da caixa.
+
+	A part vai para a pasta de unboxings, ao lado da caixa e não dentro dela: a
+	caixa é destruída logo depois, e levaria o efeito junto antes da hora. Fica
+	solta no CFrame dela, então continua no lugar certo quando a caixa some.
+]=]
+function UnboxingController:_playCrateBurstVFX(session)
+	local crate = session.Crate
+	if not crate or not crate.Parent then
+		return nil
+	end
+
+	local vfx = self.CrateOpenVFX:Clone()
+	prepareVFXPart(vfx)
+	vfx.CFrame = crate:GetPivot()
+	vfx.Parent = self.CratesFolder
+
+	for _, emitter in vfx:GetDescendants() do
+		if emitter:IsA("ParticleEmitter") then
+			emitter:Emit(emitter:GetAttribute("EmitCount") or CRATE_OPEN_EMIT_COUNT)
+		end
+	end
+
+	-- No maid também: fechar a sessão antes do prazo não pode deixar o efeito para trás.
+	session.Maid:GiveTask(vfx)
+	task.delay(CRATE_OPEN_LIFETIME, function()
+		vfx:Destroy()
+	end)
+
+	return vfx
+end
+
+--[=[
+	A aura que fica na unidade revelada, na cor da raridade dela.
+
+	Entra como filha da unidade de propósito: o giro do reveal é um `PivotTo` no
+	modelo inteiro, então a aura acompanha sem precisar de código próprio, e some
+	junto quando a unidade some.
+]=]
+function UnboxingController:_attachUnitAura(unit : Model, rarity : string?) : BasePart?
+	local rootPart = unit.PrimaryPart or unit:FindFirstChild("HumanoidRootPart")
+	if not rootPart or not rootPart:IsA("BasePart") then
+		warn(string.format("[UnboxingController]: %s has no root part for the aura VFX.", unit.Name))
+		return nil
+	end
+
+	local aura = self.UnitAuraVFX:Clone()
+	prepareVFXPart(aura)
+	aura.CFrame = rootPart.CFrame
+
+	local color = RarityConfig.getColor(rarity)
+	for _, emitter in aura:GetDescendants() do
+		if emitter:IsA("ParticleEmitter") then
+			emitter.Enabled = true
+			if color then
+				emitter.Color = ColorSequence.new(color)
+			end
+		end
+	end
+
+	aura.Parent = unit
+
+	return aura
+end
+
+--[=[
+	O display sobre a cabeça da unidade revelada.
+
+	O template é um Attachment, então a cabeça é pai direto dele e o BillboardGui
+	de dentro se ancora sozinho. Os dois rótulos são preenchidos aqui — é para isso
+	que eles existem.
+]=]
+function UnboxingController:_attachUnitDisplay(unit : Model, unitName : string, rarity : string?) : Attachment?
+	local head = unit:FindFirstChild(HEAD_PART_NAME)
+	if not head or not head:IsA("BasePart") then
+		warn(string.format("[UnboxingController]: %s has no %s for the crate display.", unit.Name, HEAD_PART_NAME))
+		return nil
+	end
+
+	local display = self.UnitDisplayTemplate:Clone()
+
+	local billboard = display:FindFirstChildWhichIsA("BillboardGui")
+	if billboard then
+		local nameLabel = billboard:FindFirstChild("UnitName")
+		if nameLabel and nameLabel:IsA("TextLabel") then
+			nameLabel.Text = unitName
+		end
+
+		local rarityLabel = billboard:FindFirstChild("Rarity")
+		if rarityLabel and rarityLabel:IsA("TextLabel") then
+			local tier = rarity and RarityConfig.TIERS[rarity]
+			rarityLabel.Text = tier and tier.DisplayName or (rarity or "")
+
+			local color = RarityConfig.getColor(rarity)
+			local stroke = rarityLabel:FindFirstChildOfClass("UIStroke")
+			if stroke and color then
+				stroke.Color = color
+			end
+		end
+	end
+
+	display.Parent = head
+
+	return display
 end
 
 --[=[
@@ -528,6 +682,17 @@ function UnboxingController:_revealUnit(session, unitName : string) : Model?
 	unit.Parent = self.CratesFolder
 	session.Unit = unit
 	session.Maid:GiveTask(unit)
+
+	-- A raridade sai do próprio catálogo da unidade, não do resultado do roll: é a
+	-- raridade dela que a aura e o display anunciam.
+	local stats = SharedConfig.UnitStats[unitName]
+	local rarity = RarityConfig.resolve(stats and stats.Rarity)
+	if not rarity then
+		warn(string.format("[UnboxingController]: %s has no valid Rarity in UnitStats.", unitName))
+	end
+
+	self:_attachUnitAura(unit, rarity)
+	self:_attachUnitDisplay(unit, unitName, rarity)
 
 	local spin = 0
 	session.Maid:GiveTask(RunService.RenderStepped:Connect(function(deltaTime : number)
@@ -1038,9 +1203,15 @@ function UnboxingController:construct()
 
 	local UI = Assets:WaitForChild("UI")
 
+	local VFX = Assets:WaitForChild("VFX")
+
 	self.CrateModels = Assets:WaitForChild("CratesModel")
 	self.UnitModels = Assets:WaitForChild("Units")
 	self.AttachmentTemplate = UI:WaitForChild("UnboxingAttachment")
+
+	self.CrateOpenVFX = VFX:WaitForChild(CRATE_OPEN_VFX_NAME)
+	self.UnitAuraVFX = VFX:WaitForChild(UNIT_AURA_VFX_NAME)
+	self.UnitDisplayTemplate = UI:WaitForChild(UNIT_DISPLAY_NAME)
 
 	-- One card per crate an unboxing can evolve into, named after it.
 	self.UpgradeTemplates = UI:WaitForChild("UpgradeCrateUnboxingTemplates")

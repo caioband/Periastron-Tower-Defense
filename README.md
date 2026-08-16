@@ -88,6 +88,28 @@ Música toca a instância original (o volume do Studio é o base; fade, master,
 mute e duck multiplicam em cima). SFX sempre toca um clone que se destrói no
 fim, pra dois efeitos iguais poderem se sobrepor.
 
+### Passos
+
+`FootstepController` (`common/client/Controllers`) é client-only e roda nas duas
+places. Ele não usa timer: quem marca o compasso é um Animation Event
+(KeyframeMarker) chamado **`Step`** dentro das animações de Walk e Run. Toda
+animação que tiver esse marcador entra no sistema sozinha — não há lista de
+animações no código. O marcador pode carregar `"Left"` ou `"Right"` pra fixar o
+pé; sem valor, o controller alterna.
+
+A superfície **não** vem do `Material` (o jogo é stud, o Material não diz nada):
+vem do atributo `Surface` da Part que o raio embaixo do pé acertar. O atributo é
+procurado também nos pais, então dá pra marcar um Model inteiro de uma vez:
+
+```lua
+part:SetAttribute("Surface", "Grass")   -- ou no Model que contém as parts
+```
+
+Os ids de cada superfície ficam em `SharedConfig.FootstepConfig`, com uma lista
+de variações por superfície (sorteia uma por passo, sem repetir a anterior).
+Part sem o atributo fica em silêncio de propósito — assim o que falta marcar
+aparece, em vez de virar grama por engano.
+
 ## Configuração: o que é replicado e o que não é
 
 Antes, `ReplicatedStorage.Shared.Config.Server` era replicado para todo cliente —
