@@ -8,8 +8,8 @@ compartilhado entre as duas places. Aqui fica só o que é exclusivo deste place
 | Pasta | Vai para | Conteúdo |
 |---|---|---|
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | LocalScript de entrada |
-| `src/Controllers/` | `Client.Controllers.Lobby` | Cmdr, Crate, UILibrary |
-| `src/Services/` | `ServerScriptService.Services.Lobby` | Cmdr, Crate, Data, Summoning, TeleportToGame |
+| `src/Controllers/` | `Client.Controllers.Lobby` | Cmdr, Crate, Shop, UILibrary |
+| `src/Services/` | `ServerScriptService.Services.Lobby` | Cmdr, Crate, Data, Shop, Summoning, TeleportToGame |
 | `src/CmdrDefinitions/` | `ServerScriptService.CmdrDefinitions` | Comandos e tipos do Cmdr |
 
 ## Dependências Wally
@@ -30,7 +30,9 @@ Estavam instalados no place mas nenhum script requer, então saíram: `Comm`,
 | Item | Por quê |
 |---|---|
 | `ReplicatedStorage.Shared.Assets` | Models/Parts/Animations, não código |
-| `StarterGui.HUD` / `StarterGui.crateui` | Instâncias de GUI — para versionar, exporte como `.rbxmx` |
+| `StarterGui.HUD` / `StarterGui.crateui` / `StarterGui.ShopUI` | Instâncias de GUI — para versionar, exporte como `.rbxmx` |
+| `ReplicatedStorage.CascadeRuntimeEngine` | Runtime pago do Cascade UI |
+| `ReplicatedStorage.CascadeAnimations` | Animações salvas pelo plugin do Cascade (`OpenShop`, `ShopItemContainerShow`) |
 | `StarterPlayerScripts.PlayerModule` | Código stock da Roblox |
 | `StarterCharacterScripts.Animate` | Código stock da Roblox |
 | `ServerStorage.Lunar_VFX_Scripts` | Readme de asset de terceiro |
