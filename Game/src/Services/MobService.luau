@@ -454,13 +454,18 @@ function MobService:awardKillReward(killerUserId, reward)
 	self:addCash(player, amount)
 end
 
+--[=[
+	Devolve o dano que de fato entrou, para quem chamou poder creditar a unidade
+	(o card de upgrade mostra o total por unidade em `DmgDone`).
+]=]
 function MobService:DamageMob(mobId, damage, killerUserId)
 	local mob = self.ActiveMobs[mobId]
-	if not mob then return end
+	if not mob then return 0 end
 
 	-- Para o MVP conta o dano que de fato entrou: um golpe de 70 num mob com 5 de
 	-- vida vale 5. O premio em caixa segue usando o valor cheio, como antes.
-	self:addDamageStat(killerUserId, math.min(mob.Health, damage or 10))
+	local effectiveDamage = math.min(mob.Health, damage or 10)
+	self:addDamageStat(killerUserId, effectiveDamage)
 
 	mob.Health -= (damage or 10)
 	self:awardDamageReward(killerUserId, damage or 10)
@@ -471,6 +476,8 @@ function MobService:DamageMob(mobId, damage, killerUserId)
 		self:awardKillReward(killerUserId, mob.Reward)
 		self:removeMob(mobId)
 	end
+
+	return effectiveDamage
 end
 
 function MobService:construct()

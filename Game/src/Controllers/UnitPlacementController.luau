@@ -320,6 +320,9 @@ UnitPlacementController.unitDottedLines = {}
 UnitPlacementController.dottedLineData = {}
 UnitPlacementController.scaleTweens = {}
 UnitPlacementController.isPlacing = false
+-- Dano total por unitId. Guardado fora do modelo porque o lote do servidor pode
+-- chegar antes de `ReplicateUnit` criar a unidade.
+UnitPlacementController.damageDoneById = {}
 
 function UnitPlacementController:getGroundExcludeList(extra)
 	local list = {}
@@ -592,6 +595,9 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 	unit:SetAttribute("UnitID", unitId)
 	unit:SetAttribute("Upgrades", upgrades or 0)
 	unit:SetAttribute("Owned", class.isOwner)
+	-- Total de dano da unidade; o servidor atualiza por `UnitDamageStats` e o card
+	-- de upgrade escuta o atributo.
+	unit:SetAttribute("DamageDone", self.damageDoneById[unitId] or 0)
 	self.createdClasses[unit] = class
 	self.classesById[unitId] = class
 
@@ -978,6 +984,7 @@ function UnitPlacementController:construct()
 				end
 				self.createdClasses[unitModel] = nil
 				self.classesById[unitId] = nil
+				self.damageDoneById[unitId] = nil
 				unitModel:Destroy()
 				break
 				end
@@ -999,6 +1006,19 @@ function UnitPlacementController:construct()
 
 				self.Controllers.MusicController:PlaySFX("UnitUpgrade")
 				break
+			end
+		end
+	end)
+
+	Framework:Listen("UnitDamageStats", function(batch)
+		if typeof(batch) ~= "table" then return end
+
+		for unitId, total in batch do
+			self.damageDoneById[unitId] = total
+
+			local class = self.classesById[unitId]
+			if class and class.model and class.model.Parent then
+				class.model:SetAttribute("DamageDone", total)
 			end
 		end
 	end)

@@ -25,6 +25,10 @@ local Framework = Me.new()
 local TARGET_SCANS_PER_FRAME = 8
 local MAX_PLACE_DISTANCE = 2048
 
+-- O total de dano por unidade so alimenta um label do card de upgrade, entao vai
+-- em lote algumas vezes por segundo em vez de um evento por golpe.
+local DAMAGE_FLUSH_INTERVAL = 0.25
+
 -- Log de posicionamento: so no Studio, para nao poluir o console de producao.
 local IS_STUDIO = RunService:IsStudio()
 
@@ -49,7 +53,9 @@ local UnitService = {
 	UnitSizes = {},
 	UnitBounds = {},
 	SessionCards = {},
-	SessionCardMax = {}
+	SessionCardMax = {},
+	DamageDirty = {},
+	LastDamageFlush = 0
 }
 
 for _, model in Units:GetChildren() do
@@ -116,6 +122,7 @@ function UnitService:ResetRound()
 
 	table.clear(self.PlacedUnits)
 	table.clear(self.UnitsById)
+	table.clear(self.DamageDirty)
 
 	-- O mapa pode ter mudado entre rounds.
 	self.GridParts = nil
@@ -158,6 +165,54 @@ function UnitService:getGridParts()
 	return parts
 end
 
+--[=[
+	Credita dano a uma unidade. O valor e o que de fato entrou no mob (`DamageMob`
+	devolve isso), nao o dano cheio do golpe — assim o `DmgDone` do card fecha com
+	a vida que os mobs perderam.
+]=]
+function UnitService:addDamageDone(entry, amount)
+	if not entry or not amount or amount <= 0 then return end
+
+	entry.damageDone = (entry.damageDone or 0) + amount
+	self.DamageDirty[entry.unitId] = true
+end
+
+--[=[
+	Mapa unitId -> dano total, de todas as unidades no mapa. Vai junto do
+	`ClientReady`, para quem entra no meio da partida ver o total de quem ja parou
+	de atirar (o flush em lote so manda quem mudou desde o ultimo envio).
+]=]
+function UnitService:getDamageSnapshot()
+	local snapshot = {}
+	for _, entry in ipairs(self.PlacedUnits) do
+		if (entry.damageDone or 0) > 0 then
+			snapshot[entry.unitId] = entry.damageDone
+		end
+	end
+	return snapshot
+end
+
+function UnitService:flushDamageDone()
+	if next(self.DamageDirty) == nil then return end
+
+	local batch = {}
+	local hasEntries = false
+	for unitId in self.DamageDirty do
+		local entry = self.UnitsById[unitId]
+		if entry then
+			batch[unitId] = entry.damageDone or 0
+			hasEntries = true
+		end
+	end
+	table.clear(self.DamageDirty)
+
+	if not hasEntries then return end
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		Framework:Fire("UnitDamageStats", plr, batch)
+	end
+end
+
 function UnitService:StunRandomUnit(duration)
 	if #self.PlacedUnits == 0 then return end
 
@@ -183,6 +238,7 @@ function UnitService:construct()
 	end)
 
 	Framework:Listen("UnitUpgraded", function() end)
+	Framework:Listen("UnitDamageStats", function() end)
 	Framework:Listen("UnitSwing", function() end)
 	Framework:Listen("TripmineThrown", function() end)
 	Framework:Listen("TripmineTriggered", function() end)
@@ -244,6 +300,11 @@ function UnitService:construct()
 			for unitName, count in cards do
 				Framework:Fire("UpdateCardCounts", player, unitName, count)
 			end
+		end
+
+		local damageSnapshot = self:getDamageSnapshot()
+		if next(damageSnapshot) ~= nil then
+			Framework:Fire("UnitDamageStats", player, damageSnapshot)
 		end
 	end)
 
@@ -350,6 +411,12 @@ function UnitService:construct()
 
 	RunService.Heartbeat:Connect(function()
 		self:stepCombat()
+
+		local now = os.clock()
+		if now - self.LastDamageFlush >= DAMAGE_FLUSH_INTERVAL then
+			self.LastDamageFlush = now
+			self:flushDamageDone()
+		end
 	end)
 end
 
@@ -528,7 +595,7 @@ function UnitService:stepTripmines(now)
 					local radius = config.AOE and config.AOE.Radius or 6
 					local mobsHit = mobService:GetMobsInRadius(mine.position, radius)
 					for _, mobId in ipairs(mobsHit) do
-						mobService:DamageMob(mobId, damage, entry.ownerUserId)
+						self:addDamageDone(entry, mobService:DamageMob(mobId, damage, entry.ownerUserId))
 					end
 					for _, plr in ipairs(Players:GetPlayers()) do
 						Framework:Fire("TripmineTriggered", plr, entry.unitId, mineId)
@@ -600,15 +667,15 @@ function UnitService:executeAttack(entry, unitStats, initialMobId)
 				local aoeCenter = predictedPos or unitPosition
 				local mobsInRadius = self.Services.MobService:GetMobsInRadius(aoeCenter, aoe.Radius)
 				for _, targetId in ipairs(mobsInRadius) do
-					self.Services.MobService:DamageMob(targetId, damage, ownerUserId)
+					self:addDamageDone(entry, self.Services.MobService:DamageMob(targetId, damage, ownerUserId))
 					table.insert(hits, { mobId = targetId, damage = damage })
 				end
 				if #hits == 0 and resolvedMobId then
-					self.Services.MobService:DamageMob(resolvedMobId, damage, ownerUserId)
+					self:addDamageDone(entry, self.Services.MobService:DamageMob(resolvedMobId, damage, ownerUserId))
 					table.insert(hits, { mobId = resolvedMobId, damage = damage })
 				end
 			elseif resolvedMobId then
-				self.Services.MobService:DamageMob(resolvedMobId, damage, ownerUserId)
+				self:addDamageDone(entry, self.Services.MobService:DamageMob(resolvedMobId, damage, ownerUserId))
 				table.insert(hits, { mobId = resolvedMobId, damage = damage })
 			end
 

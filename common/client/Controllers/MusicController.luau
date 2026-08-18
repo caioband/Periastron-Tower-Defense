@@ -82,6 +82,8 @@ export type SFXOptions = {
 	Looped: boolean?, -- exige Key ou Cut pra limpar depois
 	Cut: number?, -- corta em N segundos, mesmo que a faixa seja mais longa
 	Key: string?, -- só um som vivo por chave: o novo derruba o anterior
+	Fade: number?, -- fade in, em segundos (0 = entra seco)
+	FadeOut: number?, -- fade no fim, terminando junto com o som (ou com o Cut)
 }
 
 local MusicController = {}
@@ -712,6 +714,9 @@ end
 		Sound:PlaySFX("Beep", { Key = "Tripmine" })                 -- derruba o anterior
 
 	Com Looped, passe Key ou Cut: sem um dos dois nada limpa o clone depois.
+
+		Sound:PlaySFX("Thunderstorm", { Looped = true, Key = "Weather", Fade = 2 })
+		Sound:StopSFX("Weather", 2)                                 -- sai com fade
 ]]
 function MusicController:PlaySFX(name: string, options: SFXOptions?): Sound?
 	local opts: SFXOptions = options or {}
@@ -727,17 +732,29 @@ function MusicController:PlaySFX(name: string, options: SFXOptions?): Sound?
 	end
 
 	local sound = template:Clone()
-	sound.Volume = template.Volume * (opts.Volume or 1) * self._SFXMaster
+	local volume = template.Volume * (opts.Volume or 1) * self._SFXMaster
+	local fadeIn = opts.Fade or 0
+	local fadeOut = opts.FadeOut or 0
+
+	sound.Volume = if fadeIn > 0 then 0 else volume
 	sound.PlaybackSpeed = opts.Speed or template.PlaybackSpeed
 	sound.Looped = if opts.Looped == nil then template.Looped else opts.Looped
 	sound.Parent = opts.Parent or SoundService
 	sound:Play()
+
+	if fadeIn > 0 then
+		self:_fade(sound, volume, fadeIn)
+	end
 
 	if opts.Key then
 		self._ActiveSFX[opts.Key] = sound
 	end
 
 	local function cleanup()
+		-- O fade morre junto: um tween pendurado numa Sound destruída não termina,
+		-- e a entrada dele em `_Fades` ficaria segurando a instância.
+		self:_cancelFade(sound)
+
 		if opts.Key and self._ActiveSFX[opts.Key] == sound then
 			self._ActiveSFX[opts.Key] = nil
 		end
@@ -746,29 +763,45 @@ function MusicController:PlaySFX(name: string, options: SFXOptions?): Sound?
 		end
 	end
 
-	if opts.Cut then
-		task.delay(opts.Cut, function()
-			if sound.Parent then
-				sound:Stop()
-			end
+	-- O fim, com o fade quando pedido. Sem FadeOut é o corte seco de sempre.
+	local function finish()
+		if fadeOut > 0 and sound.Parent and sound.IsPlaying then
+			self:_fade(sound, 0, fadeOut, cleanup)
+		else
 			cleanup()
-		end)
+		end
+	end
+
+	if opts.Cut then
+		-- O fade termina junto com o corte, não depois dele.
+		task.delay(math.max(0, opts.Cut - fadeOut), finish)
 	elseif not sound.Looped then
+		-- Acabou sozinho: não sobrou tail pra suavizar, então é limpeza direta.
 		sound.Ended:Once(cleanup)
 
 		-- TimeLength só é confiável depois do som carregar; 0 significa que ainda
 		-- não deu, então cai no tempo fixo.
-		local lifetime = if sound.TimeLength > 0
-			then sound.TimeLength / math.max(sound.PlaybackSpeed, 0.01) + 1
+		local playFor = if sound.TimeLength > 0
+			then sound.TimeLength / math.max(sound.PlaybackSpeed, 0.01)
 			else SFX_FALLBACK_LIFETIME
-		task.delay(lifetime, cleanup)
+
+		if fadeOut > 0 then
+			task.delay(math.max(0, playFor - fadeOut), finish)
+		end
+		task.delay(playFor + 1, cleanup)
 	end
 
 	return sound
 end
 
--- Para o SFX que estiver vivo naquela Key (o de Looped mais longo, geralmente).
-function MusicController:StopSFX(key: string)
+--[[
+	Para o SFX que estiver vivo naquela Key (o de Looped mais longo, geralmente).
+
+	`fadeTime` desliga com fade em vez de cortar — é o que um ambiente em loop
+	precisa ao sair. O `PlaySFX` chama sem fade de propósito: quando a mesma Key é
+	reusada, o som novo tem que entrar no lugar do antigo na hora.
+]]
+function MusicController:StopSFX(key: string, fadeTime: number?)
 	local sound = self._ActiveSFX[key]
 	if not sound then
 		return
@@ -776,10 +809,23 @@ function MusicController:StopSFX(key: string)
 
 	self._ActiveSFX[key] = nil
 
-	if sound.Parent then
-		sound:Stop()
-		sound:Destroy()
+	if not sound.Parent then
+		return
 	end
+
+	if fadeTime and fadeTime > 0 then
+		self:_fade(sound, 0, fadeTime, function()
+			if sound.Parent then
+				sound:Stop()
+				sound:Destroy()
+			end
+		end)
+		return
+	end
+
+	self:_cancelFade(sound)
+	sound:Stop()
+	sound:Destroy()
 end
 
 -- Volume geral dos efeitos, separado do da música. Vale pros próximos :PlaySFX.

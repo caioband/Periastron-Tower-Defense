@@ -9,15 +9,24 @@ local Assets = Shared:WaitForChild("Assets")
 
 local SharedConfig = require(Configs.SharedConfig)
 
+--[[
+	Modulo de VFX de terceiros (ReplicatedStorage.vfx). Ele mesmo se recusa a rodar
+	fora do cliente, e e quem sabe montar o raio a partir dos atributos do asset.
+]]
+local VFX = require(ReplicatedStorage:WaitForChild("vfx"))
+
 local Me = require(Vendor.Me)
 local Framework = Me.new()
+
+local ThunderConfig = SharedConfig.WeatherConfig.Thunder
 
 local DEFAULT_LIFETIME = 2
 local DEFAULT_EMIT_COUNT = 25
 
 local VFXController = {
 	Controllers = {
-		UnitPlacementController = {}
+		UnitPlacementController = {},
+		WeatherController = {}
 	}
 }
 VFXController.Library = {}
@@ -149,6 +158,102 @@ function VFXController:resolveUnitModel(unitId)
 	return nil
 end
 
+--[=[
+	Pe da unidade: o centro da base da caixa dela.
+
+	`GetPivot` devolveria o meio do corpo, e o raio tem que bater no chao.
+]=]
+local function footOf(model : Model) : Vector3
+	local cf, size = model:GetBoundingBox()
+	return Vector3.new(cf.Position.X, cf.Position.Y - size.Y / 2, cf.Position.Z)
+end
+
+--[=[
+	De onde o raio desce.
+
+	O certo e sair da propria nuvem, entao a altura vem da Part do clima que o
+	`WeatherService` deixou em `workspace.Weather`. Sem clima ligado (o raio pode
+	ser disparado por outra coisa um dia), cai para uma altura fixa acima do pe.
+]=]
+local function strikeOrigin(foot : Vector3) : Vector3
+	local container = Workspace:FindFirstChild("Weather")
+	local cloud = container and container:FindFirstChildWhichIsA("BasePart", true)
+
+	local height = cloud and cloud.Position.Y or (foot.Y + ThunderConfig.StrikeHeight)
+	return Vector3.new(foot.X, math.max(height, foot.Y + 1), foot.Z)
+end
+
+--[=[
+	Raio caindo num ponto do mapa.
+
+	`unitId` e opcional: vindo, o pe do modelo manda, porque o servidor so conhece o
+	CFrame de posicionamento e o cliente mede a caixa real da unidade. A `position`
+	e o alvo quando o raio cai no chao, e o fallback de quando a unidade ainda nao
+	replicou.
+
+	O asset e um Attachment (o comeco do raio) com um Attachment filho `B` (o fim).
+	Posicionar os dois pelo `WorldPosition` e o suficiente: a posicao relativa do
+	filho se recalcula sozinha, e como nenhum dos dois tem BasePart de ancestral, o
+	mundo e o proprio referencial.
+]=]
+function VFXController:PlayLightningStrike(position : Vector3, unitId : string?)
+	if typeof(position) ~= "Vector3" then return end
+
+	local asset = self.Library[ThunderConfig.Asset]
+	if not asset then
+		warn(`[VFXController]: nao achei o VFX "{ThunderConfig.Asset}" em Assets.VFX.`)
+		return
+	end
+
+	local beam = asset:Clone()
+	local tip = beam:FindFirstChildWhichIsA("Attachment")
+	if not tip then
+		warn(`[VFXController]: "{ThunderConfig.Asset}" nao tem o Attachment filho que marca o fim do raio.`)
+		beam:Destroy()
+		return
+	end
+
+	-- Precisa estar no DataModel antes do emit: o modulo ignora o que esta solto.
+	beam.Parent = VFX.temp
+
+	local foot = position
+	if unitId then
+		local model = self:resolveUnitModel(unitId)
+		if model and model.Parent then
+			foot = footOf(model)
+		end
+	end
+
+	beam.WorldPosition = strikeOrigin(foot)
+	tip.WorldPosition = foot
+
+	--[[
+		Depois de posicionar, nunca antes: o Sound vira filho do Attachment da ponta,
+		entao ele sai de onde o raio bateu. O clone do som morre junto com o beam, e o
+		beam so e destruido bem depois de o estouro acabar.
+	]]
+	local weather = self.Controllers.WeatherController
+	if weather then
+		weather:PlayStrikeSound(tip)
+	end
+
+	--[[
+		O asset vem com `EmitRepeat = -1`, que e como o plugin marca a previa em
+		loop. Na pratica o `emit` trata -1 como "nao repete", mas depender disso e
+		fragil — aqui o tiro unico e dito na mao, e o resto dos atributos autorados
+		segue valendo.
+	]]
+	local attrs = beam:GetAttributes()
+	attrs.EmitRepeat = 0
+
+	VFX.emit(beam, attrs)
+
+	-- O asset nao tem ParticleEmitter proprio (o addon cria os dele em runtime),
+	-- entao o `maxLifetime` do modulo daria zero: a vida sai do `Duration` dele.
+	local duration = VFX.num(beam:GetAttribute("Duration"), 5)
+	VFX.destroyAfter(beam, duration + ThunderConfig.Cleanup)
+end
+
 function VFXController:buildLibrary()
 	local folder = Assets:FindFirstChild("VFX")
 	if not folder then return end
@@ -159,6 +264,12 @@ end
 
 function VFXController:construct()
 	self:buildLibrary()
+
+	-- Quem sorteia o alvo e o compasso e o ThunderService, no servidor: assim todo
+	-- mundo ve o mesmo raio na mesma unidade.
+	Framework:Listen("LightningStrike", function(position : Vector3, unitId : string?)
+		self:PlayLightningStrike(position, unitId)
+	end)
 end
 
 function VFXController:start()

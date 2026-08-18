@@ -39,7 +39,13 @@ ServerScriptService
 ├── Server (Script)                         <- common/server/Server
 ├── Config (ModuleScript)                   <- common/server/Config      [SÓ SERVIDOR]
 ├── Vendor                                  <- vendor/server
-├── CmdrDefinitions        (só no Lobby)    <- Lobby/src/CmdrDefinitions
+├── CmdrDefinitions
+│   ├── Types
+│   │   ├── Common                          <- common/server/CmdrDefinitions/Types
+│   │   └── Game | Lobby                    <- <place>/src/CmdrDefinitions/Types
+│   └── Commands
+│       ├── Common                          <- common/server/CmdrDefinitions/Commands
+│       └── Game | Lobby                    <- <place>/src/CmdrDefinitions/Commands
 └── Services
     ├── Common                              <- common/server/Services
     └── Game | Lobby                        <- <place>/src/Services
@@ -82,7 +88,17 @@ Sound:Duck(0.3)                                           -- abaixa pra cutscene
 Sound:PlaySFX("UnitPlace")                                -- efeito 2D
 Sound:PlaySFX("SubspaceTripmineSFX", { Parent = root,     -- 3D, e a Key derruba
                                        Key = "Tripmine" })--   o som anterior da mesma chave
+Sound:PlaySFX("Thunderstorm", { Looped = true,            -- ambiente: entra com fade
+                                Key = "WeatherAmbience",
+                                Fade = 2 })
+Sound:StopSFX("WeatherAmbience", 2)                       -- e sai com fade
+Sound:PlaySFX("Thunder", { FadeOut = 1 })                 -- cauda suavizada no fim
 ```
+
+`Fade` e `FadeOut` valem para SFX também, não só para música. O `FadeOut` termina
+junto com o som (ou com o `Cut`), não depois: num clipe de 3,63s com `FadeOut = 1` o
+fade começa em 2,63s. O `StopSFX` sem tempo continua cortando seco — é o que o
+`PlaySFX` usa quando a mesma `Key` é reaproveitada, para o som novo entrar na hora.
 
 Música toca a instância original (o volume do Studio é o base; fade, master,
 mute e duck multiplicam em cima). SFX sempre toca um clone que se destrói no
@@ -110,6 +126,299 @@ de variações por superfície (sorteia uma por passo, sem repetir a anterior).
 Part sem o atributo fica em silêncio de propósito — assim o que falta marcar
 aparece, em vez de virar grama por engano.
 
+### Lighting
+
+Um preset é uma Folder em `ReplicatedStorage.Shared.Assets.Lighting`. Os
+**atributos** dela são as propriedades do próprio `Lighting`; os **filhos** são as
+instâncias que vão para dentro dele:
+
+```
+Assets.Lighting
+└── Blizzard              (Folder)  atributos: Ambient, Brightness, ClockTime, FogColor…
+    ├── Atmosphere        (Atmosphere)
+    ├── Sky               (Sky)
+    └── ColorCorrection   (ColorCorrectionEffect)
+```
+
+`LightingService` (`common/server/Services`) clona a pasta, limpa o `Lighting` e
+joga o conteúdo do clone lá dentro. O corte é seco: o servidor é a verdade, e quem
+entra no meio da partida tem que receber o estado final direto.
+
+```lua
+local LightingService = Framework:Get("LightingService")
+
+LightingService:Apply("Blizzard")       -- transição no tempo padrão
+LightingService:Apply("Foggy", 4)       -- transição de 4s
+LightingService:Apply("Foggy", 0)       -- sem transição
+```
+
+`LightingController` (`common/client/Controllers`) é quem suaviza. No aviso de
+troca ele devolve as propriedades ao valor do preset anterior e interpola até o
+novo — number, Color3, Vector3, UDim, NumberRange, Rect e CFrame. O que não
+interpola (boolean, string, EnumItem, sequences) é corte: **ligar** entra no
+começo da transição, **desligar** espera o fim, para o efeito participar dela.
+
+A origem da interpolação é o estado que o próprio controller escreveu por último,
+não o que está no `Lighting` na hora: quando o aviso chega, o valor novo já pode
+ter replicado por cima. O destino vem da Folder do preset, pela mesma razão.
+Transição interrompida no meio congela onde está e vira a origem da seguinte, em
+vez de saltar para trás.
+
+Instância que existe nos dois presets **com o mesmo nome e a mesma classe** é
+interpolada valor a valor. A que existe só num dos lados **entra e sai
+interpolando também**, e não piscando: `LightingConfig.Neutral` diz, por classe,
+quais propriedades significam "este efeito não está fazendo nada"
+(`BlurEffect.Size = 0`, `Atmosphere.Density = 0`, …). Quem entra começa no neutro e
+sobe até o valor do preset; quem sai é recriado como uma cópia local — o servidor já
+destruiu a original — que desce até o neutro e é destruída no fim.
+
+Isso pesa mais do que parece: trocar de mapa mexe muito mais em *quais* efeitos
+existem do que nos valores dos que continuam existindo. Sem o neutro, a maior parte
+da mudança visual de uma troca é corte seco — nas iluminações dos mapas de hoje é a
+diferença entre 1 e 7 propriedades interpolando num `Snowy -> Volcano`. Classe sem
+neutro (`Sky`) continua entrando de uma vez, que é o certo: textura não tem
+meio-caminho.
+
+`SharedConfig.LightingConfig` tem o tempo/easing padrão, a lista de propriedades por
+classe e a tabela de neutros. A lista é na mão porque Roblox não tem reflection em
+runtime; classe que não estiver lá entra no `Lighting` normalmente, só não é
+interpolada. No Studio o controller loga quantas propriedades entraram em cada
+transição, porque "interpolou pouco" e "não interpolou" são indistinguíveis na tela.
+
+Duas conveniências: Folder solta dentro do `Lighting` é adotada como preset na
+entrada do servidor (é como a Main Game guarda `FoggyLightning` e
+`BlizzardLightning` — não precisa mover nada na place), e o que sobrar vira o
+preset `Default`, para a primeira troca já ter de onde sair. Filho do `Lighting`
+com o atributo `LightingKeep = true` sobrevive ao clear.
+
+#### Comandos (Cmdr, nas duas places)
+
+```
+lighting <preset> [segundos]     troca o preset; tab completa os nomes
+                                 segundos omitido = padrão do config, 0 = corte seco
+lightinglist                     lista o que existe em Assets.Lighting
+weather <clima|off> [segundos]   liga o clima no mapa carregado; off desliga
+strike [unidade]                 (só na Game) derruba um raio numa unidade posicionada
+```
+
+`strike` sem argumento pega qualquer unidade no mapa; com um tipo (`strike Sword`)
+sorteia entre as daquele tipo, e diz em quem caiu. Nome com espaço precisa de aspas:
+`strike "Subspace Tripminer"`. O autocomplete oferece o catálogo inteiro do
+`UnitStats` — quem sabe o que está *posicionado* é o servidor, e ele responde com a
+lista real quando não acha nenhuma.
+
+`lightinglist` (alias `lightings`) mostra quantas propriedades e quantas instâncias
+cada preset declara, marca o atual com `>` e aponta os vazios — é o jeito rápido de
+ver por que um preset "não fez nada". `lighting` (alias `setlighting`) num preset
+que já é o atual reaplica de propósito, para testar uma pasta recém-mexida no Studio.
+
+O tipo `lightingPreset` monta o autocomplete lendo `Assets.Lighting` na hora, e não
+de uma lista fixa: os presets de mapa só passam a existir depois que o `MapService`
+registra o mapa carregado.
+
+> Comando que depende de service de uma place só mora na pasta daquela place — o
+> `strike` precisa do `ThunderService`, que só existe na Game, e no Lobby o
+> `Framework:Get` com yield ficaria esperando para sempre.
+
+> O Cmdr era só do Lobby. Passou para as duas places nessa mudança:
+> `CmdrService` foi para `common/server/Services`, `CmdrController` para
+> `common/client/Controllers`, os comandos compartilhados para
+> `common/server/CmdrDefinitions`, e o `Game/wally.toml` ganhou a dependência. Os
+> comandos de crate (`setcrates`, `unbox`) continuam em `Lobby/src/CmdrDefinitions`,
+> que é onde fazem sentido.
+
+### Weather
+
+Um clima é um Model em `ReplicatedStorage.Shared.Assets.Weathers`, com uma **tag**
+dizendo como ele encaixa no mapa:
+
+```
+Assets.Weathers
+├── Snow      (Model, tag "AreaWeather")
+│   ├── Part      (os ParticleEmitters)
+│   └── Lighting  (Folder — preset, mesmo formato de Assets.Lighting)
+└── Thunder   (Model, tag "SkyWeather")
+```
+
+`WeatherService` (`common/server/Services`) clona o Model para `workspace.Weather`,
+encaixa a `Part` na caixa do mapa carregado e entrega a pasta `Lighting` ao
+`LightingService` — então a troca de clima entra na **mesma transição interpolada**
+de qualquer outra troca de iluminação, de graça.
+
+```lua
+local WeatherService = Framework:Get("WeatherService")
+
+WeatherService:Apply("Snow")        -- transição no tempo padrão
+WeatherService:Apply("Thunder", 4)  -- em 4s
+WeatherService:Clear()              -- tira, e devolve a iluminação de antes
+```
+
+| Tag | O que faz com a `Part` |
+|---|---|
+| `AreaWeather` | vira a caixa inteira — `Size` e `Position` |
+| `SkyWeather` | X e Z do tamanho da caixa; centro em X/Z, e Y no topo dela + `SkyHeightOffset`. A altura da Part é a autorada, porque é a espessura da camada |
+
+O offset do céu sai de `WeatherConfig.SkyHeightOffset` (20), e um Model pode trazer
+o atributo `HeightOffset` para mandar no seu próprio valor. Vale saber na hora de
+ajustar: as partículas do Thunder têm `Drag = 12` contra `Accel.Y = -15`, ou seja
+velocidade terminal de ~1.2 studs/s — a camada praticamente não cai, fica onde o
+offset colocar.
+
+#### Áudio
+
+As partículas e a iluminação chegam ao cliente sozinhas — as primeiras pela
+replicação de `workspace.Weather`, a segunda pelo `LightingApplied`. Som não: é
+local de cada cliente, e quem cuida é o `WeatherController`
+(`common/client/Controllers`), escutando o `WeatherChanged` que o `Apply`/`Clear`
+transmitem.
+
+- **ambiente**: enquanto o clima estiver ligado, o loop de `WeatherConfig.Ambience`
+  toca ao fundo pelo `MusicController`, entrando e saindo com fade. Hoje só o
+  `Thunder` tem um (`Thunderstorm`, fade de 2s). Trocar de um clima com ambiente
+  para outro cruza os dois fades em vez de estalar.
+- **estouro do raio**: cada queda toca um clone próprio de `Thunder`, com
+  `FadeOut = 1` para a cauda não cortar seca. Sem `Key`, de propósito — dois raios
+  seguidos se sobrepõem em vez de um derrubar o outro. O Sound nasce **dentro do
+  Attachment da ponta do raio**, então é 3D e sai do ponto de impacto: quem chama é
+  o `VFXController`, que é quem tem a âncora; a política de áudio (qual som, qual
+  fade, qual volume) fica no `WeatherController`. `StrikeVolume` existe porque o
+  asset tem `RollOffMinDistance = 10` e a câmera de tower defense fica longe do
+  chão — é o multiplicador para compensar sem mexer no asset.
+
+  O clone do som morre junto com o beam, e o beam só é destruído em `Duration +
+  Cleanup` (8s) contra os 3,63s do estouro — sobra folga de 4,4s.
+
+O ambiente é forçado a `Looped = true`: o asset não vem em loop, e sem isso ele
+acabaria no meio do clima. Em loop ele nunca agenda o próprio fim — só sai pelo
+`StopSFX(AmbienceKey, fade)`.
+
+O clima é servidor-autoritativo: o clone vive em `workspace.Weather` e replica para
+todo mundo, um por vez. Ao entrar, toda BasePart do clone vira intangível
+(`CanCollide`, `CanQuery` e `CanTouch` desligados) — os assets vêm com
+`CanCollide = true`, e uma Part esticada para cobrir o mapa viraria uma parede
+invisível, além de sujar o raycast dos passos e a validação de posicionamento.
+
+O `Clear` devolve a iluminação que estava antes do **primeiro** clima, não a do
+clima anterior — trocar de Snow para Thunder e desligar volta para a iluminação do
+mapa, não para a do Snow.
+
+#### Raios (Thunder)
+
+Com o clima `Thunder` ligado cai um raio a cada `Interval` (5s). Onde ele cai é
+sorteado: ou em cima de uma unidade posicionada, ou num ponto qualquer dentro da
+`BoundingBox` do mapa. Quem dá o compasso e sorteia é o `ThunderService`
+(`Game/src/Services`); quem desenha é o `VFXController`, no cliente.
+
+A chance de acertar unidade é um **pity**: começa em `UnitChance` (0.15), sobe
+`UnitChanceStep` a cada raio que cai no chão e volta ao piso quando um acerta. Como
+a escada é 0.15 → 0.30 → … → 1.00, o sétimo raio é garantido. Simulado em 20 mil
+sequências: média de 2,9 raios até acertar (~15s) e pior caso 7 (~35s). Sem isso,
+chance fixa baixa deixaria passar a partida inteira sem um raio em unidade, e chance
+fixa alta viraria metralhadora nas torres.
+
+A chance não sobe quando não há unidade nenhuma no mapa — o pity conta raio que
+*poderia* ter acertado e não acertou. E o clima sendo desligado zera tudo: relógio e
+pity voltam ao começo.
+
+O ponto no chão sorteia X e Z dentro da caixa e tira o Y de um raycast para baixo,
+porque o terreno tem altura variável e largar o raio no fundo da caixa o deixaria
+enterrado nas partes altas. Medido no `Farm`: 400 sorteios, todos acharam chão, com
+Y variando de 6.5 a 33.0 e nenhum fora da caixa. A própria `BoundingBox` não
+atrapalha a consulta porque o `LoadMap` a clona com `CanQuery` desligado.
+
+A divisão é obrigatória por dois motivos: `ReplicatedStorage.vfx` **se recusa a
+rodar fora do cliente**, e sortear no servidor é o que faz todos verem o mesmo raio
+no mesmo lugar — com cada cliente sorteando o seu, dois jogadores lado a lado veriam
+raios diferentes.
+
+O evento manda a posição e, quando o alvo é uma unidade, o `unitId` junto. O cliente
+prefere o `unitId`: ele mede o pé pela caixa real do modelo, enquanto o servidor só
+conhece o CFrame de posicionamento. A posição é o alvo do raio no chão, e o fallback
+de quando o modelo ainda não replicou.
+
+O asset (`Assets.VFX.LightningBeam`) é um **Attachment** (o começo do raio) com um
+Attachment filho **`B`** (o fim) — é por ter um filho de letra única que o addon
+`LightningBeams` o reconhece como raio. Posicionar os dois pelo `WorldPosition`
+basta: a posição relativa do filho se recalcula sozinha, e como nenhum deles tem
+BasePart de ancestral, o mundo é o próprio referencial.
+
+- **fim** (`B`): o pé da unidade — centro da base da caixa dela, não o `GetPivot`,
+  que cairia no meio do corpo.
+- **começo**: a altura da Part do clima em `workspace.Weather`, para o raio descer
+  de onde está a nuvem. Sem clima ligado, `StrikeHeight` acima do pé.
+
+Duas coisas do módulo que valem saber. O asset vem com `EmitRepeat = -1`, que é como
+o plugin marca a prévia em loop — o `emit` acaba tratando -1 como "não repete", mas
+o controller passa `EmitRepeat = 0` na mão em vez de depender disso. E o
+`maxLifetime` do módulo daria zero aqui, porque os ParticleEmitters são criados pelo
+addon em runtime e não existem no asset: a vida do clone sai do atributo `Duration`
+dele mais `Cleanup`.
+
+O raio hoje é **só visual** — não tira vida nem atordoa. O gancho seria no
+`ThunderService:strike`, ao lado do `Framework:Fire`.
+
+Para testar sem esperar o intervalo, o comando `strike` chama o
+`ThunderService:strikeUnit` direto — força acerto em unidade, sem passar pelo
+sorteio do pity.
+
+#### A caixa do mapa
+
+Cada mapa traz uma Part **`BoundingBox`** (irmã de `Content`) dizendo onde ele fica,
+e ela manda nos dois tipos de clima. Só `Position` e `Size` são lidos — as caixas são
+alinhadas aos eixos, rotação é ignorada.
+
+Ela é irmã de `Content`, mas quem a consome é o `WeatherService`, que só enxerga o
+Workspace — então o `LoadMap` a clona para dentro de `workspace.Map`, inerte
+(`CanQuery` desligado, para não aparecer no raycast dos passos nem na validação de
+posicionamento de unidade).
+
+Mapa sem a caixa cai para medir a geometria, e aí valem `BoundsFolders`
+(`Terrain` + `Path`, para o `Locked` de cenário não entrar) e `MaxPartFootprint`
+(512 studs, porque o `Snowy` tem dois planos `Ice` de 2048x2048 dentro do próprio
+`Terrain` e o `Volcano` guarda a água lá). É plano B: as heurísticas erram feio
+justamente nesses dois — o `Volcano` calculado dá 500x500 contra os 147x109 da caixa
+autorada.
+
+A caixa respeita rotação: a meia-extensão do AABB de uma Part girada é
+`|R| * meioTamanho`, e não `Size/2`.
+
+#### Mapas (Game)
+
+`MapService:LoadMap` aplica a pasta `Lighting` do mapa por aqui, em vez de limpar o
+`Lighting` na mão:
+
+```lua
+local preset = LightingService:Register(MapLighting, LightingConfig.MapPrefix .. Name)
+LightingService:Apply(preset)
+```
+
+`Register` existe por causa da replicação: os mapas moram em `ServerStorage`, que
+não replica, então a pasta é clonada para `Assets.Lighting` (virando `Map_Farm`,
+`Map_Cave`, …) antes de ser aplicada — sem esse clone o cliente não teria de onde
+ler os valores de destino da transição. Mapa sem a pasta fica com a iluminação
+autorada na place.
+
+O `init` registra a pasta de **todos** os mapas, não só a do que vai ser carregado
+(`MapService:registerMapLighting`). São seis instâncias pequenas por mapa, e é o que
+permite o `lighting` trocar entre as iluminações para comparar uma com a outra em
+jogo — com só a do mapa em curso registrada, não haveria para onde ir.
+
+Uma pasta com **zero atributos** é legítima, e aí o resultado correto é as
+propriedades do `Lighting` não mudarem — só as instâncias trocam, que é o mesmo que
+o `LoadMap` fazia antes. Para um mapa definir a iluminação inteira, é pôr os
+atributos na pasta dele. Como "aplicou e não mudou nada" e "não aplicou" ficariam
+idênticos no console, o `Apply` loga no Studio quantas propriedades e quantas
+instâncias entraram, o `LoadMap` avisa quando o mapa não tem a pasta, e o
+`lightinglist` mostra o mesmo de dentro do jogo.
+
+Dois detalhes de nomenclatura nas pastas dos mapas. Os nomes divergem entre eles
+(`Blur [Realism Mod]` num, `Blur` noutro, `SunRays` vs `SunRays [Realism Mod]`) e a
+interpolação casa por nome — com o neutro isso não é mais um corte, mas o efeito
+some até zero e o outro sobe do zero em vez de um virar o outro direto. Padronizar
+os nomes deixa a transição mais curta e mais bonita. E vários trazem **dois** filhos
+chamados `Atmosphere`; o segundo é ignorado, aqui e pela própria engine — quem vale
+é o primeiro.
+
 ## Configuração: o que é replicado e o que não é
 
 Antes, `ReplicatedStorage.Shared.Config.Server` era replicado para todo cliente —
@@ -119,7 +428,7 @@ e a lista de admins do Cmdr. Isso foi separado:
 | | Onde | Conteúdo |
 |---|---|---|
 | **Servidor** | `ServerScriptService.Config` ← `common/server/Config` | `Data` (PROFILE_KEY + template), `Wave`, `Summon`, `Difficulty`, `Cmdr` (ADMIN_USER_IDS, GROUP_ID, ALLOW_IN_STUDIO) |
-| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, `Mob`, `Cmdr` cosmético) |
+| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, `Mob`, `Cmdr` cosmético) |
 
 Convenção nos scripts de servidor:
 

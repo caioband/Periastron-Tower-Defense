@@ -34,6 +34,27 @@
       "Config": { "$path": "../common/server/Config" },
       "Vendor": { "$path": "../vendor/server" },
 
+      "CmdrDefinitions": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": false,
+
+        "Types": {
+          "$className": "Folder",
+          "$ignoreUnknownInstances": false,
+
+          "Common": { "$path": "../common/server/CmdrDefinitions/Types" },
+          "Game": { "$path": "src/CmdrDefinitions/Types" }
+        },
+
+        "Commands": {
+          "$className": "Folder",
+          "$ignoreUnknownInstances": false,
+
+          "Common": { "$path": "../common/server/CmdrDefinitions/Commands" },
+          "Game": { "$path": "src/CmdrDefinitions/Commands" }
+        }
+      },
+
       "Services": {
         "$className": "Folder",
         "$ignoreUnknownInstances": false,

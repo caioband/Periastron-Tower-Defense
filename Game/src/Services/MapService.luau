@@ -35,9 +35,35 @@ local Me = require(Vendor.Me)
 
 local Framework = Me.new()
 
+local LightingConfig = SharedConfig.LightingConfig
+local WeatherConfig = SharedConfig.WeatherConfig
+
 local ExampleService = {
-	Services = {}
+	Services = {
+		LightingService = {}
+	}
 }
+
+--[=[
+	Espera um service aparecer no loader, com limite.
+
+	`Framework:Get` com yield esperaria para sempre se o service nao existisse, e um
+	`init` travado em silencio seria pior do que carregar o mapa sem iluminacao. O
+	`Me:Load` fecha em muito menos que isto.
+]=]
+local function waitForService(name : string, timeout : number?)
+	local deadline = os.clock() + (timeout or 5)
+
+	repeat
+		local service = Framework:Get(name)
+		if service then
+			return service
+		end
+		task.wait()
+	until os.clock() >= deadline
+
+	return nil
+end
 
 --[=[
 	Um mapa qualquer entre os que o MapConfig oferece e que existem de fato na
@@ -137,6 +163,28 @@ function ExampleService:LoadMap(Name : string)
 		local Map = MapContent:FindFirstChild("Map")
 		local Clone = Map:Clone()
 		Clone.Parent = workspace
+
+		--[=[
+			A BoundingBox e irma do Content na pasta do mapa, mas quem a consome e o
+			WeatherService, que so enxerga o Workspace — entao ela entra junto do mapa.
+
+			Inerte de proposito: `CanQuery` desligado tira ela do raycast dos passos e
+			da validacao de posicionamento de unidade, que varrem o que esta em cima do
+			mapa.
+		]=]
+		local Bounds = MapInstance:FindFirstChild(WeatherConfig.BoundsPartName)
+		if Bounds and Bounds:IsA("BasePart") then
+			local BoundsClone = Bounds:Clone()
+			BoundsClone.Anchored = true
+			BoundsClone.CanCollide = false
+			BoundsClone.CanQuery = false
+			BoundsClone.CanTouch = false
+			BoundsClone.Transparency = 1
+			BoundsClone.Parent = Clone
+		else
+			warn(string.format("[MapService]: o mapa '%s' nao tem a Part '%s'; o clima vai cair para a caixa calculada.",
+				Name, WeatherConfig.BoundsPartName))
+		end
 	end
 
 	local Spawn = MapInstance:FindFirstChild("SpawnLocation")
@@ -173,20 +221,78 @@ function ExampleService:LoadMap(Name : string)
 		PathUtil.PublishNodeCounts(workspace.PathScriptable.Nodes)
 	end
 
-	local Lighting = MapInstance:FindFirstChild("Lighting")
-	if Lighting then
+	--[=[
+		A iluminacao do mapa passa pelo LightingService.
 
-		for _, Inst in game.Lighting:GetChildren() do
-			Inst:Destroy()
+		`Register` clona a pasta para `Assets.Lighting` antes de aplicar, e esse clone
+		e o que faz a transicao existir: os mapas moram em ServerStorage, que nao
+		replica, entao sem ele o cliente nao teria de onde ler os valores de destino.
+
+		Mapa sem a pasta fica com a iluminacao autorada na place — o `Snowy` e assim
+		hoje, e continua sendo.
+	]=]
+	local MapLighting = MapInstance:FindFirstChild("Lighting")
+	if not MapLighting then
+		-- Dito em voz alta porque e indistinguivel de "o service falhou" no console.
+		warn(string.format("[MapService]: o mapa '%s' nao tem pasta Lighting; a iluminacao fica a que estava.", Name))
+		return
+	end
+
+	local LightingService = self.Services.LightingService
+	if not LightingService or not LightingService.Register then
+		warn("[MapService]: LightingService indisponivel; a iluminacao do mapa nao foi aplicada.")
+		return
+	end
+
+	local presetName = LightingConfig.MapPrefix .. Name
+
+	-- `registerMapLighting` normalmente ja registrou todo mundo no init; isto cobre
+	-- um LoadMap de um mapa que apareceu depois.
+	if not LightingService:GetPreset(presetName) then
+		presetName = LightingService:Register(MapLighting, presetName) or presetName
+	end
+
+	LightingService:Apply(presetName)
+end
+
+--[=[
+	Registra a pasta `Lighting` de TODOS os mapas como preset, nao so a do mapa
+	carregado.
+
+	Os mapas vivem em ServerStorage e nao replicam; o `Register` clona cada pasta
+	para `Assets.Lighting`, que e o que faz o cliente enxergar todas. Sem isto o
+	comando `lighting` so conseguiria oferecer a do mapa em jogo — e trocar de
+	iluminacao para testar exige justamente as outras.
+
+	Sao seis instancias pequenas por mapa; o custo de replicar todas e irrelevante
+	perto de poder comparar uma com a outra em jogo.
+]=]
+function ExampleService:registerMapLighting() : number
+	local LightingService = self.Services.LightingService
+	if not LightingService or not LightingService.Register then
+		return 0
+	end
+
+	local registered = 0
+	local missing = {}
+
+	for _, map in Maps:GetChildren() do
+		local mapLighting = map:FindFirstChild("Lighting")
+		if not mapLighting then
+			table.insert(missing, map.Name)
+			continue
 		end
 
-		for _, Instance in Lighting:GetChildren() do
-			local Clone = Instance:Clone()
-			Clone.Parent = game.Lighting
+		if LightingService:Register(mapLighting, LightingConfig.MapPrefix .. map.Name) then
+			registered += 1
 		end
 	end
 
+	if #missing > 0 then
+		warn(string.format("[MapService]: sem pasta Lighting, ficaram de fora dos presets: %s.", table.concat(missing, ", ")))
+	end
 
+	return registered
 end
 
 function ExampleService:construct()
@@ -207,6 +313,23 @@ end
 function ExampleService:init()
 
 	Framework:Listen("PlayMapMusic", function() end)
+
+	--[[
+		O LightingService entra aqui, antes de decidir o mapa, de proposito: esta e a
+		ultima hora em que ceder a thread nao custa nada. Depois que o mapa foi
+		decidido o LoadMap corre dentro do PlayerAdded e nao pode mais parar (ver
+		abaixo), e o `start`, que resolveria as dependencias normalmente, roda depois
+		deste `init`.
+	]]
+	self.Services.LightingService = waitForService("LightingService")
+	if not self.Services.LightingService then
+		warn("[MapService]: LightingService nao carregou; o mapa vai entrar sem trocar a iluminacao.")
+	else
+		-- Todos os mapas viram preset, nao so o que vai ser carregado: e o que
+		-- permite o comando `lighting` trocar entre as iluminacoes para comparar.
+		local registered = self:registerMapLighting()
+		print(string.format("[MapService]: %d iluminacao(oes) de mapa registrada(s) em Assets.Lighting.", registered))
+	end
 
 	--[[
 		Carregado assim que houver como decidir, e nao num nome fixo.

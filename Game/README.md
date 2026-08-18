@@ -9,10 +9,15 @@ compartilhado entre as duas places. Aqui fica só o que é exclusivo deste place
 |---|---|---|
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | LocalScript de entrada |
 | `src/Controllers/` | `Client.Controllers.Game` | Card, Difficulty, Loading, Mob, Music, Projectile, Ready, Targeting, Tripmine, UILibrary, UnitPlacement, VFX, Wave |
-| `src/Services/` | `ServerScriptService.Services.Game` | Data, Difficulty, Map, Mob, Unit, Wave |
+| `src/Services/` | `ServerScriptService.Services.Game` | Data, Difficulty, Map, Mob, Thunder, Unit, Wave |
+| `src/CmdrDefinitions/` | `ServerScriptService.CmdrDefinitions.*.Game` | comando `strike` e o tipo `unitName` |
 
-O `Summon` e o `Cmdr` no `ServerScriptService.Config` vêm do compartilhado e não
-são usados aqui — são pequenos e ficam por consistência entre as places.
+O `Summon` no `ServerScriptService.Config` vem do compartilhado e não é usado aqui
+— é pequeno e fica por consistência entre as places. O `Cmdr` do mesmo lugar **é**
+usado: o console passou a rodar nas duas places junto com os comandos de Lighting
+(ver o README da raiz). Este place traz o `strike` em `src/CmdrDefinitions/`, que
+depende do `ThunderService` daqui — comando de service local não pode morar no
+compartilhado, ou o Lobby travaria tentando resolver um service que não existe lá.
 
 ## Dependências Wally
 
@@ -41,6 +46,36 @@ prática: `CollectionService:GetTagged("Grid")` no cliente devolve exatamente as
 parts do caminho em jogo. No servidor, não: lá as 585 parts dos seis mapas
 guardados também aparecem, e quem consulta a tag precisa filtrar por
 `workspace.Map` (é o que `UnitService:getGridParts` faz).
+
+## Card de upgrade (`StarterGui.Interface.CardUpgrade`)
+
+O componente `UILibraryController/Components/ToggleTower.luau` preenche o card da
+unidade selecionada. Cada TextLabel do StarterGui já traz o sufixo desenhado
+(`DPS`, `ATSPD`, `RANGE`, `DMG DONE`) e o componente só troca o número:
+
+| Label | Fonte |
+|---|---|
+| `Info.UnitName` / `Info.UnitLevel` | nome do modelo e atributo `Upgrades` |
+| `UpgradeCost.TextLabel` | `UnitUpgradeConfig:GetCost`, ou `MAX` no último nível |
+| `Sell.TextLabel` | `GetInvested` × `SharedConfig.SellRefundRatio` |
+| `DamagePerSecond` | `GetDPS` (dano × hits ÷ cooldown); em unidade de farm, a renda por wave |
+| `AttackSpeed` | `GetCooldown`, em segundos |
+| `Range` | `GetRange` |
+| `DmgDone` | atributo `DamageDone` do modelo |
+
+Tudo menos o `DmgDone` sai do `UnitUpgradeConfig` — o cliente refaz a mesma conta
+do servidor a partir do nível, então não precisa de replicação. O `DmgDone` só o
+servidor sabe: `MobService:DamageMob` devolve o dano que de fato entrou no mob,
+`UnitService:addDamageDone` acumula em `entry.damageDone` e um flush a cada 0,25 s
+manda um lote `unitId -> total` (`UnitDamageStats`) para todos os jogadores —
+qualquer um pode selecionar qualquer unidade. Quem entra no meio da partida recebe
+o total de todas as unidades junto do `ClientReady`. No cliente, o
+`UnitPlacementController` grava o valor no atributo `DamageDone` do modelo, e o
+card reage pelo `GetAttributeChangedSignal`.
+
+O botão `Priority` continua sem função: não existe sistema de prioridade de alvo
+no jogo (o `TargetingController` sempre pega o primeiro mob no alcance), então o
+texto `First [V]` segue sendo o placeholder do StarterGui.
 
 ## Bug conhecido (não corrigido)
 

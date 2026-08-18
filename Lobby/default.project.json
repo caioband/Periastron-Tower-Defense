@@ -33,7 +33,26 @@
       "Server": { "$path": "../common/server/Server" },
       "Config": { "$path": "../common/server/Config" },
       "Vendor": { "$path": "../vendor/server" },
-      "CmdrDefinitions": { "$path": "src/CmdrDefinitions" },
+      "CmdrDefinitions": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": false,
+
+        "Types": {
+          "$className": "Folder",
+          "$ignoreUnknownInstances": false,
+
+          "Common": { "$path": "../common/server/CmdrDefinitions/Types" },
+          "Lobby": { "$path": "src/CmdrDefinitions/Types" }
+        },
+
+        "Commands": {
+          "$className": "Folder",
+          "$ignoreUnknownInstances": false,
+
+          "Common": { "$path": "../common/server/CmdrDefinitions/Commands" },
+          "Lobby": { "$path": "src/CmdrDefinitions/Commands" }
+        }
+      },
 
       "Services": {
         "$className": "Folder",
