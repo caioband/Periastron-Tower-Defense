@@ -26,12 +26,15 @@ return {
 
 		PurchaseHistory = {},
 		Index = {},
+		--[[
+			O que o jogador novo ja tem. So Common e Rare: antes ele comecava com
+			duas Rocket e duas Subspace Tripminer, ou seja, com o topo da tabela na
+			mao e nada a conquistar na primeira hora.
+		]]
 		Units = {
-			["Entrepreneur"] = 2,
-			["Slingshot"] = 2,
-			["Subspace Tripminer"] = 2,
+			["Slasher"] = 3,
 			["Sword"] = 2,
-			["Rocket"] = 2,
+			["Slingshot"] = 1,
 		},
 		EquippedUnits = {}
 	},
@@ -43,7 +46,7 @@ return {
 		sobrevividas e pelos multiplicadores da dificuldade.
 	]]
 	BASE_WINNING_CASH = 1000,
-	BASE_WINNING_SHARDS = 30,
+	BASE_WINNING_SHARDS = 60,
 	BASE_WINNING_XP = 200,
 
 	-- Shards so comecam a cair depois desta fracao da run, e dai crescem por uma
@@ -54,10 +57,26 @@ return {
 	SHARD_CURVE = 2,
 
 	-- Fallback: o numero de waves de verdade vem do `MaxWaves` da dificuldade
-	-- (Config/Difficulty.luau). Isto so vale se um preset nao definir o campo.
-	MAX_WAVES = 15,
-	CASH_PER_DAMAGE = 1,
-	CASH_PER_KILL_MIN = 3,
-	CASH_PER_KILL_MAX = 6,
+	-- (Config/Difficulty.luau). Isto so vale se um preset nao definir o campo, e
+	-- e multiplo de 9 como os presets, para cair na wave do chefe.
+	MAX_WAVES = 18,
+	--[[
+		Caixa por ponto de dano, e so pelo dano que de fato entrou (ver
+		`MobService:DamageMob`). Antes era 1 por ponto do valor cheio do golpe, o
+		que pagava o excedente: um tiro de 70 num inimigo de 5 de vida rendia 70.
+		Isso fazia o dano ser dois tercos da economia da partida e crescer junto
+		com a vida dos inimigos, entao quanto mais dificil o preset, mais rico o
+		jogador ficava. O que sobrou dessa renda foi para as recompensas de morte,
+		em `Config.Wave`.
+
+		A taxa caiu de 0,3 para 0,15 junto com a planilha de waves: sao muito mais
+		inimigos por wave do que antes, entao o mesmo 0,3 por ponto dobraria a
+		renda de dano.
+	]]
+	CASH_PER_DAMAGE = 0.15,
+
+	-- So valem quando o inimigo nao traz `Reward` — as waves sempre trazem.
+	CASH_PER_KILL_MIN = 6,
+	CASH_PER_KILL_MAX = 12,
 	MAX_DATA_TIME_OUT = 20,
 }

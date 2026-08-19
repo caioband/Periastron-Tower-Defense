@@ -18,6 +18,13 @@ local module = {}
 
 	A crate comum não alcança Cosmic: o único caminho dela para lá é evoluir antes
 	(veja UPGRADES abaixo).
+
+	⚠️ Cosmic está com peso ZERO em todas as linhas porque nenhuma unit tem essa
+	raridade no UnitStats. Quando o sorteio caía lá, o servidor descia um degrau e
+	só registrava um aviso — ou seja, o prêmio máximo do jogo entregava uma
+	lendária repetida, e era 10% da crate lendária (a de 1800 shards). O peso que
+	era do Cosmic foi para Legendary. No dia em que existir uma unit Cosmic, basta
+	devolver os pesos: 0,5 na rara, 1 na épica e 10 na lendária.
 ]]
 module.POOLS = {
 	["Common"] = {
@@ -32,24 +39,24 @@ module.POOLS = {
 		Common = 45,
 		Rare = 40,
 		Epic = 12,
-		Legendary = 2.5,
-		Cosmic = 0.5,
+		Legendary = 3,
+		Cosmic = 0,
 	},
 
 	["Epic"] = {
 		Common = 0,
 		Rare = 45,
 		Epic = 45,
-		Legendary = 9,
-		Cosmic = 1,
+		Legendary = 10,
+		Cosmic = 0,
 	},
 
 	["Legendary"] = {
 		Common = 0,
 		Rare = 20,
 		Epic = 40,
-		Legendary = 30,
-		Cosmic = 10,
+		Legendary = 40,
+		Cosmic = 0,
 	},
 }
 

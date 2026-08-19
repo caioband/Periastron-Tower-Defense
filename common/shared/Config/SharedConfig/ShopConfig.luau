@@ -69,6 +69,14 @@ module.DEFAULT_BUTTON_TEXT = "BUY"
 		Image         optional override of the icon shown on the row
 		ButtonText    optional override of the confirm button label
 ]=]
+
+--[[
+	Preços em shards, calibrados contra o que uma partida rende (60 no Médio, 180 no
+	Nightmare): a crate comum sai a cada duas partidas no Médio e a lendária a cada
+	dez no Nightmare. Antes o Médio rendia 30 e a lendária custava 1500 — cinquenta
+	partidas —, então a loja ficava fora de alcance e o banner era a única rota real
+	para unidades novas.
+]]
 module.ITEMS = {
 	{
 		Id = "CommonCrate",
@@ -81,21 +89,21 @@ module.ITEMS = {
 		Id = "RareCrate",
 		Order = 2,
 		Crate = "Rare",
-		Price = 250,
+		Price = 300,
 	},
 
 	{
 		Id = "EpicCrate",
 		Order = 3,
 		Crate = "Epic",
-		Price = 600,
+		Price = 800,
 	},
 
 	{
 		Id = "LegendaryCrate",
 		Order = 4,
 		Crate = "Legendary",
-		Price = 1500,
+		Price = 1800,
 	},
 }
 

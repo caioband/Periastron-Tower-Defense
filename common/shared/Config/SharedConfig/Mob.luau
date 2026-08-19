@@ -1,5 +1,23 @@
+--[[
+	A vida base de cada inimigo. O que chega no mob e a vida daqui multiplicada
+	pela dificuldade e pela wave: `HealthMultiplier * HealthGrowth^(wave-1)`, ver
+	`MobService:SpawnWave`.
+
+	Estes numeros sao os da planilha do Dificil (`Config.Wave`): a coluna de vida
+	total por wave dela foi calculada com eles, entao mexer aqui desloca a curva
+	inteira. A variedade de vida entre os tipos e de proposito — o Squire e fragil
+	e rapido, o Guard e gordo e lento — e a mistura de tipos por wave e o que faz a
+	curva subir, nao o tamanho de um inimigo so.
+]]
+
 local Mob = {}
 
+--[[
+	Velocidade de referencia, em studs por segundo. A velocidade que o mob recebe e
+	`BaseSpeed * SpeedMultiplier do inimigo * SpeedMultiplier do preset *
+	SpeedGrowth^(wave-1)`, com teto no `SpeedGrowthCap` — ver `MobService:SpawnWave`
+	e `Config.Difficulty`.
+]]
 Mob.BaseSpeed = 4
 
 Mob.Entities = {

@@ -668,7 +668,23 @@ function UnitPlacementController:visualize(unitName : string)
 	local unitRange = unitStats and unitStats.Range or 10
 	local ghostBoundsCF, ghostBoundsSize = unitModel:GetBoundingBox()
 	local unitSizeX = ghostBoundsSize.X
-	local groundSurfaceY = workspace.GroundPart.CFrame.Y + workspace.GroundPart.Size.Y / 2
+	--[[
+		Altura do chao antes do primeiro movimento do mouse, so para o anel nascer
+		na altura certa -- a partir dai quem manda e o raycast do loop la embaixo.
+
+		Media pelo chao debaixo do proprio jogador em vez de uma part fixa: o mapa
+		e clonado em runtime pelo MapService e cada um tem o seu, entao nao existe
+		uma `workspace.GroundPart` para ler (era o que estourava aqui).
+	]]
+	local character = Player.Character
+	local characterPosition = character and character:GetPivot().Position
+	local groundSurfaceY = 0
+
+	if characterPosition then
+		groundSurfaceY = raycastGroundY(characterPosition, self:getGroundExcludeList({ ghost, character }))
+			or characterPosition.Y
+	end
+
 	local currentGroundY = groundSurfaceY
 
 	local placementRing = UIAssets.AOE.Ring:Clone()
@@ -681,7 +697,10 @@ function UnitPlacementController:visualize(unitName : string)
 
 	local targetRingScale = placementRing:GetScale()
 	placementRing:ScaleTo(0.001)
-	placementRing:PivotTo(CFrame.new(0, groundSurfaceY + placementRing:GetExtentsSize().Y / 2, 0))
+	-- Nasce debaixo do jogador, nao no centro do mundo: o loop so reposiciona o anel
+	-- quando o mouse acerta alguma superficie.
+	local ringOrigin = characterPosition or Vector3.zero
+	placementRing:PivotTo(CFrame.new(ringOrigin.X, groundSurfaceY + placementRing:GetExtentsSize().Y / 2, ringOrigin.Z))
 	placementRing.Parent = workspace.CurrentCamera
 
 	local ringScaleValue = Instance.new("NumberValue")

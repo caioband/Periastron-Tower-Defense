@@ -102,6 +102,7 @@ local MobService = {
 	BaseHealth = BASE_MAX_HEALTH,
 	MaxBaseHealth = BASE_MAX_HEALTH,
 	ActiveMobCount = 0,
+	HealthScale = 1,
 	SessionCash = {},
 	SessionDamage = {},
 }
@@ -304,6 +305,20 @@ function MobService:SpawnWave(waveNumber)
 	local spawnList = WaveConfig.GetSpawns(waveNumber, preset.Name)
 	local healthScale = preset.HealthMultiplier * (preset.HealthGrowth ^ (waveNumber - 1))
 
+	-- Guardado porque o premio em caixa por dano desconta esta mesma escala.
+	self.HealthScale = healthScale
+
+	--[[
+		Velocidade tambem sobe com a wave, mas com teto: sem o `SpeedGrowthCap` um
+		preset longo acabaria com mobs rapidos demais para as torres acompanharem, e
+		os gimmicks que ja multiplicam velocidade (o Wall Smasher ganha 30% por
+		curva) entrariam por cima disso.
+	]]
+	local speedScale = math.min(
+		preset.SpeedMultiplier * (preset.SpeedGrowth ^ (waveNumber - 1)),
+		preset.SpeedMultiplier * (preset.SpeedGrowthCap or math.huge)
+	)
+
 	self.Routes = nil
 	local routes = self:getRoutes()
 
@@ -314,7 +329,7 @@ function MobService:SpawnWave(waveNumber)
 		for _, spawnEntry in spawnList do
 			local entityDefinition = mobConfig.Entities[spawnEntry.Entity]
 			if entityDefinition then
-				local baseSpeed = mobConfig.BaseSpeed * (entityDefinition.SpeedMultiplier or 1) * preset.SpeedMultiplier
+				local baseSpeed = mobConfig.BaseSpeed * (entityDefinition.SpeedMultiplier or 1) * speedScale
 				local maxHealth = math.max(1, math.floor(((entityDefinition.Health or 10) * healthScale) + 0.5))
 
 				for i = 1, (spawnEntry.Amount or 1) do
@@ -438,11 +453,24 @@ function MobService:GetMVP()
 	return best
 end
 
+--[=[
+	Paga o dano que entrou, descontando a inflacao de vida da wave.
+
+	A vida dos mobs cresce por dificuldade e por wave (`HealthScale`), e sem o
+	desconto a renda cresceria junto: no Impossivel a wave 27 tem inimigos 24x mais
+	gordos que a wave 1, entao bater neles pagaria 24x mais pelo mesmo trabalho, e
+	o dano voltava a ser a economia inteira. Dividindo pela mesma escala, um ponto
+	de dano vale o mesmo em qualquer wave e em qualquer preset.
+]=]
 function MobService:awardDamageReward(killerUserId, damage)
 	if not killerUserId then return end
 	local player = Players:GetPlayerByUserId(killerUserId)
 	if not player then return end
-	local reward = math.max(1, math.floor(damage * ServerConfig.Data.CASH_PER_DAMAGE))
+
+	local scale = self.HealthScale
+	if not scale or scale <= 0 then scale = 1 end
+
+	local reward = math.max(1, math.floor((damage * ServerConfig.Data.CASH_PER_DAMAGE) / scale))
 	self:addCash(player, reward)
 end
 
@@ -462,13 +490,14 @@ function MobService:DamageMob(mobId, damage, killerUserId)
 	local mob = self.ActiveMobs[mobId]
 	if not mob then return 0 end
 
-	-- Para o MVP conta o dano que de fato entrou: um golpe de 70 num mob com 5 de
-	-- vida vale 5. O premio em caixa segue usando o valor cheio, como antes.
+	-- Conta o dano que de fato entrou: um golpe de 70 num mob com 5 de vida vale 5.
+	-- Vale tanto para o MVP quanto para a caixa — pagar o valor cheio do golpe
+	-- premiava o excedente e transformava o dano na economia inteira da partida.
 	local effectiveDamage = math.min(mob.Health, damage or 10)
 	self:addDamageStat(killerUserId, effectiveDamage)
 
 	mob.Health -= (damage or 10)
-	self:awardDamageReward(killerUserId, damage or 10)
+	self:awardDamageReward(killerUserId, effectiveDamage)
 
 	self:processDamageGimmicks(mobId, mob)
 

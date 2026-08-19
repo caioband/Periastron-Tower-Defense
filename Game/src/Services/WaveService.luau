@@ -79,7 +79,8 @@ function WaveService:setWave(waveCount : number)
 
 	-- A composicao da wave e segredo de servidor; o cliente so precisa do "tem
 	-- boss?" para trocar a musica junto com o comeco da wave.
-	local hasBoss = WaveConfig.HasBoss(waveCount)
+	local preset = self.Difficulty or self.Services.DifficultyService:GetSelected()
+	local hasBoss = WaveConfig.HasBoss(waveCount, preset and preset.Name)
 
 	for _, Player in Players:GetPlayers() do
 		Framework:Fire("SetWave", Player, self.WaveCount, hasBoss)

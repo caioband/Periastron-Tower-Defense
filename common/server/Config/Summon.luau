@@ -15,7 +15,12 @@ return {
 	BANNERS = {
 		[Keys.BASIC_DEFAULT_BANNER_KEY] = {
 			DisplayName = "Normal Banner",
-			Cost = 100,
+
+			-- Era 100. Com 1000 de caixa por partida no Médio isso dava dez
+			-- invocações por partida, e o banner sozinho entregava ~60x mais
+			-- lendárias que a loja de shards — a moeda cara comprava o pior
+			-- negócio. A 200, são cinco.
+			Cost = 200,
 			Currency = "Cash",
 		},
 	},
@@ -23,14 +28,20 @@ return {
 	-- A raridade de cada unit não fica aqui: ela vem do `Rarity` do UnitStats, que é
 	-- a fonte única (os pools das crates leem de lá também). Aqui só o peso no banner.
 	ITEMS = {
+		--[[
+			O banner é a rota barata: ele entrega Common e Rare em volume. As duas
+			lendárias caíram de 2% somados para 0,5%, porque quem quer lendária
+			deve ir pelas crates — que são a rota de shards, a moeda que só cai
+			para quem termina a partida.
+		]]
 		[Keys.BASIC_DEFAULT_BANNER_KEY] = {
 			{ Name = "Slasher", Weight = 50, UnlockedAsRobux = false },
-			{ Name = "Sword", Weight = 25, UnlockedAsRobux = false },
-			{ Name = "Slingshot", Weight = 14, UnlockedAsRobux = false },
+			{ Name = "Sword", Weight = 26, UnlockedAsRobux = false },
+			{ Name = "Slingshot", Weight = 15, UnlockedAsRobux = false },
 			{ Name = "Entrepreneur", Weight = 6, UnlockedAsRobux = false },
-			{ Name = "Subspace Tripminer", Weight = 3, UnlockedAsRobux = false },
-			{ Name = "Rocket", Weight = 1.5, UnlockedAsRobux = false },
-			{ Name = "Azure", Weight = 0.5, UnlockedAsRobux = false },
+			{ Name = "Subspace Tripminer", Weight = 2.5, UnlockedAsRobux = false },
+			{ Name = "Rocket", Weight = 0.4, UnlockedAsRobux = false },
+			{ Name = "Azure", Weight = 0.1, UnlockedAsRobux = false },
 		},
 	},
 }
