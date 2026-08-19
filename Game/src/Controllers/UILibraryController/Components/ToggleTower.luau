@@ -177,7 +177,7 @@ function module:refresh()
 		CardUpgrade.DamagePerSecond.Text = formatStat(upgradeConfig:GetDPS(unitName, level)) .. " DPS"
 	end
 
-	CardUpgrade.AttackSpeed.Text = formatNumber(upgradeConfig:GetCooldown(unitName, level), 2) .. " ATSPD"
+	CardUpgrade.AttackSpeed.Text = formatNumber(upgradeConfig:GetCooldown(unitName, level), 2) .. " COOLDOWN"
 	CardUpgrade.Range.Text = formatStat(upgradeConfig:GetRange(unitName, level)) .. " RANGE"
 
 	self:refreshDamageDone()

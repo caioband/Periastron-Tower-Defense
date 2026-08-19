@@ -51,7 +51,7 @@ guardados também aparecem, e quem consulta a tag precisa filtrar por
 
 O componente `UILibraryController/Components/ToggleTower.luau` preenche o card da
 unidade selecionada. Cada TextLabel do StarterGui já traz o sufixo desenhado
-(`DPS`, `ATSPD`, `RANGE`, `DMG DONE`) e o componente só troca o número:
+(`DPS`, `COOLDOWN`, `RANGE`, `DMG DONE`) e o componente só troca o número:
 
 | Label | Fonte |
 |---|---|

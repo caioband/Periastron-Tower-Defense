@@ -6,12 +6,12 @@
 	1. Dano por segundo dividido pelo custo. E o que decide se uma unidade vale a
 	   pena, e o teto e 15 por 100 de caixa. O Slasher ficava em 26,7 — quase tres
 	   vezes o segundo colocado — e por isso encher o mapa de Slasher era a jogada
-	   otima em qualquer dificuldade. A escada agora e por raridade: Common ~10,
-	   Rare ~10,5 com alcance, Epic ~11 com utilidade, Legendary 11 a 14.
+	   otima em qualquer dificuldade. A escada por raridade nao vale mais: Slasher
+	   3,5 e Slingshot 4,6 contra Sword ~10, Epic ~11 e Legendary 11 a 14.
 
 	2. Alcance como eixo de diferenciacao. Cinco das sete unidades tinham alcance
 	   3, o que tornava posicionamento irrelevante — todas precisavam colar no
-	   caminho. As faixas agora sao curto (4 a 6), medio (10) e longo (16), e o
+	   caminho. As faixas agora sao curto (4 a 6), medio (10) e longo (12), e o
 	   alcance longo e do Slingshot, que nao tem area nem dano alto.
 
 	DPS = Damage * Hits / Cooldown.
@@ -42,14 +42,14 @@ local UnitStats = {
 	["Rocket"] = {
 		Rarity = "Legendary",
 		Cost = 450,
-		Damage = 120,
-		Range = 10,
-		Cooldown = 2.5,
+		Damage = 50,
+		Range = 4,
+		Cooldown = 6,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
 		Projectile = { Asset = "Rocket", Speed = 55 },
-		AOE = { Radius = 8 },
+		AOE = { Radius = 2 },
 
 		RangeStats = {
 			Increment = 1,
@@ -64,7 +64,7 @@ local UnitStats = {
 		Cost = 350,
 		Damage = 75,
 		Range = 10,
-		Cooldown = 2,
+		Cooldown = 3,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
@@ -96,12 +96,13 @@ local UnitStats = {
 
 	--[[ RARE ]]
 
-	-- O alcance e o que ela vende: enxerga o caminho inteiro de onde esta.
+	-- O maior alcance da tabela e o que ela vende: um tiro a cada 1,6 s e o menor
+	-- dano por tiro, a 4,6 de DPS por 100 de caixa.
 	["Slingshot"] = {
 		Rarity = "Rare",
 		Cost = 150,
-		Damage = 22,
-		Range = 16,
+		Damage = 11,
+		Range = 12,
 		Cooldown = 1.4,
 		AttackType = "SingleShot",
 		HitInterval = 0,
@@ -128,12 +129,12 @@ local UnitStats = {
 	},
 
 	-- A unidade de entrada: continua custando 100 porque e o que o jogador compra
-	-- na wave 1, mas o dano caiu de 20 para 9 -- 26,7 de DPS por 100 de caixa era
-	-- o dobro do teto.
+	-- na wave 1, e o dano por golpe e o preco de bater a cada 0,85 s: 3,5 de DPS
+	-- por 100 de caixa, abaixo do Slingshot, que e Rare e custa mais.
 	["Slasher"] = {
 		Rarity = "Common",
 		Cost = 100,
-		Damage = 9,
+		Damage = 3,
 		Range = 5,
 		Cooldown = 0.85,
 		AttackType = "MultiShot",

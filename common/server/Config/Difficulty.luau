@@ -1,17 +1,18 @@
 --[[
 	Os presets de dificuldade.
 
-	O Dificil e a referencia: os multiplicadores dele sao todos 1, entao ele
-	reproduz a planilha de waves em `Config.Wave` exatamente como ela foi
-	desenhada. Os outros presets sao a mesma curva escalada — mais fraca abaixo,
-	mais forte acima — e nada aqui muda a composicao das waves, so o tamanho dela.
+	A planilha de waves em `Config.Wave` cuida da composicao — quantos inimigos e
+	de que tipo — e cada preset so escala o tamanho dela: `HealthMultiplier`,
+	`AmountMultiplier` e `BossAmountMultiplier` engordam a wave sem mudar o que vem
+	dentro. Ate o Medio o numero de bosses fica em 1; do Dificil para cima os tres
+	crescem juntos, ate 6,75x de vida, 5,25x de inimigos e 9x de bosses no topo.
 
-	A progressao tem duas fontes, e elas se somam. A planilha cuida da composicao:
-	quantos inimigos e de que tipo. O `HealthGrowth` cuida da vida de cada um, e
-	compoe por wave — a vida de um mob na wave N e `HealthMultiplier *
-	HealthGrowth^(N-1)`. Quanto mais dura a dificuldade, mais rapido esse juro
-	corre: 1,5% por wave no Facil e 5% no Nightmare, o que na ultima wave de cada
-	preset da 1,2x no Facil e 5,2x no Nightmare.
+	A progressao tem duas fontes, e elas se somam. Alem do tamanho da wave, o
+	`HealthGrowth` cuida da vida de cada mob e compoe por wave — a vida de um mob
+	na wave N e `HealthMultiplier * HealthGrowth^(N-1)`. Quanto mais dura a
+	dificuldade, mais rapido esse juro corre: 1,5% por wave no Facil e 5% no
+	Nightmare, o que na ultima wave de cada preset da 1,2x no Facil e 5,2x no
+	Nightmare.
 
 	O expoente e por wave, entao presets longos acumulam mais: e de proposito, mas
 	e tambem o que explode rapido se alguem subir esses numeros. Uma referencia:
@@ -64,12 +65,12 @@ Difficulty.Presets = {
 	},
 
 	Medium = {
-		HealthMultiplier = 0.7,
+		HealthMultiplier = 1.2,
 		HealthGrowth = 1.022,
 		SpeedMultiplier = 1,
 		SpeedGrowth = 1.006,
 		SpeedGrowthCap = 1.25,
-		AmountMultiplier = 0.8,
+		AmountMultiplier = 1.5,
 		BossAmountMultiplier = 1,
 		RewardMultiplier = 1.1,
 		WinCashMultiplier = 1,
@@ -85,13 +86,13 @@ Difficulty.Presets = {
 	},
 
 	Hard = {
-		HealthMultiplier = 1,
+		HealthMultiplier = 2,
 		HealthGrowth = 1.03,
 		SpeedMultiplier = 1.1,
 		SpeedGrowth = 1.008,
 		SpeedGrowthCap = 1.35,
-		AmountMultiplier = 1,
-		BossAmountMultiplier = 1,
+		AmountMultiplier = 2,
+		BossAmountMultiplier = 2,
 		RewardMultiplier = 1,
 		WinCashMultiplier = 1.75,
 		WinShardMultiplier = 2,
@@ -106,13 +107,13 @@ Difficulty.Presets = {
 	},
 
 	Impossible = {
-		HealthMultiplier = 1.45,
+		HealthMultiplier = 3.625,
 		HealthGrowth = 1.04,
 		SpeedMultiplier = 1.2,
 		SpeedGrowth = 1.01,
 		SpeedGrowthCap = 1.5,
-		AmountMultiplier = 1.3,
-		BossAmountMultiplier = 2,
+		AmountMultiplier = 3.25,
+		BossAmountMultiplier = 5,
 		RewardMultiplier = 0.85,
 		WinCashMultiplier = 2.75,
 		WinShardMultiplier = 2.5,
@@ -127,13 +128,13 @@ Difficulty.Presets = {
 	},
 
 	Nightmare = {
-		HealthMultiplier = 2.25,
+		HealthMultiplier = 6.75,
 		HealthGrowth = 1.05,
 		SpeedMultiplier = 1.35,
 		SpeedGrowth = 1.012,
 		SpeedGrowthCap = 1.7,
-		AmountMultiplier = 1.75,
-		BossAmountMultiplier = 3,
+		AmountMultiplier = 5.25,
+		BossAmountMultiplier = 9,
 		RewardMultiplier = 0.7,
 		WinCashMultiplier = 4,
 		WinShardMultiplier = 3,
