@@ -3,7 +3,6 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -17,6 +16,7 @@ local SharedConfig = require(Configs.SharedConfig)
 local ClientConfig = require(Configs.Client)
 local MobConfig = require(Configs.SharedConfig.Mob)
 local PathUtil = require(Shared.Util.PathUtil)
+local PointerUtil = require(Shared.Util.PointerUtil)
 
 local Me = require(Vendor.Me)
 
@@ -486,15 +486,21 @@ function MobController:startMovementLoop()
 end
 
 function MobController:startHoverLoop()
+	-- Sem mouse nao existe pairar sobre nada: no celular o loop so gastaria um
+	-- raycast a cada 0.05s para nunca encontrar mob nenhum.
+	if PointerUtil.isTouchOnly() then return end
+
 	local accum = 0
 	RunService.RenderStepped:Connect(function(dt)
 		accum += dt
 		if accum < 0.05 then return end
 		accum = 0
 
+		local pointerPosition = PointerUtil.getScreenPosition()
+		if not pointerPosition then return end
+
 		local camera = workspace.CurrentCamera
-		local mousePos = UserInputService:GetMouseLocation()
-		local ray = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
+		local ray = camera:ViewportPointToRay(pointerPosition.X, pointerPosition.Y)
 
 		local params = RaycastParams.new()
 		params.FilterType = Enum.RaycastFilterType.Exclude

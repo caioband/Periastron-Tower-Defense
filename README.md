@@ -554,6 +554,86 @@ os nomes deixa a transição mais curta e mais bonita. E vários trazem **dois**
 chamados `Atmosphere`; o segundo é ignorado, aqui e pela própria engine — quem vale
 é o primeiro.
 
+### Controles: mouse e toque (Game)
+
+Todo o apontar do jogo — o fantasma da unidade, a seleção de uma torre já
+colocada, o hover de mob — passava direto por `UserInputService:GetMouseLocation()`
+e só aceitava `Enum.UserInputType.MouseButton1`. Num celular nenhum dos dois
+existe: sem mouse aquela chamada não acompanha nada (fica em `(0,0)` ou congelada
+no último ponto tocado) e o toque chega como `Enum.UserInputType.Touch`. O sistema
+de posicionamento não funcionava no mobile — não por conforto, mas porque *nada*
+acontecia ao tocar a tela.
+
+`common/shared/Util/PointerUtil.luau` põe os dois aparelhos atrás da mesma porta:
+
+| | PC | Celular |
+|---|---|---|
+| `getScreenPosition()` | cursor agora | último ponto tocado (`nil` antes do 1º toque) |
+| `onPointerAction(cb)` | botão esquerdo descendo | toque curto e parado (≤20px, ≤0.6s) |
+| `isTouchOnly()` | `false` | `true` |
+
+O limite de movimento no toque é o que separa **apontar** de **girar a câmera**:
+no celular arrastar a tela é como o jogador olha em volta, e um arrasto não pode
+virar um clique no mundo. PC com tela sensível ao toque continua contando como PC.
+
+O fluxo de posicionamento diverge de propósito entre os dois:
+
+- **PC** — igual a sempre: o fantasma segue o cursor, `R` gira, clique confirma.
+- **Celular** — o toque no mapa só **move** o fantasma; quem confirma é um painel
+  (`ROTATE` / `PLACE` / `CANCEL`) que o `UnitPlacementController` monta em código
+  no canto direito. Confirmar no próprio toque seria pior que não ter nada: o dedo
+  tapa justamente o ponto onde a unidade vai nascer, e a torre sairia sem o jogador
+  ver o círculo de alcance nem a cor do fantasma. O botão `COLOCAR` acompanha a cor
+  do fantasma (verde/cinza), porque sem cursor pairando ele é o único aviso de que
+  ali não dá.
+
+O painel é criado só quando `PointerUtil.isTouchOnly()` e morre junto com o Maid do
+posicionamento, pelos dois caminhos de saída (confirmar e cancelar). O canto
+escolhido é o direito: o inferior-esquerdo é o direcional de movimento do Roblox e
+o centro de baixo é a barra de cartas.
+
+As medidas são todas em escala, com `UISizeConstraint` e `UITextSizeConstraint` só
+para os extremos: a mesma medida em offset que dá um botão confortável num tablet
+vira um alvo minúsculo num celular estreito. O piso de 190px de altura no painel é o
+que garante ~49px por botão, que é o alvo de toque confortável numa tela deitada.
+
+#### Precisão do toque
+
+Duas coisas fazem o toque cair perto — mas não em cima — do dedo, e as duas estão
+corrigidas:
+
+- **Espaço de coordenada.** `InputObject.Position` vem no espaço da interface, que
+  começa embaixo da barra superior do Roblox; `Camera:ViewportPointToRay` conta do
+  topo real da janela, porque o 3D é desenhado por trás da barra também. A diferença
+  é a GuiInset (~36px verticais) — e é só isso que separava o toque do alvo, já que
+  `GetMouseLocation()` sempre veio no espaço do raio. Em vez de somar 36 na mão (o
+  valor muda com a barra escondida, com tela cheia e entre aparelhos), o
+  `PointerUtil` **mede**: uma moldura de tamanho zero num `ScreenGui` com
+  `IgnoreGuiInset` fica no canto de cima da janela inteira, e a `AbsolutePosition`
+  dela é a origem do espaço do raio. Funciona sem depender de qual convenção a
+  engine usa.
+- **O lerp do fantasma.** O que ia ao servidor era o `ghostCF`, que persegue a mira
+  por interpolação e quase nunca está exatamente onde ela aponta. Quem passou pelo
+  teste de caminho e de sobreposição foi o **alvo** (`targetCF`), e agora é ele que
+  é enviado — o lerp fica só na aparência. No mouse a diferença era invisível (o
+  cursor fica parado e o fantasma alcança antes do clique); no toque o jogador toca
+  e já aperta `COLOCAR`, com o fantasma ainda a caminho, e a unidade nascia no meio
+  do trajeto.
+
+Duas armadilhas de UI que o toque expõe e que foram corrigidas junto:
+
+- **`MouseButton1Up` não é clique.** Se o dedo escorrega para fora do botão antes
+  de soltar, o `Up` nunca chega — a ação se perde e a animação de aperto fica
+  travada. Ação agora sai do `Activated` (`UILibraryController.addClickAnimation`,
+  vender e melhorar no `ToggleTower`), e a volta visual é vigiada pelo
+  `UserInputService.InputEnded`, que vê o dedo sair de qualquer lugar da tela.
+- **Hover não existe no toque.** `MouseEnter` às vezes dispara sem o `MouseLeave`
+  correspondente e o botão fica crescido para sempre; `addHoverAnimation` sai fora
+  no celular.
+
+`MobController:startHoverLoop` também sai fora: sem mouse ele só gastaria um
+raycast a cada 0.05s para nunca encontrar mob nenhum.
+
 ## Configuração: o que é replicado e o que não é
 
 Antes, `ReplicatedStorage.Shared.Config.Server` era replicado para todo cliente —

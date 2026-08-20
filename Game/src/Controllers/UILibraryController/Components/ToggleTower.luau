@@ -74,7 +74,9 @@ function module:create(unitModel, ...)
 	end
 
 	if sellButton and unitModel then
-		self.sellConnection = sellButton.MouseButton1Up:Connect(function()
+		-- `Activated` e nao `MouseButton1Up`: no toque, se o dedo escorrega para fora
+		-- do botao antes de soltar, o MouseButton1Up nao chega e a venda se perde.
+		self.sellConnection = sellButton.Activated:Connect(function()
 			local unitId = unitModel:GetAttribute("UnitID")
 			Framework:Fire("SellUnit", unitId)
 			self:destroy()
@@ -94,7 +96,7 @@ function module:create(unitModel, ...)
 	end
 
 	if upgradeButton and unitModel then
-		self.upgradeConnection = upgradeButton.MouseButton1Up:Connect(function()
+		self.upgradeConnection = upgradeButton.Activated:Connect(function()
 			local level = unitModel:GetAttribute("Upgrades") or 0
 			if SharedConfig.UnitUpgradeConfig:IsMaxed(level) then return end
 			local unitId = unitModel:GetAttribute("UnitID")

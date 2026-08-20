@@ -12,6 +12,7 @@ local Vendor = Shared:WaitForChild("Vendor")
 local Configs = Shared:WaitForChild("Config")
 local Assets = Shared:WaitForChild("Assets")
 local Classes = Shared:WaitForChild("Classes")
+local Utils = Shared:WaitForChild("Util")
 
 local UIAssets = Assets:WaitForChild("UI")
 
@@ -21,6 +22,7 @@ local UnitClass = require(Classes.Unit)
 
 local SharedConfig = require(Configs.SharedConfig)
 local ClientConfig = require(Configs.Client)
+local PointerUtil = require(Utils.PointerUtil)
 
 local Maid = require(Vendor.Maid)
 local Promise = require(Packages.Promise)
@@ -299,6 +301,151 @@ local function raycastGroundY(position : Vector3, excludeInstances : {Instance}?
 	end
 
 	return nil
+end
+
+--[[
+	Controles de posicionamento para quem joga no toque.
+
+	No PC o fluxo inteiro cabe no mouse: o fantasma segue o cursor, R gira e o
+	clique confirma. No celular nao ha cursor para seguir nem tecla para girar, e
+	confirmar no proprio toque seria pior ainda -- o dedo tapa justamente o ponto
+	onde a unidade vai nascer, e o jogador colocaria a torre sem ver o circulo de
+	alcance nem a cor do fantasma.
+
+	Entao o toque no mapa so MOVE o fantasma, e a confirmacao vem daqui. Os botoes
+	ficam no canto direito: o canto esquerdo de baixo e o direcional de movimento
+	do Roblox e o centro de baixo e a barra de cartas.
+
+	Tudo aqui e em escala, nao em pixel: a mesma medida em offset que da um botao
+	confortavel num tablet vira um alvo minusculo num celular estreito. Os limites
+	de tamanho existem so para os extremos -- um alvo de toque nao pode encolher
+	abaixo do dedo nem virar um cartaz numa tela grande.
+]]
+local TOUCH_PANEL_SIZE = UDim2.fromScale(0.2, 0.46)
+local TOUCH_PANEL_POSITION = UDim2.fromScale(0.98, 0.78)
+-- O minimo sai de tras para frente: 190px de altura e o que faz cada botao passar
+-- de ~49px, que e o alvo de toque confortavel numa tela de celular deitado.
+local TOUCH_PANEL_MIN_SIZE = Vector2.new(140, 190)
+local TOUCH_PANEL_MAX_SIZE = Vector2.new(280, 320)
+
+local TOUCH_BUTTON_SIZE = UDim2.fromScale(1, 0.26)
+local TOUCH_BUTTON_MAX_TEXT = 22
+local TOUCH_HINT_SIZE = UDim2.fromScale(1, 0.16)
+local TOUCH_HINT_MAX_TEXT = 15
+
+local TOUCH_CONFIRM_COLOR = Color3.fromRGB(60, 175, 85)
+local TOUCH_CONFIRM_BLOCKED_COLOR = Color3.fromRGB(95, 100, 105)
+local TOUCH_ROTATE_COLOR = Color3.fromRGB(55, 105, 190)
+local TOUCH_CANCEL_COLOR = Color3.fromRGB(185, 60, 60)
+
+local function createTouchButton(text : string, color : Color3, order : number)
+	local button = Instance.new("TextButton")
+	button.Name = text
+	button.Size = TOUCH_BUTTON_SIZE
+	button.BackgroundColor3 = color
+	button.BorderSizePixel = 0
+	button.AutoButtonColor = true
+	button.Text = text
+	button.TextColor3 = Color3.fromRGB(255, 255, 255)
+	button.TextScaled = true
+	button.Font = Enum.Font.GothamBold
+	button.LayoutOrder = order
+
+	-- TextScaled sozinho estica a fonte ate encostar nas bordas; o teto segura o
+	-- texto num tamanho de leitura e deixa a sobra virar respiro.
+	local textSize = Instance.new("UITextSizeConstraint")
+	textSize.MaxTextSize = TOUCH_BUTTON_MAX_TEXT
+	textSize.Parent = button
+
+	local padding = Instance.new("UIPadding")
+	padding.PaddingLeft = UDim.new(0.08, 0)
+	padding.PaddingRight = UDim.new(0.08, 0)
+	padding.Parent = button
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0.18, 0)
+	corner.Parent = button
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(15, 15, 20)
+	stroke.Thickness = 2
+	stroke.Transparency = 0.35
+	stroke.Parent = button
+
+	return button
+end
+
+--[=[
+	Monta o painel e devolve a ScreenGui junto do botao de confirmar, que o loop de
+	posicionamento apaga e acende conforme o lugar aceita a unidade ou nao.
+]=]
+local function createTouchControls(onRotate : () -> (), onConfirm : () -> (), onCancel : () -> ())
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "UnitPlacementTouch"
+	screenGui.ResetOnSpawn = false
+	screenGui.IgnoreGuiInset = true
+	-- Acima da HUD: o painel so existe enquanto ha unidade em mao, e nesse momento
+	-- ele e o que o jogador precisa alcancar.
+	screenGui.DisplayOrder = 100
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+	local container = Instance.new("Frame")
+	container.Name = "Buttons"
+	container.AnchorPoint = Vector2.new(1, 1)
+	container.Position = TOUCH_PANEL_POSITION
+	container.Size = TOUCH_PANEL_SIZE
+	container.BackgroundTransparency = 1
+	container.Parent = screenGui
+
+	local sizeLimits = Instance.new("UISizeConstraint")
+	sizeLimits.MinSize = TOUCH_PANEL_MIN_SIZE
+	sizeLimits.MaxSize = TOUCH_PANEL_MAX_SIZE
+	sizeLimits.Parent = container
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Vertical
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0.02, 0)
+	layout.Parent = container
+
+	local hint = Instance.new("TextLabel")
+	hint.Name = "Hint"
+	hint.Size = TOUCH_HINT_SIZE
+	hint.BackgroundTransparency = 1
+	hint.Text = "Tap the map\nto move"
+	hint.TextColor3 = Color3.fromRGB(255, 255, 255)
+	hint.TextScaled = true
+	hint.Font = Enum.Font.GothamMedium
+	hint.LayoutOrder = 0
+	hint.Parent = container
+
+	local hintTextSize = Instance.new("UITextSizeConstraint")
+	hintTextSize.MaxTextSize = TOUCH_HINT_MAX_TEXT
+	hintTextSize.Parent = hint
+
+	local hintStroke = Instance.new("UIStroke")
+	hintStroke.Color = Color3.fromRGB(0, 0, 0)
+	hintStroke.Thickness = 2
+	hintStroke.Transparency = 0.2
+	hintStroke.Parent = hint
+
+	local rotateButton = createTouchButton("ROTATE", TOUCH_ROTATE_COLOR, 1)
+	rotateButton.Parent = container
+	rotateButton.Activated:Connect(onRotate)
+
+	local confirmButton = createTouchButton("PLACE", TOUCH_CONFIRM_COLOR, 2)
+	confirmButton.Parent = container
+	confirmButton.Activated:Connect(onConfirm)
+
+	local cancelButton = createTouchButton("CANCEL", TOUCH_CANCEL_COLOR, 3)
+	cancelButton.Parent = container
+	cancelButton.Activated:Connect(onCancel)
+
+	screenGui.Parent = Player:WaitForChild("PlayerGui")
+
+	return screenGui, confirmButton
 end
 
 local UnitPlacementController = {
@@ -667,7 +814,19 @@ function UnitPlacementController:visualize(unitName : string)
 	local currentColor = VALID_COLOR
 	local canPlace = false
 	-- Guardado so para o log do Studio dizer o motivo do bloqueio.
-	local blockReason = "mouse fora de qualquer superficie"
+	local blockReason = "ponteiro fora de qualquer superficie"
+
+	--[[
+		No toque o fantasma nao segue o dedo: ele fica no ultimo ponto tocado e so
+		sai dali no proximo toque, e quem confirma e o botao do painel.
+
+		Ele nasce no centro da tela porque e para la que a camera esta olhando -- o
+		jogador ve a unidade e o circulo de alcance de cara, em vez de um fantasma
+		perdido na origem do mundo enquanto nao encosta na tela.
+	]]
+	local isTouch = PointerUtil.isTouchOnly()
+	local touchTarget : Vector2? = if isTouch then workspace.CurrentCamera.ViewportSize / 2 else nil
+	local touchConfirmButton : TextButton? = nil
 
 	local scale = ghost:GetScale()
 	ghost:ScaleTo(scale * 0.8)
@@ -791,9 +950,15 @@ function UnitPlacementController:visualize(unitName : string)
 		end
 		raycastParams.FilterDescendantsInstances = filterList
 
-		local mousePos = UserInputService:GetMouseLocation()
-		local mouseRay = workspace.CurrentCamera:ViewportPointToRay(mousePos.X, mousePos.Y)
-		local raycastResult = workspace:Raycast(mouseRay.Origin, mouseRay.Direction * 1000, raycastParams)
+		-- No mouse a mira e onde o cursor esta agora; no toque e onde o dedo encostou
+		-- por ultimo, que so muda quando o jogador toca de novo.
+		local pointerPosition = if isTouch then touchTarget else PointerUtil.getScreenPosition()
+
+		local raycastResult = nil
+		if pointerPosition then
+			local pointerRay = workspace.CurrentCamera:ViewportPointToRay(pointerPosition.X, pointerPosition.Y)
+			raycastResult = workspace:Raycast(pointerRay.Origin, pointerRay.Direction * 1000, raycastParams)
+		end
 
 		if raycastResult then
 			local position = raycastResult.Position
@@ -861,6 +1026,15 @@ function UnitPlacementController:visualize(unitName : string)
 		highlight.FillColor = currentColor
 		highlight.OutlineColor = currentColor
 
+		-- No toque o botao segue a cor do fantasma: sem cursor pairando sobre o
+		-- mapa, ele e o unico aviso de que ali nao da para colocar.
+		if touchConfirmButton then
+			local buttonColor = canPlace and TOUCH_CONFIRM_COLOR or TOUCH_CONFIRM_BLOCKED_COLOR
+			if touchConfirmButton.BackgroundColor3 ~= buttonColor then
+				touchConfirmButton.BackgroundColor3 = buttonColor
+			end
+		end
+
 		local alpha = math.min(1, dt * LERP_SPEED)
 		ghostCF = ghostCF:Lerp(targetCF, alpha)
 
@@ -883,34 +1057,83 @@ function UnitPlacementController:visualize(unitName : string)
 		placementRing:PivotTo(CFrame.new(ghostPos.X, currentGroundY + placementRing:GetExtentsSize().Y / 2, ghostPos.Z))
 	end))
 
+	local function rotateGhost()
+		currentRotation = (currentRotation + 90) % 360
+	end
+
+	--[[
+		Larga a unidade onde o fantasma esta. Vive numa funcao propria porque tem
+		duas portas de entrada: o clique do mouse no PC e o botao do painel de toque.
+	]]
+	local function confirmPlacement()
+		if not self.isPlacing then return end
+
+		if not canPlace then
+			placementPrint(unitName, "nao pode posicionar aqui:", blockReason ~= "" and blockReason or "motivo desconhecido",
+				"fantasma em", formatVector(targetCF.Position))
+			return
+		end
+
+		--[[
+			Vai `targetCF`, e nao `ghostCF`: o fantasma persegue o alvo por lerp, entao
+			ele quase nunca esta exatamente onde a mira aponta. Quem foi validado pelo
+			teste de caminho e de sobreposicao foi o alvo, e e ele que tem que chegar
+			ao servidor -- o lerp existe so para a unidade nao teleportar na tela.
+
+			No mouse a diferenca era invisivel porque o cursor fica parado sobre o
+			ponto e o fantasma alcanca antes do clique. No toque nao: o dedo toca e ja
+			aperta COLOCAR, com o fantasma ainda a caminho, e a unidade nascia no meio
+			do trajeto.
+		]]
+		placementPrint(unitName, "fantasma enviado ao servidor em", formatVector(targetCF.Position))
+		Framework:Fire("PlaceUnit", unitName, targetCF)
+
+		-- A devolucao da aparencia do caminho fica a cargo do maid, logo
+		-- abaixo: um dono so para os dois caminhos de saida.
+		placementRing:Destroy()
+		ringScaleValue:Destroy()
+		self.isPlacing = false
+		maid:Destroy()
+		ghost:Destroy()
+
+		self.Controllers.CardController:setUnequipState()
+	end
+
+	--[[
+		Desiste da unidade em mao. No PC isso e clicar de novo na carta; no toque a
+		carta fica atras do fantasma e do painel, entao o painel tem a propria saida.
+	]]
+	local function cancelPlacement()
+		self.Controllers.CardController:setUnequipState()
+		self:unequip()
+	end
+
 	maid:GiveTask(UserInputService.InputBegan:Connect(function(input, processed)
 		if processed then return end
 
 		if input.KeyCode == Enum.KeyCode.R then
-			currentRotation = (currentRotation + 90) % 360
+			rotateGhost()
 		end
 
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			if not canPlace then
-				placementPrint(unitName, "nao pode posicionar aqui:", blockReason ~= "" and blockReason or "motivo desconhecido",
-					"fantasma em", formatVector(ghostCF.Position))
-				return
-			end
-
-			placementPrint(unitName, "fantasma enviado ao servidor em", formatVector(ghostCF.Position))
-			Framework:Fire("PlaceUnit", unitName, ghostCF)
-
-			-- A devolucao da aparencia do caminho fica a cargo do maid, logo
-			-- abaixo: um dono so para os dois caminhos de saida.
-			placementRing:Destroy()
-			ringScaleValue:Destroy()
-			self.isPlacing = false
-			maid:Destroy()
-			ghost:Destroy()
-
-			self.Controllers.CardController:setUnequipState()
+			confirmPlacement()
 		end
 	end))
+
+	if isTouch then
+		-- O toque no mapa so reposiciona: quem confirma e o botao, senao o dedo
+		-- taparia a unidade no exato momento de decidir se ela pode ficar ali.
+		maid:GiveTask(PointerUtil.onPointerAction(function(screenPosition)
+			touchTarget = screenPosition
+		end))
+
+		local touchControls, confirmButton = createTouchControls(rotateGhost, confirmPlacement, cancelPlacement)
+		touchConfirmButton = confirmButton
+		maid:GiveTask(function()
+			touchConfirmButton = nil
+			touchControls:Destroy()
+		end)
+	end
 
 	maid:GiveTask(function()
 		restoreGridParts(paintedGridParts)
@@ -971,40 +1194,44 @@ function UnitPlacementController:flashUpgrade(unitModel)
 end
 
 function UnitPlacementController:construct()
-	UserInputService.InputBegan:Connect(function(input, processed)
-		if processed then return end
+	--[[
+		Clique do mouse no PC, toque curto no celular: nos dois casos o que chega
+		aqui e um ponto na tela, e o resto do caminho e o mesmo.
 
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			if self.isPlacing then return end
-			local mouseRay = workspace.CurrentCamera:ViewportPointToRay(UserInputService:GetMouseLocation().X, UserInputService:GetMouseLocation().Y)
+		Com uma unidade em mao esse ponto pertence ao posicionamento (e la que ele
+		move o fantasma), entao a selecao sai da frente.
+	]]
+	PointerUtil.onPointerAction(function(screenPosition)
+		if self.isPlacing then return end
 
-			local raycastParams = RaycastParams.new()
-			raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-			if Player.Character then
-				raycastParams.FilterDescendantsInstances = {Player.Character}
+		local pointerRay = workspace.CurrentCamera:ViewportPointToRay(screenPosition.X, screenPosition.Y)
+
+		local raycastParams = RaycastParams.new()
+		raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+		if Player.Character then
+			raycastParams.FilterDescendantsInstances = {Player.Character}
+		end
+
+		local raycastResult = workspace:Raycast(pointerRay.Origin, pointerRay.Direction * 1000, raycastParams)
+
+		if raycastResult then
+			local hitInstance = raycastResult.Instance
+			local foundUnit = nil
+
+			for unitModel, _ in pairs(self.createdClasses) do
+				if hitInstance == unitModel or hitInstance:IsDescendantOf(unitModel) then
+					foundUnit = unitModel
+					break
+				end
 			end
 
-			local raycastResult = workspace:Raycast(mouseRay.Origin, mouseRay.Direction * 1000, raycastParams)
-
-			if raycastResult then
-				local hitInstance = raycastResult.Instance
-				local foundUnit = nil
-
-				for unitModel, _ in pairs(self.createdClasses) do
-					if hitInstance == unitModel or hitInstance:IsDescendantOf(unitModel) then
-						foundUnit = unitModel
-						break
-					end
-				end
-
-				if foundUnit then
-					self:selectUnit(foundUnit)
-				else
-					self:deselectCurrent()
-				end
+			if foundUnit then
+				self:selectUnit(foundUnit)
 			else
 				self:deselectCurrent()
 			end
+		else
+			self:deselectCurrent()
 		end
 	end)
 

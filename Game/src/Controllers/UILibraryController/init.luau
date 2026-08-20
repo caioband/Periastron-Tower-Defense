@@ -1,11 +1,14 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
+local Utils = Shared:WaitForChild("Util")
 
 local Spring = require(Vendor.Spring)
 local Observers = require(Vendor.Observers)
+local PointerUtil = require(Utils.PointerUtil)
 
 local Camera = workspace.CurrentCamera
 
@@ -129,6 +132,17 @@ end
 
 function UILibraryController.addHoverAnimation(Button : GuiButton)
 	local conn = {}
+
+	--[[
+		Hover nao existe no toque: o dedo ou esta apertando ou nao esta na tela, nao
+		ha um estado "pairando por cima". Pior, o Roblox as vezes dispara o MouseEnter
+		no comeco do toque sem o MouseLeave correspondente, e o botao ficaria crescido
+		para sempre. No celular o botao simplesmente nao reage a hover.
+	]]
+	if PointerUtil.isTouchOnly() then
+		return conn
+	end
+
 	local UIScale = Button:FindFirstChildOfClass("UIScale")
 	if not UIScale then
 		UIScale = Instance.new("UIScale")
@@ -206,7 +220,7 @@ function UILibraryController.addClickAnimation(Button : GuiButton, clickCallback
 		UIScale = Instance.new("UIScale")
 		UIScale.Parent = Button
 	end
-	table.insert(conn, Button.MouseButton1Down:Connect(function()
+	local function pressVisual()
 		Spring.target(UIScale, .65, 4, {
 			Scale = .95
 		})
@@ -216,10 +230,9 @@ function UILibraryController.addClickAnimation(Button : GuiButton, clickCallback
 				Rotation = -8
 			})
 		end
+	end
 
-
-	end))
-	table.insert(conn, Button.MouseButton1Up:Connect(function()
+	local function releaseVisual()
 		Spring.target(UIScale, .65, 4, {
 			Scale = 1
 		})
@@ -229,6 +242,48 @@ function UILibraryController.addClickAnimation(Button : GuiButton, clickCallback
 				Rotation = 0
 			})
 		end
+	end
+
+	--[[
+		O botao afunda no aperto e volta no soltar, mas soltar nem sempre passa pelo
+		botao: no toque, se o dedo escorrega para fora antes de sair, o
+		`MouseButton1Up` nunca chega e o botao ficaria encolhido para sempre.
+
+		Por isso a volta e vigiada pelo UserInputService, que ve o dedo sair de
+		qualquer lugar da tela.
+	]]
+	local releaseWatcher : RBXScriptConnection? = nil
+
+	local function stopWatchingRelease()
+		if releaseWatcher then
+			releaseWatcher:Disconnect()
+			releaseWatcher = nil
+		end
+	end
+
+	table.insert(conn, Button.MouseButton1Down:Connect(function()
+		pressVisual()
+
+		stopWatchingRelease()
+		releaseWatcher = UserInputService.InputEnded:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.MouseButton1
+				and input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+
+			stopWatchingRelease()
+			releaseVisual()
+		end)
+	end))
+
+	--[[
+		A acao sai do `Activated`, que e o unico evento que o Roblox garante tanto no
+		clique quanto no toque -- e so quando o dedo/cursor sai de fato em cima do
+		botao, entao arrastar para fora continua sendo desistir.
+	]]
+	table.insert(conn, Button.Activated:Connect(function()
+		stopWatchingRelease()
+		releaseVisual()
 
 		if clickCallback ~= nil then
 			clickCallback()
@@ -236,6 +291,10 @@ function UILibraryController.addClickAnimation(Button : GuiButton, clickCallback
 
 		--require(Vendor.Me).new():Get("MusicController"):PlaySFX("UIClick")   -- falta o UIClick em SharedSounds.SFX
 	end))
+
+	-- Quem recebe essa lista desliga tudo chamando `:Disconnect()` em cada item, e
+	-- o vigia de soltura pode estar vivo na hora em que o botao morre.
+	table.insert(conn, { Disconnect = stopWatchingRelease })
 
 	return conn
 end
