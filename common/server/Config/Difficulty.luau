@@ -28,6 +28,14 @@
 
 	`BaseHealth` dividido por `MobDamage` e quantos vazamentos o jogador aguenta:
 	12 no Facil, 7 no Medio, 5 no Dificil, 4 no Impossivel e 3 no Nightmare.
+
+	`WeatherChance` e a chance, por wave, de sair um aviso de clima — o clima em si
+	cai tres waves depois (ver `WeatherConfig.Round`). O dado so e jogado quando nao
+	houver nenhum clima agendado nem no ar, entao o numero nao e "quantas waves tem
+	clima": e a pressa com que o proximo aparece depois que o anterior sai. Nos
+	valores de hoje, no Facil sai um a cada ~10 waves de intervalo livre e no
+	Nightmare a cada ~2,5 — o que, somado aos presets serem mais longos la em cima,
+	e o que faz a dificuldade mudar tambem o quanto o mapa e imprevisivel.
 ]]
 
 local Difficulty = {}
@@ -44,6 +52,7 @@ Difficulty.Order = {
 
 Difficulty.Presets = {
 	Easy = {
+		WeatherChance = 0.10,
 		HealthMultiplier = 0.5,
 		HealthGrowth = 1.015,
 		SpeedMultiplier = 0.9,
@@ -65,6 +74,7 @@ Difficulty.Presets = {
 	},
 
 	Medium = {
+		WeatherChance = 0.15,
 		HealthMultiplier = 1.2,
 		HealthGrowth = 1.022,
 		SpeedMultiplier = 1,
@@ -86,6 +96,7 @@ Difficulty.Presets = {
 	},
 
 	Hard = {
+		WeatherChance = 0.22,
 		HealthMultiplier = 2,
 		HealthGrowth = 1.03,
 		SpeedMultiplier = 1.1,
@@ -107,6 +118,7 @@ Difficulty.Presets = {
 	},
 
 	Impossible = {
+		WeatherChance = 0.30,
 		HealthMultiplier = 3.625,
 		HealthGrowth = 1.04,
 		SpeedMultiplier = 1.2,
@@ -128,6 +140,7 @@ Difficulty.Presets = {
 	},
 
 	Nightmare = {
+		WeatherChance = 0.40,
 		HealthMultiplier = 6.75,
 		HealthGrowth = 1.05,
 		SpeedMultiplier = 1.35,

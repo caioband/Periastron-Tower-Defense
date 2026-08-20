@@ -42,6 +42,22 @@ local WeatherController = {
 
 WeatherController.Current = nil :: string?
 
+--[=[
+	O clima que este cliente esta vendo, ou nil.
+
+	E a fonte de verdade do cliente para os efeitos de clima: o alcance que o
+	`TargetingController` usa para procurar alvo, o circulo que o
+	`UnitPlacementController` desenha e os numeros do card saem todos daqui, com os
+	multiplicadores do `WeatherConfig` por cima. O servidor faz a mesma conta com o
+	valor dele, entao os dois lados mostram o mesmo numero.
+
+	Quem precisa reagir a troca (redesenhar um circulo, atualizar um label) escuta
+	o proprio `WeatherChanged`; este metodo e so para ler o estado atual.
+]=]
+function WeatherController:GetCurrent() : string?
+	return self.Current
+end
+
 --[[ AMBIENTE ]]
 
 function WeatherController:_stopAmbience(fade: number?)

@@ -302,6 +302,118 @@ O `Clear` devolve a iluminação que estava antes do **primeiro** clima, não a 
 clima anterior — trocar de Snow para Thunder e desligar volta para a iluminação do
 mapa, não para a do Snow.
 
+#### Clima na partida (Game)
+
+O `WeatherService` sabe ligar e desligar um clima, mas não sabe nada de waves. Quem
+decide **se**, **qual** e **quando**, dentro do round, é o `WeatherRoundService`
+(`Game/src/Services`).
+
+A cada wave que começa ele faz três coisas, nesta ordem:
+
+1. tira o clima que estava no ar, se a duração dele acabou;
+2. liga o clima que estava agendado para esta wave;
+3. não havendo nada agendado nem no ar, joga um dado — e passando, escolhe um clima
+   do pool do mapa e **avisa** para `LeadWaves` waves à frente.
+
+O aviso é o ponto do sistema. O clima nunca cai de surpresa: o jogador vê três waves
+antes o que vem, e é isso que transforma o clima de azar em decisão — dá tempo de
+vender o que vai ficar inútil e posicionar o que vai brilhar.
+
+Só existe um clima por vez, e o dado nem é jogado enquanto houver um agendado ou no
+ar. Um clima que cairia depois da última wave do preset não vira aviso nenhum.
+
+**Pool por mapa** (`WeatherConfig.MapPools`). A chave é o nome do mapa em
+`MapConfig.MAPS`; mapa fora da tabela simplesmente não tem clima.
+
+| Mapa | Climas |
+| --- | --- |
+| `Farm` | Fog, Wind, Thunder |
+| `Dessert` | Sandstorm, Drought |
+| `Volcano` | Drought, Fog |
+| `Cave` | Fog |
+| `SnowyCastle` | Snow, Wind, Fog |
+| `Mountain` | Snow, Wind, Fog, Thunder, Drought |
+| `Snowy` | Snow, Wind, Fog |
+
+**Chance por dificuldade** (`WeatherChance`, em `Config.Difficulty`): 10% no Fácil,
+15% no Médio, 22% no Difícil, 30% no Impossível e 40% no Nightmare. Como o dado só é
+jogado com o céu livre, o número não é "quantas waves têm clima": é a pressa com que
+o próximo aparece depois que o anterior sai.
+
+**O aviso na tela** é `StarterGui.Interface.WeatherWarning`, um TextLabel com um
+UIStroke, e quem o anima é o `WeatherWarningController`. O texto desce do alto até a
+posição autorada enquanto a transparência do texto **e do stroke** cai de 1 para 0 —
+a impressão é a de a frase se formando no lugar. Segura `Hold` (5s) e sobe de volta.
+A posição autorada é o destino, então mover o label no Studio não exige tocar em
+código. Quem entra no meio da partida pede o aviso pendente com
+`RequestWeatherWarning`.
+
+#### Classes e efeitos de clima
+
+Cada unidade tem uma `Class` em `UnitStats` — `Melee`, `Ranged`, `Magic`, `Fire`,
+`Ice` ou `Electric` (aceita lista, para unidade de dois tipos). É o único lugar onde
+a classe é escrita; quem lê é o `WeatherConfig`.
+
+| Unidade | Classe |
+| --- | --- |
+| Entrepreneur | Melee |
+| Rocket | Ranged |
+| Slasher | Melee |
+| Slingshot | Ranged |
+| Subspace Tripminer | Magic |
+| Sword | Melee |
+| Azure | — (ainda sem classificar) |
+
+Unidade sem `Class` continua funcionando: ela só não entra em nenhuma regra por tipo
+e leva apenas o que o clima faz com `All`.
+
+Os efeitos vivem em `WeatherConfig.Effects` e são **sempre multiplicadores** (0.7 é
+"cai 30%"), nunca valores absolutos — assim o efeito vale igual numa unidade de
+nível 0 e numa de nível 5.
+
+| Clima | Efeito |
+| --- | --- |
+| **Fog** | alcance de todas as unidades × 0.7. Magic sofre 1.5x mais o mesmo corte (45%), então × 0.55 |
+| **Wind** | velocidade dos inimigos × 1.3; velocidade de ataque de Melee × 1.3 |
+| **Drought** | vida dos inimigos × 1.4; Fire ganha 30% de dano e 20% de cadência; Ice perde 60% de dano, cadência e alcance |
+| **Snow** | cadência de todas × 0.75 (Ice × 1.25) e uma unidade congelada por 10s a cada 30s. Magic é imune |
+| **Thunder** | o raio atordoa; Electric ganha 10% de dano passivo e carga ao ser atingido. Magic é imune |
+| **Sandstorm** | dano e alcance de todas × 0.7. Magic é imune |
+
+Duas regras de precedência valem a pena guardar. **`Units.<Classe>` substitui
+`Units.All`** naquela estatística — por isso o Fog escreve 0.55 para Magic em vez de
+esperar que 0.7 e 0.55 se multipliquem. E **`Immune` tira a unidade do clima
+inteiro**: nem debuff, nem buff da própria classe, nem congelamento, nem raio.
+
+Os multiplicadores entram no `UnitUpgradeConfig`, e não em cada chamador: todos os
+getters aceitam um `weather` opcional no fim.
+
+```lua
+UnitUpgradeConfig:GetRange("Slingshot", 0)          -- 12
+UnitUpgradeConfig:GetRange("Slingshot", 0, "Fog")   -- 8.4
+UnitUpgradeConfig:GetCooldown("Slasher", 0, "Wind") -- 0.85 / 1.3
+```
+
+Concentrar a conta ali é o que faz servidor e cliente concordarem: o alcance que o
+`UnitService` usa para procurar alvo, o círculo que o `UnitPlacementController`
+desenha no chão e os números do card saem todos da mesma função. Se o clima entrasse
+só no combate, o jogador veria um círculo que não corresponde ao que a unidade
+alcança.
+
+Ninguém empurra o clima para o combate. O `UnitService` lê o clima do
+`WeatherService` uma vez por quadro e o `MobService` confere no mesmo lugar se ele
+mudou — então ligar o clima é o único passo, e o comando `weather` produz exatamente
+a mesma partida que o round produz. No cliente a fonte é o
+`WeatherController:GetCurrent()`, e quem precisa redesenhar (círculo de alcance,
+card) escuta o próprio `WeatherChanged`.
+
+A vida dos inimigos é a exceção que só vale no spawn: mudar `MaxHealth` no meio da
+caminhada significaria curar o mob ou matá-lo na hora. A velocidade, essa sim, entra
+na hora — inclusive nos que já estão andando, senão dois mobs iguais andariam em
+ritmos diferentes na mesma wave. E a renda da fazenda fica de fora de propósito: ela
+não é dano, e o corte da tempestade de areia mexeria na economia em vez de no
+combate.
+
 #### Raios (Thunder)
 
 Com o clima `Thunder` ligado cai um raio a cada `Interval` (5s). Onde ele cai é
@@ -354,8 +466,31 @@ o controller passa `EmitRepeat = 0` na mão em vez de depender disso. E o
 addon em runtime e não existem no asset: a vida do clone sai do atributo `Duration`
 dele mais `Cleanup`.
 
-O raio hoje é **só visual** — não tira vida nem atordoa. O gancho seria no
-`ThunderService:strike`, ao lado do `Framework:Fire`.
+O raio não tira vida: ele **atordoa**. Quem leva em cheio para por `Stun.Direct`
+(20s — a wave inteira), e o choque **salta** para quem estiver dentro de
+`Stun.Radius` (12 studs), que para por `Stun.Chain` (5s). A diferença entre os dois
+prazos é grande de propósito: um raio bem colocado tem que doer, não apagar meio
+mapa. `Hops` é quantas camadas o salto pode andar (1 hoje) e `MaxTargets` fecha o
+teto por camada; cada unidade é tocada uma vez só por descarga.
+
+`Electric` é a exceção que faz o clima valer a pena para alguém: além dos 10% de
+dano passivos enquanto o trovão durar, levar o raio (ou o salto) a **carrega** com
++50% de dano e +50% de cadência por `Charge.Duration` (10s). O buff temporário mora
+em `entry.Charge`, por fora do `UnitUpgradeConfig` — o config só conhece números que
+valem para todo mundo, e a carga é estado de partida de uma unidade específica.
+Recarregar antes de acabar renova o prazo em vez de empilhar.
+
+Unidade imune ao trovão (Magic) **sai do sorteio** do raio do clima em vez de ser
+sorteada e ignorada — deixá-la no bolo estragaria o pity, porque cada raio gasto
+nela contaria como acerto e a chance voltaria ao piso sem nada acontecer na tela. O
+comando `strike` continua alcançando qualquer unidade, porque testar o visual numa
+Magic é legítimo.
+
+No cliente, `UnitStunned` pinta a unidade de amarelo e `UnitCharged` de ciano — as
+duas coisas vêm do mesmo raio e acontecem lado a lado, e sem separar as cores uma
+Electric carregada pareceria congelada. Os saltos são desenhados com o mesmo asset
+do raio (`VFXController:spawnBeam`), ligando o meio do corpo de uma unidade ao da
+outra, e sem estouro próprio: o do raio principal já está tocando.
 
 Para testar sem esperar o intervalo, o comando `strike` chama o
 `ThunderService:strikeUnit` direto — força acerto em unidade, sem passar pelo
@@ -428,7 +563,7 @@ e a lista de admins do Cmdr. Isso foi separado:
 | | Onde | Conteúdo |
 |---|---|---|
 | **Servidor** | `ServerScriptService.Config` ← `common/server/Config` | `Data` (PROFILE_KEY + template), `Wave`, `Summon`, `Difficulty`, `Cmdr` (ADMIN_USER_IDS, GROUP_ID, ALLOW_IN_STUDIO) |
-| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, `Mob`, `Cmdr` cosmético) |
+| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, `Mob`, `Cmdr` cosmético) |
 
 Convenção nos scripts de servidor:
 

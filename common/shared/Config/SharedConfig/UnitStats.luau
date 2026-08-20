@@ -15,6 +15,11 @@
 	   alcance longo e do Slingshot, que nao tem area nem dano alto.
 
 	DPS = Damage * Hits / Cooldown.
+
+	`Class` e o tipo da unidade para efeito de clima: "Melee", "Ranged", "Magic",
+	"Fire", "Ice" ou "Electric" (a lista vive em `WeatherConfig.ClassList`). Aceita
+	uma lista quando a unidade for de dois tipos — `Class = {"Melee", "Fire"}`. E o
+	unico lugar onde a classe e escrita; quem le e o `WeatherConfig`.
 ]]
 
 local UnitStats = {
@@ -24,6 +29,9 @@ local UnitStats = {
 	-- so contra quem chega perto.
 	["Azure"] = {
 		Rarity = "Legendary",
+		-- Sem `Class` de proposito: ela ainda nao foi classificada. Assim ela leva
+		-- so o que o clima faz com `All` e nao entra em nenhuma regra por tipo.
+
 		Cost = 250,
 		Damage = 17,
 		Range = 6,
@@ -41,6 +49,7 @@ local UnitStats = {
 	-- que era 3 e fazia a unidade explodir uma area que ela nao enxergava.
 	["Rocket"] = {
 		Rarity = "Legendary",
+		Class = "Ranged",
 		Cost = 450,
 		Damage = 50,
 		Range = 4,
@@ -61,6 +70,7 @@ local UnitStats = {
 
 	["Subspace Tripminer"] = {
 		Rarity = "Epic",
+		Class = "Magic",
 		Cost = 350,
 		Damage = 75,
 		Range = 10,
@@ -82,6 +92,7 @@ local UnitStats = {
 
 	["Entrepreneur"] = {
 		Rarity = "Epic",
+		Class = "Melee",
 		Cost = 200,
 		Damage = 0,
 		Range = 6,
@@ -100,6 +111,7 @@ local UnitStats = {
 	-- dano por tiro, a 4,6 de DPS por 100 de caixa.
 	["Slingshot"] = {
 		Rarity = "Rare",
+		Class = "Ranged",
 		Cost = 150,
 		Damage = 11,
 		Range = 12,
@@ -119,6 +131,7 @@ local UnitStats = {
 	-- O golpe pesado e lento, contra o Slasher que e rapido e fraco.
 	["Sword"] = {
 		Rarity = "Common",
+		Class = "Melee",
 		Cost = 175,
 		Damage = 35,
 		Range = 4,
@@ -133,6 +146,7 @@ local UnitStats = {
 	-- por 100 de caixa, abaixo do Slingshot, que e Rare e custa mais.
 	["Slasher"] = {
 		Rarity = "Common",
+		Class = "Melee",
 		Cost = 100,
 		Damage = 3,
 		Range = 5,

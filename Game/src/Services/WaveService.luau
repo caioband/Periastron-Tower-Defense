@@ -50,17 +50,28 @@ local ROUND_STATE = {
 
 -- Services que guardam estado de partida e sabem se limpar sozinhos. Cada um
 -- expoe `ResetRound()`; quem entrar nessa lista passa a ser zerado junto.
-local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService" }
+local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService", "WeatherRoundService" }
 
 local WaveService = {
 	Services = {
 		MobService = {},
 		UnitService = {},
 		DifficultyService = {},
-		DataService = {}
+		DataService = {},
+		WeatherRoundService = {}
 	},
 	Signals = {
-		Ended = Signal.new()
+		Ended = Signal.new(),
+
+		--[[
+			Disparado no comeco de cada wave, com o numero dela e o preset em uso.
+
+			Quem escuta hoje e o `WeatherRoundService`, que joga o dado do clima e
+			liga o que estava agendado. Fica como sinal e nao como chamada direta
+			porque o round nao precisa saber que existe clima: se o service sumir, o
+			`setWave` continua igual.
+		]]
+		WaveStarted = Signal.new()
 	},
 	ReadyPlayers = {},
 	PlayAgainVotes = {},
@@ -86,6 +97,7 @@ function WaveService:setWave(waveCount : number)
 		Framework:Fire("SetWave", Player, self.WaveCount, hasBoss)
 	end
 
+	self.Signals.WaveStarted:Fire(self.WaveCount, preset, self:getMaxWaves(preset))
 end
 
 function WaveService:waitForAllPlayers()

@@ -179,6 +179,337 @@ WeatherConfig.Thunder = {
 	StrikeSound = "Thunder",
 	StrikeFadeOut = 1,
 	StrikeVolume = 1,
+
+	--[[
+		O atordoamento que o raio deixa.
+
+		`Direct` e de quem o raio pegou em cheio; `Chain` e de quem levou o arco que
+		saltou dele. A diferenca e grande de proposito — 20s tira a unidade da wave
+		inteira, e sem um valor bem menor no salto um raio bem colocado apagaria meio
+		mapa de uma vez.
+
+		`Radius` e o alcance do salto, medido do pe da unidade atingida. `Hops` e
+		quantas vezes o arco pode saltar: 1 significa que so quem esta perto do alvo
+		original pega, e ninguem propaga de novo. `MaxTargets` fecha o teto por salto.
+
+		Unidade imune ao clima (ver `Effects.Thunder.Immune`) nao e atordoada nem
+		serve de ponte para o arco.
+	]]
+	Stun = {
+		Direct = 20,
+		Chain = 5,
+		Radius = 12,
+		Hops = 1,
+		MaxTargets = 4,
+	},
+
+	--[[
+		O premio de levar um raio, para quem e do tipo `Electric`.
+
+		Fora isso o Electric ja ganha um bonus passivo enquanto o clima durar, que
+		mora em `Effects.Thunder.Units.Electric` — este aqui e o temporario, que so
+		entra quando o raio (ou o arco) encosta na unidade.
+	]]
+	Charge = {
+		Damage = 1.5,
+		AttackSpeed = 1.5,
+		Duration = 10,
+	},
 }
+
+--[[ ============================ CLIMA DE PARTIDA ============================ ]]
+
+--[[
+	Quais climas cada mapa pode sortear.
+
+	A chave é o nome do mapa em `MapConfig.MAPS` — que é o mesmo nome da pasta em
+	`ServerStorage.Maps` — e o valor é a lista de Models de `Assets.Weathers` que
+	fazem sentido ali. Neve no deserto e tempestade de areia na caverna não entram
+	não por regra de código, mas porque não estão nesta lista.
+
+	Mapa fora daqui (ou com a lista vazia) simplesmente não tem clima: o sorteio de
+	cada wave nem chega a rodar. É o comportamento certo para um mapa novo que
+	ainda não foi ambientado.
+]]
+WeatherConfig.MapPools = {
+	Farm = { "Fog", "Wind", "Thunder" },
+	Dessert = { "Sandstorm", "Drought" },
+	Volcano = { "Drought", "Fog" },
+	Cave = { "Fog" },
+	SnowyCastle = { "Snow", "Wind", "Fog" },
+	Mountain = { "Snow", "Wind", "Fog", "Thunder", "Drought" },
+	Snowy = { "Snow", "Wind", "Fog" },
+}
+
+--[[
+	O ritmo do clima dentro da partida.
+
+	A cada wave que começa o `WeatherRoundService` joga um dado. Passando, ele não
+	liga o clima na hora: ele **avisa**, e o clima entra `LeadWaves` waves depois.
+	As três waves de antecedência são o ponto todo do sistema — o jogador vê o
+	aviso, sabe o que vem e tem tempo de trocar o posicionamento antes.
+
+	`Duration` é por quantas waves o clima fica no ar depois de entrar. Sai sozinho
+	no começo da wave seguinte à última.
+
+	`Chance` é só o piso: quem manda é o `WeatherChance` do preset de dificuldade
+	(`ServerScriptService.Config.Difficulty`), que sobe do Fácil para o Nightmare.
+	Este valor cobre preset sem o campo.
+
+	Enquanto houver clima agendado ou no ar, o dado não é jogado de novo — dois
+	climas ao mesmo tempo não existem, e um aviso por cima de outro só confundiria.
+]]
+WeatherConfig.Round = {
+	LeadWaves = 3,
+	Duration = 1,
+	Chance = 0.15,
+	TransitionTime = 3,
+}
+
+--[[
+	O aviso na tela: `StarterGui.Interface.WeatherWarning`, um TextLabel com um
+	UIStroke dentro.
+
+	O label nasce invisível e com a posição autorada; o controller guarda essa
+	posição como destino e faz o texto descer até ela enquanto a transparência vai
+	de 1 a 0 (no texto e no stroke), segura `Hold` segundos e sai pelo mesmo
+	caminho. `SlideOffset` é quanto acima do destino ele começa, em escala da tela.
+
+	`Text` leva o nome do clima e quantas waves faltam; `TextOne` existe só para
+	não escrever "1 ROUNDS". `DisplayNames` é para quando o nome do Model não for o
+	nome que o jogador deve ler.
+]]
+WeatherConfig.Warning = {
+	Name = "WeatherWarning",
+	Text = "WARNING! %s COMING IN %d ROUNDS",
+	TextOne = "WARNING! %s COMING NEXT ROUND",
+	DisplayNames = {},
+
+	SlideOffset = 0.06,
+	FadeIn = 0.5,
+	Hold = 5,
+	FadeOut = 0.4,
+}
+
+--[[
+	As classes que os efeitos enxergam.
+
+	A classe de cada unidade fica em `UnitStats[nome].Class`, que aceita uma string
+	ou uma lista — uma unidade pode ser `{"Melee", "Fire"}` e receber os dois lados
+	do mesmo clima. Unidade sem `Class` continua funcionando: ela só não entra em
+	nenhuma regra por tipo, e leva apenas o que o clima faz com `All`.
+]]
+WeatherConfig.ClassList = { "Melee", "Ranged", "Magic", "Fire", "Ice", "Electric" }
+
+--[[
+	O que cada clima faz.
+
+	Tudo aqui é **multiplicador**: 0.7 é "cai 30%", 1.3 é "sobe 30%". Nunca um
+	valor absoluto, para o efeito valer igual numa unidade de nível 0 e numa de
+	nível 5.
+
+	- `Units.All` vale para todas as unidades.
+	- `Units.<Classe>` vale só para quem tem aquela classe, e **substitui** o `All`
+	  naquela estatística. É por isso que o Fog escreve 0.55 para Magic em vez de
+	  esperar que 0.7 e 0.55 se multipliquem: o número da classe é o número final.
+	- `Immune` tira a unidade do clima inteiro — nem debuff, nem buff, nem
+	  congelamento, nem raio.
+	- `Mobs` mexe nos inimigos: `Speed` entra na hora (inclusive nos que já estão
+	  andando) e `Health` só vale para quem nascer com o clima ligado.
+
+	As estatísticas de unidade são `Damage`, `Range` e `AttackSpeed`. `AttackSpeed`
+	acima de 1 é ataque mais rápido — quem divide o cooldown por ela é o
+	`UnitUpgradeConfig:GetCooldown`.
+]]
+WeatherConfig.Effects = {
+	--[[
+		Neblina: todo mundo enxerga menos. Magic sofre 1.5x mais o mesmo corte
+		(30% * 1.5 = 45%), então o multiplicador dela é 0.55.
+	]]
+	Fog = {
+		Units = {
+			All = { Range = 0.7 },
+			Magic = { Range = 0.55 },
+		},
+	},
+
+	-- Vento: empurra o inimigo para a frente e o corpo a corpo para bater mais.
+	Wind = {
+		Mobs = { Speed = 1.3 },
+		Units = {
+			Melee = { AttackSpeed = 1.3 },
+		},
+	},
+
+	--[[
+		Seca: inimigo mais gordo, fogo em vantagem e gelo praticamente fora de
+		combate — 60% a menos de dano, de cadência e de alcance.
+	]]
+	Drought = {
+		Mobs = { Health = 1.4 },
+		Units = {
+			Fire = { Damage = 1.3, AttackSpeed = 1.2 },
+			Ice = { Damage = 0.4, AttackSpeed = 0.4, Range = 0.4 },
+		},
+	},
+
+	--[[
+		Neve: além do corte de cadência, congela uma unidade sorteada de tempos em
+		tempos (o `SnowService` cuida do compasso). Magic passa ileso pelos dois.
+	]]
+	Snow = {
+		Immune = { Magic = true },
+		Units = {
+			All = { AttackSpeed = 0.75 },
+			Ice = { AttackSpeed = 1.25 },
+		},
+		Freeze = {
+			Interval = 30,
+			Duration = 10,
+		},
+	},
+
+	--[[
+		Trovão: o raio atordoa quem acerta e salta para quem estiver perto (os
+		números estão em `WeatherConfig.Thunder.Stun`). Electric ganha um bônus
+		passivo enquanto o clima durar, e um bem maior e temporário quando leva o
+		raio (`WeatherConfig.Thunder.Charge`). Magic não é alvo.
+	]]
+	Thunder = {
+		Immune = { Magic = true },
+		Units = {
+			Electric = { Damage = 1.1 },
+		},
+	},
+
+	--[[
+		Tempestade de areia: menos dano e menos alcance para quem depende de ver.
+		Magic não depende, e passa ileso.
+	]]
+	Sandstorm = {
+		Immune = { Magic = true },
+		Units = {
+			All = { Damage = 0.7, Range = 0.7 },
+		},
+	},
+}
+
+--[[ ============================== CONSULTAS ================================ ]]
+
+local UnitStats = require(script.Parent.UnitStats)
+
+local EMPTY = table.freeze({})
+
+--[=[
+	As classes de uma unidade, sempre como lista.
+
+	Aceita `Class = "Melee"` e `Class = {"Melee", "Fire"}` porque a primeira forma é
+	a que se escreve em 99% dos casos e a segunda é a que o config precisa suportar.
+]=]
+function WeatherConfig.GetClasses(unitName : string?) : { string }
+	local stats = unitName and UnitStats[unitName]
+	local class = stats and stats.Class
+	if not class then
+		return EMPTY
+	end
+
+	if typeof(class) == "string" then
+		return { class }
+	end
+
+	return class
+end
+
+function WeatherConfig.HasClass(unitName : string?, className : string) : boolean
+	for _, class in WeatherConfig.GetClasses(unitName) do
+		if class == className then
+			return true
+		end
+	end
+
+	return false
+end
+
+function WeatherConfig.GetEffects(weatherName : string?)
+	if not weatherName then return nil end
+	return WeatherConfig.Effects[weatherName]
+end
+
+--[=[
+	A unidade está fora deste clima?
+
+	Imunidade é total: nem o debuff que todo mundo leva, nem o buff da própria
+	classe, nem congelamento ou raio. É o que "não afeta unidades do tipo Magic"
+	quer dizer.
+]=]
+function WeatherConfig.IsImmune(weatherName : string?, unitName : string?) : boolean
+	local effects = WeatherConfig.GetEffects(weatherName)
+	local immune = effects and effects.Immune
+	if not immune then return false end
+
+	for _, class in WeatherConfig.GetClasses(unitName) do
+		if immune[class] then
+			return true
+		end
+	end
+
+	return false
+end
+
+--[=[
+	Multiplicador do clima para uma estatística de unidade (`Damage`, `Range` ou
+	`AttackSpeed`). Sem clima, clima desconhecido ou unidade imune, devolve 1.
+
+	A regra de precedência está no comentário de `Effects`: o valor da classe
+	substitui o de `All`, e duas classes que mexam na mesma estatística se
+	multiplicam entre si.
+]=]
+function WeatherConfig.GetUnitMultiplier(weatherName : string?, unitName : string?, stat : string) : number
+	local effects = WeatherConfig.GetEffects(weatherName)
+	local units = effects and effects.Units
+	if not units then return 1 end
+
+	if WeatherConfig.IsImmune(weatherName, unitName) then return 1 end
+
+	local multiplier = 1
+	local fromClass = false
+
+	for _, class in WeatherConfig.GetClasses(unitName) do
+		local entry = units[class]
+		local value = entry and entry[stat]
+		if value then
+			multiplier *= value
+			fromClass = true
+		end
+	end
+
+	if fromClass then
+		return multiplier
+	end
+
+	local all = units.All
+	return (all and all[stat]) or 1
+end
+
+-- Multiplicador do clima para uma estatística de inimigo (`Speed` ou `Health`).
+function WeatherConfig.GetMobMultiplier(weatherName : string?, stat : string) : number
+	local effects = WeatherConfig.GetEffects(weatherName)
+	local mobs = effects and effects.Mobs
+	return (mobs and mobs[stat]) or 1
+end
+
+-- Os climas que um mapa pode sortear. Mapa sem pool devolve lista vazia.
+function WeatherConfig.GetPool(mapName : string?) : { string }
+	local pool = mapName and WeatherConfig.MapPools[mapName]
+	return pool or EMPTY
+end
+
+--[[
+	Nome que o aviso mostra. Sem entrada em `DisplayNames`, é o nome do Model em
+	caixa alta.
+]]
+function WeatherConfig.GetDisplayName(weatherName : string) : string
+	return WeatherConfig.Warning.DisplayNames[weatherName] or string.upper(weatherName)
+end
 
 return WeatherConfig

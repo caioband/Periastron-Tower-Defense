@@ -184,25 +184,22 @@ local function strikeOrigin(foot : Vector3) : Vector3
 end
 
 --[=[
-	Raio caindo num ponto do mapa.
+	Um arco entre dois pontos do mundo. Devolve o Attachment da ponta, para quem
+	chamou poder pendurar som nele.
 
-	`unitId` e opcional: vindo, o pe do modelo manda, porque o servidor so conhece o
-	CFrame de posicionamento e o cliente mede a caixa real da unidade. A `position`
-	e o alvo quando o raio cai no chao, e o fallback de quando a unidade ainda nao
-	replicou.
+	O asset e um Attachment (o comeco do raio) com um Attachment filho de letra
+	unica (o fim). Posicionar os dois pelo `WorldPosition` e o suficiente: a posicao
+	relativa do filho se recalcula sozinha, e como nenhum dos dois tem BasePart de
+	ancestral, o mundo e o proprio referencial.
 
-	O asset e um Attachment (o comeco do raio) com um Attachment filho `B` (o fim).
-	Posicionar os dois pelo `WorldPosition` e o suficiente: a posicao relativa do
-	filho se recalcula sozinha, e como nenhum dos dois tem BasePart de ancestral, o
-	mundo e o proprio referencial.
+	Vale tanto para o raio que desce da nuvem quanto para o salto de uma unidade
+	para outra — a unica diferenca entre os dois e onde ficam as pontas.
 ]=]
-function VFXController:PlayLightningStrike(position : Vector3, unitId : string?)
-	if typeof(position) ~= "Vector3" then return end
-
+function VFXController:spawnBeam(from : Vector3, to : Vector3) : Attachment?
 	local asset = self.Library[ThunderConfig.Asset]
 	if not asset then
 		warn(`[VFXController]: nao achei o VFX "{ThunderConfig.Asset}" em Assets.VFX.`)
-		return
+		return nil
 	end
 
 	local beam = asset:Clone()
@@ -210,32 +207,14 @@ function VFXController:PlayLightningStrike(position : Vector3, unitId : string?)
 	if not tip then
 		warn(`[VFXController]: "{ThunderConfig.Asset}" nao tem o Attachment filho que marca o fim do raio.`)
 		beam:Destroy()
-		return
+		return nil
 	end
 
 	-- Precisa estar no DataModel antes do emit: o modulo ignora o que esta solto.
 	beam.Parent = VFX.temp
 
-	local foot = position
-	if unitId then
-		local model = self:resolveUnitModel(unitId)
-		if model and model.Parent then
-			foot = footOf(model)
-		end
-	end
-
-	beam.WorldPosition = strikeOrigin(foot)
-	tip.WorldPosition = foot
-
-	--[[
-		Depois de posicionar, nunca antes: o Sound vira filho do Attachment da ponta,
-		entao ele sai de onde o raio bateu. O clone do som morre junto com o beam, e o
-		beam so e destruido bem depois de o estouro acabar.
-	]]
-	local weather = self.Controllers.WeatherController
-	if weather then
-		weather:PlayStrikeSound(tip)
-	end
+	beam.WorldPosition = from
+	tip.WorldPosition = to
 
 	--[[
 		O asset vem com `EmitRepeat = -1`, que e como o plugin marca a previa em
@@ -252,6 +231,80 @@ function VFXController:PlayLightningStrike(position : Vector3, unitId : string?)
 	-- entao o `maxLifetime` do modulo daria zero: a vida sai do `Duration` dele.
 	local duration = VFX.num(beam:GetAttribute("Duration"), 5)
 	VFX.destroyAfter(beam, duration + ThunderConfig.Cleanup)
+
+	return tip
+end
+
+--[=[
+	Raio caindo num ponto do mapa.
+
+	`unitId` e opcional: vindo, o pe do modelo manda, porque o servidor so conhece o
+	CFrame de posicionamento e o cliente mede a caixa real da unidade. A `position`
+	e o alvo quando o raio cai no chao, e o fallback de quando a unidade ainda nao
+	replicou.
+]=]
+function VFXController:PlayLightningStrike(position : Vector3, unitId : string?)
+	if typeof(position) ~= "Vector3" then return end
+
+	local foot = position
+	if unitId then
+		local model = self:resolveUnitModel(unitId)
+		if model and model.Parent then
+			foot = footOf(model)
+		end
+	end
+
+	local tip = self:spawnBeam(strikeOrigin(foot), foot)
+	if not tip then return end
+
+	--[[
+		Depois de posicionar, nunca antes: o Sound vira filho do Attachment da ponta,
+		entao ele sai de onde o raio bateu. O clone do som morre junto com o beam, e o
+		beam so e destruido bem depois de o estouro acabar.
+	]]
+	local weather = self.Controllers.WeatherController
+	if weather then
+		weather:PlayStrikeSound(tip)
+	end
+end
+
+--[=[
+	Meio do corpo da unidade, ou a posicao que o servidor mandou quando o modelo
+	ainda nao chegou.
+]=]
+function VFXController:chainPoint(unitId : string?, fallback : Vector3?) : Vector3?
+	if unitId then
+		local model = self:resolveUnitModel(unitId)
+		if model and model.Parent then
+			return model:GetPivot().Position
+		end
+	end
+
+	return if typeof(fallback) == "Vector3" then fallback else nil
+end
+
+--[=[
+	O salto do raio de uma unidade para outra.
+
+	Cada link vem do `ThunderService` com o par de unidades e o par de posicoes. O
+	modelo manda quando ele ja replicou — a posicao do servidor e o CFrame de
+	posicionamento, que fica no pe da unidade, e um arco horizontal saindo do chao
+	parece um risco no piso. Sem modelo, a posicao serve de reserva.
+
+	Sem estouro proprio de proposito: o do raio principal ja esta tocando, e um
+	clone por arco encheria de trovao sobreposto uma coisa que dura meio segundo.
+]=]
+function VFXController:PlayLightningChain(links)
+	if typeof(links) ~= "table" then return end
+
+	for _, link in links do
+		local from = self:chainPoint(link.fromId, link.from)
+		local to = self:chainPoint(link.toId, link.to)
+
+		if from and to then
+			self:spawnBeam(from, to)
+		end
+	end
 end
 
 function VFXController:buildLibrary()
@@ -269,6 +322,10 @@ function VFXController:construct()
 	-- mundo ve o mesmo raio na mesma unidade.
 	Framework:Listen("LightningStrike", function(position : Vector3, unitId : string?)
 		self:PlayLightningStrike(position, unitId)
+	end)
+
+	Framework:Listen("LightningChain", function(links)
+		self:PlayLightningChain(links)
 	end)
 end
 

@@ -46,7 +46,8 @@ local UnitService = {
 	Services = {
 		MobService = {},
 		DataService = {},
-		WaveService = {}
+		WaveService = {},
+		WeatherService = {}
 	},
 	PlacedUnits = {},
 	UnitsById = {},
@@ -213,21 +214,120 @@ function UnitService:flushDamageDone()
 	end
 end
 
-function UnitService:StunRandomUnit(duration)
-	if #self.PlacedUnits == 0 then return end
+--[[ CLIMA ]]
 
-	local entry = self.PlacedUnits[math.random(1, #self.PlacedUnits)]
-	entry.StunnedUntil = os.clock() + (duration or 0)
+--[=[
+	O clima no ar, lido do `WeatherService` a cada quadro de combate.
+
+	Vem de la e nao do `WeatherRoundService` de proposito: o que interessa ao
+	combate e o que esta no ceu, tenha entrado pelo round ou pelo comando `weather`
+	— testar um clima na mao tem que produzir exatamente a partida que o round
+	produziria.
+]=]
+function UnitService:GetWeather() : string?
+	local weatherService = self.Services.WeatherService
+	return weatherService and weatherService:GetCurrent() or nil
+end
+
+--[=[
+	Multiplicador temporario de uma unidade (`Damage` ou `AttackSpeed`).
+
+	Hoje so o raio do trovao carrega uma unidade `Electric`, mas o campo e generico:
+	qualquer coisa que precise de um buff com prazo escreve `entry.Charge` e o
+	combate ja o respeita.
+]=]
+function UnitService:chargeMultiplier(entry, stat : string, now : number) : number
+	local charge = entry.Charge
+	if not charge then return 1 end
+
+	if now >= charge.expiresAt then
+		entry.Charge = nil
+		return 1
+	end
+
+	return charge[stat] or 1
+end
+
+--[=[
+	Da a uma unidade um buff com prazo. Recarregar antes de acabar renova o prazo
+	em vez de empilhar: dois raios seguidos na mesma unidade dao 10s de buff a
+	partir do segundo, nao 50% em cima de 50%.
+]=]
+function UnitService:ChargeUnit(entry, damage : number?, attackSpeed : number?, duration : number)
+	if not entry then return end
+
+	entry.Charge = {
+		Damage = damage or 1,
+		AttackSpeed = attackSpeed or 1,
+		expiresAt = os.clock() + (duration or 0),
+	}
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		Framework:Fire("UnitCharged", plr, entry.unitId, duration or 0)
+	end
+end
+
+--[=[
+	Atordoa uma unidade. O prazo maior manda — um chain de 5s nao pode encurtar um
+	atordoamento de 20s que ja estava correndo.
+]=]
+function UnitService:StunUnit(entry, duration : number)
+	if not entry then return end
+
+	local until_ = os.clock() + (duration or 0)
+	if (entry.StunnedUntil or 0) >= until_ then return end
+
+	entry.StunnedUntil = until_
 
 	for _, plr in ipairs(Players:GetPlayers()) do
 		Framework:Fire("UnitStunned", plr, entry.unitId, duration or 0)
 	end
 end
 
+--[=[
+	As unidades que o clima pode atordoar.
+
+	Quem e imune ao clima (Magic, nos climas de hoje) fica de fora — nao adianta
+	sortear entre elas e depois desistir, porque isso desperdicaria o sorteio e
+	faria o congelamento da neve falhar em silencio num mapa cheio de Magic.
+
+	Sem `weatherName` devolve todas: e o caso do gimmick de mob, que atordoa sem ter
+	nada a ver com clima.
+]=]
+function UnitService:GetStunnableUnits(weatherName : string?)
+	if not weatherName then
+		return self.PlacedUnits
+	end
+
+	local candidates = {}
+	for _, entry in ipairs(self.PlacedUnits) do
+		if not SharedConfig.WeatherConfig.IsImmune(weatherName, entry.unitName) then
+			table.insert(candidates, entry)
+		end
+	end
+
+	return candidates
+end
+
+--[=[
+	Atordoa uma unidade sorteada. `weatherName` restringe o sorteio a quem nao e
+	imune aquele clima.
+]=]
+function UnitService:StunRandomUnit(duration, weatherName : string?)
+	local candidates = self:GetStunnableUnits(weatherName)
+	if #candidates == 0 then return nil end
+
+	local entry = candidates[math.random(1, #candidates)]
+	self:StunUnit(entry, duration or 0)
+
+	return entry
+end
+
 function UnitService:construct()
 	Framework:Listen("ReplicateUnit", function() end)
 	Framework:Listen("RemoveUnit", function() end)
 	Framework:Listen("UnitStunned", function() end)
+	Framework:Listen("UnitCharged", function() end)
 	Framework:Listen("UpdateCardCounts", function() end)
 	Framework:Listen("RequestCardCounts", function(player)
 		local cards = self.SessionCards[player.UserId]
@@ -431,7 +531,11 @@ function UnitService:stepCombat()
 	local now = os.clock()
 	local scansLeft = TARGET_SCANS_PER_FRAME
 
-	self:stepTripmines(now)
+	-- Uma leitura por quadro, repassada para baixo: o clima nao muda no meio de um
+	-- laco, e consultar por unidade so gastaria.
+	local weather = self:GetWeather()
+
+	self:stepTripmines(now, weather)
 
 	for i = 1, count do
 		local entry = units[i]
@@ -441,7 +545,7 @@ function UnitService:stepCombat()
 
 		if stats and stats.Tripmine then
 			if now >= (entry.StunnedUntil or 0) then
-				self:stepTripminer(entry, stats, now)
+				self:stepTripminer(entry, stats, now, weather)
 			end
 			continue
 		end
@@ -449,10 +553,10 @@ function UnitService:stepCombat()
 		if mobService.ActiveMobCount > 0
 			and stats
 			and now >= (entry.StunnedUntil or 0)
-			and now - (entry.lastAttack or 0) >= SharedConfig.UnitUpgradeConfig:GetCooldown(entry.unitName, entry.upgrades or 0)
+			and now - (entry.lastAttack or 0) >= self:getCooldown(entry, now, weather)
 		then
 			local unitPosition = entry.cf.Position
-			local range = SharedConfig.UnitUpgradeConfig:GetRange(entry.unitName, entry.upgrades or 0)
+			local range = SharedConfig.UnitUpgradeConfig:GetRange(entry.unitName, entry.upgrades or 0, weather)
 
 			local targetId = entry.targetMobId
 			local targetValid = false
@@ -473,10 +577,36 @@ function UnitService:stepCombat()
 
 			if targetValid then
 				entry.lastAttack = now
-				self:executeAttack(entry, stats, targetId)
+				self:executeAttack(entry, stats, targetId, weather)
 			end
 		end
 	end
+end
+
+--[=[
+	Cooldown efetivo de uma unidade: o da tabela com o clima, dividido pela carga
+	temporaria que ela esteja carregando.
+
+	A carga entra por fora do `UnitUpgradeConfig` porque ela e estado de partida —
+	uma unidade especifica que levou um raio ha 4 segundos — e o config so conhece
+	numeros que valem para todo mundo.
+]=]
+function UnitService:getCooldown(entry, now : number, weather : string?) : number
+	local cooldown = SharedConfig.UnitUpgradeConfig:GetCooldown(entry.unitName, entry.upgrades or 0, weather)
+
+	local charge = self:chargeMultiplier(entry, "AttackSpeed", now)
+	if charge <= 0 then return cooldown end
+
+	return cooldown / charge
+end
+
+-- Dano por golpe, com o mesmo arredondamento do config.
+function UnitService:getDamage(entry, stats, weather : string?) : number
+	local base = stats.Damage or 0
+	local multiplier = SharedConfig.UnitUpgradeConfig:GetDamageMultiplier(entry.unitName, entry.upgrades or 0, weather)
+	local charge = self:chargeMultiplier(entry, "Damage", os.clock())
+
+	return math.floor(base * multiplier * charge + 0.5)
 end
 
 function UnitService:getMineLimit(entry, tripmineConfig)
@@ -493,9 +623,9 @@ function UnitService:getActiveMineCount(entry)
 	return total
 end
 
-function UnitService:getRandomPathPointInRange(entry)
+function UnitService:getRandomPathPointInRange(entry, weather : string?)
 	local unitPosition = entry.cf.Position
-	local range = SharedConfig.UnitUpgradeConfig:GetRange(entry.unitName, entry.upgrades or 0)
+	local range = SharedConfig.UnitUpgradeConfig:GetRange(entry.unitName, entry.upgrades or 0, weather)
 
 	local step = 1
 	local candidates = {}
@@ -542,16 +672,16 @@ function UnitService:getRandomPathPointInRange(entry)
 	return point + offset + Vector3.new(0, 0.35, 0)
 end
 
-function UnitService:stepTripminer(entry, stats, now)
+function UnitService:stepTripminer(entry, stats, now, weather : string?)
 	local config = stats.Tripmine
 	entry.mines = entry.mines or {}
 
-	local cooldown = SharedConfig.UnitUpgradeConfig:GetCooldown(entry.unitName, entry.upgrades or 0)
+	local cooldown = self:getCooldown(entry, now, weather)
 	if now - (entry.lastAttack or 0) < cooldown then return end
 
 	if self:getActiveMineCount(entry) >= self:getMineLimit(entry, config) then return end
 
-	local position = self:getRandomPathPointInRange(entry)
+	local position = self:getRandomPathPointInRange(entry, weather)
 	if not position then return end
 
 	entry.lastAttack = now
@@ -579,7 +709,7 @@ function UnitService:stepTripminer(entry, stats, now)
 	end)
 end
 
-function UnitService:stepTripmines(now)
+function UnitService:stepTripmines(now, weather : string?)
 	local mobService = self.Services.MobService
 	if mobService.ActiveMobCount == 0 then return end
 
@@ -591,7 +721,7 @@ function UnitService:stepTripmines(now)
 				local triggeredBy = mobService:GetNearestMobInRange(mine.position, config.TriggerRadius or 2.5)
 				if triggeredBy then
 					entry.mines[mineId] = nil
-					local damage = math.floor(stats.Damage * SharedConfig.UnitUpgradeConfig:GetDamageMultiplier(entry.unitName, entry.upgrades or 0) + 0.5)
+					local damage = self:getDamage(entry, stats, weather)
 					local radius = config.AOE and config.AOE.Radius or 6
 					local mobsHit = mobService:GetMobsInRadius(mine.position, radius)
 					for _, mobId in ipairs(mobsHit) do
@@ -613,6 +743,9 @@ function UnitService:payFarmUnits()
 		if farm then
 			local player = Players:GetPlayerByUserId(entry.ownerUserId)
 			if player then
+				-- Sem clima de proposito: a renda da fazenda nao e dano, e o corte de
+				-- 30% da tempestade de areia mexeria na economia da partida em vez de
+				-- no combate — que e o que os climas foram feitos para fazer.
 				local amount = math.floor((farm.Income or 0) * SharedConfig.UnitUpgradeConfig:GetDamageMultiplier(entry.unitName, entry.upgrades or 0) + 0.5)
 				self.Services.MobService:addCash(player, amount)
 				for _, plr in ipairs(Players:GetPlayers()) do
@@ -623,16 +756,22 @@ function UnitService:payFarmUnits()
 	end
 end
 
-function UnitService:executeAttack(entry, unitStats, initialMobId)
+function UnitService:executeAttack(entry, unitStats, initialMobId, weather : string?)
 	local unitName = entry.unitName
 	local unitId = entry.unitId
 	local ownerUserId = entry.ownerUserId
 	local unitPosition = entry.cf.Position
 	local upgradeLevel = entry.upgrades or 0
 
-	local damage = math.floor(unitStats.Damage * SharedConfig.UnitUpgradeConfig:GetDamageMultiplier(unitName, upgradeLevel) + 0.5)
+	--[[
+		O dano e o alcance sao congelados aqui, no comeco do golpe, e nao relidos a
+		cada acerto. Um MultiShot leva quase um segundo do primeiro ao ultimo hit, e
+		um clima que entrasse no meio faria os quatro golpes do mesmo ciclo saírem
+		com numeros diferentes.
+	]]
+	local damage = self:getDamage(entry, unitStats, weather)
 	local aoe = unitStats.AOE
-	local range = SharedConfig.UnitUpgradeConfig:GetRange(unitName, upgradeLevel)
+	local range = SharedConfig.UnitUpgradeConfig:GetRange(unitName, upgradeLevel, weather)
 	local totalHits = unitStats.Hits or 1
 
 	local attackConfig = SharedConfig.UnitAttackConfig and SharedConfig.UnitAttackConfig[unitName]

@@ -8,7 +8,9 @@ local Framework = require(Vendor.Me).new()
 local SharedConfig = require(Shared:WaitForChild("Config"):WaitForChild("SharedConfig"))
 
 local TargetingController = {
-	Controllers = {}
+	Controllers = {
+		WeatherController = {}
+	}
 }
 
 TargetingController.ActiveUnits = {}
@@ -53,6 +55,11 @@ function TargetingController:StartLoop()
 		local totalUnits = #self.ActiveUnits
 		if totalUnits == 0 then return end
 
+		-- Uma leitura por quadro: o alcance da neblina vale para todas as unidades
+		-- da fatia, e consultar por unidade so gastaria.
+		local weatherController = self.Controllers.WeatherController
+		local weather = weatherController and weatherController:GetCurrent() or nil
+
 		local cycles = math.min(self.UnitsPerFrame, totalUnits)
 		for _ = 1, cycles do
 			if self.SliceIndex > totalUnits then
@@ -62,7 +69,7 @@ function TargetingController:StartLoop()
 			local unitClass = self.ActiveUnits[self.SliceIndex]
 			if unitClass and unitClass.model and unitClass.model.Parent then
 				local unitPosition = unitClass.model:GetPivot().Position
-				local range = SharedConfig.UnitUpgradeConfig:GetRange(unitClass.name, unitClass.upgrades or 0)
+				local range = SharedConfig.UnitUpgradeConfig:GetRange(unitClass.name, unitClass.upgrades or 0, weather)
 
 				local target = self:FindBestTarget(unitPosition, range)
 				unitClass:setTarget(target)
@@ -85,6 +92,10 @@ function TargetingController:start()
 end
 
 function TargetingController:init()
+	for Controller, _ in self.Controllers do
+		self.Controllers[Controller] = Framework:Get(Controller, false, true)
+	end
+
 	self:construct()
 end
 

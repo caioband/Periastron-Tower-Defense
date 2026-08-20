@@ -35,8 +35,12 @@ local WeatherConfig = SharedConfig.WeatherConfig
 	Fica na Game porque depende do `UnitService` e do mapa carregado. O clima em si
 	e compartilhado (`common/server/Services/WeatherService`).
 
-	Hoje o raio e so visual: nao tira vida nem atordoa. O gancho para isso seria no
-	`strikeUnit`, ao lado do `Framework:Fire`.
+	O raio nao tira vida: ele atordoa. Quem leva em cheio para por `Stun.Direct`
+	(20s, a wave inteira), e o choque salta para quem estiver perto, que para por
+	`Stun.Chain` (5s). Unidade `Electric` e a excecao que faz o clima valer a pena
+	para alguem: alem do bonus passivo do `Effects.Thunder`, levar o raio a carrega
+	com dano e cadencia por `Charge.Duration`. Os numeros estao todos em
+	`WeatherConfig.Thunder`.
 ]]
 
 local ThunderService = {
@@ -57,22 +61,29 @@ ThunderService.UnitChance = Config.UnitChance
 	`unitName` restringe a um tipo de unidade — o comando `strike` usa isso para
 	testar o raio numa unidade especifica em vez de esperar a sorte.
 ]=]
-function ThunderService:pickTarget(unitName : string?)
+function ThunderService:pickTarget(unitName : string?, skipImmune : boolean?)
 	local unitService = self.Services.UnitService
 	local units = unitService and unitService.PlacedUnits
 	if not units or #units == 0 then
 		return nil
 	end
 
-	if not unitName then
-		return units[math.random(1, #units)]
-	end
+	--[[
+		Unidade imune ao trovao sai do sorteio em vez de ser sorteada e ignorada.
 
+		Ela nao seria atordoada de qualquer jeito, e deixa-la no bolo estragaria o
+		pity: cada raio gasto numa Magic contaria como "acertou uma unidade" e a
+		chance voltaria ao piso sem nada ter acontecido na tela.
+
+		Vale so para o raio do clima. O comando `strike` continua alcancando
+		qualquer unidade, porque testar o visual numa Magic e legitimo.
+	]]
 	local matches = {}
 	for _, entry in units do
-		if entry.unitName == unitName then
-			table.insert(matches, entry)
-		end
+		if unitName and entry.unitName ~= unitName then continue end
+		if skipImmune and WeatherConfig.IsImmune(Config.Weather, entry.unitName) then continue end
+
+		table.insert(matches, entry)
 	end
 
 	if #matches == 0 then
@@ -125,11 +136,129 @@ function ThunderService:pickGround() : Vector3?
 	return result and result.Position or Vector3.new(x, bottom, z)
 end
 
+--[[ EFEITO DO RAIO ]]
+
+--[=[
+	Unidades ao alcance do arco, a partir de um ponto.
+
+	`hit` é quem já levou choque nesta descarga — nem alvo, nem ponte. Sem isso o
+	arco voltaria para quem acabou de acertar e o salto nunca terminaria.
+]=]
+function ThunderService:findChainTargets(origin : Vector3, hit : { [string]: boolean })
+	local unitService = self.Services.UnitService
+	local units = unitService and unitService.PlacedUnits
+	if not units then
+		return {}
+	end
+
+	local radius = Config.Stun.Radius or 0
+	local found = {}
+
+	for _, entry in units do
+		if hit[entry.unitId] then continue end
+		if WeatherConfig.IsImmune(Config.Weather, entry.unitName) then continue end
+
+		if (entry.cf.Position - origin).Magnitude <= radius then
+			table.insert(found, entry)
+		end
+	end
+
+	return found
+end
+
+--[=[
+	O que uma unidade ganha por ser tocada pelo raio.
+
+	Atordoamento para todo mundo, e para quem é `Electric` também a carga: dano e
+	cadência bem acima do normal por alguns segundos. É o outro lado do trovão —
+	para a maioria das unidades ele é uma wave perdida, e para Electric é a melhor
+	wave da partida.
+]=]
+function ThunderService:applyHit(entry, duration : number)
+	local unitService = self.Services.UnitService
+	if not unitService then return end
+
+	unitService:StunUnit(entry, duration)
+
+	if not WeatherConfig.HasClass(entry.unitName, "Electric") then return end
+
+	local charge = Config.Charge
+	if not charge then return end
+
+	unitService:ChargeUnit(entry, charge.Damage, charge.AttackSpeed, charge.Duration or 0)
+end
+
+--[=[
+	A descarga inteira, a partir da unidade que o raio pegou em cheio.
+
+	O salto anda em camadas: quem está no raio da unidade atingida leva `Chain`,
+	quem está no raio *dessas* leva na camada seguinte, até `Hops` camadas. Com o
+	`Hops = 1` de hoje só existe uma camada, mas a busca é escrita em largura
+	porque o número é config — e uma implementação recursiva sem controle de
+	visitados iria e voltaria entre duas unidades vizinhas para sempre.
+
+	Cada unidade só é tocada uma vez por descarga, e o atordoamento do salto é
+	muito mais curto que o do acerto direto (5s contra 20s): um raio bem colocado
+	tem que doer, não apagar o mapa.
+
+	Devolve os arcos desenhados, para o cliente ligar as unidades com o mesmo asset
+	do raio.
+]=]
+function ThunderService:chainFrom(entry)
+	local stun = Config.Stun
+	if not stun then return {} end
+
+	local hit = { [entry.unitId] = true }
+	local links = {}
+
+	local frontier = { entry }
+	local hops = math.max(0, stun.Hops or 0)
+	local maxTargets = stun.MaxTargets or math.huge
+
+	for _ = 1, hops do
+		local nextFrontier = {}
+
+		for _, source in frontier do
+			local targets = self:findChainTargets(source.cf.Position, hit)
+
+			for index, target in targets do
+				if index > maxTargets then break end
+
+				hit[target.unitId] = true
+				self:applyHit(target, stun.Chain or 0)
+				table.insert(nextFrontier, target)
+
+				table.insert(links, {
+					fromId = source.unitId,
+					toId = target.unitId,
+					from = source.cf.Position,
+					to = target.cf.Position,
+				})
+			end
+		end
+
+		if #nextFrontier == 0 then break end
+		frontier = nextFrontier
+	end
+
+	return links
+end
+
 --[[ RAIOS ]]
 
 local function broadcast(position : Vector3, unitId : string?)
 	for _, player in Players:GetPlayers() do
 		Framework:Fire("LightningStrike", player, position, unitId)
+	end
+end
+
+-- Os arcos do salto, para o cliente ligar uma unidade a outra com o mesmo asset
+-- do raio. Lista vazia nao vira evento.
+local function broadcastChain(links)
+	if #links == 0 then return end
+
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("LightningChain", player, links)
 	end
 end
 
@@ -141,13 +270,26 @@ end
 	ele mede da caixa da unidade. A posicao daqui e so o fallback de quando o modelo
 	ainda nao replicou.
 ]=]
-function ThunderService:strikeUnit(unitName : string?)
-	local entry = self:pickTarget(unitName)
+function ThunderService:strikeUnit(unitName : string?, skipImmune : boolean?)
+	local entry = self:pickTarget(unitName, skipImmune)
 	if not entry then
 		return nil
 	end
 
 	broadcast(entry.cf.Position, entry.unitId)
+
+	--[[
+		O visual sai primeiro e o efeito depois, na mesma linha de execucao: os dois
+		chegam no mesmo quadro, e a ordem so decide qual evento o cliente processa
+		antes. O raio na frente e o que faz o realce do atordoamento aparecer *com* o
+		clarao em vez de um piscar antes dele.
+	]]
+	local stun = Config.Stun
+	if stun and not WeatherConfig.IsImmune(Config.Weather, entry.unitName) then
+		self:applyHit(entry, stun.Direct or 0)
+		broadcastChain(self:chainFrom(entry))
+	end
+
 	return entry
 end
 
@@ -170,10 +312,10 @@ end
 	`UnitChance` no config.
 ]=]
 function ThunderService:rollStrike()
-	local hasUnits = self:pickTarget() ~= nil
+	local hasUnits = self:pickTarget(nil, true) ~= nil
 
 	if hasUnits and math.random() < self.UnitChance then
-		if self:strikeUnit() then
+		if self:strikeUnit(nil, true) then
 			self.UnitChance = Config.UnitChance
 			return
 		end
@@ -233,6 +375,7 @@ end
 
 function ThunderService:init()
 	Framework:Listen("LightningStrike", function() end)
+	Framework:Listen("LightningChain", function() end)
 end
 
 return ThunderService

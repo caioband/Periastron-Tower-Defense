@@ -150,6 +150,17 @@ function module:refresh()
 	local upgradeConfig = SharedConfig.UnitUpgradeConfig
 	local unitStats = SharedConfig.UnitStats[unitName]
 
+	--[[
+		O clima entra nos numeros de combate do card.
+
+		E o mesmo motivo do circulo de alcance no chao: durante a neblina a unidade
+		procura alvo num raio menor, e um card que continuasse mostrando o alcance
+		seco estaria mentindo sobre a unidade que o jogador esta olhando. Quem
+		redesenha o card na troca de clima e o `UnitPlacementController`.
+	]]
+	local weatherController = Framework:Get("WeatherController", false, false)
+	local weather = weatherController and weatherController:GetCurrent() or nil
+
 	CardUpgrade.Info.UnitName.Text = unitName
 	CardUpgrade.Info.UnitLevel.Text = "LVL." .. level
 
@@ -174,11 +185,11 @@ function module:refresh()
 		local income = math.floor((farm.Income or 0) * upgradeConfig:GetDamageMultiplier(unitName, level) + 0.5)
 		CardUpgrade.DamagePerSecond.Text = "$" .. UIUtil.formatAbbreviated(income) .. " INCOME"
 	else
-		CardUpgrade.DamagePerSecond.Text = formatStat(upgradeConfig:GetDPS(unitName, level)) .. " DPS"
+		CardUpgrade.DamagePerSecond.Text = formatStat(upgradeConfig:GetDPS(unitName, level, weather)) .. " DPS"
 	end
 
-	CardUpgrade.AttackSpeed.Text = formatNumber(upgradeConfig:GetCooldown(unitName, level), 2) .. " COOLDOWN"
-	CardUpgrade.Range.Text = formatStat(upgradeConfig:GetRange(unitName, level)) .. " RANGE"
+	CardUpgrade.AttackSpeed.Text = formatNumber(upgradeConfig:GetCooldown(unitName, level, weather), 2) .. " COOLDOWN"
+	CardUpgrade.Range.Text = formatStat(upgradeConfig:GetRange(unitName, level, weather)) .. " RANGE"
 
 	self:refreshDamageDone()
 end

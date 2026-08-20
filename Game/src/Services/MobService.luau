@@ -38,6 +38,19 @@ local function computeTurnDistances(positions)
 	return turnDistances
 end
 
+--[=[
+	Velocidade de um mob agora: a base do spawn, vezes o que os gimmicks dele
+	acumularam, vezes o que o clima faz.
+
+	Os tres fatores sao guardados separados de proposito. O clima entra e sai no
+	meio da wave, e um mob que ja ganhou 30% por curva tem que manter esse ganho
+	quando o vento parar — o que so funciona se a conta for refeita a partir da
+	base em vez de ir multiplicando o valor corrente.
+]=]
+local function computeSpeed(self, mob)
+	return mob.BaseSpeed * (mob.SpeedScale or 1) * (self.WeatherSpeedScale or 1)
+end
+
 local GimmickHandlers = {
 	PerTurnSpeedMultiplier = {
 		OnTurn = function(self, mobId, mob, gimmick)
@@ -49,7 +62,7 @@ local GimmickHandlers = {
 			end
 
 			mob.SpeedScale = math.max(0.1, 1 + (stacks * (gimmick.Amount or 0)))
-			mob.CurrentSpeed = mob.BaseSpeed * mob.SpeedScale
+			mob.CurrentSpeed = computeSpeed(self, mob)
 
 			for _, player in Players:GetPlayers() do
 				Framework:Fire("UpdateMobSpeed", player, mobId, mob.CurrentSpeed)
@@ -93,7 +106,8 @@ local MobService = {
 		WaveService = {},
 		UnitService = {},
 		DataService = {},
-		DifficultyService = {}
+		DifficultyService = {},
+		WeatherService = {}
 	},
 	ActiveMobs = {},
 	DebugParts = {},
@@ -103,9 +117,46 @@ local MobService = {
 	MaxBaseHealth = BASE_MAX_HEALTH,
 	ActiveMobCount = 0,
 	HealthScale = 1,
+
+	-- Clima no ar e o que ele faz com a velocidade dos inimigos. A vida nao tem
+	-- campo equivalente porque ela so vale no spawn — ver `SpawnWave`.
+	Weather = nil,
+	WeatherSpeedScale = 1,
 	SessionCash = {},
 	SessionDamage = {},
 }
+
+--[=[
+	Liga (ou desliga, com nil) os efeitos do clima sobre os inimigos.
+
+	Quem chama e o `WeatherRoundService`, no comeco da wave em que o clima entra ou
+	sai. A velocidade e recalculada para todos os mobs que ja estao andando e
+	replicada na hora — sem isso, quem nasceu antes do vento continuaria no ritmo
+	antigo ate o fim do caminho, e dois mobs iguais andariam em velocidades
+	diferentes na mesma wave.
+
+	A vida nao e mexida aqui de proposito: mudar `MaxHealth` no meio da caminhada
+	significaria ou curar o mob ou mata-lo na hora, e as duas coisas sao piores do
+	que a wave seguinte ja nascer com o valor certo.
+]=]
+function MobService:ApplyWeather(weatherName : string?)
+	self.Weather = weatherName
+	self.WeatherSpeedScale = SharedConfig.WeatherConfig.GetMobMultiplier(weatherName, "Speed")
+
+	for mobId, mob in self.ActiveMobs do
+		local speed = computeSpeed(self, mob)
+		if speed ~= mob.CurrentSpeed then
+			mob.CurrentSpeed = speed
+			for _, player in Players:GetPlayers() do
+				Framework:Fire("UpdateMobSpeed", player, mobId, speed)
+			end
+		end
+	end
+end
+
+function MobService:GetWeather() : string?
+	return self.Weather
+end
 
 --[=[
 	Todas as rotas do mapa atual, com as distancias de curva ja calculadas.
@@ -305,6 +356,17 @@ function MobService:SpawnWave(waveNumber)
 	local spawnList = WaveConfig.GetSpawns(waveNumber, preset.Name)
 	local healthScale = preset.HealthMultiplier * (preset.HealthGrowth ^ (waveNumber - 1))
 
+	--[[
+		A vida do clima entra na mesma escala da dificuldade, e por isso tambem
+		desconta no premio por dano (ver `awardDamageReward`): sem isso a seca faria
+		bater no inimigo pagar 40% a mais, e o clima que era para apertar viraria
+		bonus de economia.
+
+		Lido uma vez, no comeco da wave: o clima que valeu para o primeiro mob vale
+		para todos os da wave, mesmo que ele saia no meio da caminhada.
+	]]
+	healthScale *= SharedConfig.WeatherConfig.GetMobMultiplier(self.Weather, "Health")
+
 	-- Guardado porque o premio em caixa por dano desconta esta mesma escala.
 	self.HealthScale = healthScale
 
@@ -329,6 +391,8 @@ function MobService:SpawnWave(waveNumber)
 		for _, spawnEntry in spawnList do
 			local entityDefinition = mobConfig.Entities[spawnEntry.Entity]
 			if entityDefinition then
+				-- Sem o clima: ele entra em `computeSpeed`, para poder sair depois sem
+				-- levar junto o que os gimmicks somaram.
 				local baseSpeed = mobConfig.BaseSpeed * (entityDefinition.SpeedMultiplier or 1) * speedScale
 				local maxHealth = math.max(1, math.floor(((entityDefinition.Health or 10) * healthScale) + 0.5))
 
@@ -349,7 +413,7 @@ function MobService:SpawnWave(waveNumber)
 						MaxHealth = maxHealth,
 						BaseSpeed = baseSpeed,
 						SpeedScale = 1,
-						CurrentSpeed = baseSpeed,
+						CurrentSpeed = baseSpeed * self.WeatherSpeedScale,
 						Distance = 0,
 						StunnedUntil = 0,
 						RouteIndex = routeIndex,
@@ -366,7 +430,7 @@ function MobService:SpawnWave(waveNumber)
 						Framework:Fire("SpawnClientMob", player, {
 							Id = mobId,
 							Name = spawnEntry.Entity,
-							Speed = baseSpeed,
+							Speed = baseSpeed * self.WeatherSpeedScale,
 							MaxHealth = maxHealth,
 							Route = routeIndex,
 						})
@@ -550,6 +614,21 @@ function MobService:construct()
 	RunService.Heartbeat:Connect(function(dt)
 		self.FrameId += 1
 		local now = os.clock()
+
+		--[[
+			O clima e conferido aqui em vez de ser empurrado por quem o liga.
+
+			Sao duas leituras de tabela por quadro, e em troca a velocidade dos
+			inimigos acompanha qualquer troca de clima — a do round e a do comando
+			`weather`, que nao passa pelo `WeatherRoundService`. Um empurrao explicito
+			so cobriria a primeira, e testar o vento na mao daria uma partida
+			diferente da de verdade.
+		]]
+		local weatherService = self.Services.WeatherService
+		local currentWeather = weatherService and weatherService:GetCurrent() or nil
+		if currentWeather ~= self.Weather then
+			self:ApplyWeather(currentWeather)
+		end
 
 		for mobId, mob in self.ActiveMobs do
 			if now >= mob.StunnedUntil then

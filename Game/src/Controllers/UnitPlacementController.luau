@@ -308,7 +308,8 @@ local UnitPlacementController = {
 		CardController = {},
 		VFXController = {},
 		MobController = {},
-		MusicController = {}
+		MusicController = {},
+		WeatherController = {}
 	},
 	selectedUnit = nil,
 	selectionHighlight = nil,
@@ -411,6 +412,39 @@ function UnitPlacementController:deselectCurrent()
 	self.Controllers.UILibraryController:doComponent("ToggleTower", "destroy")
 end
 
+--[=[
+	Alcance de uma unidade com o clima do momento aplicado.
+
+	O circulo no chao tem que mostrar o alcance de verdade: durante a neblina a
+	unidade procura alvo num raio menor, e um circulo desenhado no alcance seco
+	prometeria uma cobertura que ela nao tem. E a mesma funcao que o servidor usa,
+	so que com o clima que este cliente esta vendo.
+]=]
+function UnitPlacementController:getUnitRange(unitName : string, upgrades : number) : number
+	local weatherController = self.Controllers.WeatherController
+	local weather = weatherController and weatherController:GetCurrent() or nil
+
+	return SharedConfig.UnitUpgradeConfig:GetRange(unitName, upgrades, weather)
+end
+
+--[=[
+	Refaz o circulo da unidade selecionada a partir do alcance atual dela.
+
+	Chamado quando o alcance muda por baixo do jogador — um upgrade comprado ou uma
+	troca de clima. Sem unidade selecionada (ou sem circulo na tela) nao faz nada.
+]=]
+function UnitPlacementController:resizeSelectionRing()
+	local unitModel = self.selectedUnit
+	if not unitModel or not unitModel.Parent then return end
+	if not self.selectionRing or not self.selectionRing.Parent then return end
+	if not self.selectionRingBase then return end
+
+	local range = self:getUnitRange(unitModel.Name, unitModel:GetAttribute("Upgrades") or 0)
+	local scale = self.selectionRingBase.scale * (range * 2) / self.selectionRingBase.diameter
+
+	self:tweenSelectionRing(scale)
+end
+
 function UnitPlacementController:tweenSelectionRing(targetScale)
 	local ring = self.selectionRing
 	if not ring or not ring.Parent then return end
@@ -481,7 +515,7 @@ function UnitPlacementController:selectUnit(unitModel)
 
 	if ringPartSel then
 		local upgrades = unitModel:GetAttribute("Upgrades") or 0
-		local unitRange = SharedConfig.UnitUpgradeConfig:GetRange(unitModel.Name, upgrades)
+		local unitRange = self:getUnitRange(unitModel.Name, upgrades)
 		local currentDiameter = ringPartSel.Size.X
 		local scaleFactor = (unitRange * 2) / currentDiameter
 		targetScale = Ring:GetScale() * scaleFactor
@@ -1017,10 +1051,8 @@ function UnitPlacementController:construct()
 				unitModel:SetAttribute("Upgrades", newLevel)
 				self:flashUpgrade(unitModel)
 
-				if self.selectedUnit == unitModel and self.selectionRing and self.selectionRing.Parent and self.selectionRingBase then
-					local newRange = SharedConfig.UnitUpgradeConfig:GetRange(unitModel.Name, newLevel)
-					local newScale = self.selectionRingBase.scale * (newRange * 2) / self.selectionRingBase.diameter
-					self:tweenSelectionRing(newScale)
+				if self.selectedUnit == unitModel then
+					self:resizeSelectionRing()
 				end
 
 				self.Controllers.MusicController:PlaySFX("UnitUpgrade")
@@ -1060,12 +1092,30 @@ function UnitPlacementController:construct()
 		class:playFarmVisual()
 	end)
 
-	Framework:Listen("UnitStunned", function(unitId, duration)
+	--[[
+		O clima mexe no alcance e nos numeros do card, e nenhum dos dois se redesenha
+		sozinho: o circulo so e refeito quando alguem pede, e o card so quando a
+		selecao muda. Aqui os dois sao refeitos na troca, para o jogador ver a
+		neblina encolher o circulo no mesmo momento em que ela entra.
+	]]
+	Framework:Listen("WeatherChanged", function()
+		self:resizeSelectionRing()
+		self.Controllers.UILibraryController:doComponent("ToggleTower", "refresh")
+	end)
+
+	--[=[
+		Realce temporario numa unidade, para o jogador ver que algo pegou nela.
+
+		Amarelo e atordoamento (a unidade parou), ciano e carga (ela esta melhor que
+		o normal). Duas cores porque os dois estados vem do mesmo raio e acontecem
+		lado a lado: sem separar, uma unidade Electric carregada pareceria congelada.
+	]=]
+	local function highlightUnit(unitId, duration, color)
 		for unitModel, class in pairs(self.createdClasses) do
 			if class and class.unitId == unitId then
 				local highlight = Instance.new("Highlight")
-				highlight.FillColor = Color3.fromRGB(255, 200, 60)
-				highlight.OutlineColor = Color3.fromRGB(255, 200, 60)
+				highlight.FillColor = color
+				highlight.OutlineColor = color
 				highlight.FillTransparency = 0.6
 				highlight.OutlineTransparency = 0.2
 				highlight.Parent = unitModel
@@ -1078,6 +1128,14 @@ function UnitPlacementController:construct()
 				break
 			end
 		end
+	end
+
+	Framework:Listen("UnitStunned", function(unitId, duration)
+		highlightUnit(unitId, duration, Color3.fromRGB(255, 200, 60))
+	end)
+
+	Framework:Listen("UnitCharged", function(unitId, duration)
+		highlightUnit(unitId, duration, Color3.fromRGB(90, 220, 255))
 	end)
 end
 
