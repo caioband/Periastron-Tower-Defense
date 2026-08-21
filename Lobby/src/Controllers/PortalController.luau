@@ -186,6 +186,9 @@ function PortalController:_flash()
 	screenGui.ResetOnSpawn = false
 	screenGui.DisplayOrder = 1000
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	-- A cutscene esconde as GUIs enquanto roda, e o flash nasce dentro dela: sem esta
+	-- marca ele nasceria desligado, e o teleporte aconteceria a olho nu.
+	screenGui:SetAttribute("IgnoreInterfaceHide", true)
 
 	local frame = Instance.new("Frame")
 	frame.Size = UDim2.fromScale(1, 1)

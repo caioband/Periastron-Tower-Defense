@@ -69,6 +69,18 @@ impede o descarte depois é ter uma instância viva apontando para cada uma. A
 `ScreenGui` tem `ResetOnSpawn = false` de propósito: o HUD é recriado a cada
 respawn (e por isso o bind roda de novo), o cache não.
 
+## Painel de mapas: o mapa escolhido
+
+A marca do mapa escolhido é o frame **`CheckMark`** que cada template
+`ChooseMaps.Lobby.Scroll.Map` já traz autorado — o `ChooseMapsController` só liga e
+desliga o `Visible` dele, e não desenha mais o anel que fazia antes. Template sem
+`CheckMark` continua funcionando, só não tem o que acender. O card escolhido também
+cresce um pouco (`UIScale`), que é efeito à parte e continua.
+
+Enquanto o painel está aberto o resto da UI do lobby sai da tela — ver
+[Quem some da tela, e quando](../README.md#quem-some-da-tela-e-quando) no README da
+raiz.
+
 ## Achado
 
 `Shared.Classes.Unit` chama `Framework:Get("ProjectileController")` e

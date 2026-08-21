@@ -36,7 +36,7 @@ local CLOSE_NAME = "Exit"
 local CONFIRM_NAME = "Confirm"
 
 local ENTRY_NAME_PREFIX = "Map_"
-local HIGHLIGHT_NAME = "SelectionHighlight"
+local CHECKMARK_NAME = "CheckMark"
 local ENTRY_SCALE_NAME = "SelectionScale"
 
 -- Same curves the crate panel uses, so both panels read as the same UI.
@@ -48,25 +48,26 @@ local SELECT_INFO = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirect
 local OPEN_FROM_SCALE = 0.85
 local CLOSE_TO_SCALE = 0.9
 
--- The ring around the picked map: a frame slightly wider than the card, so the
--- outline sits just outside the artwork instead of on top of it.
 local SELECTED_SCALE = 1.05
-local HIGHLIGHT_OVERSIZE = 1.08
-local HIGHLIGHT_CORNER = UDim.new(0.1, 0)
-local HIGHLIGHT_THICKNESS = 3
-local HIGHLIGHT_COLOR = Color3.fromRGB(255, 214, 92)
+
+-- The panel takes the screen for itself while it is open; the rest of the lobby UI
+-- comes back on close. Named so the cutscene can hide things over it without the two
+-- undoing each other.
+local HIDE_REASON = "ChooseMaps"
 
 --[=[
 	Owns the ChooseMaps panel: the map list, the player-count stepper and the open /
 	close animation.
 
-	Picking a card only selects it -- it gets the ring and Confirm shows up, and the
-	map is not sent anywhere until Confirm is pressed. It does not talk to the server
-	either: PortalController is the one that opens the panel, and it hears back
+	Picking a card only selects it -- its CheckMark shows up and so does Confirm, and
+	the map is not sent anywhere until Confirm is pressed. It does not talk to the
+	server either: PortalController is the one that opens the panel, and it hears back
 	through MapChosen.
 ]=]
 local ChooseMapsController = {
-	Controllers = {},
+	Controllers = {
+		InterfaceController = {},
+	},
 
 	Signals = {
 		-- (mapName : string, maxPlayers : number) -- fired by Confirm, not by the card
@@ -108,33 +109,18 @@ function ChooseMapsController:_findIcon(entry : Instance) : ImageLabel?
 end
 
 --[=[
-	The ring that marks the picked map. It is built here instead of in the template so
-	every entry gets the same one, whatever the designer does to the card art.
+	The mark that says "this is the one": the CheckMark frame the template already
+	carries. It is authored art, not something built here -- a template without one
+	still works, it just has nothing to light up.
 ]=]
-function ChooseMapsController:_buildHighlight(entry : GuiObject)
-	local highlight = Instance.new("Frame")
-	highlight.Name = HIGHLIGHT_NAME
-	highlight.AnchorPoint = Vector2.new(0.5, 0.5)
-	highlight.Position = UDim2.fromScale(0.5, 0.5)
-	highlight.Size = UDim2.fromScale(HIGHLIGHT_OVERSIZE, HIGHLIGHT_OVERSIZE)
-	highlight.BackgroundTransparency = 1
-	highlight.BorderSizePixel = 0
-	-- Above the card and everything inside it, so the ring is never cut in half.
-	highlight.ZIndex = entry.ZIndex + 10
-	highlight.Visible = false
+function ChooseMapsController:_findCheckMark(entry : Instance) : GuiObject?
+	local checkMark = entry:FindFirstChild(CHECKMARK_NAME, true)
+	if not checkMark or not checkMark:IsA("GuiObject") then
+		return nil
+	end
 
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = HIGHLIGHT_CORNER
-	corner.Parent = highlight
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = HIGHLIGHT_THICKNESS
-	stroke.Color = HIGHLIGHT_COLOR
-	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	stroke.Parent = highlight
-
-	highlight.Parent = entry
-	return highlight
+	checkMark.Visible = false
+	return checkMark
 end
 
 --[=[
@@ -185,7 +171,7 @@ function ChooseMapsController:_buildEntries(scroll : Instance, template : Instan
 
 		self.Entries[mapName] = {
 			Button = entry,
-			Highlight = self:_buildHighlight(entry),
+			CheckMark = self:_findCheckMark(entry),
 			Scale = scale,
 		}
 
@@ -194,8 +180,8 @@ function ChooseMapsController:_buildEntries(scroll : Instance, template : Instan
 end
 
 --[=[
-	Paints the selection: the picked card wears the ring and stands a little proud of
-	the others, and Confirm only exists once there is something to confirm.
+	Paints the selection: the picked card wears its CheckMark and stands a little proud
+	of the others, and Confirm only exists once there is something to confirm.
 ]=]
 function ChooseMapsController:_renderSelection(immediate : boolean?)
 	self.SelectionMaid:DoCleaning()
@@ -203,7 +189,9 @@ function ChooseMapsController:_renderSelection(immediate : boolean?)
 	for mapName, entry in self.Entries do
 		local isSelected = mapName == self.Selected
 
-		entry.Highlight.Visible = isSelected
+		if entry.CheckMark then
+			entry.CheckMark.Visible = isSelected
+		end
 
 		local goal = isSelected and SELECTED_SCALE or 1
 		if immediate then
@@ -267,6 +255,10 @@ function ChooseMapsController:_setOpen(open : boolean)
 		self:_renderCount()
 		self:_renderSelection(true)
 
+		-- The panel is the only thing on screen while it is up: the HUD, the shop and
+		-- whatever else the lobby has go away, and come back on close.
+		self.Controllers.InterfaceController:Hide(HIDE_REASON, { Except = { CHOOSE_MAPS_UI_NAME } })
+
 		self.ScreenGui.Enabled = true
 
 		self.PanelScale.Scale = OPEN_FROM_SCALE
@@ -279,6 +271,10 @@ function ChooseMapsController:_setOpen(open : boolean)
 			self:_playTween(self.Background, FADE_INFO, { ImageTransparency = 0 })
 		end
 	else
+		-- Given back at the top of the close, not at the end of it: the rest of the UI
+		-- fades in behind the panel instead of popping in after it is gone.
+		self.Controllers.InterfaceController:Show(HIDE_REASON)
+
 		self:_playTween(self.PanelScale, CLOSE_INFO, { Scale = CLOSE_TO_SCALE })
 
 		local fade = self.Background and self:_playTween(self.Background, CLOSE_INFO, { ImageTransparency = 1 })
@@ -362,10 +358,14 @@ function ChooseMapsController:_bindUI(screenGui : ScreenGui)
 
 	self:_buildEntries(scroll, template)
 
-	-- The panel starts closed: the portal is what opens it.
+	-- The panel starts closed: the portal is what opens it. A respawn lands here with
+	-- the panel open (ResetOnSpawn), so the screen is handed back too -- otherwise the
+	-- rest of the UI would stay hidden with nothing left to close.
 	self.IsOpenState = false
 	self.PlayerCount = PortalConfig.MIN_PLAYERS
 	self.Selected = nil
+
+	self.Controllers.InterfaceController:Show(HIDE_REASON)
 
 	self:_renderCount()
 	self:_renderSelection(true)

@@ -51,6 +51,9 @@ local DEBUG_KEYBIND = Enum.KeyCode.L
 local SCENE_REFERENCE = "SceneReferenceCFrame"
 local CAMERA_PART = "CamPart"
 
+-- Nome do pedido ao InterfaceController: enquanto a cena roda, tela limpa.
+local HIDE_REASON = "Cutscene"
+
 -- Atributo na cena: liga pra usar o World Pivot do Model como centro, no lugar da
 -- Part de referência.
 local PIVOT_ATTRIBUTE = "UseWorldPivot"
@@ -117,7 +120,9 @@ end
 local warnedEases = {}
 
 local CutsceneController = {
-	Controllers = {},
+	Controllers = {
+		InterfaceController = {},
+	},
 
 	Signals = {
 		-- (frame : number, lastFrame : number, asset : Instance)
@@ -659,6 +664,32 @@ function CutsceneController:hideWorld(sessionMaid)
 	end
 end
 
+--[[
+	Tira a interface da frente enquanto a cena toca — as GUIs do jogo e as da própria
+	Roblox, chat e topbar incluídos.
+
+	A interface volta com a **cena**, e não com a câmera: quem recebe é sempre o
+	sessionMaid, mesmo no `holdCamera`, onde o controle do personagem fica preso mais
+	tempo. Acabou a cena, acabou o motivo de a tela estar limpa. No portal isso cai
+	atrás do flash branco, que a essa altura já está cobrindo tudo.
+
+	Não é `Enabled = false` na mão em cada uma: quem faz isso é o InterfaceController,
+	que é o mesmo que o painel de mapas usa. Sem esse meio de campo os dois se
+	desfariam — fechar o painel devolveria a interface no meio da cutscene.
+
+	ScreenGui marcada com `IgnoreInterfaceHide` fica: é o caso do flash branco do
+	portal, que nasce no fim da cena justamente para cobrir a tela.
+--]]
+function CutsceneController:hideInterface(sessionMaid)
+	local InterfaceController = self.Controllers.InterfaceController
+	if not InterfaceController then return end
+
+	InterfaceController:Hide(HIDE_REASON, { HideCore = true })
+	sessionMaid:GiveTask(function()
+		InterfaceController:Show(HIDE_REASON)
+	end)
+end
+
 function CutsceneController:lockControls(sessionMaid)
 	local playerScripts = self.player:FindFirstChild("PlayerScripts")
 	local playerModuleScript = playerScripts and playerScripts:FindFirstChild("PlayerModule")
@@ -841,6 +872,7 @@ function CutsceneController:playCutscene(cutscene: (string | Instance)?, origin:
 	camera.CameraType = Enum.CameraType.Scriptable
 
 	self:lockControls(holdMaid or sessionMaid)
+	self:hideInterface(sessionMaid)
 	self:hideWorld(sessionMaid)
 
 	local sceneOrigin = origin or reference
@@ -920,7 +952,7 @@ end
 
 function CutsceneController:init()
 	for Controller, _ in self.Controllers do
-		self.Controllers[Controller] = Framework:Get(Controller)
+		self.Controllers[Controller] = Framework:Get(Controller, false, true)
 	end
 
 	self:construct()

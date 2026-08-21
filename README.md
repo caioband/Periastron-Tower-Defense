@@ -634,6 +634,50 @@ Duas armadilhas de UI que o toque expõe e que foram corrigidas junto:
 `MobController:startHoverLoop` também sai fora: sem mouse ele só gastaria um
 raycast a cada 0.05s para nunca encontrar mob nenhum.
 
+### Quem some da tela, e quando
+
+Duas situações pedem a tela para si: o painel de mapas, que quer o lobby só para
+ele, e a cutscene, que quer a tela limpa. Não são um interruptor global — os dois se
+sobrepõem (o painel pode estar aberto quando a cena começa) e cada um sai na sua
+hora — então quem cuida disso é o `InterfaceController`
+(`common/client/Controllers`), com **pedidos com nome**:
+
+```lua
+InterfaceController:Hide("ChooseMaps", { Except = { "ChooseMaps" } })
+InterfaceController:Show("ChooseMaps")
+```
+
+Uma `ScreenGui` fica desligada enquanto **algum** pedido a esconder, e volta ao que
+o dono dela queria quando o último sai. "O que o dono queria" é lido ao vivo: o
+controller acompanha o `Enabled` de cada GUI da `PlayerGui`, e se alguém ligar uma
+GUI escondida no meio de um pedido, o valor novo é guardado e ela continua desligada
+— quando o pedido sair é esse valor que volta. É o que permite cada controller
+continuar mexendo na própria GUI como sempre, sem saber que existe um pedido em
+curso.
+
+O que o controller escreve não entra nessa conta, e separar as duas coisas tem uma
+armadilha: o aviso de `Enabled` chega **no fim do frame**
+(`SignalBehavior.Deferred`), muito depois de uma flag ligada em volta da escrita ter
+sido baixada. Com a flag, o `false` que o controller forçava voltava para ele como
+se fosse o dono da GUI pedindo — e aí não sobrava estado nenhum para restaurar,
+nada voltava. Por isso o eco é **contado** (`entry.Pending`), um por escrita, e não
+sinalizado.
+
+- **Painel de mapas** (`ChooseMapsController`): pede no `Open` com `Except` nele
+  mesmo, devolve no começo do `Close` — a UI do lobby volta enquanto o painel ainda
+  está sumindo, em vez de aparecer de estalo depois. O `_bindUI` devolve também, para
+  o respawn com o painel aberto não deixar o lobby escondido sem nada para fechar.
+- **Cutscene** (`CutsceneController:hideInterface`): pede sem exceção nenhuma e com
+  `HideCore`, que leva junto a interface da própria Roblox (chat, playerlist, mochila
+  e topbar). Sai com a **cena**, não com a câmera: mesmo no `holdCamera` — onde o
+  controle do personagem fica preso até o `releaseCamera` — a interface volta quando
+  a cena acaba. No portal isso cai atrás do flash branco, que a essa altura já está
+  cobrindo a tela.
+
+A exceção é por **atributo**, não por lista: `ScreenGui` com `IgnoreInterfaceHide`
+nunca é escondida. Existe por causa do flash branco do portal, que nasce dentro da
+cutscene justamente para cobrir o teleporte — sem a marca ele nasceria desligado.
+
 ## Configuração: o que é replicado e o que não é
 
 Antes, `ReplicatedStorage.Shared.Config.Server` era replicado para todo cliente —
