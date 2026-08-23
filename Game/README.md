@@ -10,7 +10,7 @@ compartilhado entre as duas places. Aqui fica só o que é exclusivo deste place
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | LocalScript de entrada |
 | `src/Controllers/` | `Client.Controllers.Game` | Card, Difficulty, Loading, Mob, Music, Projectile, Ready, Targeting, Tripmine, UILibrary, UnitPlacement, VFX, Wave |
 | `src/Services/` | `ServerScriptService.Services.Game` | Collision, Data, Difficulty, Map, Mob, Snow, Thunder, Unit, Wave, WeatherRound |
-| `src/CmdrDefinitions/` | `ServerScriptService.CmdrDefinitions.*.Game` | comando `strike` e o tipo `unitName` |
+| `src/CmdrDefinitions/` | `ServerScriptService.CmdrDefinitions.*.Game` | comandos `strike` e `roundcash`, e o tipo `unitName` |
 
 O `Summon` no `ServerScriptService.Config` vem do compartilhado e não é usado aqui
 — é pequeno e fica por consistência entre as places. O `Cmdr` do mesmo lugar **é**

@@ -25,6 +25,21 @@ local CmdrService = {
 }
 
 --[=[
+	O rank do jogador num grupo, ou 0.
+
+	`GetRankInGroup` e uma chamada web: ela falha, e falhar nao pode virar erro no
+	meio da checagem de permissao -- rank desconhecido e simplesmente "nao e admin
+	por aqui", e os outros caminhos continuam valendo.
+]=]
+local function rankInGroup(Player : Player, groupId : number) : number
+	local success, rank = pcall(function()
+		return Player:GetRankInGroup(groupId)
+	end)
+
+	return (success and rank) or 0
+end
+
+--[=[
 	Every command runs through this check server side, so the client never decides
 	whether it is allowed to run something.
 ]=]
@@ -42,18 +57,26 @@ function CmdrService:IsAdmin(Player : Player?) : boolean
 		return true
 	end
 
-	if game.CreatorType == Enum.CreatorType.User and Player.UserId == game.CreatorId then
-		return true
-	end
+	--[[
+		O dono da place, que pode ser uma pessoa ou um grupo.
 
-	if CmdrConfig.GROUP_ID then
-		local success, rank = pcall(function()
-			return Player:GetRankInGroup(CmdrConfig.GROUP_ID)
-		end)
-
-		if success and rank >= CmdrConfig.GROUP_MIN_RANK then
+		O ramo do grupo nao e detalhe: **esta place pertence a um grupo**, e ai o
+		`game.CreatorId` e o id do grupo, nunca o de um jogador. Comparar um com o
+		outro nunca dava certo, e como o `ALLOW_IN_STUDIO` so vale no Studio, o
+		resultado era o console funcionar no teste e nao funcionar em jogo.
+	]]
+	if game.CreatorType == Enum.CreatorType.User then
+		if Player.UserId == game.CreatorId then
 			return true
 		end
+	elseif game.CreatorType == Enum.CreatorType.Group then
+		if rankInGroup(Player, game.CreatorId) >= CmdrConfig.CREATOR_GROUP_MIN_RANK then
+			return true
+		end
+	end
+
+	if CmdrConfig.GROUP_ID and rankInGroup(Player, CmdrConfig.GROUP_ID) >= CmdrConfig.GROUP_MIN_RANK then
+		return true
 	end
 
 	return false

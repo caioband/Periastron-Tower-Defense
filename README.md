@@ -194,18 +194,34 @@ com o atributo `LightingKeep = true` sobrevive ao clear.
 #### Comandos (Cmdr, nas duas places)
 
 ```
-lighting <preset> [segundos]     troca o preset; tab completa os nomes
-                                 segundos omitido = padrão do config, 0 = corte seco
-lightinglist                     lista o que existe em Assets.Lighting
-weather <clima|off> [segundos]   liga o clima no mapa carregado; off desliga
-restartwarning <motivo> [seg]    ensaia o aviso de restart do servidor (não reinicia nada)
-strike [unidade]                 (só na Game) derruba um raio numa unidade posicionada
+lighting <preset> [segundos]         troca o preset; tab completa os nomes
+                                     segundos omitido = padrão do config, 0 = corte seco
+lightinglist                         lista o que existe em Assets.Lighting
+weather <clima|off> [segundos]       liga o clima no mapa carregado; off desliga
+restartwarning <motivo> [seg]        ensaia o aviso de restart do servidor (não reinicia nada)
+cash <ação> <jogadores> <valor>      Cash salvo (Stats.Cash), o do lobby
+shards <ação> <jogadores> <valor>    Shards salvos (Stats.Shards)
+roundcash <ação> <jogadores> <valor> (só na Game) o dinheiro que paga as torres na partida
+strike [unidade]                     (só na Game) derruba um raio numa unidade posicionada
 ```
 
-`restartwarning` (alias `testrestart`) entra pelo mesmo caminho do evento da engine,
-então o que aparece na tela é exatamente o que apareceria no dia — ver
-[Aviso de restart do servidor](#aviso-de-restart-do-servidor). O motivo é um nome de
-`Enum.CloseReason` e o tab completa; `seg` omitido são 5 minutos.
+**Quem pode rodar comando.** A permissão é do servidor: o hook `BeforeRun` chama
+`CmdrService:IsAdmin` a cada comando, e o cliente só usa a mesma resposta para
+decidir se mostra o console. Vale, nesta ordem:
+
+| Caminho | Onde se configura |
+|---|---|
+| Studio | `ALLOW_IN_STUDIO` |
+| Lista de ids | `ADMIN_USER_IDS` |
+| Dono da place | automático — pessoa, ou rank ≥ `CREATOR_GROUP_MIN_RANK` no grupo dono |
+| Grupo extra | `GROUP_ID` + `GROUP_MIN_RANK` |
+
+O caso do **grupo dono** é o que fazia os comandos não funcionarem em jogo: esta
+place pertence a um grupo, então `game.CreatorId` é o id do **grupo**, e o teste
+antigo (`CreatorType == User and UserId == CreatorId`) não passava para ninguém.
+Como `ALLOW_IN_STUDIO` só vale no Studio e a lista de ids estava vazia, o console
+funcionava no teste e não em jogo. `CREATOR_GROUP_MIN_RANK` é 255 — o dono do grupo
+e mais ninguém; baixe para o rank dos seus admins se quiser incluir a diretoria.
 
 `strike` sem argumento pega qualquer unidade no mapa; com um tipo (`strike Sword`)
 sorteia entre as daquele tipo, e diz em quem caiu. Nome com espaço precisa de aspas:
@@ -232,6 +248,34 @@ registra o mapa carregado.
 > `common/server/CmdrDefinitions`, e o `Game/wally.toml` ganhou a dependência. Os
 > comandos de crate (`setcrates`, `unbox`) continuam em `Lobby/src/CmdrDefinitions`,
 > que é onde fazem sentido.
+
+#### Moedas pelo console
+
+São **três** moedas e duas delas são a mesma conta em lugares diferentes:
+
+| Comando | Mexe em | Onde vive |
+|---|---|---|
+| `cash` (`money`, `coins`) | `Stats.Cash` do perfil | salvo; é o do lobby, dos summons |
+| `shards` (`shard`) | `Stats.Shards` do perfil | salvo; a moeda premium da loja |
+| `roundcash` (`sessioncash`) | `MobService.SessionCash` | só enquanto o round dura |
+
+A ação é `set`, `add` ou `remove`, e o tab completa — `s`, `a` e `r` já resolvem.
+Nenhuma das três desce de zero: `remove` que passaria do fim para em zero, porque
+saldo negativo não existe em lugar nenhum do jogo. A resposta do console diz o antes
+e o depois de cada jogador, senão um `remove` que bateu no chão e um `set` num valor
+que já era aquele pareceriam "o comando não fez nada".
+
+O `cash` e o `shards` escrevem pelo `CurrencyService` (`common/server/Services`), que
+lê e escreve dentro do mesmo `DataService:Update` — assim o `add` soma em cima do
+valor que está lá agora, e não no que estava quando o comando foi digitado. O
+`roundcash` passa pelo `addCash`/`spendCash` do `MobService` em vez de escrever na
+tabela, porque são eles que disparam o `UpdateCash`: sem isso o contador na tela
+ficaria no valor antigo até a próxima kill.
+
+`restartwarning` (alias `testrestart`) entra pelo mesmo caminho do evento da engine,
+então o que aparece na tela é exatamente o que apareceria no dia — ver
+[Aviso de restart do servidor](#aviso-de-restart-do-servidor). O motivo é um nome de
+`Enum.CloseReason` e o tab completa; `seg` omitido são 5 minutos.
 
 ### Weather
 
