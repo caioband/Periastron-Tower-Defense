@@ -6,6 +6,22 @@ local PlayerGui = Player.PlayerGui
 local Interface = PlayerGui:WaitForChild("Interface", 500)
 local CardUpgrade = Interface:WaitForChild("CardUpgrade")
 
+--[=[
+	Onde o card fica de verdade e a posicao que o layout ja traz da Studio: a
+	animacao so empurra o card para fora da tela e depois o devolve pra ca.
+
+	O valor e lido aqui, no carregamento do modulo, antes de qualquer tween ter
+	mexido no `Position`. Se fosse lido na hora de abrir o card, a primeira
+	animacao ja teria deixado o card fora da tela e todas as aberturas seguintes
+	mirariam nesse lugar errado.
+]=]
+if not CardUpgrade:GetAttribute("OgPos") then
+	CardUpgrade:SetAttribute("OgPos", CardUpgrade.Position)
+end
+
+local SHOWN_POSITION : UDim2 = CardUpgrade:GetAttribute("OgPos")
+local HIDDEN_POSITION = UDim2.new(1.2, 0, SHOWN_POSITION.Y.Scale, SHOWN_POSITION.Y.Offset)
+
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
@@ -249,10 +265,10 @@ function module:create(unitModel, ...)
 
 	self:refresh()
 
-	CardUpgrade.Position = UDim2.fromScale(1.2, CardUpgrade.Position.Y.Scale)
+	CardUpgrade.Position = HIDDEN_POSITION
 
 	Spring.target(CardUpgrade, .65, 4, {
-		Position = UDim2.fromScale(0.85, CardUpgrade.Position.Y.Scale)
+		Position = SHOWN_POSITION
 	})
 	CardUpgrade.Visible = true
 
@@ -489,7 +505,7 @@ function module:destroy()
 	self.maid = nil
 
 	Spring.target(CardUpgrade, .65, 4, {
-		Position = UDim2.fromScale(1.2, CardUpgrade.Position.Y.Scale)
+		Position = HIDDEN_POSITION
 	})
 
 	local conn
