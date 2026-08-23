@@ -1,5 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local Player = Players.LocalPlayer
 local PlayerGui = Player.PlayerGui
@@ -7,20 +9,251 @@ local Interface = PlayerGui:WaitForChild("Interface", 500)
 local CardUpgrade = Interface:WaitForChild("CardUpgrade")
 
 --[=[
-	Onde o card fica de verdade e a posicao que o layout ja traz da Studio: a
-	animacao so empurra o card para fora da tela e depois o devolve pra ca.
+	O card nao entra mais deslizando de fora da tela: ele cresce no lugar.
 
-	O valor e lido aqui, no carregamento do modulo, antes de qualquer tween ter
-	mexido no `Position`. Se fosse lido na hora de abrir o card, a primeira
-	animacao ja teria deixado o card fora da tela e todas as aberturas seguintes
-	mirariam nesse lugar errado.
+	A animacao de posicao brigava com a mecanica de arrastar logo abaixo -- se o
+	card nasce fora da tela e volta para um ponto fixo, o lugar que o jogador
+	escolheu com o dedo seria desfeito toda vez que ele trocasse de unidade.
+	Escalando a partir do proprio ponto, o card aparece onde quer que ele esteja.
+
+	O `UIScale` vem do StarterGui; se algum dia sumir de la, um novo e criado aqui
+	para o modulo nao quebrar.
 ]=]
-if not CardUpgrade:GetAttribute("OgPos") then
-	CardUpgrade:SetAttribute("OgPos", CardUpgrade.Position)
+local CardScale = CardUpgrade:FindFirstChildOfClass("UIScale")
+if not CardScale then
+	CardScale = Instance.new("UIScale")
+	CardScale.Parent = CardUpgrade
 end
 
-local SHOWN_POSITION : UDim2 = CardUpgrade:GetAttribute("OgPos")
-local HIDDEN_POSITION = UDim2.new(1.2, 0, SHOWN_POSITION.Y.Scale, SHOWN_POSITION.Y.Offset)
+-- O tamanho "aberto" e o que o designer deixou na Studio, lido antes de qualquer
+-- animacao mexer no valor.
+local SHOWN_SCALE : number = CardScale.Scale > 0 and CardScale.Scale or 1
+CardScale.Scale = 0
+
+--[[
+	Elastic dos dois lados, mas com direcoes opostas: abrindo, o exagero acontece
+	no fim (o card passa um pouco do tamanho e assenta); fechando, no comeco (ele
+	da uma esticada e some). O fechamento e mais curto porque ninguem quer esperar
+	a animacao do card que acabou de usar.
+
+	Elastic nunca leva a escala abaixo de zero: o excesso e sempre para o lado de
+	onde a animacao esta saindo.
+]]
+local SHOW_TWEEN = TweenInfo.new(0.55, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+local HIDE_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Elastic, Enum.EasingDirection.In)
+
+local scaleTween : Tween? = nil
+
+--[=[
+	Leva a escala do card ate `target`. O `from` opcional reinicia a animacao do
+	zero -- e o que da o "pop" toda vez que uma unidade e selecionada, mesmo que o
+	card ja estivesse na tela por causa da unidade anterior.
+
+	A animacao anterior e cancelada, e `Cancel` faz o `Completed` chegar como
+	`Cancelled`: por isso o `onComplete` de um fechamento interrompido no meio nao
+	esconde o card que uma nova selecao acabou de abrir.
+]=]
+local function playScale(from : number?, target : number, tweenInfo : TweenInfo, onComplete : (() -> ())?)
+	if scaleTween then
+		scaleTween:Cancel()
+		scaleTween = nil
+	end
+
+	if from then
+		CardScale.Scale = from
+	end
+
+	local tween = TweenService:Create(CardScale, tweenInfo, { Scale = target })
+	scaleTween = tween
+
+	tween.Completed:Connect(function(state)
+		if scaleTween == tween then
+			scaleTween = nil
+		end
+
+		if state == Enum.PlaybackState.Completed and onComplete then
+			onComplete()
+		end
+	end)
+
+	tween:Play()
+end
+
+--[[
+	Arrastar o card.
+
+	O jogador pega o card em qualquer ponto -- fundo, textos ou os proprios botoes
+	-- e larga onde quiser, no mouse ou no dedo. O ponto escolhido fica guardado
+	aqui em `cachedPosition` e vale para o resto da sessao: toda unidade que ele
+	selecionar depois abre o card no mesmo lugar.
+
+	O cache guarda a posicao em escala, e nao em pixels: assim o card continua no
+	mesmo canto da tela se a janela mudar de tamanho ou o aparelho girar.
+]]
+local cachedPosition : UDim2 = CardUpgrade.Position
+
+-- Quanto o ponteiro precisa andar para aquilo virar um arrasto. Abaixo disso e
+-- clique: dedo nenhum fica perfeitamente parado, e o botao VENDER nao pode falhar
+-- porque o toque escorregou dois pixels.
+local DRAG_THRESHOLD = 6
+
+-- Depois de largar o card, o clique que fechou o arrasto ainda chega nos botoes.
+-- Essa janela curta engole esse clique -- arrastar o card pelo VENDER nao pode
+-- vender a unidade.
+local CLICK_BLOCK_TIME = 0.15
+
+local dragInput : InputObject? = nil
+local dragStart : Vector2? = nil
+local dragOrigin : Vector2? = nil
+local dragMoved = false
+local clickBlockedUntil = 0
+
+local function isClickSuppressed() : boolean
+	return dragMoved or os.clock() < clickBlockedUntil
+end
+
+--[=[
+	O retangulo onde o card pode andar: o proprio ScreenGui.
+]=]
+local function getParentRect() : (Vector2?, Vector2?)
+	local parent = CardUpgrade.Parent
+	if not parent or not parent:IsA("GuiBase2d") then
+		return nil, nil
+	end
+
+	local gui = parent :: GuiBase2d
+	return gui.AbsolutePosition, gui.AbsoluteSize
+end
+
+--[=[
+	Move o card seguindo o ponteiro, sem deixar ele sair da tela.
+
+	A conta e toda em pixels (`AbsolutePosition` ja e o canto de cima do card,
+	porque o `AnchorPoint` e 0,0) e so no fim vira escala -- que e o formato que o
+	cache guarda.
+]=]
+local function moveCardTo(pointer : Vector2)
+	if not dragStart or not dragOrigin then return end
+
+	local parentPosition, parentSize = getParentRect()
+	if not parentPosition or not parentSize then return end
+	if parentSize.X <= 0 or parentSize.Y <= 0 then return end
+
+	local cardSize = CardUpgrade.AbsoluteSize
+	local maxX = math.max(parentSize.X - cardSize.X, 0)
+	local maxY = math.max(parentSize.Y - cardSize.Y, 0)
+
+	local delta = pointer - dragStart
+	local x = math.clamp(dragOrigin.X + delta.X, 0, maxX)
+	local y = math.clamp(dragOrigin.Y + delta.Y, 0, maxY)
+
+	CardUpgrade.Position = UDim2.fromScale(x / parentSize.X, y / parentSize.Y)
+end
+
+local function beginDrag(input : InputObject)
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1
+		and input.UserInputType ~= Enum.UserInputType.Touch then
+		return
+	end
+
+	local parentPosition = getParentRect()
+	if not parentPosition then return end
+
+	dragInput = input
+	dragStart = Vector2.new(input.Position.X, input.Position.Y)
+	dragOrigin = CardUpgrade.AbsolutePosition - parentPosition
+	dragMoved = false
+end
+
+local function endDrag()
+	if not dragInput then return end
+
+	dragInput = nil
+	dragStart = nil
+	dragOrigin = nil
+
+	if dragMoved then
+		cachedPosition = CardUpgrade.Position
+		clickBlockedUntil = os.clock() + CLICK_BLOCK_TIME
+	end
+
+	dragMoved = false
+end
+
+--[=[
+	Liga o inicio do arrasto num pedaco do card.
+
+	Os botoes tambem entram: eles engolem a entrada antes de ela chegar ao card, e
+	sem isso boa parte da area do card nao seria agarravel. Quem separa clique de
+	arrasto e o `DRAG_THRESHOLD`.
+]=]
+local function attachDragSource(instance : Instance)
+	if not instance:IsA("GuiObject") then return end
+	instance.InputBegan:Connect(beginDrag)
+end
+
+-- Um `ImageLabel` so recebe entrada com `Active` ligado. De quebra, isso faz o
+-- card engolir o clique: apertar nele nao vaza mais para o mundo atras, que era o
+-- que desmarcava a unidade no meio de um arrasto.
+CardUpgrade.Active = true
+attachDragSource(CardUpgrade)
+
+for _, descendant in CardUpgrade:GetDescendants() do
+	if descendant:IsA("GuiButton") then
+		attachDragSource(descendant)
+	end
+end
+
+CardUpgrade.DescendantAdded:Connect(function(descendant)
+	if descendant:IsA("GuiButton") then
+		attachDragSource(descendant)
+	end
+end)
+
+--[[
+	O movimento e o fim do arrasto sao ouvidos no `UserInputService`, e nao no
+	card: o dedo (ou o mouse) sai de cima do card o tempo todo enquanto arrasta, e
+	os eventos do proprio card parariam de chegar exatamente ai.
+
+	No toque, o objeto de entrada e o mesmo do comeco ao fim -- comparar por
+	identidade e o que impede um segundo dedo na tela de sequestrar o arrasto. No
+	mouse, o movimento chega como `MouseMovement`, um objeto diferente do botao
+	que esta segurando o card.
+]]
+UserInputService.InputChanged:Connect(function(input)
+	if not dragInput or not dragStart then return end
+
+	local isDragMove = input == dragInput
+		or (dragInput.UserInputType == Enum.UserInputType.MouseButton1
+			and input.UserInputType == Enum.UserInputType.MouseMovement)
+
+	if not isDragMove then return end
+
+	local pointer = Vector2.new(input.Position.X, input.Position.Y)
+	if not dragMoved and (pointer - dragStart).Magnitude < DRAG_THRESHOLD then return end
+
+	dragMoved = true
+	moveCardTo(pointer)
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if not dragInput then return end
+
+	-- No toque, so o proprio dedo termina o arrasto: outro dedo saindo da tela nao
+	-- pode largar o card no meio do caminho. No mouse basta o tipo bater, porque o
+	-- botao que solta e sempre o mesmo que apertou.
+	local endsDrag = input == dragInput
+		or (dragInput.UserInputType == Enum.UserInputType.MouseButton1
+			and input.UserInputType == Enum.UserInputType.MouseButton1)
+
+	if endsDrag then
+		endDrag()
+	end
+end)
+
+-- Alt-tab no meio do arrasto: o `InputEnded` do botao nunca chega, e sem isso o
+-- card ficaria colado no ponteiro quando o jogador voltasse.
+UserInputService.WindowFocusReleased:Connect(endDrag)
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -35,7 +268,6 @@ local UIUtil = require(Utils.UIUtil)
 local PointerUtil = require(Utils.PointerUtil)
 
 local Maid = require(Vendor.Maid)
-local Spring = require(Vendor.Spring)
 local Me = require(Vendor.Me)
 
 local Framework = Me.new()
@@ -144,13 +376,6 @@ function module:create(unitModel, ...)
 		self.maid = nil
 	end
 
-	if self.tasks then
-		for index, taskInst in self.tasks do
-			task.cancel(taskInst)
-			self.tasks[index] = nil
-		end
-	end
-
 	self.maid = Maid.new()
 	self.currentUnit = unitModel
 
@@ -164,6 +389,9 @@ function module:create(unitModel, ...)
 		-- `Activated` e nao `MouseButton1Up`: no toque, se o dedo escorrega para fora
 		-- do botao antes de soltar, o MouseButton1Up nao chega e a venda se perde.
 		self.sellConnection = sellButton.Activated:Connect(function()
+			-- Quem acabou de arrastar o card pelo botao nao quis vender nada.
+			if isClickSuppressed() then return end
+
 			local unitId = unitModel:GetAttribute("UnitID")
 			Framework:Fire("SellUnit", unitId)
 			self:destroy()
@@ -184,6 +412,8 @@ function module:create(unitModel, ...)
 
 	if upgradeButton and unitModel then
 		self.upgradeConnection = upgradeButton.Activated:Connect(function()
+			if isClickSuppressed() then return end
+
 			local level = unitModel:GetAttribute("Upgrades") or 0
 			if SharedConfig.UnitUpgradeConfig:IsMaxed(level) then return end
 			local unitId = unitModel:GetAttribute("UnitID")
@@ -236,6 +466,8 @@ function module:create(unitModel, ...)
 			recusou (unidade de outro jogador, por exemplo).
 		]]
 		self.priorityConnection = priorityButton.Activated:Connect(function()
+			if isClickSuppressed() then return end
+
 			local unitId = unitModel:GetAttribute("UnitID")
 			if not unitId then return end
 
@@ -265,12 +497,19 @@ function module:create(unitModel, ...)
 
 	self:refresh()
 
-	CardUpgrade.Position = HIDDEN_POSITION
+	--[[
+		O card abre no lugar em que o jogador o deixou da ultima vez -- ou onde o
+		layout o colocou, se ele nunca tiver arrastado nada.
 
-	Spring.target(CardUpgrade, .65, 4, {
-		Position = SHOWN_POSITION
-	})
+		A posicao so e reescrita quando ninguem esta com o card na mao: trocar de
+		unidade no meio de um arrasto nao pode arrancar o card do dedo.
+	]]
+	if not dragInput then
+		CardUpgrade.Position = cachedPosition
+	end
+
 	CardUpgrade.Visible = true
+	playScale(0, SHOWN_SCALE, SHOW_TWEEN)
 
 	self:setJumpButtonHidden(true)
 end
@@ -498,24 +737,15 @@ function module:destroy()
 		self.maid:Destroy()
 	end
 
-	if not self.tasks then
-		self.tasks = {}
-	end
-
 	self.maid = nil
 
-	Spring.target(CardUpgrade, .65, 4, {
-		Position = HIDDEN_POSITION
-	})
-
-	local conn
-	conn = task.delay(1, function()
+	-- O card so sai da tela quando a animacao termina de encolher. Se uma nova
+	-- unidade for selecionada nesse meio tempo, o `playScale` do `create` cancela
+	-- este tween e este `Visible = false` nunca chega a acontecer.
+	playScale(nil, 0, HIDE_TWEEN, function()
 		CardUpgrade.Visible = false
 		self:setJumpButtonHidden(false)
-		self.delayTask = nil
-		table.remove(self.tasks, table.find(self.tasks, conn))
 	end)
-	table.insert(self.tasks, conn)
 end
 
 return module

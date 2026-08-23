@@ -717,6 +717,49 @@ oficial mesmo.
 > muda nenhuma resposta. Mas part **do mundo** dentro dele fica invisível para essas
 > perguntas: seria terreno que o fantasma atravessa sem nunca ficar vermelho.
 
+#### O card de upgrade: abre crescendo e o jogador escolhe onde ele fica
+
+O `CardUpgrade` (`ToggleTower`, em `Game/src/Controllers/UILibraryController/Components`)
+não entra mais deslizando de fora da tela. Ele **cresce no lugar**: o `UIScale` que
+mora dentro dele vai de `0` a `1` no `Enum.EasingStyle.Elastic` quando uma unidade é
+selecionada, e volta de `1` a `0` ao desselecionar — `EasingDirection.Out` na abertura
+(o exagero acontece no fim, o card passa um pouco do tamanho e assenta) e `In` no
+fechamento (uma esticada e some). O card só sai da tela (`Visible = false`) quando o
+tween termina; se outra unidade for selecionada no meio, o tween antigo é **cancelado**
+e o `Completed` chega como `Cancelled`, então o fechamento interrompido não apaga o
+card que a nova seleção acabou de abrir.
+
+A troca de animação não foi capricho: ela é o que **libera a posição**. O card agora é
+arrastável com o mouse ou com o dedo, pegando por qualquer ponto dele — fundo, textos
+ou os próprios botões (`Sell`, `UpgradeCost`, `Priority`), que precisam entrar na lista
+porque engolem a entrada antes de ela chegar ao card. Onde o jogador soltar é onde o
+card abre daí em diante, para todas as unidades, pelo resto da sessão. Uma animação que
+nasce fora da tela e volta a um ponto fixo desfaria essa escolha a cada seleção.
+
+Os detalhes que fazem isso funcionar nos dois aparelhos:
+
+- **Clique não é arrasto.** Só depois de 6px de movimento aquilo vira um arrasto — dedo
+  nenhum fica perfeitamente parado, e o `VENDER` não pode falhar porque o toque
+  escorregou dois pixels. Na volta, o clique que fecha o arrasto ainda chega nos botões:
+  uma janela de 0.15s engole esse clique, senão arrastar o card pelo `VENDER` venderia a
+  unidade.
+- **Quem escuta o movimento é o `UserInputService`, não o card.** O ponteiro sai de cima
+  do card o tempo todo enquanto arrasta, e os eventos do próprio card parariam de chegar
+  exatamente aí. No toque o `InputObject` é o mesmo do começo ao fim, e comparar por
+  identidade é o que impede um segundo dedo na tela de sequestrar o arrasto; no mouse o
+  movimento chega como `MouseMovement`, um objeto diferente do botão que segura o card.
+  O `WindowFocusReleased` também solta, senão um alt-tab no meio do arrasto deixaria o
+  card colado no ponteiro.
+- **O cache é em escala, não em pixels.** A conta do arrasto é toda em pixels
+  (`AbsolutePosition` já é o canto de cima do card, porque o `AnchorPoint` é `0,0`),
+  com o card preso dentro do retângulo do `ScreenGui`, e só no fim vira escala — assim
+  o card continua no mesmo canto da tela se a janela mudar de tamanho ou o aparelho
+  girar. A posição vive na sessão do cliente; sair do jogo devolve o card ao lugar do
+  layout.
+- **`CardUpgrade.Active = true`.** Um `ImageLabel` só recebe entrada com isso ligado. De
+  quebra o card passa a engolir o clique: apertar nele não vaza mais para o mundo atrás,
+  que era o que desselecionava a unidade no meio de um arrasto.
+
 ### Quem some da tela, e quando
 
 Duas situações pedem a tela para si: o painel de mapas, que quer o lobby só para
