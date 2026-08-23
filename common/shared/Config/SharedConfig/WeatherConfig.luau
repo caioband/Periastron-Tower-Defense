@@ -267,28 +267,19 @@ WeatherConfig.Round = {
 }
 
 --[[
-	O aviso na tela: `StarterGui.Interface.WeatherWarning`, um TextLabel com um
-	UIStroke dentro.
-
-	O label nasce invisível e com a posição autorada; o controller guarda essa
-	posição como destino e faz o texto descer até ela enquanto a transparência vai
-	de 1 a 0 (no texto e no stroke), segura `Hold` segundos e sai pelo mesmo
-	caminho. `SlideOffset` é quanto acima do destino ele começa, em escala da tela.
+	A frase do aviso de clima.
 
 	`Text` leva o nome do clima e quantas waves faltam; `TextOne` existe só para
 	não escrever "1 ROUNDS". `DisplayNames` é para quando o nome do Model não for o
 	nome que o jogador deve ler.
+
+	O label em si e a animação não estão aqui: são do `WarningConfig`, que o clima
+	divide com os outros avisos de tela (hoje, o restart do servidor).
 ]]
 WeatherConfig.Warning = {
-	Name = "WeatherWarning",
 	Text = "WARNING! %s COMING IN %d ROUNDS",
 	TextOne = "WARNING! %s COMING NEXT ROUND",
 	DisplayNames = {},
-
-	SlideOffset = 0.06,
-	FadeIn = 0.5,
-	Hold = 5,
-	FadeOut = 0.4,
 }
 
 --[[

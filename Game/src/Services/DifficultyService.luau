@@ -18,6 +18,10 @@ local Framework = Me.new()
 
 local ALL_VOTED_GRACE = 2
 
+-- Ate quando vale a pena esperar o cliente de quem acabou de entrar avisar que
+-- carregou. Passou disso, ele nao vai mais avisar.
+local CLIENT_READY_TIMEOUT = 60
+
 local DifficultyService = {
 	Services = {
 		MobService = {}
@@ -79,18 +83,49 @@ function DifficultyService:winner()
 	return best or DifficultyConfig.Default
 end
 
+--[=[
+	O estado como este jogador o ve: o voto e de cada um, o resto e do servidor.
+	`locked` e o que diz se a partida ja comecou — enquanto for `nil` ninguem
+	escolheu dificuldade nenhuma.
+]=]
+function DifficultyService:stateFor(player : Player, timeLeft : number?, counts : { [string] : number }?)
+	return {
+		active = self.SelectionActive == true,
+		options = DifficultyConfig.Order,
+		votes = counts or self:tally(),
+		timeLeft = timeLeft,
+		selected = self.Votes[player.UserId],
+		locked = self.Selected,
+	}
+end
+
 function DifficultyService:broadcastSelectionState(timeLeft)
 	local counts = self:tally()
 	for _, player in Players:GetPlayers() do
-		Framework:Fire("DifficultySelection", player, {
-			active = self.SelectionActive == true,
-			options = DifficultyConfig.Order,
-			votes = counts,
-			timeLeft = timeLeft,
-			selected = self.Votes[player.UserId],
-			locked = self.Selected,
-		})
+		Framework:Fire("DifficultySelection", player, self:stateFor(player, timeLeft, counts))
 	end
+end
+
+--[=[
+	Manda o estado atual para quem acabou de entrar. A votacao so fala enquanto
+	esta aberta, entao sem isto quem cai num round que ja comecou nunca receberia
+	um `DifficultySelection` — e a hotbar dele, que so aparece com a dificuldade
+	decidida, ficaria escondida a partida inteira.
+
+	Espera a tag `ClientReady` que o `DataService` poe quando o cliente avisa que
+	carregou: antes dela o controller do outro lado ainda nem esta escutando.
+]=]
+function DifficultyService:syncPlayer(player : Player)
+	local deadline = os.clock() + CLIENT_READY_TIMEOUT
+
+	while not player:HasTag("ClientReady") do
+		if os.clock() > deadline or not player:IsDescendantOf(Players) then
+			return
+		end
+		task.wait(0.25)
+	end
+
+	Framework:Fire("DifficultySelection", player, self:stateFor(player, self:timeLeft()))
 end
 
 function DifficultyService:RunSelection(duration)
@@ -160,6 +195,12 @@ function DifficultyService:construct()
 		end
 
 		self:broadcastSelectionState(self:timeLeft())
+	end)
+
+	Players.PlayerAdded:Connect(function(player)
+		task.spawn(function()
+			self:syncPlayer(player)
+		end)
 	end)
 
 	Players.PlayerRemoving:Connect(function(player)

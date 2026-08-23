@@ -75,6 +75,9 @@ local WaveService = {
 	},
 	ReadyPlayers = {},
 	PlayAgainVotes = {},
+
+	-- Quanto cada jogador ja recebeu neste round, por UserId. Zerado a cada round.
+	PaidRewards = {},
 	GameOver = false,
 	State = ROUND_STATE.Idle,
 
@@ -215,6 +218,78 @@ function WaveService:computeReward(preset)
 	}
 end
 
+--[=[
+	Credita a recompensa da partida no perfil do jogador, descontando o que ele ja
+	recebeu neste round.
+
+	O desconto e o que faz a recompensa de saida conviver com a de fim de round.
+	Sem ele, dois casos quebram: quem sai no exato instante do fim seria pago pelo
+	`onRoundEnded` e de novo pela saida, e quem sai na wave 19 e volta para o mesmo
+	round levaria as duas recompensas cheias.
+
+	Como a conta cresce com a wave e o que ja foi pago sai fora, o total de quem
+	entra e sai no meio da partida nunca passa do que recebeu quem ficou o round
+	inteiro. Devolve `false` quando nao ha nada a pagar.
+]=]
+function WaveService:grantReward(player : Player, rewards) : boolean
+	local paid = self.PaidRewards[player.UserId]
+
+	local coins = math.max(0, rewards.coins - (paid and paid.coins or 0))
+	local shards = math.max(0, rewards.shards - (paid and paid.shards or 0))
+	local xp = math.max(0, rewards.xp - (paid and paid.xp or 0))
+
+	if coins <= 0 and shards <= 0 and xp <= 0 then return false end
+
+	local dataService = self.Services.DataService
+	if not dataService then return false end
+
+	self.PaidRewards[player.UserId] = {
+		coins = (paid and paid.coins or 0) + coins,
+		shards = (paid and paid.shards or 0) + shards,
+		xp = (paid and paid.xp or 0) + xp,
+	}
+
+	dataService:Update(player, "Stats", function(stats)
+		stats.Cash = (stats.Cash or 0) + coins
+		stats.Shards = (stats.Shards or 0) + shards
+		stats.XP = (stats.XP or 0) + xp
+		return stats
+	end)
+
+	return true
+end
+
+--[=[
+	A recompensa de quem sai antes do fim -- por vontade propria ou porque o
+	servidor esta desligando.
+
+	E a mesma conta do fim de round (`computeReward`), que ja e proporcional as
+	waves sobrevividas: quem sai na wave 18 de 20 leva quase tudo, quem sai na 2
+	leva quase nada. Nada e disparado para o cliente: nao ha tela de resultado
+	para quem esta indo embora.
+
+	So enquanto o round esta rodando. Em `Finished` o `onRoundEnded` ja pagou todo
+	mundo que estava na sala, e em `Idle` nao existe partida para pagar -- sair na
+	votacao de dificuldade ou no intervalo nao vale recompensa nenhuma, e a conta
+	devolveria zero de qualquer forma (wave 0).
+
+	Quem chama e o `DataService`, com o perfil ainda aberto (ver `OnBeforeRelease`),
+	e nao o `PlayerRemoving` daqui: e o que garante que o credito entra antes da
+	sessao fechar nos dois caminhos de saida.
+]=]
+function WaveService:GrantLeaveReward(player : Player)
+	if self.State ~= ROUND_STATE.Running then return end
+
+	local preset = self.Difficulty or self.Services.DifficultyService:GetSelected()
+	local rewards = self:computeReward(preset)
+
+	if self:grantReward(player, rewards) then
+		print(string.format(
+			"[WaveService]: %s saiu na wave %d/%d; recompensa proporcional paga (%d coins, %d shards, %d XP).",
+			player.Name, self.WaveCount or 0, self:getMaxWaves(preset), rewards.coins, rewards.shards, rewards.xp))
+	end
+end
+
 function WaveService:onRoundEnded(won : boolean)
 	local preset = self.Difficulty or self.Services.DifficultyService:GetSelected()
 	local maxWaves = self:getMaxWaves(preset)
@@ -225,14 +300,7 @@ function WaveService:onRoundEnded(won : boolean)
 	local mvp = mobService and mobService:GetMVP() or nil
 
 	for _, player in Players:GetPlayers() do
-		if dataService then
-			dataService:Update(player, "Stats", function(stats)
-				stats.Cash = (stats.Cash or 0) + rewards.coins
-				stats.Shards = (stats.Shards or 0) + rewards.shards
-				stats.XP = (stats.XP or 0) + rewards.xp
-				return stats
-			end)
-		end
+		self:grantReward(player, rewards)
 
 		if won then
 			Framework:Fire("Win", player)
@@ -359,6 +427,7 @@ function WaveService:StartRound()
 	self.State = ROUND_STATE.Running
 	self.GameOver = false
 	self.WaveCount = 0
+	table.clear(self.PaidRewards)
 
 	self.RoundThread = task.spawn(function()
 		self:runRound(generation)
@@ -428,6 +497,7 @@ function WaveService:ResetRound(autoStart : boolean?)
 	self.Difficulty = nil
 	table.clear(self.ReadyPlayers)
 	table.clear(self.PlayAgainVotes)
+	table.clear(self.PaidRewards)
 
 	for _, serviceName in ROUND_SCOPED_SERVICES do
 		local service = self.Services[serviceName]
@@ -569,6 +639,20 @@ function WaveService:construct()
 	Framework:Listen("RequestLobbyTeleport", function(player)
 		self:sendToLobby(player)
 	end)
+
+	--[[
+		A recompensa de saida nao entra aqui: ela precisa do perfil aberto, e a
+		ordem entre este `PlayerRemoving` e o do `DataService` nao e garantida. Quem
+		chama o `GrantLeaveReward` e o proprio `DataService`, logo antes de fechar a
+		sessao -- o que cobre tambem o desligamento do servidor, onde `PlayerRemoving`
+		nem sempre chega a disparar.
+	]]
+	local dataService = self.Services.DataService
+	if dataService and dataService.OnBeforeRelease then
+		dataService:OnBeforeRelease(function(player)
+			self:GrantLeaveReward(player)
+		end)
+	end
 
 	Players.PlayerRemoving:Connect(function(player)
 		self.PlayAgainVotes[player.UserId] = nil

@@ -14,8 +14,10 @@ local Assets = Shared:WaitForChild("Assets")
 local Units = Assets:WaitForChild("Units")
 
 local SharedConfig = require(Configs.SharedConfig)
+local TargetPriority = SharedConfig.TargetPriority
 local ServerConfig = require(ServerConfigs)
 local PathUtil = require(Shared:WaitForChild("Util"):WaitForChild("PathUtil"))
+local PlacementUtil = require(Shared:WaitForChild("Util"):WaitForChild("PlacementUtil"))
 
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
@@ -338,6 +340,7 @@ function UnitService:construct()
 	end)
 
 	Framework:Listen("UnitUpgraded", function() end)
+	Framework:Listen("UnitPriorityChanged", function() end)
 	Framework:Listen("UnitDamageStats", function() end)
 	Framework:Listen("UnitSwing", function() end)
 	Framework:Listen("TripmineThrown", function() end)
@@ -389,11 +392,33 @@ function UnitService:construct()
 		end
 	end)
 
+	--[=[
+		Troca a prioridade de alvo de uma unidade. O cliente manda o modo que quer
+		(e nao "gira um") para o pedido nao depender de quem esta em dia com quem:
+		dois cliques rapidos chegam como dois modos, e o segundo manda.
+	]=]
+	Framework:Listen("SetUnitPriority", function(player, unitId, priority)
+		local entry = self.UnitsById[unitId]
+		if not entry or entry.ownerUserId ~= player.UserId then return end
+		if not TargetPriority.Exists(priority) then return end
+		if entry.priority == priority then return end
+
+		entry.priority = priority
+
+		-- O alvo atual cai junto: sem isso a unidade so obedeceria a prioridade
+		-- nova depois de o mob de agora sair do alcance.
+		entry.targetMobId = nil
+
+		for _, plr in ipairs(Players:GetPlayers()) do
+			Framework:Fire("UnitPriorityChanged", plr, unitId, priority)
+		end
+	end)
+
 	self.PlayersReady = {}
 	Framework:Listen("ClientReady", function(player)
 		self.PlayersReady[player.UserId] = true
 		for _, entry in self.PlacedUnits do
-			Framework:Fire("ReplicateUnit", player, entry.unitName, entry.cf, entry.ownerUserId, entry.unitId, entry.upgrades or 0)
+			Framework:Fire("ReplicateUnit", player, entry.unitName, entry.cf, entry.ownerUserId, entry.unitId, entry.upgrades or 0, entry.priority)
 		end
 		local cards = self.SessionCards[player.UserId]
 		if cards then
@@ -448,30 +473,37 @@ function UnitService:construct()
 		local unitSizeX = self.UnitSizes[unitName] or 2
 		local isValid = true
 
-		-- A caixa de teste tem que ser a mesma que o cliente usa para pintar o
-		-- fantasma de verde: a bounding box real do modelo, girada pelo CFrame que
-		-- ele mandou. Uma caixa maior (ex.: um cubo de 6 studs de altura) desce
-		-- abaixo do chao e encosta nos trilhos finos do caminho, recusando
-		-- posicionamentos que o cliente ja tinha aprovado.
+		--[[
+			A caixa de teste tem que ser a mesma que o cliente usa para pintar o
+			fantasma de verde: a bounding box real do modelo, girada pelo CFrame que
+			ele mandou. Uma caixa maior (ex.: um cubo de 6 studs de altura) desce
+			abaixo do chao e encosta nos trilhos finos do caminho, recusando
+			posicionamentos que o cliente ja tinha aprovado.
+
+			O `PathProbe` estica essa caixa para baixo: so o volume da unidade nao
+			basta, porque qualquer coisa que a levante acima do trilho tira o caminho
+			de dentro da caixa. Ver `PlacementUtil.PathClearance`.
+		]]
 		local checkSize = self.UnitBounds[unitName] or Vector3.new(unitSizeX, 2, unitSizeX)
+		local probeCF, probeSize = PlacementUtil.PathProbe(cf, checkSize)
 		local overlapParams = OverlapParams.new()
 		overlapParams.FilterType = Enum.RaycastFilterType.Include
 		overlapParams.FilterDescendantsInstances = self:getGridParts()
 		local gridProbe = Instance.new("Part")
-		gridProbe.Size = checkSize
+		gridProbe.Size = probeSize
 		gridProbe.Anchored = true
 		gridProbe.CanCollide = false
 		gridProbe.CanQuery = false
 		gridProbe.CanTouch = false
 		gridProbe.Transparency = 1
-		gridProbe.CFrame = cf
+		gridProbe.CFrame = probeCF
 		gridProbe.Parent = workspace
 		local gridParts = workspace:GetPartsInPart(gridProbe, overlapParams)
 		gridProbe:Destroy()
 		if #gridParts > 0 then
 			isValid = false
 			placementPrint(player.Name, unitName, "recusado: em cima do caminho", formatVector(position),
-				"caixa de teste", formatVector(checkSize),
+				"caixa de teste", formatVector(probeSize),
 				string.format("%d part(s) de Grid, primeira: %s em %s", #gridParts, gridParts[1]:GetFullName(), formatVector(gridParts[1].Position)))
 		end
 
@@ -491,9 +523,25 @@ function UnitService:construct()
 			end
 		end
 
+		--[[
+			Ninguem nasce dentro de um jogador.
+
+			E aqui que a regra vale de verdade: o cliente pinta o fantasma de vermelho
+			para o jogador enxergar, mas quem aceita ou recusa e este listener -- um
+			cliente adulterado manda o CFrame que quiser.
+		]]
+		if isValid then
+			local blockingCharacter = PlacementUtil.FindBlockingCharacter(cf, checkSize)
+			if blockingCharacter then
+				isValid = false
+				placementPrint(player.Name, unitName, "recusado: em cima de um personagem",
+					formatVector(position), "personagem", blockingCharacter:GetFullName())
+			end
+		end
+
 		if isValid then
 			local unitId = HttpService:GenerateGUID(false)
-			local newEntry = { unitId = unitId, unitName = unitName, cf = cf, ownerUserId = player.UserId, upgrades = 0, invested = placeCost, lastAttack = 0 }
+			local newEntry = { unitId = unitId, unitName = unitName, cf = cf, ownerUserId = player.UserId, upgrades = 0, invested = placeCost, lastAttack = 0, priority = TargetPriority.Default }
 			table.insert(self.PlacedUnits, newEntry)
 			self.UnitsById[unitId] = newEntry
 
@@ -504,7 +552,7 @@ function UnitService:construct()
 				"unitId", unitId)
 
 			for _, plr in ipairs(Players:GetPlayers()) do
-				Framework:Fire("ReplicateUnit", plr, unitName, cf, player.UserId, unitId, 0)
+				Framework:Fire("ReplicateUnit", plr, unitName, cf, player.UserId, unitId, 0, newEntry.priority)
 			end
 		end
 	end)
@@ -565,14 +613,28 @@ function UnitService:stepCombat()
 				targetValid = pos ~= nil and (pos - unitPosition).Magnitude <= range
 			end
 
-			if not targetValid then
-				entry.targetMobId = nil
-				if scansLeft > 0 then
-					scansLeft -= 1
-					targetId = mobService:GetNearestMobInRange(unitPosition, range)
-					entry.targetMobId = targetId
-					targetValid = targetId ~= nil
+			--[[
+				A busca acontece a cada golpe, e nao so quando o alvo sai do alcance:
+				prioridade e sobre quem esta em alcance AGORA. O mob mais fraco muda
+				a cada batida, e o "mais forte" que acabou de entrar no alcance tem
+				que roubar o alvo do que ja estava la.
+
+				O orcamento de buscas por quadro continua mandando — estourou, a
+				unidade fica com o alvo anterior se ele ainda serve e tenta de novo
+				no proximo quadro.
+			]]
+			if scansLeft > 0 then
+				scansLeft -= 1
+				local bestId = mobService:GetBestMobInRange(unitPosition, range, entry.priority)
+				if bestId then
+					targetId = bestId
+					targetValid = true
+				elseif not targetValid then
+					targetId = nil
 				end
+				entry.targetMobId = targetId
+			elseif not targetValid then
+				entry.targetMobId = nil
 			end
 
 			if targetValid then
@@ -795,8 +857,11 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 
 		for i = 1, totalHits do
 			local resolvedMobId = initialMobId
+			-- O alvo morreu entre dois golpes do mesmo ataque: o substituto sai pela
+			-- mesma prioridade, senao o golpe 2 iria para o mais perto enquanto o
+			-- golpe 1 foi para o mais forte.
 			if resolvedMobId and not self.Services.MobService.ActiveMobs[resolvedMobId] then
-				resolvedMobId = self.Services.MobService:GetNearestMobInRange(unitPosition, range)
+				resolvedMobId = self.Services.MobService:GetBestMobInRange(unitPosition, range, entry.priority)
 			end
 
 			local predictedPos = resolvedMobId and self.Services.MobService:PredictPosition(resolvedMobId)

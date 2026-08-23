@@ -4,6 +4,7 @@ local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local PhysicsService = game:GetService("PhysicsService")
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -21,8 +22,10 @@ local Units = Assets:WaitForChild("Units")
 local UnitClass = require(Classes.Unit)
 
 local SharedConfig = require(Configs.SharedConfig)
+local TargetPriority = SharedConfig.TargetPriority
 local ClientConfig = require(Configs.Client)
 local PointerUtil = require(Utils.PointerUtil)
+local PlacementUtil = require(Utils.PlacementUtil)
 
 local Maid = require(Vendor.Maid)
 local Promise = require(Packages.Promise)
@@ -33,6 +36,10 @@ local Framework = Me.new()
 local Player = Players.LocalPlayer
 
 local LERP_SPEED = 14
+-- Teto do encosta-no-chao de `replicatePlacedUnit`. Um stud cobre a diferenca de
+-- escala entre o fantasma e a unidade de verdade; acima disso o "acerto" seria a
+-- unidade mudando de lugar por conta propria.
+local MAX_GROUND_SNAP = 1
 local VALID_COLOR = Color3.fromRGB(0, 255, 0)
 local INVALID_COLOR = Color3.fromRGB(255, 0, 0)
 local COLOR_LERP_SPEED = 10
@@ -48,6 +55,30 @@ end
 local function formatVector(v : Vector3?)
 	if not v then return "nil" end
 	return string.format("(%.2f, %.2f, %.2f)", v.X, v.Y, v.Z)
+end
+
+--[=[
+	O grupo de colisao do fantasma, ou `nil` se ele ainda nao existir aqui.
+
+	Quem registra e o `CollisionService`, no servidor, e o registro replica. Perguntar
+	antes de escrever e o que separa "o servico nao subiu" de um erro no meio do
+	posicionamento: `CollisionGroup` com nome nao registrado estoura, e estourar aqui
+	levaria o fantasma inteiro junto.
+]=]
+local function getGhostCollisionGroup() : string?
+	local group = PlacementUtil.GhostCollisionGroup
+
+	local ok, registered = pcall(function()
+		return PhysicsService:IsCollisionGroupRegistered(group)
+	end)
+
+	if ok and registered then
+		return group
+	end
+
+	placementPrint("grupo de colisao", group, "nao registrado; fantasma so com CanCollide = false")
+
+	return nil
 end
 
 local TILT_MAX = math.rad(16)
@@ -280,16 +311,19 @@ local function tweenRingOut(ring)
 	end)
 end
 
+--[[
+	Altura do chao debaixo de um ponto.
+
+	As parts do caminho contam como chao aqui, e nao sao filtradas: elas sao o piso
+	visivel da trilha. Ignora-las fazia o raio atravessar o trilho e parar no bloco
+	de baixo — uma unidade aceita no ar (na quina de uma ponte, na face de uma
+	pedra) era entao DESENHADA de pe em cima do caminho, longe do CFrame que o
+	servidor guardou e usa para mirar.
+]]
 local function raycastGroundY(position : Vector3, excludeInstances : {Instance}?)
 	local raycastParams = RaycastParams.new()
 	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-	local excludeList = table.clone(CollectionService:GetTagged("Grid"))
-	if excludeInstances then
-		for _, inst in excludeInstances do
-			table.insert(excludeList, inst)
-		end
-	end
-	raycastParams.FilterDescendantsInstances = excludeList
+	raycastParams.FilterDescendantsInstances = excludeInstances or {}
 
 	-- O raio parte do proprio ponto, nao de um ponto acima dele: o que interessa e
 	-- o chao EMBAIXO da unidade. Comecando la em cima, a primeira coisa atingida
@@ -704,7 +738,7 @@ function UnitPlacementController:selectUnit(unitModel)
 	self.Controllers.MusicController:PlaySFX("SelectSound")
 end
 
-function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFrame, ownerUserId : number, unitId : string, upgrades : number)
+function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFrame, ownerUserId : number, unitId : string, upgrades : number, priority : string?)
 	local unitModel = Units:FindFirstChild(unitName)
 	if not unitModel then return end
 
@@ -724,12 +758,28 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 	unit:PivotTo(CF or CFrame.new())
 	unit.Parent = workspace
 
+	--[[
+		Encosta a unidade no chao. O ajuste e de acerto fino: o cliente calcula a
+		altura do fantasma com o modelo em escala reduzida, entao a unidade de
+		tamanho cheio nasce uns 20 cm enterrada.
+
+		Dai o teto: quem manda na posicao e o servidor, e um "acerto" de metros nao
+		e acerto nenhum — e a unidade indo parar em outro lugar. Acontecia quando o
+		raio saia de dentro de alguma geometria (a quina da ponte em que a unidade
+		foi largada): sem nada para acertar por perto, ele descia ate o chao la
+		embaixo e a unidade era desenhada de pe no meio do caminho, enquanto o
+		servidor continuava mirando a partir de onde ela foi largada de verdade.
+	]]
 	local boundsCF, boundsSize = unit:GetBoundingBox()
 	local bottomY = boundsCF.Position.Y - boundsSize.Y / 2
 	local groundSurfaceY = raycastGroundY(boundsCF.Position, self:getGroundExcludeList({unit}))
 	if groundSurfaceY then
 		local lift = groundSurfaceY - bottomY
-		if math.abs(lift) > 0.001 then
+		if math.abs(lift) > MAX_GROUND_SNAP then
+			placementPrint(unitName, "correcao de chao ignorada:", string.format("%.2f studs", lift),
+				"maior que o limite de", string.format("%.2f", MAX_GROUND_SNAP))
+			groundSurfaceY = bottomY
+		elseif math.abs(lift) > 0.001 then
 			unit:PivotTo((CF or CFrame.new()) + Vector3.new(0, lift, 0))
 		end
 	else
@@ -775,6 +825,10 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 	class.upgrades = upgrades or 0
 	unit:SetAttribute("UnitID", unitId)
 	unit:SetAttribute("Upgrades", upgrades or 0)
+	-- A prioridade viaja em atributo pelo mesmo motivo que o nivel: quem precisa
+	-- dela — o card, que escreve o nome no botao, e o TargetingController, que gira
+	-- a unidade — le do modelo, sem passar por controller nenhum.
+	unit:SetAttribute("TargetPriority", TargetPriority.Get(priority))
 	unit:SetAttribute("Owned", class.isOwner)
 	-- Total de dano da unidade; o servidor atualiza por `UnitDamageStats` e o card
 	-- de upgrade escuta o atributo.
@@ -831,14 +885,51 @@ function UnitPlacementController:visualize(unitName : string)
 	local scale = ghost:GetScale()
 	ghost:ScaleTo(scale * 0.8)
 
+	--[[
+		O fantasma nao colide com nada, e isso custa tres cuidados.
+
+		**O grupo de colisao** e quem resolve de verdade: part num grupo declarado
+		nao-colidivel com todos os outros nao colide, ponto. Quem registra o grupo e o
+		`CollisionService`, no servidor -- `RegisterCollisionGroup` nao roda no
+		cliente. Registro que nao chegou nao vira erro: o fantasma so fica com os
+		outros dois cuidados, que e como ele vinha antes do grupo existir.
+
+		**O `CanCollide = false`** continua sendo feito, como plano B do acima.
+
+		**A maquina de estado do Humanoid** sai (`EvaluateStateMachine = false`), e
+		antes de parentear no workspace, que e o que dispara a primeira avaliacao. E
+		ela quem manda na colisao de um personagem: ao entrar num estado novo
+		(Running, Landed...) ela religa o `CanCollide` do torso e desfaz o laco abaixo.
+
+		O Humanoid em si **precisa** ficar. Por um bug antigo da engine, Highlight nao
+		renderiza em part transparente quando o modelo nao tem Humanoid -- e o
+		fantasma e meio transparente por natureza. Sem Humanoid o Highlight some, e
+		com ele o verde/vermelho que diz se da para colocar ali.
+
+		As perguntas de posicionamento nao mudam de resposta por causa do grupo: elas
+		sao feitas com `OverlapParams` no grupo `Default`, e e o grupo do *params* que
+		vale, nao o da part consultada.
+	]]
+	local ghostHumanoid = ghost:FindFirstChildOfClass("Humanoid")
+	if ghostHumanoid then
+		ghostHumanoid.EvaluateStateMachine = false
+	end
+
+	local ghostGroup = getGhostCollisionGroup()
+
 	for _, descendant in pairs(ghost:GetDescendants()) do
 		if descendant:IsA("BasePart") then
 			descendant.CanCollide = false
 			descendant.Transparency = 0.5
+
+			if ghostGroup then
+				descendant.CollisionGroup = ghostGroup
+			end
 		end
 	end
 
-	local ghostHumanoid = ghost:FindFirstChildOfClass("Humanoid")
+	-- A animacao nao depende da maquina de estado: quem toca a faixa e o Animator,
+	-- e a faixa e pedida na mao aqui.
 	if ghostHumanoid then
 		local animator = Instance.new("Animator")
 		animator.Parent = ghostHumanoid
@@ -925,7 +1016,10 @@ function UnitPlacementController:visualize(unitName : string)
 	local halfHeight = ghostExtentsSize.Y / 2
 
 	local gridProbe = Instance.new("Part")
-	gridProbe.Size = ghostBoundsSize
+	-- Tamanho vem do `PathProbe`, igual ao do servidor: a caixa da unidade mais a
+	-- coluna de ar debaixo dela. O CFrame e reposto a cada teste, la embaixo.
+	local _, gridProbeSize = PlacementUtil.PathProbe(CFrame.new(), ghostBoundsSize)
+	gridProbe.Size = gridProbeSize
 	gridProbe.Anchored = true
 	gridProbe.CanCollide = false
 	gridProbe.CanQuery = false
@@ -972,7 +1066,8 @@ function UnitPlacementController:visualize(unitName : string)
 				overlapCheckElapsed = 0
 
 				local ghostCFrameNow = CFrame.new(placedPosition) * CFrame.Angles(0, math.rad(currentRotation), 0)
-				gridProbe.CFrame = ghostCFrameNow
+				local probeCF = PlacementUtil.PathProbe(ghostCFrameNow, ghostBoundsSize)
+				gridProbe.CFrame = probeCF
 
 				local gridOverlapParams = OverlapParams.new()
 				gridOverlapParams.FilterType = Enum.RaycastFilterType.Include
@@ -984,7 +1079,8 @@ function UnitPlacementController:visualize(unitName : string)
 				local reason = ""
 
 				if onGrid then
-					reason = string.format("em cima do caminho (%d part(s) de Grid, primeira: %s)", #gridParts, gridParts[1]:GetFullName())
+					reason = string.format("em cima do caminho (%d part(s) de Grid ate %d studs abaixo, primeira: %s)",
+						#gridParts, PlacementUtil.PathClearance, gridParts[1]:GetFullName())
 				end
 
 				if not onGrid then
@@ -998,6 +1094,22 @@ function UnitPlacementController:visualize(unitName : string)
 							reason = "obstruido por " .. part:GetFullName()
 							break
 						end
+					end
+				end
+
+				--[[
+					Personagem e caso a parte porque o teste generico acima nao o pega:
+					ele roda so na HumanoidRootPart do fantasma (uns 0,6 stud) e ainda
+					pula a part que o raycast acertou -- que, mirando num jogador, e
+					justamente o corpo dele. Aqui a caixa e a da unidade inteira, e o
+					proprio jogador conta: colocar uma torre dentro de si mesmo tambem
+					nao vale.
+				]]
+				if not onGrid and not isObstructed then
+					local blockingCharacter = PlacementUtil.FindBlockingCharacter(ghostCFrameNow, ghostBoundsSize)
+					if blockingCharacter then
+						isObstructed = true
+						reason = "em cima do personagem " .. blockingCharacter:GetFullName()
 					end
 				end
 
@@ -1269,6 +1381,15 @@ function UnitPlacementController:construct()
 				break
 				end
 			end
+	end)
+
+	Framework:Listen("UnitPriorityChanged", function(unitId, priority)
+		for unitModel, class in pairs(self.createdClasses) do
+			if class and class.unitId == unitId then
+				unitModel:SetAttribute("TargetPriority", TargetPriority.Get(priority))
+				break
+			end
+		end
 	end)
 
 	Framework:Listen("UnitUpgraded", function(unitId, newLevel)

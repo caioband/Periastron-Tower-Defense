@@ -55,6 +55,7 @@ end
 
 function DataService:construct()
 	self.Profiles = {}
+	self.BeforeRelease = self.BeforeRelease or {}
 	self.Packages = {
 		ReplicaToken = Replica.Token("PlayerData"),
 		ProfileManager = ProfileStore.New(
@@ -118,12 +119,41 @@ function DataService:Get(Player : Player, callbackFunc)
 	end)
 end
 
-function DataService:Destroy(Player : Player)
-	if self.Profiles[Player] then
-		self.Profiles[Player].Session:EndSession()
-		self.Profiles[Player].Profile:Destroy()
-		self.Profiles[Player] = nil
+--[=[
+	Registra algo para acontecer com o perfil ainda aberto, no instante anterior
+	ao fechamento da sessao -- por exemplo creditar a recompensa de quem sai no
+	meio de um round.
+
+	Todo caminho de saida passa pelo `Destroy`: o `PlayerRemoving` de quem sai
+	sozinho e o `BindToClose` do desligamento do servidor. Registrar aqui cobre os
+	dois de uma vez e, principalmente, nao depende da ordem em que os services
+	conectaram o proprio `PlayerRemoving` -- um credito feito depois do
+	`EndSession` seria escrito num perfil ja fechado e se perderia.
+]=]
+function DataService:OnBeforeRelease(callback : (Player) -> ())
+	if not self.BeforeRelease then
+		self.BeforeRelease = {}
 	end
+
+	table.insert(self.BeforeRelease, callback)
+end
+
+function DataService:Destroy(Player : Player)
+	local entry = self.Profiles[Player]
+	if not entry then return end
+
+	-- Um pcall por callback: erro em qualquer um deles nao pode impedir a sessao
+	-- de fechar, senao o perfil fica preso e o jogador nao entra em outro servidor.
+	for _, callback in self.BeforeRelease or {} do
+		local ok, err = pcall(callback, Player)
+		if not ok then
+			warn(string.format("[DataService]: callback de saida falhou para %s: %s", Player.Name, tostring(err)))
+		end
+	end
+
+	entry.Session:EndSession()
+	entry.Profile:Destroy()
+	self.Profiles[Player] = nil
 end
 
 function DataService:Update(Player : Player, Key : string, callbackFunc)

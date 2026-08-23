@@ -10,6 +10,7 @@ local Config = Shared:WaitForChild("Config")
 local ServerConfigs = ServerScriptService:WaitForChild("Config")
 
 local SharedConfig = require(Config.SharedConfig)
+local TargetPriority = SharedConfig.TargetPriority
 local ServerConfig = require(ServerConfigs)
 local PathUtil = require(Shared.Util.PathUtil)
 
@@ -23,6 +24,11 @@ local Framework = Me.new()
 
 local BASE_MAX_HEALTH = 100
 local MOB_DAMAGE = 20
+
+-- De quanto em quanto tempo se reprocura o node mais perto de um mob. O mesmo
+-- valor esta no `TargetingController`: os dois lados tem que enxergar o mob no
+-- mesmo trecho do caminho, senao a torre mira num e o dano vai para outro.
+local NODE_PROGRESS_REFRESH = 0.1
 
 local function computeTurnDistances(positions)
 	local turnDistances = {}
@@ -176,6 +182,37 @@ function MobService:getRoutes()
 	return self.Routes
 end
 
+--[=[
+	Os nodes do caminho com a distancia de cada um ate o primeiro, para a
+	prioridade `Farthest`. Cai junto com as rotas quando o mapa muda.
+]=]
+function MobService:getNodeDistances()
+	if not self.NodeDistances then
+		self.NodeDistances = PathUtil.BuildNodeDistances(self:getRoutes())
+	end
+	return self.NodeDistances
+end
+
+--[=[
+	O quanto o mob ja andou do caminho, em cache.
+
+	A varredura de nodes e barata, mas ela roda por unidade e por mob: numa wave
+	grande com muitas torres no `Farthest` isso vira o produto dos dois. Como o
+	mob nao muda de node a cada quadro, a conta vale por `NODE_PROGRESS_REFRESH`.
+]=]
+function MobService:getMobPathProgress(mob, position : Vector3, nodeDistances)
+	local now = os.clock()
+
+	if mob.NodeProgress and now - (mob.NodeProgressClock or 0) < NODE_PROGRESS_REFRESH then
+		return mob.NodeProgress
+	end
+
+	mob.NodeProgress = PathUtil.GetNodeProgress(nodeDistances, position)
+	mob.NodeProgressClock = now
+
+	return mob.NodeProgress
+end
+
 function MobService:getSmoothPath(routeIndex : number?)
 	local routes = self:getRoutes()
 	local route = routes[routeIndex or 1] or routes[1]
@@ -310,6 +347,7 @@ function MobService:ResetRound()
 	-- As rotas sao reconstruidas no proximo SpawnWave; largar o cache evita
 	-- carregar geometria velha caso o mapa mude entre rounds.
 	self.Routes = nil
+	self.NodeDistances = nil
 
 	self.BaseHealth = self.MaxBaseHealth
 	self:broadcastBaseHealth()
@@ -382,6 +420,7 @@ function MobService:SpawnWave(waveNumber)
 	)
 
 	self.Routes = nil
+	self.NodeDistances = nil
 	local routes = self:getRoutes()
 
 	self.AllMobsSpawned = false
@@ -458,19 +497,44 @@ function MobService:getMobPosition(mobId)
 	return pos
 end
 
-function MobService:GetNearestMobInRange(position, range)
+--[=[
+	O mob que a unidade escolhe dentro do alcance, pelo criterio que o dono dela
+	deixou no botao `Priority` do card. A comparacao mora no `TargetPriority`,
+	compartilhado com o cliente — ver o modulo.
+]=]
+function MobService:GetBestMobInRange(position : Vector3, range : number, priority : string?)
 	local bestId = nil
-	local bestDist = math.huge
-	for mobId, _ in self.ActiveMobs do
+	local best = nil
+
+	-- So o `Farthest` olha o caminho; nos outros modos nem se monta a lista.
+	local nodeDistances = TargetPriority.UsesPathProgress(priority) and self:getNodeDistances() or nil
+
+	for mobId, mob in self.ActiveMobs do
 		local pos = self:getMobPosition(mobId)
 		if not pos then continue end
+
 		local dist = (pos - position).Magnitude
-		if dist <= range and dist < bestDist then
-			bestDist = dist
+		if dist > range then continue end
+
+		local candidate = { distance = dist, health = mob.Health or 0 }
+
+		if nodeDistances then
+			candidate.progress = self:getMobPathProgress(mob, pos, nodeDistances)
+		end
+
+		if TargetPriority.IsBetter(priority, candidate, best) then
+			best = candidate
 			bestId = mobId
 		end
 	end
+
 	return bestId
+end
+
+-- Sem prioridade nenhuma: o mais perto. Quem so quer "quem esta ai" — a mina que
+-- pergunta quem pisou nela — continua chamando por aqui.
+function MobService:GetNearestMobInRange(position : Vector3, range : number)
+	return self:GetBestMobInRange(position, range, TargetPriority.Default)
 end
 
 function MobService:GetMobsInRadius(position, radius)

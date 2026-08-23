@@ -220,6 +220,11 @@ function module:set(Cards : {}, Counts : {}, callbackDo : (string) -> ())
 		self.maid:GiveTask(UserInputService.InputBegan:Connect(function(input, gpe)
 			if gpe then return end
 
+			-- Hotbar fora da tela e hotbar que nao responde: quem esconde o
+			-- TowerContainer (o DifficultyController, antes da partida comecar) nao
+			-- precisa se lembrar de desligar os atalhos tambem.
+			if not TowerContainer.Visible then return end
+
 			local keybind = supportedKeybinds[input.KeyCode.Name]
 			if keybind ~= nil then
 				local towerFrame = TowerContainer:FindFirstChild("Card" .. keybind)

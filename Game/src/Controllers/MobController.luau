@@ -76,6 +76,12 @@ local function getHealthBillboard(mob)
 end
 
 local function updateHealthBar(mob, current, max, instant)
+	-- A vida vai junto para um atributo do modelo: e por ela que o
+	-- `TargetingController` acha o mob mais fraco ou mais forte do alcance sem ter
+	-- de perguntar nada ao MobController. Fica antes das saidas abaixo de
+	-- proposito -- mob sem barra de vida continua sendo alvo.
+	mob:SetAttribute("Health", current)
+
 	local attachment = mob:FindFirstChild("HealthAttachment")
 	if not attachment then return end
 
@@ -293,6 +299,27 @@ function MobController:getRoutes()
 	return self.Routes
 end
 
+--[=[
+	Os nodes do caminho com a distancia de cada um ate o primeiro, para a
+	prioridade `Farthest` do `TargetingController`.
+
+	Sai das mesmas rotas do movimento, que e o que faz cliente e servidor medirem
+	o avanco do mob na mesma regua. Caminho incompleto nao e cacheado, pela mesma
+	razao do `getRoutes`: o proximo pedido tenta de novo.
+]=]
+function MobController:getNodeDistances()
+	if not self.NodeDistances then
+		local nodeDistances = PathUtil.BuildNodeDistances(self:getRoutes())
+
+		if not self.Routes then
+			return nodeDistances
+		end
+
+		self.NodeDistances = nodeDistances
+	end
+	return self.NodeDistances
+end
+
 function MobController:createEntity(entityData)
 	local mobName = entityData.Name or "CourageBearer"
 	local speed = entityData.Speed or 6
@@ -349,6 +376,15 @@ function MobController:createEntity(entityData)
 	local bottomOffset = currentPivot.Position.Y - (currentSize.Y / 2)
 	local targetHeight = startPosition.Y + (currentSize.Y / 2)
 	local verticalAdjustment = targetHeight - bottomOffset
+
+	--[[
+		Quanto o centro do modelo esta acima do caminho. O `TargetingController`
+		desconta isso antes de perguntar em que node o mob esta: o servidor mede a
+		partir do ponto do caminho, e sem o desconto os dois escolheriam nodes
+		diferentes perto da metade de cada trecho -- a torre olharia para um mob e o
+		dano iria para outro.
+	]]
+	mobClone:SetAttribute("PathOffsetY", currentSize.Y / 2)
 
 	mobClone:PivotTo(currentPivot * CFrame.new(0, verticalAdjustment, 0))
 	mobClone:PivotTo(CFrame.new(startPosition.X, targetHeight, startPosition.Z) * mobClone:GetPivot().Rotation)
@@ -615,6 +651,7 @@ function MobController:construct()
 	-- O mapa pode ter mudado entre rounds; as rotas sao remontadas no proximo mob.
 	Framework:Listen("RoundRestarted", function()
 		self.Routes = nil
+		self.NodeDistances = nil
 		self:clearAllMobs()
 	end)
 

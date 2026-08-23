@@ -29,8 +29,20 @@ function DifficultyController:updateClock(state)
 	clock.Time.Text = formatClock(state.timeLeft or 0)
 end
 
+--[=[
+	A hotbar so aparece com a dificuldade ja decidida. Antes disso nao ha partida
+	nenhuma — o servidor esta esperando todo mundo carregar, ou a votacao esta
+	aberta — e as cartas nao teriam onde ser colocadas.
+]=]
+function DifficultyController:setHotbarVisible(visible : boolean)
+	if self.hotbar then
+		self.hotbar.Visible = visible
+	end
+end
+
 function DifficultyController:updateUI(state)
 	self:updateClock(state)
+	self:setHotbarVisible(state.locked ~= nil)
 
 	local board = self.board
 	if not board then return end
@@ -68,6 +80,15 @@ function DifficultyController:construct()
 		clock.Visible = false
 	end
 
+	local hotbar = Interface and Interface:WaitForChild("TowerContainer", 60)
+	if hotbar then
+		self.hotbar = hotbar
+
+		-- Escondida de saida: o cliente costuma terminar de carregar antes de o
+		-- servidor abrir a votacao, e ate o primeiro estado chegar nao ha partida.
+		hotbar.Visible = false
+	end
+
 	local screen = PlayerGui:WaitForChild("Difficulty", 60)
 	if not screen then return end
 
@@ -93,6 +114,8 @@ function DifficultyController:construct()
 	Framework:Listen("DifficultyLocked", function(difficultyName)
 		self.Locked = difficultyName
 		self.board.Visible = false
+
+		self:setHotbarVisible(true)
 
 		if self.clock then
 			self.clock.Visible = false

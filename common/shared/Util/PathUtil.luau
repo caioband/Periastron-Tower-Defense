@@ -279,6 +279,76 @@ function PathUtil.BuildSmoothPathFromPositions(positions, cornerRadius, samplesP
 	return { points = points, length = total, cumulative = cumulative }
 end
 
+--[=[
+	Os nodes do caminho achatados numa lista so, cada um com a distancia
+	percorrida do primeiro node ate ele.
+
+	E o que a prioridade `Farthest` usa para medir o avanco de um mob: o node mais
+	perto dele diz o quanto do caminho ele ja andou, independente de onde a torre
+	esta. Sai das rotas ja montadas, entao os subnodes (as pastas de trecho) e as
+	bifurcacoes ja vieram expandidos na ordem certa pelo `BuildRoutes`.
+
+	As rotas de um mapa com bifurcacao compartilham o comeco, e o mesmo node
+	aparece em varias delas. Ele entra na lista uma vez so, com a menor distancia
+	entre as rotas em que aparece -- assim dois mobs em ramos diferentes continuam
+	comparaveis, e o resultado nao depende da ordem em que as rotas foram geradas.
+
+	Distancia pelo caminho, e nao em linha reta ate o primeiro node: num mapa que
+	volta perto do spawn a linha reta diria que o mob recuou.
+]=]
+function PathUtil.BuildNodeDistances(routes)
+	local nodes = {}
+	local byKey = {}
+
+	for _, route in routes do
+		local positions = route.positions
+		local traveled = 0
+
+		for index, position in positions do
+			if index > 1 then
+				traveled += (position - positions[index - 1]).Magnitude
+			end
+
+			local key = string.format("%.3f/%.3f/%.3f", position.X, position.Y, position.Z)
+			local existing = byKey[key]
+
+			if existing then
+				if traveled < existing.distance then
+					existing.distance = traveled
+				end
+			else
+				local node = { position = position, distance = traveled }
+				byKey[key] = node
+				table.insert(nodes, node)
+			end
+		end
+	end
+
+	return nodes
+end
+
+--[=[
+	O quanto do caminho ja foi andado por quem esta em `position`: a distancia do
+	primeiro node ate o node mais perto dela. `nil` se a lista estiver vazia.
+]=]
+function PathUtil.GetNodeProgress(nodes, position : Vector3) : number?
+	local best = nil
+	local bestDistance = math.huge
+
+	for _, node in nodes do
+		-- Comparacao ao quadrado: e so para achar o menor, e a raiz nao muda a ordem.
+		local offset = node.position - position
+		local squared = offset:Dot(offset)
+
+		if squared < bestDistance then
+			bestDistance = squared
+			best = node
+		end
+	end
+
+	return best and best.distance
+end
+
 function PathUtil.GetPositionAtDistance(smooth, distance)
 	local points = smooth.points
 	local cumulative = smooth.cumulative

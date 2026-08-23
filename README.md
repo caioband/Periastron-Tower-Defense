@@ -198,8 +198,14 @@ lighting <preset> [segundos]     troca o preset; tab completa os nomes
                                  segundos omitido = padrão do config, 0 = corte seco
 lightinglist                     lista o que existe em Assets.Lighting
 weather <clima|off> [segundos]   liga o clima no mapa carregado; off desliga
+restartwarning <motivo> [seg]    ensaia o aviso de restart do servidor (não reinicia nada)
 strike [unidade]                 (só na Game) derruba um raio numa unidade posicionada
 ```
+
+`restartwarning` (alias `testrestart`) entra pelo mesmo caminho do evento da engine,
+então o que aparece na tela é exatamente o que apareceria no dia — ver
+[Aviso de restart do servidor](#aviso-de-restart-do-servidor). O motivo é um nome de
+`Enum.CloseReason` e o tab completa; `seg` omitido são 5 minutos.
 
 `strike` sem argumento pega qualquer unidade no mapa; com um tipo (`strike Sword`)
 sorteia entre as daquele tipo, e diz em quem caiu. Nome com espaço precisa de aspas:
@@ -341,11 +347,9 @@ jogado com o céu livre, o número não é "quantas waves têm clima": é a pres
 o próximo aparece depois que o anterior sai.
 
 **O aviso na tela** é `StarterGui.Interface.WeatherWarning`, um TextLabel com um
-UIStroke, e quem o anima é o `WeatherWarningController`. O texto desce do alto até a
-posição autorada enquanto a transparência do texto **e do stroke** cai de 1 para 0 —
-a impressão é a de a frase se formando no lugar. Segura `Hold` (5s) e sobe de volta.
-A posição autorada é o destino, então mover o label no Studio não exige tocar em
-código. Quem entra no meio da partida pede o aviso pendente com
+UIStroke. O `WeatherWarningController` só monta a frase; quem a anima é o
+`WarningController` (ver [Aviso de restart do servidor](#aviso-de-restart-do-servidor),
+que divide o mesmo label). Quem entra no meio da partida pede o aviso pendente com
 `RequestWeatherWarning`.
 
 #### Classes e efeitos de clima
@@ -634,6 +638,41 @@ Duas armadilhas de UI que o toque expõe e que foram corrigidas junto:
 `MobController:startHoverLoop` também sai fora: sem mouse ele só gastaria um
 raycast a cada 0.05s para nunca encontrar mob nenhum.
 
+#### O fantasma não colide com nada
+
+São três cuidados, e o primeiro é o que resolve de verdade:
+
+1. **Grupo de colisão `PlacementGhost`.** As parts do fantasma entram num grupo
+   declarado não-colidível com todos os outros — e com ele mesmo, para dois fantasmas
+   não se esbarrarem. Part que não colide com nada não colide com nada, dê o Humanoid
+   o que der. Quem registra é o `CollisionService` (`Game/src/Services`), porque
+   `PhysicsService:RegisterCollisionGroup` só roda no servidor; o registro replica e o
+   `UnitPlacementController` só atribui. O nome do grupo mora no `PlacementUtil`, que
+   os dois lados já requerem.
+2. **`CanCollide = false`** em cada part, como sempre — hoje é o plano B, para o caso
+   de o registro não ter acontecido.
+3. **`EvaluateStateMachine = false`** no Humanoid, **antes** de parentear no
+   workspace.
+
+O terceiro existe porque é o Humanoid quem manda na colisão de um personagem: ao
+entrar num estado novo (Running, Landed…) ele religa o `CanCollide` do torso, e a
+entrada no workspace é justamente o que dispara a primeira avaliação. Era isso que
+fazia o fantasma empurrar o jogador e travar quem passasse perto, apesar do item 2.
+
+E o Humanoid **tem** que ficar: por um
+[bug antigo da engine](https://devforum.roblox.com/t/highlight-does-not-work-with-transparency-on-non-humanoid-models/2731329),
+`Highlight` não renderiza em part transparente quando o modelo não tem Humanoid — e o
+fantasma é meio transparente por natureza. Sem Humanoid o Highlight some, e com ele o
+verde/vermelho que diz se dá para colocar ali. A Roblox chegou a corrigir e reverteu
+de propósito (quebrava jogos com gatilho invisível), então o Humanoid é o workaround
+oficial mesmo.
+
+> ⚠️ **Nada além do fantasma pode entrar no `PlacementGhost`.** As perguntas de
+> posicionamento são feitas com `OverlapParams` no grupo `Default`, e é o grupo do
+> *params* que vale, não o da part consultada — por isso o fantasma no grupo novo não
+> muda nenhuma resposta. Mas part **do mundo** dentro dele fica invisível para essas
+> perguntas: seria terreno que o fantasma atravessa sem nunca ficar vermelho.
+
 ### Quem some da tela, e quando
 
 Duas situações pedem a tela para si: o painel de mapas, que quer o lobby só para
@@ -678,6 +717,71 @@ A exceção é por **atributo**, não por lista: `ScreenGui` com `IgnoreInterfac
 nunca é escondida. Existe por causa do flash branco do portal, que nasce dentro da
 cutscene justamente para cobrir o teleporte — sem a marca ele nasceria desligado.
 
+### O aviso grande no meio da tela
+
+`StarterGui.Interface.WeatherWarning` é um TextLabel só, e hoje dois donos escrevem
+nele: o clima que vem vindo e o restart do servidor. Quem encosta no label é o
+`WarningController` (`common/client/Controllers`) — os donos mandam a frase pronta:
+
+```lua
+WarningController:Show("WARNING! SERVER RESTART FOR GAME UPDATE IN 2 MINUTES", {
+	Priority = WarningConfig.Priority.Restart,
+	Hold = 8,
+})
+```
+
+A animação é a de sempre: o texto desce de `SlideOffset` acima do destino enquanto a
+transparência do texto **e do stroke** cai de 1 para 0 — a impressão é a de a frase
+se formando no lugar —, segura `Hold` e sai pelo mesmo caminho. O destino é a posição
+autorada no StarterGui, então mover o label no Studio não exige tocar em código. O
+stroke entra junto de propósito: só o texto aparecendo deixaria o contorno sólido por
+trás de uma letra invisível.
+
+**Prioridade** é o que resolve os dois donos disputando o label. Um aviso derruba o
+que estiver no ar quando empata ou ganha em prioridade (`Weather` = 1, `Restart` = 2)
+e é recusado quando perde — o clima da wave 8 não apaga "o servidor vai reiniciar em
+1 minuto". O `Hide` aceita a mesma prioridade como "limpe só o que for meu": é assim
+que o `RoundRestarted` limpa o aviso de clima sem levar o de restart junto.
+
+O label e os tempos moram em `WarningConfig.Label`; o `WeatherConfig.Warning` ficou
+só com as frases do clima.
+
+### Aviso de restart do servidor
+
+Quando a Roblox marca o fim deste servidor — atualização publicada, manutenção,
+moderação, memória —, `game.ServerRestartScheduled` dispara **no servidor** com
+`restartTime` (um `DateTime`) e `source` (um `Enum.CloseReason`). O
+`ServerRestartService` (`common/`) repassa isso para os clientes e o
+`ServerRestartController` escreve no label acima:
+
+```
+WARNING! SERVER RESTART FOR GAME UPDATE IN 2 MINUTES
+WARNING! SERVER RESTART FOR ROBLOX MAINTENANCE IN 45 SECONDS
+WARNING! SERVER RESTARTING FOR MODERATION            (faltando menos de 5s)
+```
+
+O motivo vira texto por `WarningConfig.Restart.Sources`, que é onde se separa o
+restart **do desenvolvedor** (`DeveloperUpdate`, `DeveloperShutdown` → "GAME UPDATE")
+do restart **da Roblox** (`RobloxMaintenance`, `Moderation`, `OutOfMemory`,
+`ServerEmpty`, `Unknown`). Motivo que a engine invente amanhã cai no `DefaultSource`
+em vez de virar aviso nenhum.
+
+**O que atravessa a rede são os segundos que faltam, não o horário.** O `restartTime`
+é UTC e o relógio da máquina do jogador não é confiável — hora errada no Windows
+mostraria "restart em 3 horas". A subtração é feita no servidor e refeita a cada
+envio, então quem entra dois minutos depois recebe dois minutos a menos; o cliente
+ancora o prazo em `os.clock()`, que é monótono.
+
+**O aviso volta.** Um restart é marcado com minutos de antecedência e uma frase de 8
+segundos no meio de uma wave se perde, então `WarningConfig.Restart.Reminders`
+(5min, 2min, 1min, 30s, 10s) traz o aviso de volta com o número novo. Marca que
+cairia em cima do aviso anterior é descartada. Quem entra depois do agendamento pede
+o pendente com `RequestServerRestart`, igual ao clima.
+
+> O evento é da engine e não dá para ensaiar de verdade — a única forma de vê-lo é
+> publicar uma atualização. Por isso existe o `restartwarning` do Cmdr, que entra
+> pelo mesmo `ServerRestartService:Schedule` sem nada ser realmente agendado.
+
 ## Configuração: o que é replicado e o que não é
 
 Antes, `ReplicatedStorage.Shared.Config.Server` era replicado para todo cliente —
@@ -712,6 +816,26 @@ Dois consumidores de cliente foram ajustados nessa mudança:
   desabilitado até o servidor responder ao evento `RequestCmdrAccess`. A
   autorização de verdade sempre foi (e continua sendo) o hook `BeforeRun` do
   `CmdrService`.
+
+## Evento novo do servidor para o cliente precisa ser declarado
+
+O identificador de um evento do Warp nasce no **servidor**. Quando o cliente faz
+`Framework:Listen("X")` e o servidor ainda não conhece `X`, o `Serdes.increment`
+do cliente **cede a thread por 10 segundos** esperando o atributo aparecer, avisa
+`Serdes: X is taking too long to retrieve` e devolve `nil`. Como `construct()` é
+uma função só, todo `Listen` **depois** daquela linha fica esperando junto — o
+sintoma não é o evento novo não funcionar, é o resto do controller sumir.
+
+Por isso todo evento que só o servidor dispara tem um `Listen` vazio no service
+dono dele, no começo do `construct` (ver `UnitService`, `MobService`,
+`WeatherService`):
+
+```lua
+Framework:Listen("UnitPriorityChanged", function() end)   -- só para existir
+```
+
+Evento que o **cliente** dispara não precisa: quem escuta é o servidor, e é ele
+que cria o identificador ao registrar o `Listen` de verdade.
 
 ## Verificação depois de mexer na estrutura
 

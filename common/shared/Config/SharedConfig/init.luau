@@ -13,6 +13,7 @@ type Shared = {
 	MapConfig : typeof(require(script.MapConfig)),
 	PortalConfig : typeof(require(script.PortalConfig)),
 	Mob : typeof(require(script.Mob)),
+	TargetPriority : typeof(require(script.TargetPriority)),
 	LevelConfig : typeof(require(script.LevelConfig)),
 	Cmdr : typeof(require(script.Cmdr)),
 	SellValue : number,
