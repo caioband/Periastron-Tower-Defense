@@ -5,6 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local SharedConfig = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("SharedConfig")
 local CrateConfig = require(SharedConfig:WaitForChild("CrateConfig"))
+local DeckConfig = require(SharedConfig:WaitForChild("DeckConfig"))
 
 return {
 	PROFILE_KEY = "profi555",
@@ -36,7 +37,17 @@ return {
 			["Sword"] = 2,
 			["Slingshot"] = 1,
 		},
-		EquippedUnits = {}
+
+		--[[
+			As cartas do deck, um nome por carta e com repetição: duas Slasher
+			equipadas são dois "Slasher" aqui. Ver `SharedConfig.DeckConfig`.
+		]]
+		EquippedUnits = {},
+
+		-- Quantas cartas cabem no deck. Fica no perfil porque é para crescer com o
+		-- jogador; o `DeckConfig.DEFAULT_CARD_LIMIT` é só o valor de partida, e o
+		-- reconcile do DataService dá a chave para quem é de antes dela.
+		CardLimit = DeckConfig.DEFAULT_CARD_LIMIT,
 	},
 
 	STARTING_CASH = 500,

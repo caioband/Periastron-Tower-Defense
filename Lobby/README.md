@@ -81,6 +81,162 @@ Enquanto o painel está aberto o resto da UI do lobby sai da tela — ver
 [Quem some da tela, e quando](../README.md#quem-some-da-tela-e-quando) no README da
 raiz.
 
+## Deck: inventário, cartas equipadas e detalhe
+
+`StarterGui.HUD.CardUI` é do `DeckController`, e o botão `HUDFrame.Deck` abre e
+fecha (o mesmo botão com o painel aberto fecha). A abertura é um tween do `UIScale`
+do `CardUI` de 0 até a escala que veio autorada — a escala é lida da GUI no bind,
+antes de qualquer animação, então mexer nela no Studio basta.
+
+### Uma carta por clique
+
+O deck é contado em **cartas**, não em unidades. `EquippedUnits` é um array de
+**slots** (`SharedConfig.DeckConfig`), um por `CardWrapper` do `EquippedCards`: cada
+posição é `{ Unit = nome, Amount = quantidade }` ou `false` quando o slot está vazio.
+O array é sempre denso (`MAX_SLOTS` posições), então ele sobrevive à ida e volta do
+DataStore sem virar dicionário.
+
+**O slot é fixo.** Tirar a última carta de uma unidade esvazia o slot dela e não mexe
+em mais nada — quem está no slot 4 continua no slot 4, e a próxima unidade nova entra
+no primeiro buraco, não no fim da fila. (O formato anterior era um array de nomes com
+repetição, e o slot saía da ordem de primeira aparição; era isso que fazia a unidade
+que acabava puxar todas as seguintes uma casa para trás. Perfil naquele formato
+continua sendo lido: o `sanitize` converte, agrupando na ordem em que os nomes
+aparecem — que é tudo o que ele dizia sobre slots.)
+
+- clicar numa carta do **inventário** só **seleciona** — mostra os detalhes no
+  `SelectionPanel`, e não mexe no deck;
+- o **`EquipToggle`** é quem põe carta no deck, uma por clique, na unidade
+  selecionada;
+- clicar numa carta do **deck** tira uma.
+
+O `CardFlip` de `SoundService.SharedSounds.SFX` (pelo `MusicController:PlaySFX`) toca
+quando uma carta **muda de lado**, nas duas direções — é o `_launchFlight` que o
+dispara, junto com o clone. Selecionar não toca nada, porque nada se move.
+
+O botão é só o `Equip`, no verde autorado, e é ele que equipa a segunda e a terceira
+cópia da mesma unidade. Quando não sobra nenhuma — a unidade está inteira no deck —
+ele fica **invisível**, porque não há mais o que equipar; desequipar é só pela carta
+do deck. Não existe estado vermelho de desequipar no botão.
+
+Três tetos, todos checados no cliente (para o aviso sair na hora) e de novo no
+servidor (que é quem decide): as cópias que o jogador tem daquela unidade, o
+`CardLimit` do perfil e os seis slots do `EquippedCards` (`DeckConfig.MAX_SLOTS`).
+Recusa acende o `ErrorLabel` por alguns segundos — sem slot livre usa o texto
+autorado, os outros dois casos têm texto próprio.
+
+`CardsLimit` mostra `cartas/limite` (`7/15`). O limite mora no perfil
+(`CardLimit`, começa em `DeckConfig.DEFAULT_CARD_LIMIT`) porque é para crescer com o
+jogador; `DeckService:SetLimit` é o caminho para subir o teto, e ele limpa o deck em
+seguida para um teto menor não deixar carta sobrando.
+
+### A carta que voa
+
+Toda troca é uma **cópia da carta clicada** que viaja por 0,8 s até o destino: do
+inventário para o slot da unidade, ou do slot de volta para o inventário. O clone é
+enfeite — os botões dele nascem `Interactable = false` e o `Count` é **destruído**,
+porque o número da origem já nasce velho no instante em que o clone sai — e mora no
+próprio `CardUI`, com `ZIndex` bem acima dos painéis, porque só de lá dá para cruzar
+a lista com rolagem e o quadro do deck. Posição e tamanho viram escala do `CardUI`
+(`_rectToScale`), então a viagem funciona em qualquer resolução. O nome também é
+reescrito no clone: a origem pode ser um slot escondido, que só vai ser preenchido
+quando a carta anterior pousar.
+
+**O lado de onde a carta saiu muda na hora; o lado onde ela vai cair espera o
+pouso.** Clicar numa carta do inventário desconta a linha dela na mesma hora (e some
+com ela, se era a última cópia), e o slot só troca `EmptyCard` por `Card` quando a
+carta chega — junto com o `Count` e o `CardsLimit`, que andam com o deck. Clicar numa
+carta equipada é o contrário: o slot e o contador caem na hora, e a linha do
+inventário só volta no pouso. A troca em si já está gravada no perfil desde o clique
+— a viagem é só a forma de mostrar isso.
+
+Os dois lados são desenhados separadamente (`_renderInventory` e `_renderSlots`,
+cada um com o seu maid), e **o que espera é a carta, não o painel**: com uma indo
+para o deck e outra voltando para o inventário ao mesmo tempo, cada uma segura só o
+próprio slot ou a própria linha, e todo o resto continua respondendo. Quem faz isso
+são o `_landedDeck` (o `Projected` sem os equipares que ainda estão no ar, para o
+slot só mudar quando a carta dele chegar) e o `_landedTally` (as cartas equipadas
+mais as que ainda estão voltando, que só saem da conta do inventário quando pousam).
+
+A linha escondida do inventário é saída normal do render: unidade sem cópia sobrando
+mas com carta voltando ganha o wrapper mesmo assim, com a `Card` invisível, e é isso
+que abre o buraco na grade onde ela vai pousar. O `_inventoryTarget` só cede um frame
+antes de medir, porque o `UIGridLayout` posiciona o wrapper novo no fim do frame.
+
+**Clicar em rajada vale**: cada clique solta mais uma carta, e várias viajam ao mesmo
+tempo. Quem decide se o clique vale não é a tela — que está sempre um pouco atrás de
+propósito —, e sim o **`Projected`**: o deck contando o que ainda está no ar, ou
+seja, o que o servidor já gravou. É dele que sai o slot de destino — o slot da
+unidade, se ela já estiver no deck, ou o primeiro livre — e é contra ele que os três
+tetos são checados. Sem carta no ar, `Projected` é
+ressincronizado com o perfil; uma recusa do servidor desfaz só aquele clique e faz a
+carta correspondente sumir no meio do caminho.
+
+Desequipar uma unidade que estava com **todas** as cópias no deck não tem carta de
+destino, porque unidade sem cópia sobrando some do inventário. Nesse caso a linha de
+destino nasce escondida e já na posição ordenada (o `LayoutOrder` é carimbado pela
+ordem da lista a cada redesenho), a grade abre o buraco, e a carta aparece no pouso. O `_ensureInventoryCard` cede um frame de propósito: o `UIGridLayout` só
+posiciona o wrapper novo no fim do frame, e sem esperar a carta voaria para onde ele
+*estava*.
+
+### O resto do painel
+
+**O inventário** (`CardUI.Inventory.ScrollingFrame`) tem uma carta por unidade com
+cópia sobrando (posse menos equipadas), ordenada da raridade mais alta para a mais
+baixa e alfabética dentro da faixa. O `CardWrapper` autorado é o **molde** e some no
+bind. Unidade que não existe mais no `UnitStats` fica de fora, com um aviso uma vez
+só.
+
+Quando uma linha sai da lista (a unidade acabou), as linhas seguintes **não pulam**
+para a célula nova: o wrapper vai instantâneo, como o `UIGridLayout` manda, e a
+`Card` de dentro é deslocada pela diferença entre as duas células — de modo a
+continuar exatamente onde estava na tela — e volta ao repouso animando
+(`_slideCard`). A diferença sai da conta da grade (`_cellOffset`: célula +
+espaçamento, preenchendo na horizontal), e não de `AbsolutePosition`: logo depois de
+mexer no `LayoutOrder` o valor absoluto ainda é o velho, e esperar um frame para lê-lo
+faria a carta piscar na posição nova antes de voltar para animar. A conta vale para a
+grade alinhada no topo à esquerda, que é como ela está montada.
+
+A lista é atualizada **no lugar**, nunca refeita: cada linha tem o próprio maid, e o
+redesenho só cria a linha que passou a existir, apaga a que não tem mais o que
+mostrar e reescreve o contador das que ficam — nome, cor da raridade e conexão do
+botão são escritos uma vez, quando a linha nasce. Recriar todos os wrappers a cada
+redesenho fazia o inventário **piscar a cada pouso**, porque as cartas eram
+destruídas e clonadas de novo e o `AutomaticCanvasSize` da rolagem recalculava junto.
+Carta escondida não recebe entrada, então a linha que está só guardando o lugar de um
+pouso pode ficar com o clique ligado.
+
+**A animação de abertura** anima a `Card` **dentro** do wrapper, e não o wrapper: quem
+coloca o wrapper no lugar é o `UIGridLayout`, e mexer nele brigaria com a grade. Toda
+carta sai de `Position = (0, 0)` (o canto do próprio wrapper) com **todos os
+descendentes em transparência 1** e cai na posição autorada, devolvendo a
+transparência que cada objeto tinha antes do runtime — o alvo do fade é lido do
+próprio objeto no bind/clone, então contorno que veio meio apagado volta meio
+apagado. Entram escalonadas, com teto de atraso, e o atraso vai no `TweenInfo` em vez
+de um `task.delay`. Só na **abertura**: redesenhar com o painel aberto põe as cartas
+prontas no lugar.
+
+**Os seis slots** (`CardUI.EquippedCards`) mostram a `Card` quando ocupados e a
+`EmptyCard` quando livres. A `EmptyCard` copia a `Rotation` da `Card` do mesmo slot no
+bind, então a inclinação que o designer escolher (-4 ou 4) vale para as duas.
+
+**O painel de detalhe** (`SelectionPanel.Container`) só fica visível com uma carta
+selecionada — clicar em qualquer carta seleciona (e equipa/desequipa junto). Os
+números são os da unidade **sem upgrade e sem clima** (no lobby não existe nem um nem
+outro) e usam o mesmo formato do card de upgrade do Game: `X DMG` (ou `$X INCOME`
+para Farm), `X.XX COOLDOWN`, `X RANGE`, mais o `ClassIcon` do `ClassConfig`. O
+contorno do nome leva a cor da raridade.
+
+`DeckConfig.sanitize` limpa a lista toda vez que alguém a lê: unidade que sumiu do
+`UnitStats`, cópia além do que o jogador tem, unidade além do sexto slot e carta além
+do `CardLimit` não entram. É o que impede um perfil velho de ficar com uma carta
+fantasma equipada para sempre.
+
+O deck vale na partida: o Game monta a hotbar e as contagens de carta a partir de
+`EquippedUnits` — ver [A hotbar é o deck montado no
+lobby](../Game/README.md#a-hotbar-é-o-deck-montado-no-lobby). Quem nunca montou o seu
+joga com um deck automático (`DeckConfig.autoDeck`), que não é gravado.
+
 ## Achado
 
 `Shared.Classes.Unit` chama `Framework:Get("ProjectileController")` e

@@ -287,9 +287,199 @@ Quem entra no meio de um round já em andamento recebe o estado de uma vez só:
 para esse jogador. Sem isso a votação nunca falaria com ele — ela só transmite
 enquanto está aberta — e a hotbar dele ficaria escondida a partida inteira.
 
-Os atalhos `1`–`5` do `Components/Card.luau` seguem a mesma visibilidade: o
+Os atalhos `1`–`6` do `Components/Card.luau` seguem a mesma visibilidade: o
 `InputBegan` sai fora quando o `TowerContainer` está invisível, para a hotbar
 escondida não continuar equipando unidade por teclado.
+
+### A hotbar é o deck montado no lobby
+
+Quem decide o que entra na hotbar é o **deck** (`EquippedUnits` no perfil, ver
+`SharedConfig.DeckConfig` e o [README do Lobby](../Lobby/README.md#deck-inventário-cartas-equipadas-e-detalhe)):
+só entra unidade que está num slot, e a quantidade de cada carta é o `Amount`
+daquele slot — não o inventário inteiro, como era antes.
+
+- **servidor** (`UnitService:initPlayerCards`): monta `SessionCards` a partir do
+  deck. É o `getCardCount` que recusa a colocação, então o deck é o que de fato
+  limita a partida.
+- **cliente** (`CardController`): monta a hotbar com `DeckConfig.unitList`, na
+  ordem dos slots e sem os buracos — slot vazio não vira carta em branco no meio
+  da mão. A primeira carta da mão é o primeiro slot ocupado, e assim por diante;
+  quem desenha é o componente `Card`, e o `CardController` só diz o que aparece,
+  quantas cartas cada uma tem e qual está escolhida.
+
+As duas pontas leem o mesmo perfil pelas mesmas funções, então chegam ao mesmo
+deck sem evento novo. Quem **nunca montou deck** recebe um automático
+(`DeckConfig.autoDeck`, chamado pelo `resolve`): as unidades mais raras primeiro,
+com as cartas distribuídas em rodízio até o `CardLimit`. Sem isso um jogador que
+nunca abriu o painel entraria na partida sem carta nenhuma e não conseguiria
+colocar nada. O deck automático **não é gravado** — vale só para a sessão.
+
+### O arco (`Components/Card.luau`)
+
+O `TowerContainer` não tem mais um `CardN` por slot: ele tem **um** `CardWrapper`
+autorado, que é o molde. O componente o tira da tela no primeiro uso e clona um
+por unidade do deck, então a hotbar na tela é sempre 100% deck.
+
+Quem espalha os **wrappers** na horizontal é o `UIListLayout` do container. O que
+o componente desenha é a posição **Y da carta dentro do wrapper** — e é daí que
+sai o arco, de concavidade para baixo. Separar os dois é o que deixa o arco
+existir sem brigar com o layout.
+
+A carta cai pelo **quadrado** da distância até o vértice, medido em **alturas de
+carta** (`card.Size.Y.Scale`): mexer no tamanho da carta no Studio abre ou fecha o
+arco inteiro sozinho. A curva é normalizada pela distância da carta mais longe, de
+modo que a da ponta sempre caia `ARC_SPREAD` — sem isso, escolher a primeira carta
+de um deck de seis jogaria a última quase uma altura inteira para baixo (o
+quadrado de 5), para fora do container.
+
+O **vértice** é o meio do deck: a carta do meio quando o número é ímpar, e as
+**duas** do meio quando é par (as duas ficam à mesma distância de `(n+1)/2`, então
+sobem juntas).
+
+| Cartas | Y de cada uma |
+|---|---|
+| 6 (par) | `0.730 0.577 0.500 0.500 0.577 0.730` |
+| 5 (ímpar) | `0.730 0.558 0.500 0.558 0.730` |
+
+Medir contra o menor e o maior quadrado da lista resolve os três casos com a mesma
+conta. Toda vez que uma carta entra ou sai — e toda vez que a escolha muda — o deck
+inteiro se reacomoda; no primeiro desenho a hotbar já nasce montada, sem animação.
+
+A reacomodação inteira dura **`ARC_TOTAL_TIME` (0,3 s)**, do primeiro movimento ao
+último, e as cartas não saem todas juntas: uma fatia do tempo
+(`ARC_STAGGER_SHARE`, 40%) é gasta escalonando as saídas, da esquerda para a
+direita, e o que sobra é a duração de cada uma. Como o intervalo total é sempre a
+mesma fatia, o deck de duas cartas e o de seis terminam no mesmo instante — muda só
+o quão apertado fica o intervalo entre uma e outra:
+
+| Cartas | Intervalo | Duração de cada | Última termina em |
+|---|---|---|---|
+| 2 | 0,120 s | 0,180 s | 0,300 s |
+| 3 | 0,060 s | 0,180 s | 0,300 s |
+| 6 | 0,024 s | 0,180 s | 0,300 s |
+| 1 | — | 0,300 s | 0,300 s |
+
+Carta sozinha não tem entre quem escalonar, então o tempo todo vira duração. O
+atraso vai no próprio `TweenInfo` e não num `task.delay`: enquanto ele não vence o
+tween não escreve nada, e cancelar o tween cancela a espera junto — o que importa
+quando uma escolha nova chega no meio da reacomodação anterior.
+
+A **inclinação** sai da mesma distância, só que com sinal e normalizada do mesmo
+jeito: quem está à esquerda do vértice tomba para a esquerda, quem está à direita
+tomba para a direita, e a carta da ponta chega a `ARC_TILT` (8°, os mesmos do leque
+que estava autorado antes). A carta do vértice fica em pé.
+
+#### A escala diz o que está acontecendo com a carta
+
+O `UIScale` de cada carta tem três estados, e o maior deles ganha:
+
+| Estado | Escala |
+|---|---|
+| parada | 1 |
+| **escolhida** (é a que está na mão) | 1,1 |
+| debaixo do mouse | 1,2 |
+
+Todas as trocas passam pelo mesmo tween de 0,2 s, então tirar o mouse de uma carta
+escolhida desce de 1,2 para 1,1 sem salto, e escolher outra carta troca as duas ao
+mesmo tempo. **A escolha não mexe no arco** — o vértice é sempre o meio do deck; é
+a escala que mostra qual carta está na mão.
+
+Escolher uma carta toca o `CardFlip` de `SoundService.SharedSounds.SFX` (pelo
+`MusicController:PlaySFX`), o mesmo som do painel de deck no lobby. Só quando uma
+carta **entra** na mão: largar a unidade passa pelo mesmo caminho com `nil`, e aí
+não há carta nenhuma para virar. Não se confunde com o `SelectSound`, que é de
+selecionar uma unidade **já colocada no mapa** (`UnitPlacementController:selectUnit`).
+
+Com uma carta escolhida, **as outras apagam um pouco** — elas e tudo o que têm
+dentro, mais o contador delas, que mora fora da carta mas é parte dela. O apagar é
+uma fração do caminho que falta até a transparência total
+(`base + (1 - base) * DIM_AMOUNT`), e não um valor fixo: assim ele se **compõe**
+com o que a peça já tinha em vez de atropelar. Uma carta sem estoque já está em
+0,25 e vai para 0,51; um botão invisível (1) continua em 1.
+
+Os valores de volta são os que foram lidos do clone recém-feito, antes de qualquer
+coisa mexer nele, então "volta ao estado original" é literal — o alvo é sempre o
+que o designer deixou no molde, e não um número escrito no código. Quem escreve
+transparência é uma função só (`_applyTransparency`), que soma os dois motivos que
+existem para uma peça apagar: o estado da carta (sem estoque) e a escolha de outra.
+Sem isso os dois se sobrescreveriam.
+
+Como as cartas se sobrepõem bastante, quem cresce também vem para a frente
+(`ZIndex`): a que está sob o mouse ganha de todas, e a escolhida fica à frente das
+vizinhas — senão ela cresceria por baixo delas.
+
+#### Carta que cresce empurra as vizinhas
+
+Mudar a escala **ou o tamanho** de qualquer carta dispara a reacomodação, e a nova
+posição de cada uma leva esse crescimento em conta: a carta que cresceu não sai do
+lugar, e a largura que ela ganhou é devolvida em espaço para os dois lados, metade
+para cada um (`PUSH_SHARE`). Como o empurrão é simétrico, as pontas andam o mesmo
+tanto em direções opostas e a mão continua centrada.
+
+Com seis cartas de 156 px, a segunda sob o mouse (1,2) e a quarta escolhida (1,1):
+
+```
+carta 1  escala 1,0   -27,5 px
+carta 2  escala 1,2    -9,2 px   <- cresceu
+carta 3  escala 1,0    +9,2 px
+carta 4  escala 1,1   +18,4 px   <- cresceu
+carta 5  escala 1,0   +27,5 px
+carta 6  escala 1,0   +27,5 px
+```
+
+O deslocamento vai no **offset X da carta**, dentro do wrapper — o `UIListLayout`
+continua dono da posição dos wrappers, e não fica sabendo de nada. A largura usada
+na conta é a autorada (`Size` contra o wrapper), nunca o `AbsoluteSize`: durante o
+tween do hover o absoluto está no meio do caminho, e o empurrão ficaria perseguindo
+o próprio efeito. Ler o `Size` na hora é também o que faz mexer no tamanho da carta
+reacomodar o deck, e não só mexer na escala.
+
+A reacomodação é sempre a mesma: os 0,3 s escalonados. Trocar de carta escolhida
+mexe em duas, mas o deck se reacomoda uma vez só.
+
+#### Os contadores vivem fora das cartas
+
+O `Count` não é mais filho do `Card`: ele mora numa camada única (`CountLayer`), e
+por isso todos ficam **no mesmo plano, à frente de todas as cartas**. Enquanto ele
+era descendente do card, sumia atrás do card vizinho — a `Interface` é
+`ZIndexBehavior.Sibling`, e nesse modo um descendente nunca desenha acima de um
+irmão do pai dele, por mais `ZIndex` que se dê a ele.
+
+O vínculo que era de parentesco virou conta, refeita a cada quadro
+(`_followCounts`): o centro do contador sai de onde ele estava dentro da carta (lido
+do molde), girado pela inclinação dela e medido sobre o **tamanho absoluto** do
+card — que já inclui o `UIScale`. Então o contador acompanha o arco, a inclinação e
+o crescer do hover sem um quadro de atraso.
+
+A camada é o último filho do `TowerContainer`, e como tal ela também entra no
+`UIListLayout`. A largura dela é escolhida para **anular a própria vaga**: com o
+espaçamento de −12 px do layout, uma célula de +12 px seguida de −12 px de padding
+soma zero. Medido no place: as seis cartas ficam no mesmo pixel com e sem a camada.
+
+As cores do estado normal (contorno do custo, cor do contador) são lidas do molde,
+não escritas no código: trocar o roxo no Studio basta. Sem dinheiro para o custo, a
+carta fica vermelha (`NoCash`).
+
+#### Carta sem unidade sai da mão
+
+Quando o contador de uma unidade zera, a carta dela **não fica apagada na mão**: ela
+cai para fora do deck em 0,5 s (`EXIT_DROP`, medido em alturas de carta, então ela
+sai inteira da tela em qualquer resolução). A vaga só fecha **quando ela termina de
+cair** — o `_layout` das outras sai do `Completed` do tween, não do clique —, e aí
+as cinco restantes se reacomodam no arco pelos 0,3 s de sempre.
+
+Quando a unidade volta a existir, o caminho é o mesmo ao contrário: a vaga reabre na
+hora e a carta sobe de onde parou até o lugar dela, também em 0,5 s. Sair acelera
+(Quad In) e voltar desacelera (Quad Out).
+
+Carta fora da mão não conta para nada: não ocupa vaga no arco, não ocupa tecla (os
+atalhos `1`–`6` numeram o que está na tela) e some junto com o contador dela. Esse
+último é fácil de esquecer — o contador mora na camada de cima, não no wrapper,
+então esconder o wrapper não o esconde; quem cuida das duas metades é o
+`_setPresence`.
+
+Carta que já nasce sem unidade (a mão sendo montada) entra direto no estado de fora,
+sem cair — não há de onde cair.
 
 ## Recompensa de quem sai antes do fim
 

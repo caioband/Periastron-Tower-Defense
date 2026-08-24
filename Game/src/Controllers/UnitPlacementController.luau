@@ -490,7 +490,8 @@ local UnitPlacementController = {
 		VFXController = {},
 		MobController = {},
 		MusicController = {},
-		WeatherController = {}
+		WeatherController = {},
+		WeatherFeedbackController = {}
 	},
 	selectedUnit = nil,
 	selectionHighlight = nil,
@@ -795,9 +796,21 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 	local DottedLine = UIAssets.AOE.DottedLine:Clone()
 	local dottedPivot = DottedLine:GetPivot()
 	DottedLine:PivotTo(CFrame.new(unitPos.X, groundSurfaceY, unitPos.Z) * dottedPivot.Rotation)
+	local isOwner = ownerUserId == Player.UserId
+
 	local blueCircle = DottedLine:FindFirstChild("BlueCircle")
 	if blueCircle then
 		blueCircle.CFrame = CFrame.new(unitPos.X, groundSurfaceY + blueCircle.Size.X / 2, unitPos.Z) * CFrame.Angles(0, 0, math.pi / 2)
+
+		--[[
+			O disco azul e a marca de "esta e sua": ele fica aceso o tempo todo, fora
+			do liga-desliga que a linha pontilhada leva na selecao. So faz sentido
+			embaixo das unidades deste jogador — no chao de uma partida cheia, um
+			disco embaixo de cada unidade de cada um vira ruido e some com a marca.
+		]]
+		if not isOwner then
+			blueCircle.Transparency = 1
+		end
 	end
 	DottedLine.Parent = workspace.CurrentCamera
 	setDottedLineVisible(DottedLine, false)
@@ -821,7 +834,7 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 
 	local class = UnitClass.new(unitName, unit)
 	class.unitId = unitId
-	class.isOwner = ownerUserId == Player.UserId
+	class.isOwner = isOwner
 	class.upgrades = upgrades or 0
 	unit:SetAttribute("UnitID", unitId)
 	unit:SetAttribute("Upgrades", upgrades or 0)
@@ -844,6 +857,11 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 
 	if self.Controllers.VFXController then
 		self.Controllers.VFXController:Trigger(unitName, "OnPlace", { unitModel = unit })
+	end
+
+	-- Quem nasce no meio de um clima ja nasce com o realce e a billboard dele.
+	if self.Controllers.WeatherFeedbackController then
+		self.Controllers.WeatherFeedbackController:Register(unit)
 	end
 
 	self.Controllers.MusicController:PlaySFX("UnitPlace")

@@ -372,6 +372,11 @@ vender o que vai ficar inútil e posicionar o que vai brilhar.
 Só existe um clima por vez, e o dado nem é jogado enquanto houver um agendado ou no
 ar. Um clima que cairia depois da última wave do preset não vira aviso nenhum.
 
+**Duração** (`WeatherConfig.Round.Duration`): o clima fica no ar por 4 waves e sai
+sozinho no começo da quinta — entrando na wave 10, ele vale da 10 à 13 e some na 14.
+Enquanto ele durar o dado não é jogado, então o próximo aviso só pode sair da wave em
+que o anterior saiu.
+
 **Pool por mapa** (`WeatherConfig.MapPools`). A chave é o nome do mapa em
 `MapConfig.MAPS`; mapa fora da tabela simplesmente não tem clima.
 
@@ -461,6 +466,46 @@ na hora — inclusive nos que já estão andando, senão dois mobs iguais andari
 ritmos diferentes na mesma wave. E a renda da fazenda fica de fora de propósito: ela
 não é dano, e o corte da tempestade de areia mexeria na economia em vez de no
 combate.
+
+#### Buff e debuff na unidade
+
+Toda unidade que o clima mexe mostra isso em cima dela, e as duas peças saem do mesmo
+cálculo (`WeatherConfig.GetUnitFeedback`):
+
+- **Highlight** no modelo — azul claro (`120, 200, 255`) quando o clima está
+  ajudando, vermelho (`255, 70, 70`) quando está atrapalhando. Os dois com
+  transparência 0.75, de preenchimento e de contorno.
+- **Billboard na cabeça** (`Assets.UI.BuffDebuffBillboard`, um Attachment com um
+  `BillboardGui`) com um ícone por estatística mexida, na ordem dano → alcance →
+  cooldown.
+
+Quem desenha é o `WeatherFeedbackController` (`Game/src/Controllers`), no cliente. Ele
+não decide nada: a lista de ícones e a cor vêm do `WeatherConfig`, a mesma config de
+onde o servidor tira os multiplicadores que aplica no combate. O que o jogador vê e o
+que ele leva no combate saem da mesma linha.
+
+| Estatística | Multiplicador > 1 | Multiplicador < 1 |
+| --- | --- | --- |
+| `Damage` | `BuffDamage` | `DebuffDamage` |
+| `Range` | `BuffRange` | `DebuffRange` |
+| `AttackSpeed` | `BuffCooldown` | `DebuffCooldown` |
+
+`AttackSpeed` aparece como **cooldown** porque é assim que o card mostra o número:
+cadência maior é recarga menor, então `AttackSpeed > 1` acende o ícone de *buff*.
+
+Unidade imune ao clima (Magic, nos climas de hoje) não recebe nada — nem billboard,
+nem Highlight —, que é o mesmo "fora do clima" que o `Immune` já significa no combate.
+Havendo buff e debuff na mesma unidade, o Highlight é **vermelho**: nenhum clima de
+hoje faz as duas coisas, mas quando fizer, a perda é o que precisa ser visto de longe.
+
+As duas peças moram **dentro do modelo da unidade**, então vender ou recomeçar o round
+limpa junto; o controller as procura pelo nome em vez de guardar numa tabela, e não
+existe bookkeeping para desencontrar do que está no Workspace. O Highlight tem nome
+próprio (`WeatherHighlight`) para não brigar com os outros que a unidade recebe: o
+verde da seleção, o amarelo do atordoamento e o ciano da carga do raio.
+
+Ícone que ainda não exista no asset simplesmente não aparece — a unidade continua com
+o Highlight e com os outros ícones, e o Studio avisa uma vez no output.
 
 #### Raios (Thunder)
 
@@ -878,7 +923,7 @@ e a lista de admins do Cmdr. Isso foi separado:
 | | Onde | Conteúdo |
 |---|---|---|
 | **Servidor** | `ServerScriptService.Config` ← `common/server/Config` | `Data` (PROFILE_KEY + template), `Wave`, `Summon`, `Difficulty`, `Cmdr` (ADMIN_USER_IDS, GROUP_ID, ALLOW_IN_STUDIO) |
-| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, `Mob`, `Cmdr` cosmético) |
+| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, DeckConfig, `Mob`, `Cmdr` cosmético) |
 
 Convenção nos scripts de servidor:
 

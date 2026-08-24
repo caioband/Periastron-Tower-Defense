@@ -250,7 +250,8 @@ WeatherConfig.MapPools = {
 	aviso, sabe o que vem e tem tempo de trocar o posicionamento antes.
 
 	`Duration` é por quantas waves o clima fica no ar depois de entrar. Sai sozinho
-	no começo da wave seguinte à última.
+	no começo da wave seguinte à última — com 4, um clima que entra na wave 10 vale
+	da 10 à 13 e some na 14.
 
 	`Chance` é só o piso: quem manda é o `WeatherChance` do preset de dificuldade
 	(`ServerScriptService.Config.Difficulty`), que sobe do Fácil para o Nightmare.
@@ -261,7 +262,7 @@ WeatherConfig.MapPools = {
 ]]
 WeatherConfig.Round = {
 	LeadWaves = 3,
-	Duration = 1,
+	Duration = 4,
 	Chance = 0.15,
 	TransitionTime = 3,
 }
@@ -280,6 +281,61 @@ WeatherConfig.Warning = {
 	Text = "WARNING! %s COMING IN %d ROUNDS",
 	TextOne = "WARNING! %s COMING NEXT ROUND",
 	DisplayNames = {},
+}
+
+--[[
+	O que o clima mostra em cima da unidade afetada.
+
+	Duas coisas, e as duas saem do mesmo cálculo: um Highlight no modelo (azul claro
+	quando o clima está ajudando, vermelho quando está atrapalhando) e uma billboard
+	na cabeça com um ícone por estatística mexida.
+
+	A arte é o Attachment `Assets.UI.BuffDebuffBillboard`, e dentro de
+	`BillboardGui.Frame` mora um ImageLabel por ícone. Os nomes abaixo são os desses
+	labels: quem desenha só liga o `Visible` do que a unidade está sentindo, então um
+	ícone que ainda não exista no asset simplesmente não aparece — o resto continua
+	funcionando.
+
+	`AttackSpeed` aparece como **Cooldown** porque é assim que o jogador lê o número
+	no card: cadência maior é recarga menor. Por isso `AttackSpeed > 1` acende o
+	ícone de *buff* de cooldown, e não o de debuff.
+]]
+WeatherConfig.Feedback = {
+	-- Attachment em `Assets.UI`, clonado para dentro da cabeça da unidade.
+	Asset = "BuffDebuffBillboard",
+
+	-- Onde ele é encaixado. Todas as unidades de hoje são modelos de personagem.
+	HeadName = "Head",
+
+	--[[
+		Nome do Highlight do clima.
+
+		Ele é procurado pelo nome em vez de guardado numa tabela: assim a unidade
+		levar `Destroy` (venda, recomeço de round) já limpa tudo, e não sobra
+		bookkeeping para desencontrar do que está no Workspace.
+
+		Nome próprio também o mantém fora do caminho dos outros Highlights que a
+		unidade recebe — o verde da seleção, o amarelo do atordoamento e o ciano da
+		carga do raio.
+	]]
+	HighlightName = "WeatherHighlight",
+
+	--[[
+		Uma linha por estatística que o clima mexe, na ordem em que os ícones
+		aparecem na billboard. `Buff` é o label para multiplicador acima de 1 e
+		`Debuff` o de abaixo.
+	]]
+	Stats = {
+		{ Stat = "Damage", Buff = "BuffDamage", Debuff = "DebuffDamage" },
+		{ Stat = "Range", Buff = "BuffRange", Debuff = "DebuffRange" },
+		{ Stat = "AttackSpeed", Buff = "BuffCooldown", Debuff = "DebuffCooldown" },
+	},
+
+	Highlight = {
+		Buff = Color3.fromRGB(120, 200, 255),
+		Debuff = Color3.fromRGB(255, 70, 70),
+		Transparency = 0.75,
+	},
 }
 
 --[[
@@ -487,6 +543,51 @@ function WeatherConfig.GetMobMultiplier(weatherName : string?, stat : string) : 
 	local effects = WeatherConfig.GetEffects(weatherName)
 	local mobs = effects and effects.Mobs
 	return (mobs and mobs[stat]) or 1
+end
+
+--[=[
+	O que o clima está fazendo com uma unidade, do ponto de vista da tela.
+
+	Devolve `{ Icons = { nomes }, Kind = "Buff" | "Debuff" }`, ou `nil` quando não há
+	nada a mostrar: sem clima no ar, unidade imune, ou classe que o clima não cita.
+
+	`Icons` sai na ordem de `Feedback.Stats`, e é a mesma ordem em que a billboard os
+	mostra. Só entram estatísticas cujo multiplicador saiu de 1 — um clima que mexe
+	só no alcance acende um ícone só.
+
+	`Kind` é **`Debuff` sempre que houver um debuff**, mesmo com buff junto. Nenhum
+	clima de hoje faz as duas coisas com a mesma unidade, mas quando fizer, o vermelho
+	é o que o jogador precisa ver: o buff ele descobre no card, a perda ele precisa
+	perceber de longe para reagir a tempo.
+]=]
+function WeatherConfig.GetUnitFeedback(weatherName : string?, unitName : string?)
+	if not weatherName then return nil end
+	if not WeatherConfig.GetEffects(weatherName) then return nil end
+	if WeatherConfig.IsImmune(weatherName, unitName) then return nil end
+
+	local icons = {}
+	local hasDebuff = false
+
+	for _, entry in WeatherConfig.Feedback.Stats do
+		local multiplier = WeatherConfig.GetUnitMultiplier(weatherName, unitName, entry.Stat)
+		if multiplier == 1 then continue end
+
+		if multiplier > 1 then
+			table.insert(icons, entry.Buff)
+		else
+			table.insert(icons, entry.Debuff)
+			hasDebuff = true
+		end
+	end
+
+	if #icons == 0 then
+		return nil
+	end
+
+	return {
+		Icons = icons,
+		Kind = if hasDebuff then "Debuff" else "Buff",
+	}
 end
 
 -- Os climas que um mapa pode sortear. Mapa sem pool devolve lista vazia.

@@ -15,6 +15,7 @@ local Units = Assets:WaitForChild("Units")
 
 local SharedConfig = require(Configs.SharedConfig)
 local TargetPriority = SharedConfig.TargetPriority
+local DeckConfig = SharedConfig.DeckConfig
 local ServerConfig = require(ServerConfigs)
 local PathUtil = require(Shared:WaitForChild("Util"):WaitForChild("PathUtil"))
 local PlacementUtil = require(Shared:WaitForChild("Util"):WaitForChild("PlacementUtil"))
@@ -92,14 +93,30 @@ function UnitService:incrementCardCount(player, unitName)
 	self:setCardCount(player, unitName, math.min(cap, current + 1))
 end
 
+--[=[
+	As cartas que o jogador leva para a partida saem do **deck** que ele montou no
+	lobby (`EquippedUnits`), e nao do inventario inteiro: so entra unidade que esta
+	num slot, e a quantidade de cada uma e o `Amount` daquele slot.
+
+	Quem nunca montou deck recebe um automatico (`DeckConfig.resolve`), montado a
+	partir do que ele tem — sem isso ele entraria na partida sem carta nenhuma, e o
+	`getCardCount` recusaria toda colocacao.
+
+	O cliente monta a hotbar a partir do mesmo perfil e das mesmas funcoes, entao os
+	dois chegam ao mesmo deck sem precisar de evento novo.
+]=]
 function UnitService:initPlayerCards(player)
 	self.Services.DataService:Get(player, function(profileData)
+		local deck = DeckConfig.resolve(profileData)
+
 		local cards = {}
 		local cardMax = {}
-		for unitName, amount in pairs(profileData.Units or {}) do
+
+		for unitName, amount in DeckConfig.tally(deck) do
 			cards[unitName] = amount
 			cardMax[unitName] = amount
 		end
+
 		self.SessionCards[player.UserId] = cards
 		self.SessionCardMax[player.UserId] = cardMax
 
