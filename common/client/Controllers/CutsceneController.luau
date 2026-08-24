@@ -1,6 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
@@ -46,7 +45,6 @@ local Framework = Me.new()
 --]]
 
 local DEFAULT_CUTSCENE = "EnterCutscene"
-local DEBUG_KEYBIND = Enum.KeyCode.L
 
 local SCENE_REFERENCE = "SceneReferenceCFrame"
 local CAMERA_PART = "CamPart"
@@ -774,12 +772,6 @@ function CutsceneController:construct()
 end
 
 function CutsceneController:start()
-	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if gameProcessed then return end
-		if input.KeyCode == DEBUG_KEYBIND then
-			self:playCutscene()
-		end
-	end)
 end
 
 function CutsceneController:stopCutscene()

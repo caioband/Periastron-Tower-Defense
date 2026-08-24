@@ -24,6 +24,18 @@ local MAP_FOLDER_NAME = "Map"
 local EXIT_UI_NAME = "ExitGroupPortal"
 local EXIT_BUTTON_NAME = "Exit"
 
+--[[
+	Nome do pedido ao InterfaceController: entrou num grupo, a contagem começou, e a
+	tela fica só com o botão de sair até ela zerar.
+
+	O pedido é solto quando o jogador sai do grupo, e não quando a contagem zera. Aos
+	zero segundos quem assume é a cutscene, que esconde tudo (e a interface da Roblox
+	junto); deixar este pedido de pé por baixo dela é o que impede a lobby inteira de
+	reaparecer entre o fim da cena e o teleporte. Falhando o teleporte, o portal
+	devolve o grupo e é essa devolução que traz a interface de volta.
+]]
+local HIDE_REASON = "PortalCountdown"
+
 -- Walking is not a per-frame problem: the check runs on a fixed beat instead.
 local CHECK_INTERVAL = 0.15
 
@@ -59,6 +71,7 @@ local PortalController = {
 	Controllers = {
 		ChooseMapsController = {},
 		CutsceneController = {},
+		InterfaceController = {},
 	},
 
 	Signals = {
@@ -231,6 +244,32 @@ function PortalController:_clearFlash()
 	tween:Play()
 end
 
+--[=[
+	Liga e desliga o botão de sair do grupo.
+
+	Passa pelo `SetEnabled` do InterfaceController, e não por `Enabled` na mão, porque
+	este botão é justamente a GUI que muda **junto** com um pedido: ele acende no mesmo
+	instante em que a contagem esconde a lobby. Escrevendo direto, o pedido lê o
+	`Enabled` antigo (o aviso dele só chega no fim do frame) e desliga o botão de volta
+	no mesmo frame — que era o botão sumindo ao entrar no portal.
+
+	Com a chamada abaixo a ordem entre isto e o `Hide`/`Show` deixa de importar.
+]=]
+function PortalController:_setExitVisible(visible : boolean)
+	local screenGui = self.ExitUI
+	if not screenGui or not screenGui.Parent then
+		return
+	end
+
+	local InterfaceController = self.Controllers.InterfaceController
+	if InterfaceController then
+		InterfaceController:SetEnabled(screenGui, visible)
+		return
+	end
+
+	screenGui.Enabled = visible
+end
+
 function PortalController:_bindExitUI(screenGui : ScreenGui)
 	self.UiMaid:DoCleaning()
 
@@ -241,7 +280,7 @@ function PortalController:_bindExitUI(screenGui : ScreenGui)
 	end
 
 	self.ExitUI = screenGui
-	screenGui.Enabled = self.GroupPortalId ~= 0
+	self:_setExitVisible(self.GroupPortalId ~= 0)
 
 	self.UiMaid:GiveTask(button.Activated:Connect(function()
 		if self.GroupPortalId == 0 then
@@ -280,8 +319,22 @@ function PortalController:_onGroupChanged(portalId : number, mapName : string)
 	self.GroupPortalId = portalId or 0
 	self.MapName = mapName or ""
 
-	if self.ExitUI and self.ExitUI.Parent then
-		self.ExitUI.Enabled = self.GroupPortalId ~= 0
+	self:_setExitVisible(self.GroupPortalId ~= 0)
+
+	--[[
+		A contagem regressiva é uma decisão já tomada: o jogador escolheu o mapa e está
+		a caminho. A loja, o deck e o resto da lobby não têm mais o que oferecer, e
+		abrir qualquer um deles agora só serviria para ele perder o único botão que
+		ainda importa — o de sair do grupo, que é o que o `Except` deixa de pé.
+	]]
+	local InterfaceController = self.Controllers.InterfaceController
+
+	if InterfaceController then
+		if self.GroupPortalId ~= 0 then
+			InterfaceController:Hide(HIDE_REASON, { Except = { EXIT_UI_NAME } })
+		else
+			InterfaceController:Show(HIDE_REASON)
+		end
 	end
 
 	if self.GroupPortalId ~= 0 then
@@ -332,9 +385,7 @@ function PortalController:PlayPortalCutscene(model : Model)
 
 	-- Leaving is off the table once the countdown is over, and the button has no
 	-- business sitting on top of the cutscene.
-	if self.ExitUI and self.ExitUI.Parent then
-		self.ExitUI.Enabled = false
-	end
+	self:_setExitVisible(false)
 
 	local CutsceneController = self.Controllers.CutsceneController
 	local origin = reference.CFrame

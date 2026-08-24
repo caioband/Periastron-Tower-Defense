@@ -223,6 +223,39 @@ end
 --[[ EXTERNAL ]]
 
 --[=[
+	Liga ou desliga uma GUI **como dono dela**, sem depender do aviso que chega no fim
+	do frame.
+
+	`Desired` normalmente é descoberto escutando o `Enabled` de cada GUI, e esse aviso
+	é `Deferred`: entre a escrita do dono e a chegada dele, o valor guardado aqui
+	ainda é o antigo. Qualquer `Hide`/`Show` que caia nessa janela — e um `_applyAll`
+	varre todas as GUIs — reaplica o valor velho por cima do que o dono acabou de
+	escrever.
+
+	Para quase toda GUI isso nunca acontece: ela muda por conta própria, longe de
+	qualquer pedido. Para a que muda **junto** com um pedido é o caso normal, não a
+	exceção — o botão de sair do portal liga no mesmo instante em que a contagem
+	esconde a lobby, e escrever direto no `Enabled` dele significava ver o pedido
+	desligá-lo de volta no mesmo frame.
+
+	Aqui o `Desired` é escrito na hora, então não existe janela. Quem chama não
+	precisa se preocupar com ordem.
+
+	GUI que este controller ainda não acompanha leva a escrita direta: o `_track` que
+	vier depois lê justamente esse valor como o que o dono queria.
+]=]
+function InterfaceController:SetEnabled(screenGui : LayerCollector, enabled : boolean)
+	local entry = self.Tracked[screenGui]
+	if not entry then
+		screenGui.Enabled = enabled
+		return
+	end
+
+	entry.Desired = enabled
+	self:_apply(screenGui)
+end
+
+--[=[
 	Esconde as GUIs até o `Show` do mesmo `reason`. Pedir duas vezes com o mesmo nome
 	só troca as opções — não empilha, então um `Show` sempre desfaz.
 

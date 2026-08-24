@@ -807,8 +807,9 @@ Os detalhes que fazem isso funcionar nos dois aparelhos:
 
 ### Quem some da tela, e quando
 
-Duas situações pedem a tela para si: o painel de mapas, que quer o lobby só para
-ele, e a cutscene, que quer a tela limpa. Não são um interruptor global — os dois se
+Três situações pedem a tela para si: o painel de mapas, que quer o lobby só para
+ele; a contagem regressiva do portal, que deixa em pé só o botão de sair; e a
+cutscene, que quer a tela limpa. Não são um interruptor global — os dois se
 sobrepõem (o painel pode estar aberto quando a cena começa) e cada um sai na sua
 hora — então quem cuida disso é o `InterfaceController`
 (`common/client/Controllers`), com **pedidos com nome**:
@@ -838,12 +839,47 @@ sinalizado.
   mesmo, devolve no começo do `Close` — a UI do lobby volta enquanto o painel ainda
   está sumindo, em vez de aparecer de estalo depois. O `_bindUI` devolve também, para
   o respawn com o painel aberto não deixar o lobby escondido sem nada para fechar.
+- **Contagem do portal** (`PortalController:_onGroupChanged`): pede assim que o
+  jogador entra num grupo, com `Except` no `ExitGroupPortal` — durante a contagem a
+  loja, o deck e o resto da lobby saem, e fica só o botão de desistir. O pedido é
+  devolvido quando o jogador **sai do grupo**, e não quando a contagem zera: aos zero
+  a cutscene assume por cima, e é este pedido por baixo dela que impede a lobby de
+  reaparecer entre o fim da cena e o teleporte. Falhando o teleporte, o portal devolve
+  o grupo (`_abortLaunch`) e é essa devolução que traz a interface de volta.
 - **Cutscene** (`CutsceneController:hideInterface`): pede sem exceção nenhuma e com
   `HideCore`, que leva junto a interface da própria Roblox (chat, playerlist, mochila
   e topbar). Sai com a **cena**, não com a câmera: mesmo no `holdCamera` — onde o
   controle do personagem fica preso até o `releaseCamera` — a interface volta quando
   a cena acaba. No portal isso cai atrás do flash branco, que a essa altura já está
   cobrindo a tela.
+
+#### GUI que muda junto com um pedido
+
+`Desired` é descoberto **escutando** o `Enabled` de cada GUI, e esse aviso é
+`Deferred`: ele chega no fim do frame, não na hora da escrita. Entre uma coisa e
+outra o valor guardado aqui ainda é o antigo — e um `Hide`/`Show` que caia nessa
+janela varre todas as GUIs (`_applyAll`) e reaplica o valor velho por cima do que o
+dono acabou de escrever.
+
+Para quase toda GUI isso nunca acontece: ela muda por conta própria, longe de
+qualquer pedido. Para a que muda **junto** com um pedido é o caso normal — o botão de
+sair do portal acende no mesmo instante em que a contagem esconde a lobby, e o painel
+de mapas se desliga 0.18s depois de devolver a tela, tempo de sobra para a contagem
+começar. Escrevendo direto no `Enabled`, o botão sumia ao entrar no portal e o painel
+voltava vazio depois.
+
+Para esses casos existe o `SetEnabled`, que escreve o `Desired` na hora e aplica:
+
+```lua
+InterfaceController:SetEnabled(screenGui, true)
+```
+
+Não substitui o `Enabled` direto no caso geral — é para quem escreve perto de um
+pedido. Hoje usam o `PortalController` (`_setExitVisible`, nas três transições do
+botão) e o `ChooseMapsController` (as duas pontas do painel). Uma GUI que este
+controller ainda não acompanha leva a escrita direta, e o `_track` que vier depois lê
+justamente esse valor como o que o dono queria — o que cobre o respawn, já que todas
+as `ScreenGui` da lobby são `ResetOnSpawn`.
 
 A exceção é por **atributo**, não por lista: `ScreenGui` com `IgnoreInterfaceHide`
 nunca é escondida. Existe por causa do flash branco do portal, que nasce dentro da

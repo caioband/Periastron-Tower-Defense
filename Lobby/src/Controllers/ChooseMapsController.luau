@@ -259,7 +259,7 @@ function ChooseMapsController:_setOpen(open : boolean)
 		-- whatever else the lobby has go away, and come back on close.
 		self.Controllers.InterfaceController:Hide(HIDE_REASON, { Except = { CHOOSE_MAPS_UI_NAME } })
 
-		self.ScreenGui.Enabled = true
+		self.Controllers.InterfaceController:SetEnabled(self.ScreenGui, true)
 
 		self.PanelScale.Scale = OPEN_FROM_SCALE
 		panel.Visible = true
@@ -282,7 +282,14 @@ function ChooseMapsController:_setOpen(open : boolean)
 			-- Reopened mid-fade: the open tween owns the panel now.
 			if state == Enum.PlaybackState.Completed and not self.IsOpenState then
 				panel.Visible = false
-				self.ScreenGui.Enabled = false
+				--[[
+					Pelo `SetEnabled`, e não no `Enabled` direto: o painel fecha em 0.18s, e
+					nesse intervalo o portal pode pedir a tela para a contagem regressiva.
+					Escrevendo direto, o pedido já teria desligado a `ScreenGui` antes, esta
+					linha não mudaria nada — e o controller continuaria achando que o dono a
+					queria ligada, reacendendo um painel vazio quando o pedido saísse.
+				]]
+				self.Controllers.InterfaceController:SetEnabled(self.ScreenGui, false)
 			end
 		end
 
