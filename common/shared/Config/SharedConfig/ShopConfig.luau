@@ -35,8 +35,14 @@ module.ITEM_ANIMATION_DELAY = 0.25
 module.REFERENCE_PARENT_NAME = "Map"
 module.REFERENCE_PART_NAME = "ShopPartReference"
 
--- Studs from the part, measured against the HumanoidRootPart.
-module.OPEN_RADIUS = 40
+--[[
+	Studs from the part, measured against the HumanoidRootPart.
+
+	Não pode cair abaixo de ~15: o `ShopPartTeleport` fica a 14.5 studs daqui, e o
+	botão da HUD conta com o pouso dele estar **dentro** deste raio para a loja abrir
+	sozinha. Abaixo disso o botão levaria o jogador até a loja e nada aconteceria.
+]]
+module.OPEN_RADIUS = 20
 
 -- How often the distance is checked. The radius is wide enough that a fifth of a
 -- second is imperceptible and cheaper than measuring every frame.

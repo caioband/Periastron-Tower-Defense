@@ -33,6 +33,7 @@ local LIST_NAME = "ScrollingFrame"
 local TEMPLATE_NAME = "ShopItemWrapper"
 local CONTAINER_NAME = "ShopItemContainer"
 local SHARDS_LABEL_NAME = "CurrentShards"
+local CLOSE_BUTTON_NAME = "Close"
 
 local ITEM_IMAGE_NAME = "ItemImg"
 local ITEM_NAME_NAME = "ItemName"
@@ -342,6 +343,27 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 	self.Panel = panel
 	self.List = list
 	self.ShardsLabel = panel:FindFirstChild(SHARDS_LABEL_NAME)
+
+	--[[
+		O X do painel.
+
+		Fechar na mão não desliga a proximidade: o `_updateProximity` só age na
+		**travessia**, então o painel não é reaberto no tick seguinte só porque o
+		jogador continua parado ali. Ele volta quando o jogador sair do raio e
+		voltar — que é o que "fechei porque não quero agora" quer dizer.
+
+		Vai no `UIMaid`, junto com o resto do bind: a `ShopUI` é `ResetOnSpawn`, e a
+		cópia nova traz um botão novo.
+	]]
+	local closeButton = panel:FindFirstChild(CLOSE_BUTTON_NAME)
+
+	if closeButton and closeButton:IsA("GuiButton") then
+		self.UIMaid:GiveTask(closeButton.Activated:Connect(function()
+			self:Close()
+		end))
+	else
+		warn(`[ShopController]: could not find {SHOP_UI_NAME}.{PANEL_NAME}.{CLOSE_BUTTON_NAME}.`)
+	end
 
 	-- The authored row is the template, not a row: it never shows up on screen.
 	self.Template = template:Clone()
