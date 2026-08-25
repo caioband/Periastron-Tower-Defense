@@ -18,9 +18,9 @@
 
 	Unidade sem entrada aqui fica com a arte que o `CardWrapper` trouxe autorada do
 	StarterGui: carta com a arte errada é melhor do que carta invisível na hotbar.
-	Hoje é o caso de `Slingshot`, `Subspace Tripminer` e `Azure` — e como a arte
-	autorada é a do Slasher, as três aparecem com a carta dele até os ids chegarem.
-	É aqui que se conserta, uma linha por unidade.
+	Hoje é o caso de `Slingshot` e `Subspace Tripminer` — e como a arte autorada é a
+	do Slasher, as duas aparecem com a carta dele até os ids chegarem. É aqui que se
+	conserta, uma linha por unidade.
 ]]
 
 local CardConfig = {}
@@ -30,6 +30,7 @@ CardConfig.Images = {
 	Rocket = "rbxassetid://109642138105636",
 	Entrepreneur = "rbxassetid://130898800672794",
 	Sword = "rbxassetid://78316687499130",
+	Azure = "rbxassetid://117289931783490",
 }
 
 --[=[

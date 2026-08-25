@@ -29,10 +29,15 @@ end
 --[[
 	Clima do mapa em jogo.
 
-	Um clima é um Model em `Assets.Weathers` com uma Part de partículas e uma pasta
-	`Lighting`. Este service encaixa a Part no mapa carregado e entrega a pasta ao
+	Um clima é um Model em `Assets.Weathers` com uma ou mais Parts de partículas e
+	uma pasta `Lighting`. Este service encaixa **cada Part** no mapa carregado, do
+	jeito que a tag dela pedir (`AreaWeather` ou `SkyWeather`), e entrega a pasta ao
 	`LightingService`, que é quem muda a iluminação — então o clima herda de graça a
 	transição interpolada de lá.
+
+	Um clima pode ser dos dois tipos: a chuva tem uma camada de nuvem no céu e a
+	chuva caindo dentro da área jogável, e as duas medem caixas diferentes do mapa.
+	Ver `WeatherConfig.Tags`.
 
 		local Weather = Framework:Get("WeatherService")
 
@@ -193,13 +198,59 @@ end
 
 --[[ ENCAIXE ]]
 
-function WeatherService:_getPart(model: Model): BasePart?
-	local part = model:FindFirstChild(Config.PartName)
-	if part and part:IsA("BasePart") then
-		return part
+--[=[
+	Em qual das duas caixas esta Part entra: `"Area"`, `"Sky"` ou `nil`.
+
+	A tag da **Part** manda. Sem ela vale a do Model, e só quando ele diz uma coisa
+	só: num clima dos dois tipos não há como adivinhar de qual delas uma Part sem
+	tag é. É o que deixa os climas antigos (uma tag no Model, Parts sem nada)
+	continuarem funcionando sem serem reautorados.
+]=]
+function WeatherService:_partKind(model: Model, part: BasePart): string?
+	if CollectionService:HasTag(part, Config.Tags.Area) then
+		return "Area"
 	end
 
-	return model:FindFirstChildWhichIsA("BasePart")
+	if CollectionService:HasTag(part, Config.Tags.Sky) then
+		return "Sky"
+	end
+
+	local isArea = CollectionService:HasTag(model, Config.Tags.Area)
+	local isSky = CollectionService:HasTag(model, Config.Tags.Sky)
+
+	if isArea and not isSky then
+		return "Area"
+	end
+
+	if isSky and not isArea then
+		return "Sky"
+	end
+
+	return nil
+end
+
+--[=[
+	A caixa do mapa, medida no máximo uma vez por tipo.
+
+	Os dois tipos medem coisas diferentes (ver `GetMapBounds`), e um clima misto
+	precisa das duas — mas uma Part de céu e outra de área não podem sair de duas
+	medições diferentes do mesmo mapa, nem custar duas varreduras quando o clima é
+	de um tipo só.
+]=]
+function WeatherService:_boundsReader(target: Instance)
+	local cache = {}
+
+	return function(kind: string): (Vector3?, Vector3?, string)
+		local entry = cache[kind]
+
+		if not entry then
+			-- Sky mede o mapa inteiro, Area só a área jogável.
+			entry = table.pack(self:GetMapBounds(target, kind == "Sky"))
+			cache[kind] = entry
+		end
+
+		return entry[1], entry[2], entry[3]
+	end
 end
 
 --[=[
@@ -220,16 +271,11 @@ local function makeIntangible(instance: Instance)
 end
 
 --[=[
-	Encaixa a Part do clima na caixa do mapa, do jeito que a tag do Model pedir.
-	Devolve uma descrição do que fez, para o log e para a resposta do comando.
+	Encaixa **uma** Part na caixa que o tipo dela pede. Devolve a descrição do que
+	fez, para o log e para a resposta do comando.
 ]=]
-function WeatherService:_fit(model: Model, center: Vector3, size: Vector3): string?
-	local part = self:_getPart(model)
-	if not part then
-		return nil
-	end
-
-	if CollectionService:HasTag(model, Config.Tags.Area) then
+function WeatherService:_fitPart(model: Model, part: BasePart, kind: string, center: Vector3, size: Vector3): string
+	if kind == "Area" then
 		part.Size = size
 		part.CFrame = CFrame.new(center)
 
@@ -237,22 +283,73 @@ function WeatherService:_fit(model: Model, center: Vector3, size: Vector3): stri
 			size.X, size.Y, size.Z, center.X, center.Y, center.Z)
 	end
 
-	if CollectionService:HasTag(model, Config.Tags.Sky) then
-		-- A espessura da camada é a autorada; o que acompanha o mapa é X e Z.
-		local thickness = part.Size.Y
-		local offset = model:GetAttribute(Config.HeightOffsetAttribute) or Config.SkyHeightOffset
-		local peak = center.Y + size.Y / 2
+	-- A espessura da camada é a autorada; o que acompanha o mapa é X e Z.
+	local thickness = part.Size.Y
+	local offset = model:GetAttribute(Config.HeightOffsetAttribute) or Config.SkyHeightOffset
+	local peak = center.Y + size.Y / 2
 
-		part.Size = Vector3.new(size.X, thickness, size.Z)
-		part.CFrame = CFrame.new(center.X, peak + offset, center.Z)
+	part.Size = Vector3.new(size.X, thickness, size.Z)
+	part.CFrame = CFrame.new(center.X, peak + offset, center.Z)
 
-		return string.format("céu %.0fx%.0f (espessura %.0f) em (%.0f, %.0f, %.0f) — centro do mapa, %.0f acima do pico %.0f",
-			size.X, size.Z, thickness,
-			part.CFrame.Position.X, part.CFrame.Position.Y, part.CFrame.Position.Z,
-			offset, peak)
+	return string.format("céu %.0fx%.0f (espessura %.0f) em (%.0f, %.0f, %.0f) — centro do mapa, %.0f acima do pico %.0f",
+		size.X, size.Z, thickness,
+		part.CFrame.Position.X, part.CFrame.Position.Y, part.CFrame.Position.Z,
+		offset, peak)
+end
+
+--[=[
+	Encaixa **todas** as Parts do clima, cada uma na caixa do tipo dela. Devolve a
+	descrição do que fez, ou `nil` mais o motivo quando não sobrou nada encaixado.
+
+	Só os filhos diretos contam: os ParticleEmitters moram dentro das Parts, e uma
+	geometria decorativa aninhada não é uma camada de clima.
+
+	Part sozinha que não encaixa derruba o clima inteiro (é o caso do clima de uma
+	Part só, e o que o comando precisa reportar); com várias, a que falhar sai com
+	aviso e as outras entram — meio clima na tela é mais fácil de diagnosticar do
+	que nenhum, e o aviso diz qual faltou.
+]=]
+function WeatherService:_fit(model: Model, bounds): (string?, string?)
+	local parts = {}
+	for _, child in model:GetChildren() do
+		if child:IsA("BasePart") then
+			table.insert(parts, child)
+		end
 	end
 
-	return nil
+	if #parts == 0 then
+		return nil, "não tem nenhuma BasePart para encaixar"
+	end
+
+	local fitted = {}
+	local failures = {}
+
+	for _, part in parts do
+		local kind = self:_partKind(model, part)
+		if not kind then
+			table.insert(failures, string.format("%s não tem tag %s nem %s (o clima tem os dois tipos, então cada Part precisa dizer a sua)",
+				part.Name, Config.Tags.Area, Config.Tags.Sky))
+			continue
+		end
+
+		local center, size, measured = bounds(kind)
+		if not center or not size then
+			table.insert(failures, string.format("%s (%s): o mapa não tem nenhuma BasePart em %s", part.Name, kind, measured))
+			continue
+		end
+
+		table.insert(fitted, self:_fitPart(model, part, kind, center, size))
+	end
+
+	if #fitted == 0 then
+		return nil, table.concat(failures, "; ")
+	end
+
+	for _, failure in failures do
+		warn(`[WeatherService]: "{model.Name}": {failure}.`)
+	end
+
+	return table.concat(fitted, " + "), nil
 end
 
 --[[ API ]]
@@ -343,21 +440,15 @@ function WeatherService:Apply(name: string, transitionTime: number?): (boolean, 
 		return false, string.format("não há nenhum '%s' no Workspace para encaixar o clima.", Config.TargetName)
 	end
 
-	-- Sky mede o mapa inteiro, Area só a área jogável. Ver `GetMapBounds`.
-	local center, size, measured = self:GetMapBounds(target, isSky)
-	if not center or not size then
-		return false, string.format("o mapa não tem nenhuma BasePart em %s; não dá para medir a caixa.", measured)
-	end
-
 	local clone = model:Clone()
 	if not clone then
 		return false, string.format("o clima '%s' não é clonável (Archivable = false?).", name)
 	end
 
-	local fitted = self:_fit(clone, center, size)
+	local fitted, reason = self:_fit(clone, self:_boundsReader(target))
 	if not fitted then
 		clone:Destroy()
-		return false, string.format("o clima '%s' não tem uma Part para encaixar.", name)
+		return false, string.format("o clima '%s' não encaixou: %s.", name, reason or "motivo desconhecido")
 	end
 
 	makeIntangible(clone)
@@ -398,8 +489,8 @@ function WeatherService:Apply(name: string, transitionTime: number?): (boolean, 
 	self.Current = name
 	broadcastWeather(name)
 
-	weatherPrint(string.format("'%s' aplicado | caixa de %s: centro %s tamanho %s | %s | %s",
-		name, measured, tostring(center), tostring(size), fitted, applied))
+	-- O `fitted` ja traz o tamanho e o centro de cada Part encaixada, uma por tipo.
+	weatherPrint(string.format("'%s' aplicado | %s | %s", name, fitted, applied))
 
 	return true, string.format("Weather: %s | %s | %s.", name, fitted, applied)
 end

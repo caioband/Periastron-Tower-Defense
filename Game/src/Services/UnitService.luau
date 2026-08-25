@@ -486,7 +486,12 @@ function UnitService:construct()
 			return
 		end
 
-		local placeCost = stats.Cost or 0
+		--[[
+			O preco com o clima do momento: a chuva desconta 25% do Ice. Sai do
+			`GetPlaceCost` porque o card da hotbar mostra pela mesma funcao -- sem isso
+			o jogador veria um preco e pagaria outro.
+		]]
+		local placeCost = SharedConfig.UnitUpgradeConfig:GetPlaceCost(unitName, self:GetWeather())
 		local cash = self.Services.MobService:getCash(player)
 		if cash < placeCost then
 			placementPrint(player.Name, unitName, "recusado: sem dinheiro",
@@ -571,7 +576,18 @@ function UnitService:construct()
 
 		if isValid then
 			local unitId = HttpService:GenerateGUID(false)
-			local newEntry = { unitId = unitId, unitName = unitName, cf = cf, ownerUserId = player.UserId, upgrades = 0, invested = placeCost, lastAttack = 0, priority = TargetPriority.Default }
+			--[[
+				`invested` e o preco de **tabela**, e nao o que foi cobrado.
+
+				E dele que sai o valor de venda, e o cliente calcula o mesmo numero pelo
+				`GetInvested` sem saber quanto esta unidade custou de fato -- o
+				`invested` nao e replicado. Guardar o preco com desconto faria o card
+				prometer uma devolucao e a venda dar outra. O desconto continua sendo so
+				vantagem: comprar por 75 e vender por 50 nunca e lucro.
+			]]
+			local sticker = SharedConfig.UnitUpgradeConfig:GetPlaceCost(unitName)
+
+			local newEntry = { unitId = unitId, unitName = unitName, cf = cf, ownerUserId = player.UserId, upgrades = 0, invested = sticker, lastAttack = 0, priority = TargetPriority.Default }
 			table.insert(self.PlacedUnits, newEntry)
 			self.UnitsById[unitId] = newEntry
 
@@ -715,6 +731,17 @@ function UnitService:stepCombat()
 	for i = 1, count do
 		local entry = units[i]
 		local stats = SharedConfig.UnitStats[entry.unitName]
+
+		--[[
+			Unidade desligada pelo clima nao faz nada neste laco -- a chuva apaga o
+			`Fire` inteiro. Nao e atordoamento: nao tem prazo, nao acende realce
+			amarelo e nao pode ser encurtado; ela volta quando o clima sair.
+
+			A renda da farm fica de fora porque quem paga e o `payFarmUnits`, e nao
+			este laco. Nenhuma farm de hoje e de uma classe que algum clima desligue;
+			no dia em que for, e la que a regra tem que ser repetida.
+		]]
+		if SharedConfig.WeatherConfig.IsDisabled(weather, entry.unitName) then continue end
 
 		if stats and stats.Farm then continue end
 

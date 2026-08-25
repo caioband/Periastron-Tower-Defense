@@ -69,6 +69,38 @@ impede o descarte depois é ter uma instância viva apontando para cada uma. A
 `ScreenGui` tem `ResetOnSpawn = false` de propósito: o HUD é recriado a cada
 respawn (e por isso o bind roda de novo), o cache não.
 
+## leaderstats: Coins, Wins e Shards
+
+O `LeaderstatsService` (`Lobby/src/Services`) põe as três colunas na lista de
+jogadores, nesta ordem — a Roblox desenha na ordem em que os valores entram na
+pasta. Nada é calculado ali: ele só copia `Data.Stats` para os `IntValue`.
+
+| Coluna | Chave do perfil |
+| --- | --- |
+| Coins | `Stats.Cash` |
+| Wins | `Stats.Wins` |
+| Shards | `Stats.Shards` |
+
+**Coins é `Cash`** porque o perfil chama de `Cash` e a tela chama de Coins desde
+sempre (é o que o `HUDController` escreve na moeda do HUD) — a lista segue a tela,
+não o nome da chave. Não é o dinheiro da partida, que é o `MobService.SessionCash` e
+nem chega ao perfil.
+
+**Como fica em dia, sem polling.** Toda escrita no perfil passa pelo
+`DataService:Update` — o `Set` da replica só acontece lá dentro —, e ele agora
+anuncia cada uma no sinal `DataUpdated` `(player, key, value)`. O service escuta esse
+sinal (filtrando `Stats`) e o `PlayerDataLoaded`, então a coluna muda no mesmo
+instante em que o perfil muda: uma compra na loja, um summon, o `cash` do Cmdr.
+
+A pasta é parenteada ao `Player` **depois** de os três valores estarem dentro: a
+lista começa a desenhar assim que ela aparece, e uma pasta vazia por um frame pisca
+uma linha sem coluna nenhuma. Sem perfil aberto a pasta nem nasce, em vez de nascer
+com três zeros que não são o que o jogador tem.
+
+Só na Lobby, que foi onde pediram — as duas places têm o mesmo perfil, então o dia
+em que a Game também quiser é mover o arquivo para `common/server/Services` (e levar
+o `DataUpdated` para o `DataService` de lá, que hoje não tem).
+
 ## Painel de mapas: o mapa escolhido
 
 A marca do mapa escolhido é o frame **`CheckMark`** que cada template
@@ -185,6 +217,25 @@ destino nasce escondida e já na posição ordenada (o `LayoutOrder` é carimbad
 ordem da lista a cada redesenho), a grade abre o buraco, e a carta aparece no pouso. O `_ensureInventoryCard` cede um frame de propósito: o `UIGridLayout` só
 posiciona o wrapper novo no fim do frame, e sem esperar a carta voaria para onde ele
 *estava*.
+
+### A arte da carta é por unidade
+
+A `Card` (do inventário, do slot e do painel de detalhe) é um **ImageLabel**, e a arte
+dela é a carta inteira — moldura, ilustração e fundo numa imagem só. Trocar de unidade
+é trocar a imagem, e os ids ficam em `SharedConfig.CardConfig`, os mesmos que a hotbar
+do Game usa: uma unidade tem uma carta, e as duas places a desenham igual.
+
+Quem escreve é o `writeCardImage`, chamado de três lugares — o `writeCardName` (que
+cobre o inventário e os slots de uma vez, já que é ele quem diz de que unidade a carta
+é), o `_dressClone` e o painel de detalhe. O clone que voa precisa da escrita própria
+pelo mesmo motivo que já precisava do nome: a origem pode estar escondida e ainda
+mostrando outra unidade — é o caso do slot que só vai ser preenchido quando a carta
+anterior pousar.
+
+Unidade sem id fica com a arte que a GUI trouxe autorada, que hoje é a do Slasher:
+carta com a arte errada é melhor do que carta em branco no meio do inventário. Faltam
+`Slingshot` e `Subspace Tripminer`, e é uma linha por unidade no config. O
+`EmptyCard` do slot livre tem arte própria e não passa por aqui.
 
 ### O resto do painel
 

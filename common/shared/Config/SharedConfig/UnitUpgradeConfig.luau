@@ -82,6 +82,32 @@ function UnitUpgradeConfig:GetCost(unitName, currentLevel)
 	return math.floor(data.BaseCost * (data.CostMultiplier ^ currentLevel) + 0.5)
 end
 
+--[=[
+	O que custa **colocar** a unidade no mapa, com o clima do momento.
+
+	É o `UnitStats[nome].Cost` vezes o multiplicador de `Cost` do clima (a chuva
+	desconta 25% do Ice). Sem clima, ou com um clima que não mexe em preço, devolve o
+	número da tabela sem tocar em nada.
+
+	Existe pelo mesmo motivo dos outros getters: o servidor cobra por aqui e o card
+	da hotbar mostra por aqui, então não há como o jogador ver um preço e pagar
+	outro.
+
+	> **A venda não segue o desconto.** O `GetInvested` continua somando o preço de
+	> tabela, e é ele que os dois lados usam para o valor de venda — o servidor
+	> guarda no `entry.invested` o preço cheio, mesmo tendo cobrado menos. Fazer o
+	> contrário obrigaria o cliente a saber quanto foi pago em cada unidade (o
+	> `invested` não é replicado), e o desconto viraria uma divergência entre o que o
+	> card promete de volta e o que a venda dá. Na prática o desconto continua sendo
+	> só vantagem: comprar por 75 e vender por 50 nunca é lucro.
+]=]
+function UnitUpgradeConfig:GetPlaceCost(unitName, weather)
+	local stats = UnitStats[unitName]
+	local cost = stats and stats.Cost or 0
+
+	return math.floor(cost * weatherMultiplier(weather, unitName, "Cost") + 0.5)
+end
+
 function UnitUpgradeConfig:GetDamageMultiplier(unitName, level, weather)
 	local data = self:GetUnitData(unitName)
 	return (data.DamageMultiplier ^ level) * weatherMultiplier(weather, unitName, "Damage")
@@ -170,7 +196,9 @@ end
 	upgrade ja comprado. Serve para o cliente calcular o valor de venda sem precisar
 	do `entry.invested` do servidor — as duas contas seguem a mesma tabela.
 
-	Sem clima de propósito: o que se investiu não muda porque começou a nevar.
+	Sem clima de propósito, nos dois sentidos: o que se investiu não muda porque
+	começou a nevar, e o desconto de colocação da chuva (`GetPlaceCost`) também não
+	entra aqui — ver o comentário de lá.
 ]=]
 function UnitUpgradeConfig:GetInvested(unitName, level)
 	local stats = UnitStats[unitName]

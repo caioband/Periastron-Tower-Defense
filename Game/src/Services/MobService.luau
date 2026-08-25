@@ -567,6 +567,17 @@ function MobService:addDamageStat(userId, damage)
 	entry.damage += damage
 end
 
+--[=[
+	Quanto dano um jogador ja causou nesta partida. Zero para quem ainda nao bateu
+	em nada, e para todo mundo depois que o round reinicia -- o placar e limpo junto
+	com a partida.
+]=]
+function MobService:GetDamageDealt(userId : number?) : number
+	local entry = userId and self.SessionDamage[userId]
+
+	return entry and entry.damage or 0
+end
+
 function MobService:GetMVP()
 	local best = nil
 	local bestDamage = 0

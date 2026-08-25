@@ -16,6 +16,9 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Maid = require(Vendor.Maid)
+local Me = require(Vendor.Me)
+
+local Framework = Me.new()
 
 --[[ CONSTANTS ]]
 local WRAPPER_NAME = "CardWrapper"
@@ -610,16 +613,49 @@ local function getParts(card : GuiObject, badge : GuiObject?)
 	}
 end
 
+--[=[
+	O clima no ceu, do jeito que o `ToggleTower` tambem pergunta.
+
+	Pedido na hora em vez de guardado: o preco da carta e reescrito em dois momentos
+	so (quando a carta nasce e quando o clima troca), e nos dois a resposta certa e a
+	de agora.
+]=]
+local function getWeather()
+	local weatherController = Framework:Get("WeatherController", false, false)
+	return weatherController and weatherController:GetCurrent() or nil
+end
+
+--[=[
+	O que custa colocar a unidade agora -- com o desconto do clima, se houver (a
+	chuva tira 25% do Ice).
+
+	Mesma funcao que o servidor cobra em `PlaceUnit`, de proposito: e o que impede a
+	carta de mostrar um preco e a colocacao descontar outro.
+]=]
+local function placeCost(unitName : string?) : number
+	if not unitName then return 0 end
+
+	return SharedConfig.UnitUpgradeConfig:GetPlaceCost(unitName, getWeather())
+end
+
 -- Estado visual da carta: sem estoque tem prioridade sobre falta de dinheiro, ja
 -- que sem unidade a carta nao pode ser usada de jeito nenhum.
 function module:_resolveState(unitName : string?) : string
-	local stats = unitName and SharedConfig.UnitStats[unitName]
-
-	if stats and self.cash < (stats.Cost or 0) then
+	if unitName and SharedConfig.UnitStats[unitName] and self.cash < placeCost(unitName) then
 		return "NoCash"
 	end
 
 	return "Available"
+end
+
+--[=[
+	Escreve o preco na carta. Fica numa funcao propria porque ele nao e mais fixo:
+	entrar ou sair um clima que mexe em `Cost` reescreve todos.
+]=]
+function module:_writeCost(entry)
+	if not entry.Parts.Cost then return end
+
+	entry.Parts.Cost.Text = "$" .. placeCost(entry.Unit)
 end
 
 --[=[
@@ -842,15 +878,11 @@ function module:_createEntry(unitName : string, index : number, callbackDo : (st
 		entry.Maid:GiveTask(badge)
 	end
 
-	local stats = SharedConfig.UnitStats[unitName]
-
 	if entry.Parts.UnitName then
 		entry.Parts.UnitName.Text = unitName
 	end
 
-	if entry.Parts.Cost then
-		entry.Parts.Cost.Text = "$" .. (stats and stats.Cost or 0)
-	end
+	self:_writeCost(entry)
 
 	--[[
 		A arte da carta e por unidade, e e a carta inteira: o `Card` e um ImageLabel,
@@ -992,6 +1024,21 @@ function module:setCash(cash : number)
 	self.cash = cash or 0
 
 	for _, entry in self.entries do
+		self:_applyState(entry)
+	end
+end
+
+--[=[
+	O clima entrou ou saiu: reescreve o preco de cada carta e reavalia quem cabe no
+	bolso.
+
+	As duas coisas juntas, e nesta ordem, porque sao a mesma mudanca vista de dois
+	lugares -- a carta que ficou 25% mais barata pode ter deixado de estar em
+	vermelho no mesmo instante.
+]=]
+function module:refreshWeather()
+	for _, entry in self.entries do
+		self:_writeCost(entry)
 		self:_applyState(entry)
 	end
 end

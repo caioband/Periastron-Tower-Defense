@@ -25,7 +25,7 @@ local Framework = Me.new()
 local DataConfig = ServerConfig.Data
 
 local INTERMISSION_TIME = 60
-local WAVE_INTERVAL = 3
+local WAVE_INTERVAL = 2.5
 local SELECTION_TIME = 15
 
 -- Respiro entre o ultimo voto de recomecar e o round de fato reiniciar, para o

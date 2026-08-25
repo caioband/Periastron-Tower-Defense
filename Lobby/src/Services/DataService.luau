@@ -27,7 +27,17 @@ local Framework = Me.new()
 
 local DataService = {
 	Signals = {
-		PlayerDataLoaded = Signal.new()
+		PlayerDataLoaded = Signal.new(),
+
+		--[[
+			(player, key, value) — depois de toda escrita do `Update`.
+
+			O `Update` e o unico caminho de escrita no perfil (o `Set` da replica so
+			acontece la dentro), entao quem precisa reagir a uma mudanca no servidor
+			escuta aqui em vez de vigiar o perfil. O cliente nao precisa disto: para
+			ele a replica ja avisa sozinha, pelo `OnChange`.
+		]]
+		DataUpdated = Signal.new(),
 	}
 }
 
@@ -176,6 +186,8 @@ function DataService:Update(Player : Player, Key : string, callbackFunc)
 	end
 
 	replicaProfile:Set({Key}, editedData)
+	self.Signals.DataUpdated:Fire(Player, Key, editedData)
+
 	return editedData
 end
 

@@ -529,8 +529,8 @@ o sintoma mais difícil de ligar à causa.
 
 Unidade sem id fica com a arte que o `CardWrapper` tem autorada no StarterGui:
 carta com a arte errada é melhor do que carta invisível na hotbar. Hoje é o caso de
-`Slingshot`, `Subspace Tripminer` e `Azure` — e como a arte autorada é a do Slasher,
-as três aparecem com a carta dele até os ids chegarem.
+`Slingshot` e `Subspace Tripminer` — e como a arte autorada é a do Slasher, as duas
+aparecem com a carta dele até os ids chegarem.
 
 ### O arco (`Components/Card.luau`)
 
@@ -698,6 +698,37 @@ então esconder o wrapper não o esconde; quem cuida das duas metades é o
 
 Carta que já nasce sem unidade (a mão sendo montada) entra direto no estado de fora,
 sem cair — não há de onde cair.
+
+## leaderstats: Damage e Cash
+
+O `LeaderstatsService` (`Game/src/Services`) põe duas colunas na lista de jogadores,
+nesta ordem — a Roblox desenha na ordem em que os valores entram na pasta.
+
+| Coluna | De onde vem |
+| --- | --- |
+| Damage | `MobService.SessionDamage`, o placar que decide o MVP (`GetDamageDealt`) |
+| Cash | `MobService.SessionCash`, o dinheiro do round (`getCash`) |
+
+Os dois são **da sessão**, não do perfil: nada disso é salvo, e os dois voltam a zero
+quando o round recomeça. Não confundir com o [`leaderstats` da
+Lobby](../Lobby/README.md#leaderstats-coins-wins-e-shards), que mostra Coins, Wins e
+Shards do perfil — lá `Coins` é o `Stats.Cash` guardado, que é outra moeda.
+
+**Aqui é polling (4 Hz), e na Lobby não.** Lá toda escrita passa por um funil
+(`DataService:Update`) e acontece de vez em quando, então um sinal por escrita é
+exato e barato. Aqui, dois motivos viram o jogo:
+
+- **frequência** — o dano cresce a cada golpe em cada mob. Com AOE e meia dúzia de
+  torres são dezenas de escritas por segundo, e escrever o `IntValue` em todas
+  replicaria muito mais do que a lista consegue mostrar.
+- **os zeros** — o fim de round limpa o placar com `table.clear(SessionDamage)`, que
+  não é escrita nenhuma. Um desenho movido a evento continuaria mostrando o dano da
+  partida passada; lendo o estado, a volta ao zero sai de graça.
+
+A escrita só acontece quando o valor muda, então parado o service não replica nada. O
+`math.floor` é explícito para a comparação valer sobre o mesmo número que vai ser
+escrito — sem ele, um dano fracionário marcaria "mudou" a cada golpe sem a coluna
+nunca mudar na tela.
 
 ## Recompensa de quem sai antes do fim
 

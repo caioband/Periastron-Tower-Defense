@@ -15,6 +15,7 @@ local Signal = require(Packages.Signal)
 local SharedConfig = require(Configs.SharedConfig)
 local UIUtil = require(Util.UIUtil)
 
+local CardConfig = SharedConfig.CardConfig
 local ClassConfig = SharedConfig.ClassConfig
 local DeckConfig = SharedConfig.DeckConfig
 local RarityConfig = SharedConfig.RarityConfig
@@ -366,14 +367,42 @@ function DeckController:_sortedUnits(
 end
 
 --[=[
-	O nome da unidade na carta, com o contorno na cor da raridade: é o único lugar da
-	carta onde a raridade cabe, e sem isso o inventário inteiro é roxo.
+	A arte da carta da unidade.
 
-	Não muda enquanto a carta for daquela unidade, então a linha do inventário só
-	escreve isso quando nasce.
+	O `Card` é um ImageLabel e a arte dele é a **carta inteira** — moldura,
+	ilustração e fundo numa imagem só —, então trocar de unidade é trocar a imagem.
+	Os ids ficam em `SharedConfig.CardConfig`, os mesmos que a hotbar do Game usa.
+
+	Unidade sem id fica com a arte que a GUI trouxe autorada: carta com a arte
+	errada é melhor do que carta em branco no meio do inventário. O `EmptyCard` do
+	slot livre tem arte própria e não passa por aqui.
+]=]
+local function writeCardImage(card : GuiObject, unitName : string)
+	if not card:IsA("ImageLabel") and not card:IsA("ImageButton") then
+		return
+	end
+
+	local image = CardConfig.GetImage(unitName)
+	if not image then
+		return
+	end
+
+	card.Image = image
+end
+
+--[=[
+	A identidade da carta: de que unidade ela é.
+
+	A arte, o nome e o contorno na cor da raridade — o nome é o único lugar da carta
+	onde a raridade cabe, e sem ele o inventário inteiro é roxo.
+
+	Nada disso muda enquanto a carta for daquela unidade, então a linha do inventário
+	só escreve isso quando nasce. A carta de slot passa por aqui a cada redesenho,
+	porque ela é fixa e troca de unidade conforme o deck muda.
 ]=]
 local function writeCardName(card : GuiObject, unitName : string)
 	card:SetAttribute("Unit", unitName)
+	writeCardImage(card, unitName)
 
 	local nameLabel = card:FindFirstChild(UNIT_NAME_NAME)
 	if not nameLabel or not nameLabel:IsA("TextLabel") then
@@ -487,9 +516,10 @@ end
 	estão paradas, e o número da origem já nasce velho no instante em que o clone
 	sai — mais ainda com várias viagens no ar ao mesmo tempo.
 
-	O nome é reescrito porque a origem pode estar escondida e com o texto de outra
-	unidade: é o caso do slot que só vai ser preenchido quando a carta anterior
-	pousar.
+	O nome **e a arte** são reescritos porque a origem pode estar escondida e ainda
+	mostrando outra unidade: é o caso do slot que só vai ser preenchido quando a
+	carta anterior pousar. Sem isso, a carta que voa sai com a cara da unidade
+	errada.
 ]=]
 function DeckController:_dressClone(clone : GuiObject, unitName : string)
 	clone.Name = FLIGHT_NAME
@@ -501,6 +531,8 @@ function DeckController:_dressClone(clone : GuiObject, unitName : string)
 	if countHolder then
 		countHolder:Destroy()
 	end
+
+	writeCardImage(clone, unitName)
 
 	local nameLabel = clone:FindFirstChild(UNIT_NAME_NAME)
 	local stats = UnitStats[unitName]
@@ -1217,6 +1249,11 @@ function DeckController:_renderSelection()
 	end
 
 	local card = container:FindFirstChild(CARD_NAME)
+
+	if card then
+		writeCardImage(card, unitName)
+	end
+
 	local nameLabel = card and card:FindFirstChild(UNIT_NAME_NAME)
 	if nameLabel and nameLabel:IsA("TextLabel") then
 		nameLabel.Text = unitName

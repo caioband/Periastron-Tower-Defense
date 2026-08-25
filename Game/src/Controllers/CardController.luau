@@ -173,6 +173,22 @@ function CardController:construct()
 	end)
 	Framework:Fire("RequestCash")
 
+	--[[
+		O clima pode mexer no preco de colocar (a chuva desconta 25% do Ice), e o
+		preco esta escrito na carta: sem isto o jogador veria o valor antigo ate a
+		hotbar ser redesenhada por outro motivo.
+
+		O `task.defer` e pelo mesmo motivo do `WeatherFeedbackController`: quem guarda
+		o clima atual e o `WeatherController`, que escuta o mesmo evento, e a ordem
+		entre os dois nao e garantida. Um passo de espera e o suficiente para o
+		`GetCurrent` ja responder o clima novo.
+	]]
+	Framework:Listen("WeatherChanged", function()
+		task.defer(function()
+			self:_component("refreshWeather")
+		end)
+	end)
+
 	task.spawn(function()
 		self:_render()
 	end)

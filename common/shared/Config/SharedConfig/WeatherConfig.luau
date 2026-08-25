@@ -4,15 +4,23 @@
 	Um clima é um Model em `ReplicatedStorage.Shared.Assets.Weathers`:
 
 		Assets.Weathers
-		└── Snow                  (Model, tag "AreaWeather")
-			├── Part              (Part com os ParticleEmitters)
-			└── Lighting          (Folder — preset do LightingService)
+		├── Snow                  (Model, tag "AreaWeather")
+		│   ├── Part              (Part com os ParticleEmitters)
+		│   └── Lighting          (Folder — preset do LightingService)
+		└── Rain                  (Model, tags "AreaWeather" + "SkyWeather")
+			├── Part              (tag "SkyWeather"  — a camada de nuvem)
+			├── Part              (tag "AreaWeather" — a chuva na área jogável)
+			└── Lighting          (Folder)
 
-	A **tag** diz como a Part é encaixada no mapa, e a pasta `Lighting` é um preset
-	no mesmo formato de `Assets.Lighting` (atributos = propriedades do Lighting,
-	filhos = instâncias). O `WeatherService` registra essa pasta como preset e
-	aplica pelo `LightingService`, então a troca de clima entra na mesma transição
-	interpolada de qualquer outra troca de iluminação.
+	A **tag** diz como cada Part é encaixada no mapa. Um clima pode ter os dois
+	tipos ao mesmo tempo: aí o Model leva as duas tags e **cada Part diz a sua**.
+	Clima de um tipo só não precisa marcar nada nas Parts — a tag do Model vale para
+	todas elas, que é como os climas antigos continuam funcionando.
+
+	A pasta `Lighting` é um preset no mesmo formato de `Assets.Lighting` (atributos
+	= propriedades do Lighting, filhos = instâncias). O `WeatherService` registra
+	essa pasta como preset e aplica pelo `LightingService`, então a troca de clima
+	entra na mesma transição interpolada de qualquer outra troca de iluminação.
 
 	Fica em `common/` porque as duas places montam o Weathers.
 ]]
@@ -23,7 +31,7 @@ local WeatherConfig = {}
 WeatherConfig.AssetsPath = { "Shared", "Assets", "Weathers" }
 
 --[[
-	Como a Part do clima é encaixada no mapa:
+	Como cada Part do clima é encaixada no mapa:
 
 	- `Area`: vira a caixa do mapa. Neblina, neve — coisa que acontece *dentro* da
 	  área jogável.
@@ -31,8 +39,20 @@ WeatherConfig.AssetsPath = { "Shared", "Assets", "Weathers" }
 	  altura (Y da Part) é a autorada, porque é a espessura da camada, não a
 	  extensão dela.
 
-	Model sem nenhuma das duas tags é recusado — é mais fácil de achar do que um
-	clima que entra e não encaixa em nada.
+	As duas valem tanto no **Model** quanto em cada **Part**, e a da Part manda:
+
+	- Model com uma tag só e Parts sem tag: todas as Parts são daquele tipo. É como
+	  os climas de um tipo só são autorados, e como todos eram antes de existir
+	  clima misto.
+	- Model com as duas tags: cada Part precisa dizer a sua, senão não há como
+	  adivinhar em qual das duas caixas ela entra — a Part sem tag é recusada com
+	  aviso, e o resto do clima entra normalmente.
+
+	Model sem nenhuma das duas tags é recusado inteiro — é mais fácil de achar do
+	que um clima que entra e não encaixa em nada.
+
+	As Parts não precisam ter nomes diferentes: o `Rain` tem duas chamadas `Part`, e
+	quem as separa é a tag, não o nome.
 ]]
 WeatherConfig.Tags = {
 	Area = "AreaWeather",
@@ -96,9 +116,6 @@ WeatherConfig.TargetName = "Map"
 
 -- Onde o clone do clima em uso fica pendurado no Workspace.
 WeatherConfig.ContainerName = "Weather"
-
--- Nome da Part que leva os emissores. Não achando, vale a primeira BasePart.
-WeatherConfig.PartName = "Part"
 
 -- Prefixo do preset que o clima registra em `Assets.Lighting`, pelo mesmo motivo
 -- do `MapPrefix`: o nome de um clima não pode esbarrar num preset autorado.
@@ -232,12 +249,12 @@ WeatherConfig.Thunder = {
 	ainda não foi ambientado.
 ]]
 WeatherConfig.MapPools = {
-	Farm = { "Fog", "Wind", "Thunder" },
+	Farm = { "Fog", "Wind", "Thunder", "Rain" },
 	Desert = { "Sandstorm", "Drought" },
 	Volcano = { "Drought", "Fog" },
 	Cave = { "Fog" },
-	SnowyCastle = { "Snow", "Wind", "Fog" },
-	Mountain = { "Snow", "Wind", "Fog", "Thunder", "Drought" },
+	SnowyCastle = { "Snow", "Wind", "Fog", "Rain" },
+	Mountain = { "Snow", "Wind", "Fog", "Thunder", "Drought", "Rain" },
 	Snowy = { "Snow", "Wind", "Fog" },
 }
 
@@ -291,10 +308,16 @@ WeatherConfig.Warning = {
 	na cabeça com um ícone por estatística mexida.
 
 	A arte é o Attachment `Assets.UI.BuffDebuffBillboard`, e dentro de
-	`BillboardGui.Frame` mora um ImageLabel por ícone. Os nomes abaixo são os desses
-	labels: quem desenha só liga o `Visible` do que a unidade está sentindo, então um
-	ícone que ainda não exista no asset simplesmente não aparece — o resto continua
-	funcionando.
+	`BillboardGui.Frame` mora um ImageLabel por ícone. O asset tem os seis:
+	`BuffDamage`/`DebuffDamage`, `BuffRange`/`DebuffRange` e
+	`BuffCooldown`/`DebuffCooldown` — as três estatísticas que aparecem na billboard,
+	nos dois sentidos. Os labels vêm todos `Visible = true` do Studio, e quem desenha
+	liga o do que a unidade está sentindo e **apaga o resto**; nome pedido aqui que
+	não exista lá simplesmente não aparece, com um aviso no Studio.
+
+	`Cost` fica de fora de propósito: ele não é um estado da unidade em campo, é o
+	preço de colocar uma nova. Quem o mostra é o próprio número da carta na hotbar,
+	que já sai com o desconto.
 
 	`AttackSpeed` aparece como **Cooldown** porque é assim que o jogador lê o número
 	no card: cadência maior é recarga menor. Por isso `AttackSpeed > 1` acende o
@@ -331,6 +354,16 @@ WeatherConfig.Feedback = {
 		{ Stat = "AttackSpeed", Buff = "BuffCooldown", Debuff = "DebuffCooldown" },
 	},
 
+	--[[
+		O ícone da unidade **desligada** (`Disable`).
+
+		É o de debuff de cooldown, e não um sétimo desenho: parar de atacar é o
+		extremo do que aquele ícone já significa, e a unidade também leva o realce
+		vermelho junto. Um ícone próprio pode entrar aqui no dia em que a arte
+		existir — muda esta linha e mais nada.
+	]]
+	Disabled = "DebuffCooldown",
+
 	Highlight = {
 		Buff = Color3.fromRGB(120, 200, 255),
 		Debuff = Color3.fromRGB(255, 70, 70),
@@ -359,14 +392,24 @@ WeatherConfig.ClassList = { "Melee", "Ranged", "Magic", "Fire", "Ice", "Electric
 	- `Units.<Classe>` vale só para quem tem aquela classe, e **substitui** o `All`
 	  naquela estatística. É por isso que o Fog escreve 0.55 para Magic em vez de
 	  esperar que 0.7 e 0.55 se multipliquem: o número da classe é o número final.
+	  A substituição é **por estatística**: o Ice da chuva escreve só `Cost`, e a
+	  cadência dele continua saindo do `All`.
 	- `Immune` tira a unidade do clima inteiro — nem debuff, nem buff, nem
-	  congelamento, nem raio.
+	  congelamento, nem raio, nem desligamento.
+	- `Disable` **desliga** a unidade: ela para de atacar enquanto o clima durar. É
+	  um sim-ou-não por classe, e não um multiplicador, porque não existe "atacar
+	  90% menos" — ou a unidade está no combate ou não está.
 	- `Mobs` mexe nos inimigos: `Speed` entra na hora (inclusive nos que já estão
 	  andando) e `Health` só vale para quem nascer com o clima ligado.
 
-	As estatísticas de unidade são `Damage`, `Range` e `AttackSpeed`. `AttackSpeed`
-	acima de 1 é ataque mais rápido — quem divide o cooldown por ela é o
-	`UnitUpgradeConfig:GetCooldown`.
+	As estatísticas de unidade são `Damage`, `Range`, `AttackSpeed` e `Cost`.
+
+	`AttackSpeed` acima de 1 é ataque mais rápido — quem divide o cooldown por ela é
+	o `UnitUpgradeConfig:GetCooldown`.
+
+	`Cost` é o preço de **colocar** a unidade, e não o dos upgrades: quem o aplica é
+	o `UnitUpgradeConfig:GetPlaceCost`, que o servidor cobra e o card mostra. O que a
+	unidade vale na venda não muda com ele — ver o comentário do `GetPlaceCost`.
 ]]
 WeatherConfig.Effects = {
 	--[[
@@ -452,6 +495,28 @@ WeatherConfig.Effects = {
 	},
 
 	--[[
+		Chuva: apaga o fogo e encharca o resto.
+
+		Unidade `Fire` **desliga** — não é debuff, ela sai do combate enquanto
+		chover. As outras batem 35% mais devagar (0.65), e `Magic` sofre 1.5x o mesmo
+		corte (52.5%), então o multiplicador dela é 0.475 — a mesma regra do Fog, e o
+		motivo de o número da classe ser escrito pronto em vez de composto.
+
+		`Ice` é a única que ganha alguma coisa: colocar custa 25% menos. É um convite
+		a trocar o tabuleiro enquanto chove, e não um buff de combate — a cadência
+		dela cai igual à de todo mundo, porque `Cost` é a única estatística que a
+		linha da classe escreve.
+	]]
+	Rain = {
+		Disable = { Fire = true },
+		Units = {
+			All = { AttackSpeed = 0.65 },
+			Magic = { AttackSpeed = 0.475 },
+			Ice = { Cost = 0.75 },
+		},
+	},
+
+	--[[
 		Tempestade de areia: menos dano e menos alcance para quem depende de ver.
 		Magic não depende, e passa ileso.
 	]]
@@ -526,8 +591,36 @@ function WeatherConfig.IsImmune(weatherName : string?, unitName : string?) : boo
 end
 
 --[=[
-	Multiplicador do clima para uma estatística de unidade (`Damage`, `Range` ou
-	`AttackSpeed`). Sem clima, clima desconhecido ou unidade imune, devolve 1.
+	A unidade está **desligada** por este clima?
+
+	Desligada é sim-ou-não: ela para de atacar enquanto o clima durar, e nenhum
+	multiplicador tem como dizer isso. Quem faz valer é o `UnitService`, que pula a
+	unidade no laço de ataque; o resto (alcance, dano, cadência) continua sendo
+	calculado normalmente e simplesmente não é usado.
+
+	Imunidade vence: `Immune` tira a unidade do clima inteiro, e "inteiro" inclui
+	não ser desligada.
+]=]
+function WeatherConfig.IsDisabled(weatherName : string?, unitName : string?) : boolean
+	local effects = WeatherConfig.GetEffects(weatherName)
+	local disable = effects and effects.Disable
+	if not disable then return false end
+
+	if WeatherConfig.IsImmune(weatherName, unitName) then return false end
+
+	for _, class in WeatherConfig.GetClasses(unitName) do
+		if disable[class] then
+			return true
+		end
+	end
+
+	return false
+end
+
+--[=[
+	Multiplicador do clima para uma estatística de unidade (`Damage`, `Range`,
+	`AttackSpeed` ou `Cost`). Sem clima, clima desconhecido ou unidade imune,
+	devolve 1.
 
 	A regra de precedência está no comentário de `Effects`: o valor da classe
 	substitui o de `All`, e duas classes que mexam na mesma estatística se
@@ -586,6 +679,19 @@ function WeatherConfig.GetUnitFeedback(weatherName : string?, unitName : string?
 	if not weatherName then return nil end
 	if not WeatherConfig.GetEffects(weatherName) then return nil end
 	if WeatherConfig.IsImmune(weatherName, unitName) then return nil end
+
+	--[[
+		Unidade desligada tem resposta própria, e curta: o que ela precisa comunicar
+		é "esta não está atacando", não em quanto cada estatística mexeu. Os números
+		dela continuam existindo — só não são usados por ninguém enquanto o clima
+		durar, e mostrá-los sugeriria uma unidade meio funcionando.
+	]]
+	if WeatherConfig.IsDisabled(weatherName, unitName) then
+		return {
+			Icons = { WeatherConfig.Feedback.Disabled },
+			Kind = "Debuff",
+		}
+	end
 
 	local icons = {}
 	local hasDebuff = false

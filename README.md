@@ -280,18 +280,22 @@ então o que aparece na tela é exatamente o que apareceria no dia — ver
 ### Weather
 
 Um clima é um Model em `ReplicatedStorage.Shared.Assets.Weathers`, com uma **tag**
-dizendo como ele encaixa no mapa:
+dizendo como cada Part dele encaixa no mapa:
 
 ```
 Assets.Weathers
 ├── Snow      (Model, tag "AreaWeather")
 │   ├── Part      (os ParticleEmitters)
 │   └── Lighting  (Folder — preset, mesmo formato de Assets.Lighting)
-└── Thunder   (Model, tag "SkyWeather")
+├── Thunder   (Model, tag "SkyWeather")
+└── Rain      (Model, tags "AreaWeather" + "SkyWeather")
+    ├── Part      (tag "SkyWeather"  — a camada de nuvem)
+    ├── Part      (tag "AreaWeather" — a chuva na área jogável)
+    └── Lighting  (Folder)
 ```
 
 `WeatherService` (`common/server/Services`) clona o Model para `workspace.Weather`,
-encaixa a `Part` na caixa do mapa carregado e entrega a pasta `Lighting` ao
+encaixa **cada Part** na caixa do mapa carregado e entrega a pasta `Lighting` ao
 `LightingService` — então a troca de clima entra na **mesma transição interpolada**
 de qualquer outra troca de iluminação, de graça.
 
@@ -307,6 +311,19 @@ WeatherService:Clear()              -- tira, e devolve a iluminação de antes
 |---|---|
 | `AreaWeather` | vira a caixa inteira — `Size` e `Position` |
 | `SkyWeather` | X e Z do tamanho da caixa; centro em X/Z, e Y no topo dela + `SkyHeightOffset`. A altura da Part é a autorada, porque é a espessura da camada |
+
+**Um clima pode ser dos dois tipos.** A chuva tem uma camada de nuvem no céu e a
+chuva caindo dentro da área jogável, e as duas medem caixas diferentes do mapa (o
+céu mede o mapa inteiro, a área só `Terrain`+`Path`). Quando isso acontece, o Model
+leva as duas tags e **cada Part diz a sua** — as duas do `Rain` se chamam `Part`, e
+quem as separa é a tag, não o nome. As caixas são medidas no máximo uma vez por
+tipo, então um clima de um tipo só continua custando uma varredura.
+
+Clima de um tipo só não precisa marcar nada nas Parts: a tag do Model vale para
+todas elas, que é como os climas antigos continuam funcionando sem serem
+reautorados. Já num clima de dois tipos, Part sem tag é recusada com aviso (não há
+como adivinhar em qual das duas caixas ela entra) e o resto do clima entra normal —
+meio clima na tela é mais fácil de diagnosticar do que nenhum.
 
 O offset do céu sai de `WeatherConfig.SkyHeightOffset` (20), e um Model pode trazer
 o atributo `HeightOffset` para mandar no seu próprio valor. Vale saber na hora de
@@ -382,12 +399,12 @@ que o anterior saiu.
 
 | Mapa | Climas |
 | --- | --- |
-| `Farm` | Fog, Wind, Thunder |
+| `Farm` | Fog, Wind, Thunder, Rain |
 | `Desert` | Sandstorm, Drought |
 | `Volcano` | Drought, Fog |
 | `Cave` | Fog |
-| `SnowyCastle` | Snow, Wind, Fog |
-| `Mountain` | Snow, Wind, Fog, Thunder, Drought |
+| `SnowyCastle` | Snow, Wind, Fog, Rain |
+| `Mountain` | Snow, Wind, Fog, Thunder, Drought, Rain |
 | `Snowy` | Snow, Wind, Fog |
 
 **Chance por dificuldade** (`WeatherChance`, em `Config.Difficulty`): 10% no Fácil,
@@ -432,11 +449,33 @@ nível 0 e numa de nível 5.
 | **Snow** | cadência de todas × 0.75 (Ice × 1.25) e uma unidade congelada por 10s a cada 30s. Magic é imune |
 | **Thunder** | o raio atordoa; Electric ganha 10% de dano passivo e carga ao ser atingido. Magic é imune |
 | **Sandstorm** | dano e alcance de todas × 0.7. Magic é imune |
+| **Rain** | **desliga** todas as unidades Fire; cadência de todas × 0.65 (Magic × 0.475). Colocar uma unidade Ice custa 25% menos |
 
 Duas regras de precedência valem a pena guardar. **`Units.<Classe>` substitui
 `Units.All`** naquela estatística — por isso o Fog escreve 0.55 para Magic em vez de
-esperar que 0.7 e 0.55 se multipliquem. E **`Immune` tira a unidade do clima
-inteiro**: nem debuff, nem buff da própria classe, nem congelamento, nem raio.
+esperar que 0.7 e 0.55 se multipliquem. A substituição é **por estatística**: o Ice
+da chuva escreve só `Cost`, e a cadência dele continua saindo do `All`. E **`Immune`
+tira a unidade do clima inteiro**: nem debuff, nem buff da própria classe, nem
+congelamento, nem raio, nem desligamento.
+
+**`Disable` não é multiplicador.** A chuva desliga o Fire: a unidade para de atacar
+enquanto o clima durar, e quem faz valer é o `UnitService`, que a pula no laço de
+ataque. Não existe "atacar 90% menos" — ou a unidade está no combate ou não está —,
+e por isso é um sim-ou-não por classe. Não é atordoamento: não tem prazo, não acende
+o realce amarelo e não pode ser encurtado; ela volta quando o clima sair.
+
+**`Cost` é o preço de colocar**, e entra pelo `UnitUpgradeConfig:GetPlaceCost` — o
+mesmo que o servidor cobra em `PlaceUnit` e que a carta da hotbar mostra, para não
+haver um preço na tela e outro na conta. Trocar de clima reescreve o preço de todas
+as cartas (`Card.refreshWeather`), inclusive quem estava em vermelho por falta de
+caixa.
+
+> **A venda não segue o desconto.** O servidor guarda no `entry.invested` o preço de
+> **tabela**, mesmo tendo cobrado menos, porque é do `GetInvested` que os dois lados
+> tiram o valor de venda e o cliente não sabe quanto cada unidade custou de fato (o
+> `invested` não é replicado). Guardar o preço descontado faria o card prometer uma
+> devolução e a venda dar outra. Na prática o desconto continua sendo só vantagem:
+> comprar por 75 e vender por 50 nunca é lucro.
 
 Os multiplicadores entram no `UnitUpgradeConfig`, e não em cada chamador: todos os
 getters aceitam um `weather` opcional no fim.
@@ -536,6 +575,20 @@ que ele leva no combate saem da mesma linha.
 `AttackSpeed` aparece como **cooldown** porque é assim que o card mostra o número:
 cadência maior é recarga menor, então `AttackSpeed > 1` acende o ícone de *buff*.
 
+O asset tem os seis, e os labels vêm todos `Visible = true` do Studio: quem desenha
+liga o do que a unidade está sentindo e **apaga o resto**. `Cost` fica de fora da
+billboard de propósito — ele não é um estado da unidade em campo, é o preço de
+colocar uma nova, e quem o mostra é o próprio número da carta na hotbar, que já sai
+com o desconto.
+
+**Unidade desligada** (o Fire na chuva) tem resposta própria e curta: um ícone só, o
+`DebuffCooldown`, mais o Highlight vermelho. O que ela precisa comunicar é "esta não
+está atacando", e não em quanto cada estatística mexeu — os números dela continuam
+existindo, só não são usados por ninguém enquanto o clima durar, e mostrá-los
+sugeriria uma unidade meio funcionando. O ícone é o de cooldown porque parar de
+atacar é o extremo do que ele já significa; um desenho próprio entra numa linha do
+config (`Feedback.Disabled`) no dia em que a arte existir.
+
 Unidade imune ao clima (Magic, nos climas de hoje) não recebe nada — nem billboard,
 nem Highlight —, que é o mesmo "fora do clima" que o `Immune` já significa no combate.
 Havendo buff e debuff na mesma unidade, o Highlight é **vermelho**: nenhum clima de
@@ -547,8 +600,9 @@ existe bookkeeping para desencontrar do que está no Workspace. O Highlight tem 
 próprio (`WeatherHighlight`) para não brigar com os outros que a unidade recebe: o
 verde da seleção, o amarelo do atordoamento e o ciano da carga do raio.
 
-Ícone que ainda não exista no asset simplesmente não aparece — a unidade continua com
-o Highlight e com os outros ícones, e o Studio avisa uma vez no output.
+Nome de ícone pedido pelo config que não exista no asset simplesmente não aparece — a
+unidade continua com o Highlight e com os outros ícones, e o Studio avisa uma vez no
+output.
 
 #### Raios (Thunder)
 
