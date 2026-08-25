@@ -383,7 +383,7 @@ que o anterior saiu.
 | Mapa | Climas |
 | --- | --- |
 | `Farm` | Fog, Wind, Thunder |
-| `Dessert` | Sandstorm, Drought |
+| `Desert` | Sandstorm, Drought |
 | `Volcano` | Drought, Fog |
 | `Cave` | Fog |
 | `SnowyCastle` | Snow, Wind, Fog |

@@ -124,6 +124,27 @@ function UnitUpgradeConfig:GetCooldown(unitName, level, weather)
 end
 
 --[=[
+	O bônus de caixa da aura de uma farm no nível dado, como fração somável: 0.15 é
+	"+15%". Unidade sem aura devolve 0.
+
+	Não aceita `weather` de propósito, ao contrário dos getters acima. O bônus é
+	economia, e economia não anda com o clima — é a mesma regra do `Farm.Income`,
+	que o `payFarmUnits` paga sem clima justamente para a seca não virar bônus de
+	caixa. O **raio** da aura continua sendo o `GetRange`, esse sim com clima,
+	porque é o círculo que o jogador vê desenhado no chão.
+]=]
+function UnitUpgradeConfig:GetAuraBonus(unitName, level)
+	local stats = UnitStats[unitName]
+	local aura = stats and stats.Farm and stats.Farm.Aura
+
+	if not aura then
+		return 0
+	end
+
+	return (aura.Bonus or 0) + (aura.BonusPerUpgrade or 0) * (level or 0)
+end
+
+--[=[
 	Dano por golpe no nivel dado, com o mesmo arredondamento que o servidor usa
 	em `UnitService:executeAttack` — o card tem que mostrar o numero que vai de
 	fato entrar no mob.

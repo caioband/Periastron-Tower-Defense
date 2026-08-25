@@ -130,6 +130,9 @@ local MobService = {
 	WeatherSpeedScale = 1,
 	SessionCash = {},
 	SessionDamage = {},
+
+	-- A sobra fracionaria do bonus da aura, por jogador. Ver `applyCashBonus`.
+	BonusRemainder = {},
 }
 
 --[=[
@@ -341,6 +344,7 @@ function MobService:ResetRound()
 	table.clear(self.ActiveMobs)
 	table.clear(self.PositionCache)
 	table.clear(self.SessionDamage)
+	table.clear(self.BonusRemainder)
 	self.ActiveMobCount = 0
 	self.AllMobsSpawned = false
 
@@ -590,7 +594,33 @@ end
 	o dano voltava a ser a economia inteira. Dividindo pela mesma escala, um ponto
 	de dano vale o mesmo em qualquer wave e em qualquer preset.
 ]=]
-function MobService:awardDamageReward(killerUserId, damage)
+--[=[
+	Soma o bonus da aura do Entrepreneur a um premio, sem perder a parte quebrada.
+
+	Os premios sao inteiros e quase todos pequenos: 15% de um kill de 3 da 0,45, e
+	15% do piso de 1 do premio por dano da 0,15 -- arredondados na hora, os dois
+	sumiriam, e a aura pareceria nao fazer nada justamente onde ela mais aparece.
+
+	Entao a sobra fica guardada por jogador e vira caixa assim que passa de 1. Um
+	bonus pequeno paga devagar em vez de nao pagar nunca, e ao longo de uma wave o
+	total sai igual a porcentagem cheia.
+
+	`bonus` e fracao: 0.15 e "+15%". Sem bonus, o premio volta intocado.
+]=]
+function MobService:applyCashBonus(player, amount : number, bonus : number?) : number
+	if not bonus or bonus <= 0 or amount <= 0 then
+		return amount
+	end
+
+	local carried = (self.BonusRemainder[player.UserId] or 0) + (amount * bonus)
+	local whole = math.floor(carried)
+
+	self.BonusRemainder[player.UserId] = carried - whole
+
+	return amount + whole
+end
+
+function MobService:awardDamageReward(killerUserId, damage, bonus : number?)
 	if not killerUserId then return end
 	local player = Players:GetPlayerByUserId(killerUserId)
 	if not player then return end
@@ -599,22 +629,27 @@ function MobService:awardDamageReward(killerUserId, damage)
 	if not scale or scale <= 0 then scale = 1 end
 
 	local reward = math.max(1, math.floor((damage * ServerConfig.Data.CASH_PER_DAMAGE) / scale))
-	self:addCash(player, reward)
+	self:addCash(player, self:applyCashBonus(player, reward, bonus))
 end
 
-function MobService:awardKillReward(killerUserId, reward)
+function MobService:awardKillReward(killerUserId, reward, bonus : number?)
 	if not killerUserId then return end
 	local player = Players:GetPlayerByUserId(killerUserId)
 	if not player then return end
 	local amount = reward or math.random(ServerConfig.Data.CASH_PER_KILL_MIN, ServerConfig.Data.CASH_PER_KILL_MAX)
-	self:addCash(player, amount)
+	self:addCash(player, self:applyCashBonus(player, amount, bonus))
 end
 
 --[=[
 	Devolve o dano que de fato entrou, para quem chamou poder creditar a unidade
 	(o card de upgrade mostra o total por unidade em `DmgDone`).
 ]=]
-function MobService:DamageMob(mobId, damage, killerUserId)
+--[=[
+	`cashBonus` e a aura do Entrepreneur em cima da unidade que bateu -- uma fracao
+	que o `UnitService` congela no comeco do golpe, junto com o dano e o alcance.
+	Ela entra nos dois premios, o de dano e o de morte.
+]=]
+function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?)
 	local mob = self.ActiveMobs[mobId]
 	if not mob then return 0 end
 
@@ -625,12 +660,12 @@ function MobService:DamageMob(mobId, damage, killerUserId)
 	self:addDamageStat(killerUserId, effectiveDamage)
 
 	mob.Health -= (damage or 10)
-	self:awardDamageReward(killerUserId, effectiveDamage)
+	self:awardDamageReward(killerUserId, effectiveDamage, cashBonus)
 
 	self:processDamageGimmicks(mobId, mob)
 
 	if mob.Health <= 0 then
-		self:awardKillReward(killerUserId, mob.Reward)
+		self:awardKillReward(killerUserId, mob.Reward, cashBonus)
 		self:removeMob(mobId)
 	end
 
@@ -653,6 +688,17 @@ function MobService:construct()
 	Framework:Listen("AttackVisual", function() end)
 	Framework:Listen("MobPlayAttack", function() end)
 	Framework:Listen("UpdateBaseHealth", function() end)
+
+	--[=[
+		O valor de agora, para quem acabou de achar o billboard da base no mapa.
+
+		O `UpdateBaseHealth` so sai quando a vida muda, e o mapa chega ao cliente
+		muito antes do primeiro vazamento -- sem este pedido o numero ficaria no texto
+		que veio autorado na GUI ate um inimigo passar. Mesmo motivo do `RequestCash`.
+	]=]
+	Framework:Listen("RequestBaseHealth", function(player)
+		Framework:Fire("UpdateBaseHealth", player, self.BaseHealth, self.MaxBaseHealth)
+	end)
 	Framework:Listen("GameOver", function() end)
 	Framework:Listen("ReplicateUnit", function() end)
 	Framework:Listen("Bridge", function() end)
@@ -757,6 +803,7 @@ function MobService:start()
 
 	Players.PlayerRemoving:Connect(function(player)
 		self.SessionCash[player.UserId] = nil
+		self.BonusRemainder[player.UserId] = nil
 	end)
 
 	self:construct()

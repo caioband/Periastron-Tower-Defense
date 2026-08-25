@@ -32,7 +32,10 @@ module.MAPS = {
 		Image = "rbxassetid://82438762834917",
 	},
 
-	["Dessert"] = {
+	-- A pasta em `ServerStorage.Maps` se chama "Desert", com um S so, e a chave tem
+	-- de bater com ela -- era "Dessert" e por isso este mapa nunca era sorteado nem
+	-- carregado. O `DisplayName` continua sendo coisa a parte.
+	["Desert"] = {
 		DisplayName = "Dessert",
 		Order = 3,
 		Image = "rbxassetid://115008998327555",
@@ -65,6 +68,18 @@ module.MAPS = {
 		Image = "rbxassetid://91827512669644",
 	},
 }
+
+--[=[
+	A Part que cada pasta de mapa traz na raiz com o billboard da vida da base, e o
+	nome do TextLabel de dentro dela onde o numero e escrito.
+
+	Os dois nomes moram aqui porque os dois lados precisam do mesmo: o `MapService`
+	clona a Part para dentro de `workspace.Map` (sem isso o cliente nao a veria, ja
+	que os mapas nao replicam) e o `BaseHealthController` acha o label la para
+	escrever a vida a cada `UpdateBaseHealth`.
+]=]
+module.BASE_HEALTH_PART = "BaseHP"
+module.BASE_HEALTH_LABEL = "Value"
 
 --[=[
 	Returns the canonical map name for the passed string (case insensitive),

@@ -102,6 +102,31 @@ local UnitStats = {
 		Hits = 1,
 		Farm = {
 			Income = 60,
+
+			--[[
+				A aura: toda unidade aliada dentro do alcance do Entrepreneur leva
+				`Bonus` a mais de caixa em cima do que ela ganhar por dano e por morte.
+				Vale para qualquer dono -- a torre do vizinho tambem rende mais perto
+				da minha farm, e quem recebe e sempre o dono da torre.
+
+				O raio nao esta escrito aqui de proposito: ele e o `Range` acima, lido
+				pelo `UnitUpgradeConfig:GetRange`, que e exatamente o circulo que o
+				jogador ve ao selecionar a farm. Mexer no `Range` move a aura e o
+				circulo juntos, e nao ha como um mentir sobre o outro.
+
+				`Bonus` e uma fracao somavel: 0.15 e "+15%", e duas farms cobrindo a
+				mesma torre valem 30%. `BonusPerUpgrade` e quanto cada nivel soma --
+				somado, e nao multiplicado como a renda, porque porcentagem que cresce
+				em passo redondo (15, 20, 25...) e o que o card consegue mostrar sem
+				casa decimal.
+
+				Quem faz a conta e o `UnitUpgradeConfig:GetAuraBonus`, para o servidor
+				e o card nunca discordarem.
+			]]
+			Aura = {
+				Bonus = 0.15,
+				BonusPerUpgrade = 0.05,
+			},
 		},
 	},
 

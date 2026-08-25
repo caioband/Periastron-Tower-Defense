@@ -47,6 +47,200 @@ parts do caminho em jogo. No servidor, não: lá as 585 parts dos seis mapas
 guardados também aparecem, e quem consulta a tag precisa filtrar por
 `workspace.Map` (é o que `UnitService:getGridParts` faz).
 
+## A vida da base no mapa (`BaseHP`)
+
+Cada pasta de mapa em `ServerStorage.Maps` traz na raiz — irmã do `Content`, como a
+`BoundingBox` — uma Part **`BaseHP`**: invisível, ancorada e inerte, com um
+`BillboardGui` dentro cujo `TextLabel` **`Value`** é onde o número da vida da base
+aparece. Os dois nomes estão no `SharedConfig.MapConfig`
+(`BASE_HEALTH_PART` / `BASE_HEALTH_LABEL`), porque servidor e cliente precisam do
+mesmo.
+
+O `MapService:LoadMap` clona a Part para dentro de `workspace.Map` junto com o resto
+do mapa. Sem esse clone o cliente nem saberia que ela existe — mapa mora em
+`ServerStorage` e não replica. O clone é forçado a `Anchored` e a
+`CanCollide`/`CanQuery`/`CanTouch` desligados: Part solta cairia do mundo levando o
+billboard junto, e `CanQuery` ligado a poria no raycast que valida o posicionamento
+de unidade, que varre justamente o que está em cima do mapa. A aparência fica a que
+veio autorada.
+
+Quem escreve o número é o **`BaseHealthController`**, no cliente, a cada
+`UpdateBaseHealth` — o mesmo evento que o `MobController` usa para tremer a tela
+quando um inimigo escapa. O controller acha o label procurando um `TextLabel` com o
+nome do config entre os descendentes da Part, e caindo no primeiro `TextLabel` que
+houver: reorganizar o `Frame` dentro do billboard no Studio não apaga o número.
+Como a Part replica antes dos filhos dela, a procura é repetida por alguns quadros
+até o billboard chegar.
+
+O `UpdateBaseHealth` só é disparado quando a vida **muda**, e o mapa chega ao cliente
+muito antes do primeiro vazamento. Por isso, assim que acha o label, o controller
+pede o valor de agora com **`RequestBaseHealth`** (mesmo padrão do `RequestCash`) —
+sem esse pedido o billboard ficaria no texto que veio autorado na GUI até um inimigo
+passar.
+
+A vida em si continua sendo só do servidor: quem tira é o `MobService:mobEscaped`, no
+valor de `MobDamage` da dificuldade, e o teto é o `BaseHealth` dela
+(`common/server/Config/Difficulty.luau`).
+
+## Prêmio por wave concluída
+
+Toda wave que termina paga caixa a **todos os jogadores da partida**, e é o único
+dinheiro do jogo que não depende do que o jogador fez — não é por dano, nem por
+morte, nem de farm. É por a wave ter acabado, então sai igual para todo mundo,
+inclusive para quem entrou no meio da partida.
+
+O prêmio é **acumulativo**: cada faixa do `Config.Wave.CASH_TIERS` diz quanto uma
+wave soma sobre a anterior, e o valor da wave N é a soma dos passos de todas as waves
+até ela.
+
+```lua
+Wave.CASH_TIERS = {
+    { UpTo = 10, Step = 25 },
+    { Step = 50 },
+}
+```
+
+| Wave | 1 | 2 | 3 | … | 10 | 11 | 12 | … | 25 | 30 | 35 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Prêmio | 25 | 50 | 75 | | 250 | 300 | 350 | | 1.000 | 1.250 | 1.500 |
+
+A última faixa não tem `UpTo` e vale dali em diante — isso importa porque `MaxWaves`
+varia por dificuldade e o Nightmare vai até a wave 35.
+
+Quem paga é `WaveService:payWaveCash`, chamado no `runRound` **depois** da checagem de
+game over (wave perdida não paga) e **antes** da checagem de vitória (a última wave é
+uma wave concluída como as outras).
+
+O valor é fixo: não passa pelo `RewardMultiplier` do preset, ao contrário da caixa por
+morte. Uma wave paga o mesmo no Fácil e no Nightmare — o que muda entre presets é só
+quantas waves existem.
+
+### O que isso faz com a economia
+
+O `Config.Wave` documenta que as recompensas por morte foram calibradas para o Difícil
+render **cerca de 9.000 de caixa** ao longo das 25 waves. O prêmio por wave sozinho
+soma **11.125** no mesmo trajeto — ou seja, ele mais que dobra a economia da partida,
+e é agora a maior fonte de renda do jogo.
+
+| Preset | Waves | Prêmio somado |
+|---|---|---|
+| Fácil | 15 | 3.375 |
+| Normal | 20 | 6.625 |
+| Difícil | 25 | 11.125 |
+| Insano | 30 | 16.875 |
+| Nightmare | 35 | 23.875 |
+
+Mexer nisso é mexer em `CASH_TIERS`, num lugar só.
+
+## Entrepreneur: a farm com aura
+
+O Entrepreneur continua sendo a farm — não ataca, e paga `Farm.Income` **ao dono** no
+fim de cada wave. O que ele ganhou foi uma **aura**: toda unidade aliada dentro do
+alcance dele leva uma % a mais de caixa em cima do que ela ganhar **por dano e por
+morte**. Vale para qualquer dono (a torre do vizinho também rende mais perto da minha
+farm), e quem recebe o bônus é o dono *daquela torre*, não o dono da farm.
+
+### O raio é o `Range`, e não um número à parte
+
+O alcance da aura é o `Range` do Entrepreneur lido pelo `UnitUpgradeConfig:GetRange`
+— exatamente o mesmo círculo que o jogador vê ao selecionar a farm, clima incluído.
+Não existe um `Radius` separado no config de propósito: com dois números, um
+inevitavelmente mentiria sobre o outro. Para abrir ou fechar a aura, muda-se o
+`Range` em `UnitStats` e o círculo acompanha.
+
+Só a porcentagem mora no config, em `UnitStats.Entrepreneur.Farm.Aura`:
+
+```lua
+Aura = { Bonus = 0.15 },   -- +15%
+```
+
+`Bonus` é fração somável, e **auras que se sobrepõem somam**: duas farms cobrindo a
+mesma torre valem 30%. `BonusPerUpgrade` é quanto cada nível soma — somado, e não
+multiplicado como a renda, porque porcentagem em passo redondo (15, 20, 25…) é o que
+o card mostra sem casa decimal.
+
+A conta mora em `UnitUpgradeConfig:GetAuraBonus(unitName, level)`, e é ela que o
+servidor e o card leem — os dois nunca discordam sobre quanto a aura vale.
+
+Ela é o único getter do `UnitUpgradeConfig` que **não** aceita `weather`. O bônus é
+economia, e economia não anda com o clima: é a mesma regra do `Farm.Income`, que o
+`payFarmUnits` paga sem clima justamente para a seca não virar bônus de caixa. O
+*raio* continua vindo do `GetRange`, esse sim com clima, porque é o círculo desenhado
+no chão.
+
+### No card de upgrade
+
+Farm não ataca, então o `AttackSpeed` dela é um número que não quer dizer nada — a
+linha é reaproveitada para o bônus, exatamente como o `DamagePerSecond` já era
+reaproveitado para a renda. Nenhuma mudança de GUI: o Entrepreneur mostra
+
+```
+$60 PER WAVE          (DamagePerSecond)
+15% PER UNIT BONUS    (AttackSpeed)
+6 RANGE               (Range — o raio da aura)
+```
+
+e a **prévia do próximo nível** vem de graça, porque ela usa os mesmos formatadores
+com `level + 1` (`20% PER UNIT BONUS` pairando sobre o custo de upgrade, ou sempre
+visível no celular). Por nível: 15 / 20 / 25 / 30 / 35 / 40%.
+
+Os dois textos dizem mais do que "INCOME" e "BONUS" diziam, e de propósito:
+**"PER WAVE"** porque a frequência é o que decide se a farm se paga (a renda cai no
+fim de cada wave, não do round), e **"PER UNIT"** porque o bônus não é um valor que a
+farm paga — é uma % em cima do que *cada* unidade dentro do raio já ganha por dano e
+por morte. Sem isso escrito, "15%" se lê como algo que sai da própria farm.
+
+Farm sem `Aura` no config volta a mostrar o cooldown — `formatCooldownOrBonus` decide
+pela presença do bônus, não pelo nome da unidade.
+
+### O caminho do dinheiro
+
+`UnitService:getAuraBonus` soma as farms que alcançam a unidade e devolve a fração.
+Ela é **congelada no começo do golpe**, junto com o dano e o alcance (`executeAttack`)
+— um MultiShot leva quase um segundo do primeiro ao último hit, e vender a farm no
+meio não pode fazer os quatro hits do mesmo ciclo renderem diferente. Nas minas do
+Tripminer, a distância medida é até a **unidade**, não até a mina: quem precisa estar
+perto da farm é a torre.
+
+A fração desce por `MobService:DamageMob(..., cashBonus)` e entra nos dois prêmios,
+o de dano e o de morte.
+
+A lista de farms com aura (`AuraSources`) é remontada uma vez por quadro no
+`stepCombat`, em vez de mantida na colocação e na venda: o `stepCombat` já varre a
+lista inteira todo quadro, então o segundo laço não se mede, e em troca não existe
+estado para invalidar quando uma unidade entra, sai, é vendida ou o round recomeça.
+
+### A sobra fracionária é guardada
+
+Os prêmios são inteiros e quase todos pequenos. 15% de um kill de Traveler (3) dá
+0,45; 15% do piso de $1 do prêmio por dano dá 0,15. Arredondados na hora, os dois
+sumiriam — e a aura pareceria não fazer nada justamente nas waves altas, onde o piso
+de $1 domina.
+
+Por isso `MobService:applyCashBonus` guarda a sobra por jogador (`BonusRemainder`) e
+paga assim que ela passa de 1. Um bônus pequeno paga devagar em vez de não pagar
+nunca, e ao longo de uma wave o total bate com a porcentagem cheia. A sobra é zerada
+no recomeço de round e quando o jogador sai.
+
+### O efeito
+
+Cada vez que uma unidade rende a mais, o servidor manda `AuraBonusVFX` com o `unitId`
+e o `VFXController:PlayAuraBonus` clona `Assets.VFX.MoneyEntrepreneur` **dentro da
+`HumanoidRootPart`** da unidade. O asset é um `Attachment`, então morar numa BasePart
+é o que faz o efeito acompanhar o modelo sem weld nenhum — ao contrário do
+`VFXController:Play`, que solta o clone no Workspace.
+
+O emit e a faxina são do módulo `ReplicatedStorage.vfx`: os `EmitCount` e `EmitDelay`
+vêm autorados no `ParticleEmitter` do asset e é ele quem sabe lê-los, e o
+`destroyAfter` sem prazo tira a vida do próprio asset (hoje 0,6 s). Mexer no emitter
+no Studio não deixa lixo para trás.
+
+**O efeito é estrangulado por unidade** (`AURA_VFX_COOLDOWN`, 0,35 s). Um MultiShot
+são quatro golpes e um AOE é uma chamada de dano por inimigo atingido — sem o
+estrangulamento, um Rocket dentro da aura mandaria dez efeitos no mesmo quadro para a
+mesma torre. O bônus em si continua valendo em **todos** os golpes; só o dinheirinho
+na tela é que espaça.
+
 ## Onde pode colocar unidade (tag `Grid`)
 
 As parts com a tag `Grid` são o caminho — trilhos finos (0,25 stud) deitados

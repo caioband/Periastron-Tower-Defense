@@ -23,6 +23,15 @@ local ThunderConfig = SharedConfig.WeatherConfig.Thunder
 local DEFAULT_LIFETIME = 2
 local DEFAULT_EMIT_COUNT = 25
 
+-- O dinheirinho da aura do Entrepreneur: o asset em `Assets.VFX` e a Part da
+-- unidade onde ele e pendurado.
+local MONEY_VFX_NAME = "MoneyEntrepreneur"
+local UNIT_ROOT_NAME = "HumanoidRootPart"
+
+-- Prazo de faxina de quando o proprio modulo nao souber dizer quanto o efeito
+-- dura (asset sem particula, ou com `EmitDuration` infinito).
+local MONEY_VFX_FALLBACK = 3
+
 local VFXController = {
 	Controllers = {
 		UnitPlacementController = {},
@@ -145,6 +154,40 @@ function VFXController:Trigger(unitName, eventName, context)
 
 		self:Play(entry.Effect, target, entry)
 	end
+end
+
+--[=[
+	O dinheiro saindo da unidade que acabou de render a mais dentro da aura de um
+	Entrepreneur. Quem manda e o `UnitService`, no servidor -- a caixa e dele, e
+	assim todo mundo ve o efeito na mesma unidade.
+
+	O asset e um Attachment, entao ele mora dentro de uma BasePart: a
+	`HumanoidRootPart` da unidade. E isso que faz o efeito acompanhar o modelo sem
+	weld nenhum, ao contrario do `Play`, que solta o clone no Workspace.
+
+	O emit e do modulo `vfx`: os `EmitCount`/`EmitDelay` vem autorados no
+	ParticleEmitter do asset e e ele quem sabe le-los. A faxina tambem -- sem prazo
+	explicito, o modulo tira do maior tempo de vida das particulas do proprio
+	asset, entao mexer no emitter no Studio nao deixa lixo para tras.
+]=]
+function VFXController:PlayAuraBonus(unitId : string)
+	local template = self.Library[MONEY_VFX_NAME]
+	if not template then
+		warn(`[VFXController]: nao achei o VFX "{MONEY_VFX_NAME}" em Assets.VFX.`)
+		return
+	end
+
+	local model = self:resolveUnitModel(unitId)
+	if not model or not model.Parent then return end
+
+	local root = model:FindFirstChild(UNIT_ROOT_NAME) or model.PrimaryPart
+	if not root or not root:IsA("BasePart") then return end
+
+	local clone = template:Clone()
+	clone.Parent = root
+
+	VFX.emit(clone)
+	VFX.destroyAfter(clone, VFX.maxLifetime(clone) or MONEY_VFX_FALLBACK)
 end
 
 function VFXController:resolveUnitModel(unitId)
@@ -326,6 +369,10 @@ function VFXController:construct()
 
 	Framework:Listen("LightningChain", function(links)
 		self:PlayLightningChain(links)
+	end)
+
+	Framework:Listen("AuraBonusVFX", function(unitId : string)
+		self:PlayAuraBonus(unitId)
 	end)
 end
 

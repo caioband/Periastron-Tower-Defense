@@ -233,7 +233,7 @@ WeatherConfig.Thunder = {
 ]]
 WeatherConfig.MapPools = {
 	Farm = { "Fog", "Wind", "Thunder" },
-	Dessert = { "Sandstorm", "Drought" },
+	Desert = { "Sandstorm", "Drought" },
 	Volcano = { "Drought", "Fog" },
 	Cave = { "Fog" },
 	SnowyCastle = { "Snow", "Wind", "Fog" },

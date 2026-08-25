@@ -341,8 +341,12 @@ local function getWeather()
 end
 
 --[=[
-	Dano por golpe, ou a renda por wave quando a unidade e uma Farm -- que nao
-	ataca. Mesma conta para o nivel atual e para a previa do proximo.
+	Dano por golpe, ou a renda quando a unidade e uma Farm -- que nao ataca. Mesma
+	conta para o nivel atual e para a previa do proximo.
+
+	O texto diz "PER WAVE" e nao "INCOME" porque a frequencia e a parte que o
+	jogador precisa saber para decidir se a farm se paga: a renda cai no fim de
+	cada wave, e nao no fim do round.
 ]=]
 local function formatDamageOrIncome(unitName : string, level : number, weather) : string
 	local upgradeConfig = SharedConfig.UnitUpgradeConfig
@@ -351,10 +355,36 @@ local function formatDamageOrIncome(unitName : string, level : number, weather) 
 
 	if farm then
 		local income = math.floor((farm.Income or 0) * upgradeConfig:GetDamageMultiplier(unitName, level) + 0.5)
-		return "$" .. UIUtil.formatAbbreviated(income) .. " INCOME"
+		return "$" .. UIUtil.formatAbbreviated(income) .. " PER WAVE"
 	end
 
 	return formatStat(upgradeConfig:GetDamage(unitName, level, weather)) .. " DMG"
+end
+
+--[=[
+	Cooldown entre ataques, ou o bonus da aura quando a unidade e uma Farm.
+
+	Mesma ideia do label de cima: farm nao ataca, entao o cooldown dela e um numero
+	que nao quer dizer nada, e a linha e reaproveitada para o que de fato importa
+	naquela unidade. A previa do proximo nivel sai da mesma funcao, com `level + 1`.
+
+	"PER UNIT" esta no texto porque o bonus nao e um valor que a farm paga: e uma
+	porcentagem em cima do que CADA unidade dentro do raio ja ganha por dano e por
+	morte. Farm num canto vazio nao rende bonus nenhum, e sem isso escrito o
+	jogador leria "15%" como algo que sai da propria farm.
+
+	Farm sem aura (uma farm nova que so pague renda) continua caindo no cooldown --
+	nao ha bonus para mostrar.
+]=]
+local function formatCooldownOrBonus(unitName : string, level : number, weather) : string
+	local upgradeConfig = SharedConfig.UnitUpgradeConfig
+	local bonus = upgradeConfig:GetAuraBonus(unitName, level)
+
+	if bonus > 0 then
+		return formatNumber(bonus * 100, 1) .. "% PER UNIT BONUS"
+	end
+
+	return formatNumber(upgradeConfig:GetCooldown(unitName, level, weather), 2) .. " COOLDOWN"
 end
 
 --[=[
@@ -651,7 +681,7 @@ function module:refresh()
 	]]
 	CardUpgrade.DamagePerSecond.Text = formatDamageOrIncome(unitName, level, weather)
 
-	CardUpgrade.AttackSpeed.Text = formatNumber(upgradeConfig:GetCooldown(unitName, level, weather), 2) .. " COOLDOWN"
+	CardUpgrade.AttackSpeed.Text = formatCooldownOrBonus(unitName, level, weather)
 	CardUpgrade.Range.Text = formatStat(upgradeConfig:GetRange(unitName, level, weather)) .. " RANGE"
 
 	self:refreshPreview()
@@ -688,7 +718,7 @@ function module:refreshPreview()
 
 	local texts = {
 		DamagePerSecondUpgrade = formatDamageOrIncome(unitName, nextLevel, weather),
-		CooldownUpgrade = formatNumber(upgradeConfig:GetCooldown(unitName, nextLevel, weather), 2) .. " COOLDOWN",
+		CooldownUpgrade = formatCooldownOrBonus(unitName, nextLevel, weather),
 		RangeUpgrade = formatStat(upgradeConfig:GetRange(unitName, nextLevel, weather)) .. " RANGE",
 	}
 

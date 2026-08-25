@@ -185,6 +185,30 @@ function ExampleService:LoadMap(Name : string)
 			warn(string.format("[MapService]: o mapa '%s' nao tem a Part '%s'; o clima vai cair para a caixa calculada.",
 				Name, WeatherConfig.BoundsPartName))
 		end
+
+		--[=[
+			A BaseHP e irma do Content como a BoundingBox, e entra junto do mapa pelo
+			mesmo motivo: o billboard dela e o unico lugar onde o jogador ve a vida da
+			base, e do mapa o cliente so enxerga o que esta em `workspace.Map`.
+
+			O clone e forcado a ancorado e inerte -- Part solta cairia do mundo levando
+			o billboard junto, e `CanQuery` ligado a poria no raycast que valida o
+			posicionamento de unidade, que varre justamente o que esta em cima do mapa.
+			A aparencia fica a que veio autorada. Quem escreve o numero e o
+			`BaseHealthController`, no cliente.
+		]=]
+		local BaseHP = MapInstance:FindFirstChild(MapConfig.BASE_HEALTH_PART)
+		if BaseHP and BaseHP:IsA("BasePart") then
+			local BaseHPClone = BaseHP:Clone()
+			BaseHPClone.Anchored = true
+			BaseHPClone.CanCollide = false
+			BaseHPClone.CanQuery = false
+			BaseHPClone.CanTouch = false
+			BaseHPClone.Parent = Clone
+		else
+			warn(string.format("[MapService]: o mapa '%s' nao tem a Part '%s'; a vida da base nao vai aparecer em lugar nenhum.",
+				Name, MapConfig.BASE_HEALTH_PART))
+		end
 	end
 
 	local Spawn = MapInstance:FindFirstChild("SpawnLocation")

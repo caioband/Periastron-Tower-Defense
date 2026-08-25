@@ -109,6 +109,51 @@ local TABLE_LENGTH = #WAVE_TABLE
 	Onde a wave cai na tabela. Devolve um numero fracionario entre 1 e 25: a parte
 	inteira e a linha, e a fracao e o quanto ela ja andou na direcao da proxima.
 ]=]
+--[[
+	O premio por wave concluida, pago a TODOS os jogadores da partida.
+
+	E renda de time: nao depende de quem bateu, de quem matou nem de quem colocou
+	unidade. Sai uma vez, quando a wave termina de verdade -- wave perdida (game
+	over) nao paga.
+
+	O premio e **acumulativo**: cada faixa diz quanto uma wave soma sobre a
+	anterior, e o valor da wave N e a soma dos passos de todas as waves ate ela.
+	Com as faixas de hoje: 25, 50, 75... ate 250 na wave 10, e daí de 50 em 50 --
+	300 na 11, 1.250 na 30.
+
+	`UpTo` e a ultima wave da faixa; a ultima entrada nao tem `UpTo` e vale dali em
+	diante, o que importa porque o `MaxWaves` varia por dificuldade e o Nightmare
+	vai ate a wave 35 (1.500 la).
+]]
+Wave.CASH_TIERS = {
+	{ UpTo = 10, Step = 25 },
+	{ Step = 50 },
+}
+
+--[=[
+	Quanto a wave `waveNumber` paga a cada jogador. Wave invalida devolve 0.
+]=]
+function Wave.GetWaveCash(waveNumber : number?) : number
+	if typeof(waveNumber) ~= "number" or waveNumber < 1 then
+		return 0
+	end
+
+	local total = 0
+	local from = 1
+
+	for _, tier in Wave.CASH_TIERS do
+		local last = math.min(tier.UpTo or waveNumber, waveNumber)
+		if last < from then break end
+
+		total += (last - from + 1) * (tier.Step or 0)
+		from = last + 1
+
+		if from > waveNumber then break end
+	end
+
+	return total
+end
+
 local function tablePosition(waveNumber : number, preset)
 	local total = preset.MaxWaves or TABLE_LENGTH
 	if total <= 1 then

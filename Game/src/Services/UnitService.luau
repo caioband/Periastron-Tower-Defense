@@ -26,6 +26,10 @@ local Me = require(Vendor.Me)
 local Framework = Me.new()
 
 local TARGET_SCANS_PER_FRAME = 8
+
+-- Um efeito de dinheiro por unidade a cada tanto. Ver `playAuraVFX`.
+local AURA_VFX_COOLDOWN = 0.35
+
 local MAX_PLACE_DISTANCE = 2048
 
 -- O total de dano por unidade so alimenta um label do card de upgrade, entao vai
@@ -59,7 +63,10 @@ local UnitService = {
 	SessionCards = {},
 	SessionCardMax = {},
 	DamageDirty = {},
-	LastDamageFlush = 0
+	LastDamageFlush = 0,
+
+	-- As farms com aura que estao no mapa. Refeita todo quadro no `stepCombat`.
+	AuraSources = {},
 }
 
 for _, model in Units:GetChildren() do
@@ -363,6 +370,7 @@ function UnitService:construct()
 	Framework:Listen("TripmineThrown", function() end)
 	Framework:Listen("TripmineTriggered", function() end)
 	Framework:Listen("FarmPayout", function() end)
+	Framework:Listen("AuraBonusVFX", function() end)
 
 	Framework:Listen("SellUnit", function(player, unitId)
 		local foundIndex = nil
@@ -585,6 +593,102 @@ function UnitService:construct()
 	end)
 end
 
+--[[ AURA DO ENTREPRENEUR ]]
+
+--[=[
+	As farms com aura que estao no mapa agora, remontadas uma vez por quadro.
+
+	Refeita em vez de mantida na colocacao e na venda porque o `stepCombat` ja varre
+	a lista inteira todo quadro: um segundo laco pelo mesmo array nao se mede, e em
+	troca nao existe estado para invalidar quando uma unidade entra, sai, e vendida
+	ou o round recomeca.
+]=]
+function UnitService:collectAuraSources()
+	table.clear(self.AuraSources)
+
+	for _, entry in ipairs(self.PlacedUnits) do
+		local stats = SharedConfig.UnitStats[entry.unitName]
+		local farm = stats and stats.Farm
+
+		if farm and farm.Aura then
+			table.insert(self.AuraSources, entry)
+		end
+	end
+end
+
+--[=[
+	Quanto a mais em caixa uma unidade leva por estar na aura de uma farm.
+
+	Devolve uma fracao somavel -- 0.15 e "+15%" -- e auras que se sobrepoem somam:
+	duas farms cobrindo a mesma torre valem as duas. Zero quer dizer "fora de todas".
+
+	O dono nao entra na conta: a aura vale para qualquer unidade aliada, e quem
+	recebe o dinheiro continua sendo o dono da unidade que bateu.
+
+	O raio de cada farm e o alcance dela pelo `GetRange`, ou seja, o mesmo circulo
+	que o jogador ve quando a seleciona -- inclusive o que o clima faz com ele.
+]=]
+function UnitService:getAuraBonus(entry, weather : string?) : number
+	local sources = self.AuraSources
+	if #sources == 0 then return 0 end
+
+	local position = entry.cf.Position
+	local bonus = 0
+
+	for _, source in ipairs(sources) do
+		-- Uma farm nao se banha na propria aura; ela nem causa dano, mas deixar a
+		-- regra escrita evita surpresa se um dia uma farm atacar.
+		if source == entry then continue end
+
+		local level = source.upgrades or 0
+		local radius = SharedConfig.UnitUpgradeConfig:GetRange(source.unitName, level, weather)
+
+		if (source.cf.Position - position).Magnitude <= radius then
+			bonus += SharedConfig.UnitUpgradeConfig:GetAuraBonus(source.unitName, level)
+		end
+	end
+
+	return bonus
+end
+
+--[=[
+	O dinheirinho saindo da unidade que acabou de render a mais.
+
+	Estrangulado por unidade: um MultiShot sao quatro golpes e um AOE e uma chamada
+	de dano por inimigo atingido, entao sem isto um Rocket dentro da aura mandaria
+	dez efeitos no mesmo quadro para a mesma torre. Um a cada `AURA_VFX_COOLDOWN` e
+	o bastante para o jogador entender que aquela torre esta rendendo.
+]=]
+function UnitService:playAuraVFX(entry)
+	local now = os.clock()
+	if now - (entry.lastAuraVFX or 0) < AURA_VFX_COOLDOWN then return end
+
+	entry.lastAuraVFX = now
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		Framework:Fire("AuraBonusVFX", plr, entry.unitId)
+	end
+end
+
+--[=[
+	Aplica dano e credita quem bateu: o placar de dano da unidade, o caixa do dono
+	(com o bonus da aura) e o efeito de dinheiro quando o bonus valeu.
+
+	Passa por aqui todo dano que sai de uma unidade -- ataque normal, area e mina.
+]=]
+function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : number) : number
+	local dealt = self.Services.MobService:DamageMob(mobId, damage, entry.ownerUserId, auraBonus)
+	self:addDamageDone(entry, dealt)
+
+	-- Golpe que nao encostou em ninguem (o mob ja estava morto) nao rende nem
+	-- efeito: o `DamageMob` devolve 0 e nao pagou nada.
+	if dealt > 0 and auraBonus > 0 then
+		self:playAuraVFX(entry)
+	end
+
+	return dealt
+end
+
 function UnitService:stepCombat()
 	local units = self.PlacedUnits
 	local count = #units
@@ -600,6 +704,7 @@ function UnitService:stepCombat()
 	-- laco, e consultar por unidade so gastaria.
 	local weather = self:GetWeather()
 
+	self:collectAuraSources()
 	self:stepTripmines(now, weather)
 
 	for i = 1, count do
@@ -803,8 +908,14 @@ function UnitService:stepTripmines(now, weather : string?)
 					local damage = self:getDamage(entry, stats, weather)
 					local radius = config.AOE and config.AOE.Radius or 6
 					local mobsHit = mobService:GetMobsInRadius(mine.position, radius)
+
+					-- A aura mede a distancia ate a UNIDADE, e nao ate a mina: quem
+					-- precisa estar perto da farm e a torre, nao o lugar onde ela
+					-- jogou o explosivo.
+					local auraBonus = self:getAuraBonus(entry, weather)
+
 					for _, mobId in ipairs(mobsHit) do
-						self:addDamageDone(entry, mobService:DamageMob(mobId, damage, entry.ownerUserId))
+						self:creditDamage(entry, mobId, damage, auraBonus)
 					end
 					for _, plr in ipairs(Players:GetPlayers()) do
 						Framework:Fire("TripmineTriggered", plr, entry.unitId, mineId)
@@ -838,7 +949,6 @@ end
 function UnitService:executeAttack(entry, unitStats, initialMobId, weather : string?)
 	local unitName = entry.unitName
 	local unitId = entry.unitId
-	local ownerUserId = entry.ownerUserId
 	local unitPosition = entry.cf.Position
 	local upgradeLevel = entry.upgrades or 0
 
@@ -849,6 +959,12 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 		com numeros diferentes.
 	]]
 	local damage = self:getDamage(entry, unitStats, weather)
+
+	-- Congelado pelo mesmo motivo: a farm pode ser vendida entre o primeiro e o
+	-- ultimo golpe de um MultiShot, e os quatro hits do mesmo ciclo tem que render
+	-- igual.
+	local auraBonus = self:getAuraBonus(entry, weather)
+
 	local aoe = unitStats.AOE
 	local range = SharedConfig.UnitUpgradeConfig:GetRange(unitName, upgradeLevel, weather)
 	local totalHits = unitStats.Hits or 1
@@ -888,15 +1004,15 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 				local aoeCenter = predictedPos or unitPosition
 				local mobsInRadius = self.Services.MobService:GetMobsInRadius(aoeCenter, aoe.Radius)
 				for _, targetId in ipairs(mobsInRadius) do
-					self:addDamageDone(entry, self.Services.MobService:DamageMob(targetId, damage, ownerUserId))
+					self:creditDamage(entry, targetId, damage, auraBonus)
 					table.insert(hits, { mobId = targetId, damage = damage })
 				end
 				if #hits == 0 and resolvedMobId then
-					self:addDamageDone(entry, self.Services.MobService:DamageMob(resolvedMobId, damage, ownerUserId))
+					self:creditDamage(entry, resolvedMobId, damage, auraBonus)
 					table.insert(hits, { mobId = resolvedMobId, damage = damage })
 				end
 			elseif resolvedMobId then
-				self:addDamageDone(entry, self.Services.MobService:DamageMob(resolvedMobId, damage, ownerUserId))
+				self:creditDamage(entry, resolvedMobId, damage, auraBonus)
 				table.insert(hits, { mobId = resolvedMobId, damage = damage })
 			end
 

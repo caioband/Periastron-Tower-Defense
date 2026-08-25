@@ -189,6 +189,28 @@ end
 	Quantas waves a partida tem. Cada dificuldade define a sua (`MaxWaves`);
 	`DataConfig.MAX_WAVES` fica so como fallback para preset sem o campo.
 ]=]
+--[=[
+	Paga o premio de wave concluida a todos os jogadores da partida.
+
+	E o unico dinheiro do jogo que nao depende do que o jogador fez: nao e por
+	dano, nem por morte, nem de farm -- e por a wave ter acabado. Por isso sai
+	igual para todo mundo, inclusive para quem entrou no meio da partida.
+
+	Quem chama e o `runRound`, depois da checagem de game over: wave que terminou
+	porque a base caiu nao paga.
+]=]
+function WaveService:payWaveCash()
+	local amount = WaveConfig.GetWaveCash(self.WaveCount)
+	if amount <= 0 then return end
+
+	local mobService = self.Services.MobService
+	if not mobService then return end
+
+	for _, player in Players:GetPlayers() do
+		mobService:addCash(player, amount)
+	end
+end
+
 function WaveService:getMaxWaves(preset)
 	preset = preset or self.Difficulty
 	return (preset and preset.MaxWaves) or MAX_WAVES
@@ -397,6 +419,10 @@ function WaveService:runRound(generation : number)
 
 		if not self:awaitWaveEnd(generation) then return end
 		if self.GameOver then break end
+
+		-- Antes da checagem de vitoria de proposito: a ultima wave tambem e uma wave
+		-- concluida, e ela paga como as outras.
+		self:payWaveCash()
 
 		if self.WaveCount >= self:getMaxWaves(preset) then
 			won = true
