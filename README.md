@@ -467,6 +467,49 @@ ritmos diferentes na mesma wave. E a renda da fazenda fica de fora de propósito
 não é dano, e o corte da tempestade de areia mexeria na economia em vez de no
 combate.
 
+#### Congelamento da neve
+
+Enquanto o `Snow` estiver no ar, o `SnowService` (`Game/src/Services`) sorteia uma
+unidade a cada 30s e a congela por 10s. Congelar é o mesmo atordoamento do raio
+(`UnitService:StunUnit`) — quem é imune ao clima fica **fora do sorteio**, e não
+"é sorteado e não congela", senão um mapa cheio de Magic passaria waves sem nada
+acontecer.
+
+O `UnitStunned` leva um terceiro argumento, `source`: o clima que causou o
+atordoamento. O realce amarelo do `UnitPlacementController` vale para qualquer um
+deles, mas o VFX é só de quem tiver um — o `VFXController` procura o
+`Effects.<clima>.Freeze` do `source` em vez de comparar o nome com `"Snow"`, então o
+raio e o gimmick de mob caem fora sozinhos.
+
+São **dois** VFX, porque o congelamento tem dois momentos e cada um pede um jeito
+diferente de tocar:
+
+| Config | Asset | Como toca |
+| --- | --- | --- |
+| `Freeze.Asset` | `FrozenVFX` | o **estouro** do instante em que a unidade trava: emissores de rajada, um `emit` só, ~1s |
+| `Freeze.Aura` | `FrozenAuraVFX` | o **estado**, pelos 10s inteiros: emissores contínuos que nascem desligados, entram com `enable` e saem com `disable` |
+
+Sem a aura, só o realce amarelo sobreviveria ao estouro — o jogador veria o momento
+de congelar, e nada dizendo que a unidade *está* congelada. O `disable` não destrói
+na hora: a faxina espera o rabo das últimas partículas, senão a aura sumiria com um
+corte no fim de cada congelamento. A duração que vale é a que o servidor **de fato
+aplicou** (chega no próprio `UnitStunned`), não o `Freeze.Duration` do config: o
+prazo maior manda em `StunUnit`, e a aura tem que acompanhar o que a unidade está
+sentindo.
+
+Os dois assets são Parts de partículas, e o `attachVFX` cuida das duas coisas que
+parentear sozinho não resolve. **Posicionar**: Part filha de Part não herda posição,
+então o clone recebe o CFrame da `HumanoidRootPart` (o dinheirinho do Entrepreneur
+não precisa disso, porque o asset dele é um Attachment). **Desarmar**: os assets vêm
+do plugin com `CanCollide`, `CanQuery` e `CanTouch` ligados — dentro de uma unidade
+isso vira uma caixa invisível que empurra quem passa e aparece nos `GetPartsInPart`
+do posicionamento, recusando um lugar vazio para quem tentar construir do lado.
+
+O clone da aura mantém o nome do asset, e é por ele que uma aura anterior é achada e
+desfeita: congelar de novo quem já está congelado troca a aura em vez de empilhar
+duas. Achar pelo nome também faz a unidade levar `Destroy` (venda, recomeço de round)
+limpar tudo sozinha, sem bookkeeping para desencontrar.
+
 #### Buff e debuff na unidade
 
 Toda unidade que o clima mexe mostra isso em cima dela, e as duas peças saem do mesmo
@@ -727,6 +770,34 @@ Duas armadilhas de UI que o toque expõe e que foram corrigidas junto:
 `MobController:startHoverLoop` também sai fora: sem mouse ele só gastaria um
 raycast a cada 0.05s para nunca encontrar mob nenhum.
 
+#### O que bloqueia o posicionamento
+
+O cliente pinta o fantasma de verde ou vermelho e o servidor aceita ou recusa, e os
+dois têm que responder igual — fantasma verde com o servidor recusando (ou o
+contrário) é a divergência que o `PlacementUtil` existe para evitar. São quatro
+testes, na ordem:
+
+1. **Caminho** — `GetPartsInPart` nas parts com a tag `Grid`, na caixa da unidade
+   esticada `PathClearance` studs para baixo.
+2. **Obstrução genérica** (só no cliente) — qualquer part do mundo dentro da
+   `PrimaryPart` do fantasma. Acessório nunca aparece aqui: o `CollisionService`
+   desliga o `CanQuery` de todos eles.
+3. **Personagem** — `PlacementUtil.FindBlockingCharacter`, na bounding box cheia da
+   unidade.
+4. **Distância mínima** para outra unidade já posicionada.
+
+**Personagem nenhum entra no teste 2**, e é a correção que importa lembrar: quem
+responde por personagem é o teste 3, que usa a caixa da unidade inteira (mais
+estrita, então o corpo continua bloqueando) e **pula acessório de propósito** —
+chapéu e asa saem metros fora do corpo, e sem essa regra o jogador via o
+posicionamento recusado por um lugar que, na tela, está vazio. O teste 2 não tinha
+essa regra: o chapéu de quem passasse perto pintava o fantasma de vermelho num lugar
+que o servidor aprovaria, porque no servidor o único teste de personagem é o 3.
+
+O raycast do chão continua excluindo só o fantasma e o próprio jogador: mirar em cima
+de outro jogador ainda apoia o fantasma nele, e é o teste 3 que pinta aquilo de
+vermelho.
+
 #### O fantasma não colide com nada
 
 São três cuidados, e o primeiro é o que resolve de verdade:
@@ -761,6 +832,31 @@ oficial mesmo.
 > *params* que vale, não o da part consultada — por isso o fantasma no grupo novo não
 > muda nenhuma resposta. Mas part **do mundo** dentro dele fica invisível para essas
 > perguntas: seria terreno que o fantasma atravessa sem nunca ficar vermelho.
+
+**O personagem tem grupo próprio, `Character`.** Toda BasePart de todo personagem de
+jogador entra nele — corpo, acessório e o que mais nascer no modelo depois, porque o
+`CollisionService` deixa um `DescendantAdded` ligado (os acessórios chegam depois do
+`CharacterAdded`, e sem o sinal o chapéu ficaria no `Default`). O grupo é registrado
+**antes** da volta que declara o fantasma não-colidível com todos, senão ele nasceria
+colidindo com o fantasma — grupo novo nasce colidindo com os existentes, e é isso que
+vale conferir no dia em que aparecer um terceiro grupo.
+
+**E acessório não é consultável.** A mesma volta desliga o `CanQuery` de toda part de
+todo acessório. Grupo de colisão resolve física, e acessório nunca foi problema de
+física: o problema dele é ser uma part *consultável* que sai metros fora do corpo —
+chapéu e asa entravam nos `GetPartsInPart` do posicionamento e recusavam lugares que,
+na tela, estão vazios. Desligar na própria part faz a regra valer para **qualquer**
+consulta do jogo, não só para as que se lembrarem de filtrar acessório na mão. A
+pergunta é a mesma do `FindBlockingCharacter`,
+`FindFirstAncestorOfClass("Accessory")`, só que feita uma vez na part em vez de a cada
+consulta — e nenhuma consulta de hoje precisa enxergá-los.
+
+Não que o fantasma esbarrasse no jogador antes: ele já não colidia com `Default`,
+onde o personagem vivia. O que muda é que "personagem não esbarra no fantasma" virou
+um par nomeado em vez de consequência da volta. Do resto o personagem continua
+participando igual — mapa, unidades posicionadas e os outros personagens —, e as
+perguntas de posicionamento também: o `FindBlockingCharacter` consulta no `Default`,
+com quem o grupo novo colide, então o jogador em pé no lugar continua bloqueando.
 
 #### O card de upgrade: abre crescendo e o jogador escolhe onde ele fica
 
@@ -804,6 +900,19 @@ Os detalhes que fazem isso funcionar nos dois aparelhos:
 - **`CardUpgrade.Active = true`.** Um `ImageLabel` só recebe entrada com isso ligado. De
   quebra o card passa a engolir o clique: apertar nele não vaza mais para o mundo atrás,
   que era o que desselecionava a unidade no meio de um arrasto.
+
+**Unidade de outro jogador abre o card sem os botões.** `Sell`, `UpgradeCost` e
+`Priority` só aparecem para o dono — o servidor já recusa os três de quem não é
+(`UnitService`), e o que eles faziam na tela alheia era prometer uma ação que nunca
+ia acontecer. O resto do card continua inteiro: nome, nível, stats, prioridade atual
+e dano feito são justamente o que interessa olhar na unidade do outro. A prévia do
+próximo nível sai junto, senão no celular (onde ela aparece sem hover) sobrariam os
+números de um upgrade que não está mais no card.
+
+Quem responde é o atributo `Owned`, que o `UnitPlacementController` escreve no modelo
+ao replicar a unidade — o mesmo caminho do nível e da prioridade, então o card não
+precisa perguntar a controller nenhuma quem é o dono. Sem o atributo a resposta é
+não, de propósito.
 
 ### Quem some da tela, e quando
 

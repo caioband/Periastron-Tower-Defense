@@ -58,6 +58,46 @@ local function formatVector(v : Vector3?)
 end
 
 --[=[
+	A superficie que o raycast do posicionamento acertou, para o log: caminho
+	completo e classe.
+
+	A classe vai junto porque `GetFullName` sozinho nao distingue uma Part de um
+	MeshPart nem, principalmente, avisa que o alvo e o proprio `Terrain` -- que e
+	um acerto comum, ja que boa parte dos mapas tem chao esculpido, e que aparece
+	como uma instancia so para o mapa inteiro.
+]=]
+local function describeSurface(instance : Instance?) : string
+	if not instance then
+		return "nada (o ponteiro nao acertou superficie nenhuma)"
+	end
+
+	return string.format("%s (%s)", instance:GetFullName(), instance.ClassName)
+end
+
+--[=[
+	`base` mais o personagem de todo jogador que estiver no servidor.
+
+	E a lista de exclusao do teste generico de obstrucao: personagem nao entra nele,
+	porque quem responde por personagem e o `FindBlockingCharacter` -- com a caixa da
+	unidade inteira e com a regra de pular acessorio, que e o que o servidor tambem
+	faz. Duas listas em vez de uma porque o raycast do chao continua excluindo so o
+	fantasma e o proprio jogador: mirar em cima de outro jogador ainda apoia o
+	fantasma nele, e e o `FindBlockingCharacter` que pinta aquilo de vermelho.
+]=]
+local function characterFilter(base : { Instance }) : { Instance }
+	local list = table.clone(base)
+
+	for _, player in Players:GetPlayers() do
+		local character = player.Character
+		if character and not table.find(list, character) then
+			table.insert(list, character)
+		end
+	end
+
+	return list
+end
+
+--[=[
 	O grupo de colisao do fantasma, ou `nil` se ele ainda nao existir aqui.
 
 	Quem registra e o `CollisionService`, no servidor, e o registro replica. Perguntar
@@ -889,6 +929,16 @@ function UnitPlacementController:visualize(unitName : string)
 	local blockReason = "ponteiro fora de qualquer superficie"
 
 	--[[
+		A superficie em que o fantasma esta apoiado, so para o log de quando a
+		unidade e enviada.
+
+		Anda junto com o `targetCF`: os dois so mudam dentro do `if raycastResult`,
+		entao o que o log diz e a superficie daquele CFrame, e nao a ultima que o
+		ponteiro tocou por acaso.
+	]]
+	local groundInstance : Instance? = nil
+
+	--[[
 		No toque o fantasma nao segue o dedo: ele fica no ultimo ponto tocado e so
 		sai dali no proximo toque, e quem confirma e o botao do painel.
 
@@ -1075,6 +1125,7 @@ function UnitPlacementController:visualize(unitName : string)
 		if raycastResult then
 			local position = raycastResult.Position
 			currentGroundY = position.Y
+			groundInstance = raycastResult.Instance
 			local placedPosition = Vector3.new(position.X, position.Y + halfHeight, position.Z)
 
 			targetCF = CFrame.new(placedPosition) * CFrame.Angles(0, math.rad(currentRotation), 0)
@@ -1102,9 +1153,23 @@ function UnitPlacementController:visualize(unitName : string)
 				end
 
 				if not onGrid then
+					--[[
+						Personagem nenhum entra neste teste -- nem o do proprio jogador,
+						nem o dos outros. Quem responde por eles e o `FindBlockingCharacter`
+						logo abaixo, e a caixa dele e a da unidade inteira: tudo que este
+						teste pegaria num corpo, aquele ja pega, e com a regra certa.
+
+						A regra que faltava aqui era a do acessorio. Chapeu e asa saem
+						metros fora do corpo e sao parts consultaveis como qualquer outra,
+						entao o chapeu de quem passasse perto pintava o fantasma de vermelho
+						-- num lugar que o servidor aceitaria, porque la o unico teste de
+						personagem e o `FindBlockingCharacter`, que pula acessorio de
+						proposito. Fantasma vermelho e servidor aprovando e exatamente a
+						divergencia que o `PlacementUtil` existe para evitar.
+					]]
 					local overlapParams = OverlapParams.new()
 					overlapParams.FilterType = Enum.RaycastFilterType.Exclude
-					overlapParams.FilterDescendantsInstances = filterList
+					overlapParams.FilterDescendantsInstances = characterFilter(filterList)
 					local parts = workspace:GetPartsInPart(ghost.PrimaryPart or ghost:FindFirstChildWhichIsA("BasePart"), overlapParams)
 					for _, part in ipairs(parts) do
 						if part ~= raycastResult.Instance then
@@ -1215,7 +1280,8 @@ function UnitPlacementController:visualize(unitName : string)
 			aperta COLOCAR, com o fantasma ainda a caminho, e a unidade nascia no meio
 			do trajeto.
 		]]
-		placementPrint(unitName, "fantasma enviado ao servidor em", formatVector(targetCF.Position))
+		placementPrint(unitName, "fantasma enviado ao servidor em", formatVector(targetCF.Position),
+			"| apoiado em", describeSurface(groundInstance))
 		Framework:Fire("PlaceUnit", unitName, targetCF)
 
 		-- A devolucao da aparencia do caminho fica a cargo do maid, logo

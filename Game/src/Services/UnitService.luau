@@ -296,8 +296,13 @@ end
 --[=[
 	Atordoa uma unidade. O prazo maior manda — um chain de 5s nao pode encurtar um
 	atordoamento de 20s que ja estava correndo.
+
+	`source` e o clima que causou o atordoamento, e viaja junto para o cliente:
+	parar de atacar e sempre o mesmo realce amarelo, mas o congelamento da neve tem
+	VFX proprio (`Effects.Snow.Freeze.Asset`) e o raio nao. Sem `source` — o gimmick
+	de mob — o cliente so desenha o realce.
 ]=]
-function UnitService:StunUnit(entry, duration : number)
+function UnitService:StunUnit(entry, duration : number, source : string?)
 	if not entry then return end
 
 	local until_ = os.clock() + (duration or 0)
@@ -306,7 +311,7 @@ function UnitService:StunUnit(entry, duration : number)
 	entry.StunnedUntil = until_
 
 	for _, plr in ipairs(Players:GetPlayers()) do
-		Framework:Fire("UnitStunned", plr, entry.unitId, duration or 0)
+		Framework:Fire("UnitStunned", plr, entry.unitId, duration or 0, source)
 	end
 end
 
@@ -344,7 +349,7 @@ function UnitService:StunRandomUnit(duration, weatherName : string?)
 	if #candidates == 0 then return nil end
 
 	local entry = candidates[math.random(1, #candidates)]
-	self:StunUnit(entry, duration or 0)
+	self:StunUnit(entry, duration or 0, weatherName)
 
 	return entry
 end

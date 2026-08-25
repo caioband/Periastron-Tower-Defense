@@ -852,6 +852,19 @@ function module:_createEntry(unitName : string, index : number, callbackDo : (st
 		entry.Parts.Cost.Text = "$" .. (stats and stats.Cost or 0)
 	end
 
+	--[[
+		A arte da carta e por unidade, e e a carta inteira: o `Card` e um ImageLabel,
+		nao uma moldura com a ilustracao dentro.
+
+		Unidade sem id no `CardConfig` fica com a arte que o `CardWrapper` trouxe
+		autorada -- carta com a arte errada e melhor do que carta invisivel na hotbar,
+		e o config diz quais unidades ainda estao nesse caso.
+	]]
+	local cardImage = SharedConfig.CardConfig.GetImage(unitName)
+	if cardImage and (card:IsA("ImageLabel") or card:IsA("ImageButton")) then
+		card.Image = cardImage
+	end
+
 	-- Mexer no tamanho da carta (no Studio, ou em tempo de execucao) reacomoda o
 	-- deck pelo mesmo caminho que a escala.
 	entry.Maid:GiveTask(card:GetPropertyChangedSignal("Size"):Connect(function()

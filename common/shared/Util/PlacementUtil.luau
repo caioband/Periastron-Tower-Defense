@@ -41,6 +41,26 @@ PlacementUtil.PathClearance = 4
 ]]
 PlacementUtil.GhostCollisionGroup = "PlacementGhost"
 
+--[[
+	O grupo de colisao dos personagens de jogador.
+
+	Existe pelo mesmo motivo do de cima, e o par entre os dois e o ponto: fantasma e
+	personagem nao se colidem. O `CollisionService` (servidor) registra os dois e
+	declara o par, e e ele tambem quem poe **toda BasePart** de cada personagem aqui
+	dentro -- corpo, acessorio e o que mais nascer no modelo depois.
+
+	Ao contrario do grupo do fantasma, este colide com todo o resto normalmente:
+	personagem continua batendo no mapa, nos outros personagens e nas unidades
+	posicionadas. So o fantasma fica de fora.
+
+	> Isto **nao** tira o personagem das perguntas de posicionamento. O
+	> `FindBlockingCharacter` consulta com `OverlapParams` no grupo `Default`, e o
+	> que vale ali e a colidibilidade entre o grupo do params e o da part: como este
+	> grupo colide com `Default`, o personagem continua aparecendo na consulta e
+	> continua bloqueando o lugar.
+]]
+PlacementUtil.CharacterCollisionGroup = "Character"
+
 --[=[
 	A caixa que testa o caminho: o volume da propria unidade mais a coluna de
 	`PathClearance` studs debaixo dela.

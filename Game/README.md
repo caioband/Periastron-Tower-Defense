@@ -508,6 +508,30 @@ com as cartas distribuídas em rodízio até o `CardLimit`. Sem isso um jogador 
 nunca abriu o painel entraria na partida sem carta nenhuma e não conseguiria
 colocar nada. O deck automático **não é gravado** — vale só para a sessão.
 
+### A arte da carta é por unidade
+
+O `Card` do `CardWrapper` é um **ImageLabel**, e a arte dele é a carta inteira —
+moldura, ilustração e fundo numa imagem só. Os ids ficam em
+`SharedConfig.CardConfig`, e quem escreve é o componente `Card`, na mesma passada em
+que ele escreve o nome e o custo.
+
+| Unidade (`UnitStats`) | Carta |
+| --- | --- |
+| `Slasher` | Slasher |
+| `Rocket` | Rocketeer |
+| `Entrepreneur` | Entrepreneur |
+| `Sword` | Gladiator |
+
+A tabela existe porque o nome da unidade nem sempre é o nome que o jogador lê na
+arte: a carta do **Rocketeer** é da unidade `Rocket`, e a do **Gladiator** é da
+`Sword`. Errar a chave não estoura nada — a unidade só fica sem arte própria, que é
+o sintoma mais difícil de ligar à causa.
+
+Unidade sem id fica com a arte que o `CardWrapper` tem autorada no StarterGui:
+carta com a arte errada é melhor do que carta invisível na hotbar. Hoje é o caso de
+`Slingshot`, `Subspace Tripminer` e `Azure` — e como a arte autorada é a do Slasher,
+as três aparecem com a carta dele até os ids chegarem.
+
 ### O arco (`Components/Card.luau`)
 
 O `TowerContainer` não tem mais um `CardN` por slot: ele tem **um** `CardWrapper`

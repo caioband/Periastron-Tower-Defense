@@ -18,7 +18,8 @@ local VFX = require(ReplicatedStorage:WaitForChild("vfx"))
 local Me = require(Vendor.Me)
 local Framework = Me.new()
 
-local ThunderConfig = SharedConfig.WeatherConfig.Thunder
+local WeatherConfig = SharedConfig.WeatherConfig
+local ThunderConfig = WeatherConfig.Thunder
 
 local DEFAULT_LIFETIME = 2
 local DEFAULT_EMIT_COUNT = 25
@@ -31,6 +32,8 @@ local UNIT_ROOT_NAME = "HumanoidRootPart"
 -- Prazo de faxina de quando o proprio modulo nao souber dizer quanto o efeito
 -- dura (asset sem particula, ou com `EmitDuration` infinito).
 local MONEY_VFX_FALLBACK = 3
+local FREEZE_VFX_FALLBACK = 2
+local FREEZE_AURA_FALLBACK = 2
 
 local VFXController = {
 	Controllers = {
@@ -188,6 +191,136 @@ function VFXController:PlayAuraBonus(unitId : string)
 
 	VFX.emit(clone)
 	VFX.destroyAfter(clone, VFX.maxLifetime(clone) or MONEY_VFX_FALLBACK)
+end
+
+local function disarmPart(part : BasePart)
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+end
+
+--[=[
+	Pendura um asset de VFX dentro da `HumanoidRootPart` da unidade, pronto para
+	tocar. Devolve o clone.
+
+	Duas coisas que parentear sozinho nao resolve:
+
+	**Posicionar.** Part filha de Part nao herda posicao — a do asset e a de quando
+	ele foi autorado, do outro lado do mapa. O `PlayAuraBonus` nao precisa disto
+	porque o asset dele e um Attachment, que herda.
+
+	**Desarmar.** Os assets vem do plugin com `CanCollide`, `CanQuery` e `CanTouch`
+	ligados (o `FrozenAuraVFX` vem assim). Dentro de uma unidade isso vira uma caixa
+	invisivel que empurra quem passa e, pior, aparece nos `GetPartsInPart` do
+	posicionamento — recusando um lugar vazio para todo mundo que tentar construir
+	do lado. Nao da para depender de o asset vir certo do Studio.
+]=]
+local function attachVFX(template : Instance, root : BasePart) : Instance
+	local clone = template:Clone()
+	clone.Parent = root
+
+	if clone:IsA("BasePart") then
+		clone.CFrame = root.CFrame
+		disarmPart(clone)
+	end
+
+	for _, descendant in clone:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			disarmPart(descendant)
+		end
+	end
+
+	return clone
+end
+
+--[=[
+	O estouro do congelamento: o instante em que a unidade trava.
+
+	Emissores de rajada, um `emit` so. A faxina sai do maior tempo de vida das
+	particulas do proprio asset, entao mexer nele no Studio nao deixa lixo para tras.
+]=]
+function VFXController:playFreezeBurst(assetName : string?, root : BasePart)
+	if not assetName then return end
+
+	local template = self.Library[assetName]
+	if not template then
+		warn(`[VFXController]: nao achei o VFX "{assetName}" em Assets.VFX.`)
+		return
+	end
+
+	local clone = attachVFX(template, root)
+
+	VFX.emit(clone)
+	VFX.destroyAfter(clone, VFX.maxLifetime(clone) or FREEZE_VFX_FALLBACK)
+end
+
+--[=[
+	A aura do congelamento: o estado, enquanto ele durar.
+
+	`enable`/`disable` em vez de `emit` porque os emissores sao continuos e nascem
+	desligados — quem manda neles e o `Enabled`, nao um numero de particulas. O
+	`disable` e o desligar, e a destruicao vem so depois do rabo das ultimas
+	particulas, senao a aura sumiria com um corte no fim de cada congelamento.
+
+	`duration` e o que o servidor de fato aplicou, e nao o `Freeze.Duration` do
+	config: o atordoamento pode ter vindo mais longo (o prazo maior manda, em
+	`UnitService:StunUnit`), e a aura tem que acompanhar o que a unidade esta
+	sentindo.
+
+	O clone mantem o nome do asset, e e por ele que uma aura anterior e achada e
+	desfeita: congelar de novo quem ja esta congelado troca a aura em vez de
+	empilhar duas. Achar pelo nome tambem faz a unidade levar `Destroy` (venda,
+	recomeco de round) limpar tudo sozinha, sem bookkeeping para desencontrar.
+]=]
+function VFXController:playFreezeAura(assetName : string?, root : BasePart, duration : number)
+	if not assetName or duration <= 0 then return end
+
+	local template = self.Library[assetName]
+	if not template then
+		warn(`[VFXController]: nao achei o VFX "{assetName}" em Assets.VFX.`)
+		return
+	end
+
+	local previous = root:FindFirstChild(assetName)
+	if previous then
+		previous:Destroy()
+	end
+
+	local clone = attachVFX(template, root)
+
+	VFX.enable(clone)
+
+	task.delay(duration, function()
+		-- A unidade pode ter sido vendida, ou uma aura nova pode ter substituido
+		-- esta: nos dois casos o clone ja saiu do Workspace e nao ha o que desligar.
+		if not clone.Parent then return end
+
+		VFX.disable(clone)
+		VFX.destroyAfter(clone, VFX.maxLifetime(clone) or FREEZE_AURA_FALLBACK)
+	end)
+end
+
+--[=[
+	O congelamento da neve, na unidade que acabou de travar: o estouro e a aura.
+
+	Nada aqui e escrito em cima do nome "Snow": o desenho sai do `Freeze` do clima
+	que o servidor mandou como causa do atordoamento. Clima sem `Freeze` (o raio) e
+	atordoamento sem clima nenhum (o gimmick de mob) caem fora sozinhos, e ficam so
+	com o realce amarelo que o `UnitPlacementController` desenha.
+]=]
+function VFXController:PlayFreeze(unitId : string, weatherName : string?, duration : number?)
+	local effects = WeatherConfig.GetEffects(weatherName)
+	local freeze = effects and effects.Freeze
+	if not freeze then return end
+
+	local model = self:resolveUnitModel(unitId)
+	if not model or not model.Parent then return end
+
+	local root = model:FindFirstChild(UNIT_ROOT_NAME) or model.PrimaryPart
+	if not root or not root:IsA("BasePart") then return end
+
+	self:playFreezeBurst(freeze.Asset, root)
+	self:playFreezeAura(freeze.Aura, root, duration or 0)
 end
 
 function VFXController:resolveUnitModel(unitId)
@@ -373,6 +506,15 @@ function VFXController:construct()
 
 	Framework:Listen("AuraBonusVFX", function(unitId : string)
 		self:PlayAuraBonus(unitId)
+	end)
+
+	--[[
+		O mesmo evento que acende o realce amarelo no `UnitPlacementController`. Os
+		dois escutam de proposito: o realce vale para qualquer atordoamento, e o VFX
+		so para o clima que tiver um.
+	]]
+	Framework:Listen("UnitStunned", function(unitId : string, duration : number, source : string?)
+		self:PlayFreeze(unitId, source, duration)
 	end)
 end
 

@@ -631,11 +631,51 @@ local function applyClassIcon(unitName : string?)
 end
 
 --[=[
+	A unidade selecionada e deste jogador?
+
+	Sai do atributo `Owned`, que o `UnitPlacementController` escreve no modelo na
+	hora de replicar a unidade. Ler do modelo e o mesmo caminho do nivel e da
+	prioridade: o card nao precisa perguntar a controller nenhuma quem e o dono.
+
+	Sem o atributo a resposta e nao, de proposito -- um card que abre sem saber de
+	quem e a unidade deve mostrar o que qualquer um pode fazer, e nao os botoes de
+	quem manda nela.
+]=]
+local function isOwnedByMe(unitModel : Instance?) : boolean
+	return unitModel ~= nil and unitModel:GetAttribute("Owned") == true
+end
+
+--[=[
+	Os botoes que so o dono da unidade pode apertar.
+
+	Vender, melhorar e trocar a prioridade sao recusados no servidor quando vem de
+	quem nao e dono (`UnitService`), entao esconde-los nao e o que protege a
+	partida -- o que eles faziam era prometer uma acao que nunca ia acontecer. O
+	card de uma unidade alheia continua abrindo inteiro: nome, nivel, stats e dano
+	feito sao justamente o que interessa olhar na unidade do outro.
+
+	O `Priority` nao entra aqui porque ele ja tem uma regra propria por cima desta
+	(Farm nao mira em ninguem); quem cuida dele e o `refreshPriority`.
+]=]
+function module:refreshOwnership()
+	local owned = isOwnedByMe(self.currentUnit)
+
+	for _, name in { "Sell", "UpgradeCost" } do
+		local button = CardUpgrade:FindFirstChild(name)
+		if button and button:IsA("GuiObject") then
+			button.Visible = owned
+		end
+	end
+end
+
+--[=[
 	Preenche todo o card com os dados da unidade selecionada. Cada label leva o
 	sufixo que o designer deixou no StarterGui, so o numero e trocado.
 ]=]
 function module:refresh()
 	local unitModel = self.currentUnit
+
+	self:refreshOwnership()
 
 	local upgradeLabel = CardUpgrade.UpgradeCost:FindFirstChild("TextLabel")
 	local sellLabel = CardUpgrade.Sell:FindFirstChild("TextLabel")
@@ -707,6 +747,16 @@ function module:refreshPreview()
 		shouldShow = false
 	end
 
+	--[[
+		Unidade alheia nao mostra previa nenhuma. No PC isso ja acontecia sozinho --
+		sem o botao de upgrade na tela nao ha o que pairar --, mas no celular a previa
+		aparece sem hover, e ficariam numeros do proximo nivel ao lado de um upgrade
+		que nao existe mais no card.
+	]]
+	if not isOwnedByMe(unitModel) then
+		shouldShow = false
+	end
+
 	if not shouldShow then
 		hidePreviewLabels()
 		return
@@ -743,10 +793,13 @@ function module:refreshPriority()
 	local unitModel = self.currentUnit
 	if not unitModel or not unitModel.Parent then return end
 
-	-- Farm nao mira em ninguem: o botao sai da tela em vez de mostrar uma
-	-- prioridade que nao vai ser usada.
+	--[[
+		Duas razoes para o botao sair da tela, e as duas valem ao mesmo tempo: Farm
+		nao mira em ninguem, e prioridade de unidade alheia o servidor recusa (ver
+		`refreshOwnership`).
+	]]
 	local unitStats = SharedConfig.UnitStats[unitModel.Name]
-	button.Visible = not (unitStats and unitStats.Farm)
+	button.Visible = isOwnedByMe(unitModel) and not (unitStats and unitStats.Farm)
 
 	label.Text = TargetPriority.Label(unitModel:GetAttribute("TargetPriority"))
 end
