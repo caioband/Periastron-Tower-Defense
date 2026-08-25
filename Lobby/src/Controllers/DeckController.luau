@@ -253,6 +253,10 @@ end
 	some quando não sobra cópia no inventário, e tirar carta é só clicando na carta do
 	próprio deck. Toda troca é uma carta clonada que voa até o destino.
 
+	**No PC existe um atalho:** o botão direito numa carta do inventário seleciona e
+	já equipa, sem a ida ao `EquipToggle`. É o mesmo caminho de equipar, com as
+	mesmas checagens — o que muda é só quantos cliques custa.
+
 	**O lado de onde a carta saiu muda na hora; o lado onde ela vai cair espera o
 	pouso.** Os dois são desenhados separadamente (`_renderInventory` e
 	`_renderSlots`), e cada um fica parado enquanto houver carta voando para ele —
@@ -892,6 +896,16 @@ function DeckController:_createInventoryEntry(unitName : string)
 		-- selecionada.
 		entry.Maid:GiveTask(button.Activated:Connect(function()
 			self:Select(unitName)
+		end))
+
+		-- O atalho de quem tem mouse: o botão direito seleciona **e** equipa, sem
+		-- passar pelo `EquipToggle`. `MouseButton2Click` só existe para o botão
+		-- direito de verdade, então toque e gamepad continuam no clique normal, que é
+		-- só seleção. O equipar é o mesmo `_requestEquip` do toggle -- os mesmos
+		-- tetos, o mesmo aviso quando não dá, a mesma carta voando para o slot livre.
+		entry.Maid:GiveTask(button.MouseButton2Click:Connect(function()
+			self:Select(unitName)
+			self:_requestEquip(unitName)
 		end))
 	end
 

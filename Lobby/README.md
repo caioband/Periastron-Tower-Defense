@@ -110,6 +110,13 @@ aparecem — que é tudo o que ele dizia sobre slots.)
   selecionada;
 - clicar numa carta do **deck** tira uma.
 
+**No PC, o botão direito na carta do inventário é o atalho:** ele seleciona e já
+equipa uma carta, sem a ida ao `EquipToggle`. É o mesmo caminho de equipar — os
+mesmos três tetos, o mesmo `ErrorLabel` quando um deles bate, a mesma carta voando
+até o slot —, só que num clique em vez de dois. O gatilho é o `MouseButton2Click`
+do botão da carta, que só existe para o botão direito de verdade: toque e gamepad
+continuam com o clique normal, que é só seleção.
+
 O `CardFlip` de `SoundService.SharedSounds.SFX` (pelo `MusicController:PlaySFX`) toca
 quando uma carta **muda de lado**, nas duas direções — é o `_launchFlight` que o
 dispara, junto com o clone. Selecionar não toca nada, porque nada se move.
