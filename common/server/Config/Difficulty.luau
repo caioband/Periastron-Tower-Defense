@@ -150,7 +150,11 @@ Difficulty.Presets = {
 		BossAmountMultiplier = 9,
 		RewardMultiplier = 0.7,
 		WinCashMultiplier = 4,
-		WinShardMultiplier = 3,
+		--[[
+			450 shards na run completa: o premio sai de
+			`Data.BASE_WINNING_SHARDS` (60) vezes este numero, entao 7.5.
+		]]
+		WinShardMultiplier = 7.5,
 		WinXpMultiplier = 2.5,
 		SpawnDelayMultiplier = 0.8,
 		StartingCash = 300,
