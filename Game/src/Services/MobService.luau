@@ -132,6 +132,16 @@ local MobService = {
 	SessionCash = {},
 	SessionDamage = {},
 
+	--[[
+		`os.clock()` da ultima vez que uma unidade encostou num mob. Quem le e o
+		`SkipService`: cinco segundos sem isso mudar e a partida travou, e o prompt
+		de pular a wave entra na tela.
+
+		Tempo real de proposito, e nao `GameClock`: o que ele mede e a paciencia de
+		quem esta olhando, e nao o ritmo da partida.
+	]]
+	LastContact = 0,
+
 	-- A sobra fracionaria do bonus da aura, por jogador. Ver `applyCashBonus`.
 	BonusRemainder = {},
 }
@@ -348,6 +358,7 @@ function MobService:ResetRound()
 	table.clear(self.BonusRemainder)
 	self.ActiveMobCount = 0
 	self.AllMobsSpawned = false
+	self.LastContact = os.clock()
 
 	-- As rotas sao reconstruidas no proximo SpawnWave; largar o cache evita
 	-- carregar geometria velha caso o mapa mude entre rounds.
@@ -429,7 +440,18 @@ function MobService:SpawnWave(waveNumber)
 	local routes = self:getRoutes()
 
 	self.AllMobsSpawned = false
-	self.ActiveMobCount = 0
+
+	--[[
+		A contagem **nao** e zerada aqui: uma wave pulada (`WaveService:SkipWave`)
+		nasce por cima dos mobs da anterior, e zerar faria os que sobraram
+		descontarem da conta da wave nova — o `Ended` sairia com inimigos vivos no
+		mapa. O numero ja e o de mobs vivos: o spawn soma, o `removeMob` subtrai, e
+		o reset de round zera.
+	]]
+
+	-- A janela de ociosidade recomeca com a wave: os mobs ainda estao a caminho das
+	-- unidades, e o silencio da caminhada nao e a partida travada.
+	self.LastContact = os.clock()
 
 	task.spawn(function()
 		for _, spawnEntry in spawnList do
@@ -664,6 +686,10 @@ end
 function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?)
 	local mob = self.ActiveMobs[mobId]
 	if not mob then return 0 end
+
+	-- Alguem encostou em alguem: a partida nao esta travada. Marcado aqui porque
+	-- este e o unico caminho de dano do jogo — torre, tripmine, respingo de area.
+	self.LastContact = os.clock()
 
 	-- Conta o dano que de fato entrou: um golpe de 70 num mob com 5 de vida vale 5.
 	-- Vale tanto para o MVP quanto para a caixa — pagar o valor cheio do golpe

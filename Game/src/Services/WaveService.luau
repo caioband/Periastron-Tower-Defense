@@ -462,6 +462,57 @@ function WaveService:runRound(generation : number)
 	self:onRoundEnded(won)
 end
 
+--[[ pular a wave ]]
+
+--[=[
+	Se a wave que esta no ar agora pode ser pulada.
+
+	Sao quatro condicoes, e todas as quatro sao sobre o laco do round, nao sobre o
+	jogador: o round tem que estar rodando, o laco tem que estar **esperando o fim
+	de uma wave** (`WaveAwaiter`), a wave tem que ter acabado de nascer inteira
+	(`AllMobsSpawned`) e tem que existir uma proxima wave.
+
+	O `AllMobsSpawned` e o mais importante dos quatro: pular no meio de um spawn
+	poria duas corotinas de `SpawnWave` no ar ao mesmo tempo, e a primeira a
+	terminar diria que a wave inteira nasceu quando so uma delas nasceu.
+
+	A ultima wave nao pula porque nao ha para onde: `WaveCount >= MaxWaves` e a
+	condicao de vitoria logo abaixo do `awaitWaveEnd`, e adiantar isso seria
+	entregar a partida com os inimigos ainda no caminho.
+]=]
+function WaveService:CanSkipWave() : boolean
+	if self.State ~= ROUND_STATE.Running or self.GameOver then return false end
+	if not self.WaveAwaiter then return false end
+	if (self.WaveCount or 0) >= self:getMaxWaves() then return false end
+
+	local mobService = self.Services.MobService
+
+	return mobService ~= nil and mobService.AllMobsSpawned == true
+end
+
+--[=[
+	Comeca a proxima wave sem esperar a atual acabar. Quem chama e o `SkipService`,
+	quando a votacao fecha.
+
+	E o mesmo `Ended` que o `MobService` dispara quando o ultimo mob morre: para o
+	laco do round, a wave acabou, e ela paga como qualquer outra (o dinheiro de wave
+	e a renda das farms). A diferenca esta no mapa, nao no codigo — os mobs que
+	sobraram continuam andando, continuam pagando por dano e por morte, e continuam
+	podendo derrubar a base. Pular e trocar espera por risco, e nao por desconto.
+
+	Os dois `Ended` nao se atrapalham: enquanto a proxima wave nao chama
+	`awaitWaveEnd` de novo ninguem esta escutando, e a partir dai o `MobService` so
+	dispara quando **todos** os mobs vivos morrerem, os que sobraram inclusive.
+]=]
+function WaveService:SkipWave() : boolean
+	if not self:CanSkipWave() then return false end
+
+	print(string.format("[WaveService]: wave %d pulada por votacao.", self.WaveCount or 0))
+	self.Signals.Ended:Fire()
+
+	return true
+end
+
 --[=[
 	Comeca um round do zero. Nao limpa nada — quem quer partida limpa chama
 	`ResetRound()`, que zera os services e chama isto no fim.

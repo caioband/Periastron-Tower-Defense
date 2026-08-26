@@ -8,8 +8,8 @@ compartilhado entre as duas places. Aqui fica só o que é exclusivo deste place
 | Pasta | Vai para | Conteúdo |
 |---|---|---|
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | LocalScript de entrada |
-| `src/Controllers/` | `Client.Controllers.Game` | Card, Difficulty, Loading, Mob, Music, Projectile, Ready, Targeting, Tripmine, UILibrary, UnitPlacement, VFX, Wave |
-| `src/Services/` | `ServerScriptService.Services.Game` | Collision, Data, Difficulty, Map, Mob, Snow, Thunder, Unit, Wave, WeatherRound |
+| `src/Controllers/` | `Client.Controllers.Game` | Card, Difficulty, Loading, Mob, Music, Projectile, Ready, SkipPrompt, Targeting, Tripmine, UILibrary, UnitPlacement, VFX, Wave |
+| `src/Services/` | `ServerScriptService.Services.Game` | Collision, Data, Difficulty, Map, Mob, Skip, Snow, Thunder, Unit, Wave, WeatherRound |
 | `src/CmdrDefinitions/` | `ServerScriptService.CmdrDefinitions.*.Game` | comandos `strike` e `roundcash`, e o tipo `unitName` |
 
 O `Summon` no `ServerScriptService.Config` vem do compartilhado e não é usado aqui
@@ -780,6 +780,77 @@ a de fim de round em dois casos:
 Com o desconto, o total de quem entra e sai no meio nunca passa do que recebeu
 quem ficou o round inteiro. O ledger zera no `StartRound` e no `ResetRound`.
 
+## Pular a wave (`StarterGui.Interface.SkipPrompt`)
+
+O prompt de pular **não tem botão para abrir**: ele aparece sozinho quando a partida
+trava. O critério é o contato — nenhuma unidade de nenhum jogador encostou em nenhum
+mob por `SkipConfig.IdleTime` (5) segundos.
+
+Quem marca o contato é o `MobService:DamageMob`, que é por onde passa **todo** dano do
+jogo (torre, tripmine, respingo de área): cada golpe que entra escreve
+`MobService.LastContact = os.clock()`. O `SkipService` só lê esse relógio a cada
+`PollInterval`. Tempo real, e não `GameClock`: o que se mede aqui é a paciência de
+quem está olhando a tela, e não o ritmo da partida — no 3x, cinco segundos parados
+continuam sendo cinco segundos parados.
+
+A janela recomeça a cada wave (`SpawnWave` também escreve `LastContact`): os mobs
+ainda estão a caminho das unidades, e o silêncio da caminhada não é a partida travada.
+
+### Quando o prompt pode aparecer
+
+Além da ociosidade, `WaveService:CanSkipWave()` cobra quatro condições, e todas as
+quatro são sobre o laço do round:
+
+| Condição | Por quê |
+| --- | --- |
+| round `Running`, sem game over | fora disso não há wave para pular |
+| `WaveAwaiter` existe | o laço está esperando o fim de **uma wave**, e não no intervalo |
+| `MobService.AllMobsSpawned` | pular no meio de um spawn poria duas corotinas de `SpawnWave` no ar |
+| `WaveCount < MaxWaves` | a última wave não pula: adiantar a vitória entregaria a partida com inimigos no caminho |
+
+Voltando a haver contato, o prompt sai da tela e **os votos são descartados**: o
+motivo de pular deixou de existir, e um voto dado há meia wave não pode fechar a
+votação de agora.
+
+### A votação
+
+Maioria estrita de quem está no servidor (`SkipConfig.RequiredVotes`): 1 jogador
+decide sozinho, 2 precisam concordar, 4 precisam de 3. O contador da tela mostra
+**votos sobre votos necessários** (`1/3`), e não sobre o total de jogadores.
+
+- **Confirm** vota a favor.
+- **Cancel** tira o voto e some com o prompt **só para quem clicou**, até a próxima
+  votação. Cada abertura vem com um `token` novo do servidor; um token que o cliente
+  ainda não dispensou volta a aparecer normalmente.
+
+Fechada a votação, o `WaveService:SkipWave()` dispara o mesmo `Signals.Ended` que o
+`MobService` dispara quando o último mob morre. Para o laço do round a wave acabou, e
+ela paga como qualquer outra (o dinheiro de wave e a renda das farms). **A diferença
+está no mapa, não no código**: os mobs que sobraram continuam andando, continuam
+pagando por dano e por morte, e continuam podendo derrubar a base. Pular é trocar
+espera por risco, e não por desconto.
+
+Os dois `Ended` não se atrapalham: enquanto a próxima wave não chama `awaitWaveEnd` de
+novo ninguém está escutando, e a partir daí o `MobService` só dispara quando **todos**
+os mobs vivos morrerem, os que sobraram inclusive.
+
+⚠️ É por causa disso que o `SpawnWave` **não zera** o `ActiveMobCount`. Zerar faria os
+mobs que sobraram descontarem da conta da wave nova, e o `Ended` sairia com inimigos
+vivos no mapa. O número já é o de mobs vivos: o spawn soma, o `removeMob` subtrai e o
+reset de round zera.
+
+### A animação
+
+É a mesma do `WeatherWarning` (ver `WarningConfig`): o prompt desce de `SlideOffset`
+acima do lugar autorado enquanto a transparência sobe de 1 até o valor autorado.
+
+**Até o valor autorado, e não até zero.** O `SkipPrompt` tem fundo transparente,
+sombra a 20% e imagem opaca no mesmo galho — animar todo mundo para zero pintaria uma
+caixa sólida por trás da arte. O `SkipPromptController` lê a transparência de cada
+descendente uma vez, no bind, antes de qualquer animação: repintar no Studio basta.
+`GuiObject.Transparency` fica de fora da lista de propósito, porque é apelido de
+`BackgroundTransparency` e os dois tweens brigariam pela mesma propriedade.
+
 ## Velocidade da partida (`StarterGui.Interface.Speed`)
 
 O `ImageButton` `Interface.Speed` acelera a partida. Um clique avança um degrau e
@@ -795,6 +866,12 @@ está agora**, não a próxima.
 Os degraus vivem no `SharedConfig.SpeedConfig` — velocidade nova é uma linha lá, e
 as duas pontas a leem pela mesma tabela (o cliente pega a arte, o servidor pega a
 escala).
+
+O botão tem o mesmo "pop" de clique dos botões do HUD do Lobby (`HUDButtonController`):
+encolhe para 0.9 enquanto está apertado (`Circular`) e volta com overshoot (`Back`),
+com o `UIClick` saindo na volta. É `MouseButton1Down`/`Up`, e não `Activated`, porque
+quem troca a velocidade é o `MouseButton1Click` — a animação não pode consumir o
+clique dele. O `UIScale` é criado pelo controller: o `Interface.Speed` não traz um.
 
 **A velocidade é da sala, não de quem clicou.** A simulação inteira (mob andando,
 torre atacando, wave nascendo) é do servidor, então ou todos jogam acelerado ou
