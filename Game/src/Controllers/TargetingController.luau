@@ -8,6 +8,7 @@ local Framework = require(Vendor.Me).new()
 local SharedConfig = require(Shared:WaitForChild("Config"):WaitForChild("SharedConfig"))
 local TargetPriority = SharedConfig.TargetPriority
 local PathUtil = require(Shared:WaitForChild("Util"):WaitForChild("PathUtil"))
+local GameClock = require(Shared:WaitForChild("Util"):WaitForChild("GameClock"))
 
 -- Ver `NODE_PROGRESS_REFRESH` do `MobService`: os dois lados releem o node do
 -- mob no mesmo ritmo.
@@ -71,7 +72,9 @@ end
 	conta roda por unidade e por mob, e o node do mob nao muda a cada quadro.
 ]=]
 function TargetingController:getMobPathProgress(mob, position : Vector3, nodeDistances)
-	local now = os.clock()
+	-- Tempo de partida, como no servidor: no 3x o mob anda o triplo por segundo
+	-- real, e um cache preso ao relogio de parede envelheceria tres vezes mais.
+	local now = GameClock.Now()
 	local cached = self.MobProgress[mob]
 
 	if cached and now - cached.clock < NODE_PROGRESS_REFRESH then

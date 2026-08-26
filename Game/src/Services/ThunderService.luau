@@ -8,6 +8,7 @@ local Vendor = Shared:WaitForChild("Vendor")
 local Configs = Shared:WaitForChild("Config")
 
 local SharedConfig = require(Configs.SharedConfig)
+local GameClock = require(Shared:WaitForChild("Util"):WaitForChild("GameClock"))
 
 local Me = require(Vendor.Me)
 
@@ -361,7 +362,11 @@ end
 
 function ThunderService:construct()
 	RunService.Heartbeat:Connect(function()
-		self:step(os.clock())
+		-- Tempo de partida: o atordoamento que este clima aplica ja encolhe com a
+		-- velocidade (o `UnitService` marca o prazo no mesmo relogio), entao a
+		-- cadencia tem que encolher junto -- senao acelerar seria uma forma de
+		-- levar menos clima por wave.
+		self:step(GameClock.Now())
 	end)
 end
 

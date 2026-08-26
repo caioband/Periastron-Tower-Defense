@@ -8,6 +8,7 @@ local Configs = Shared:WaitForChild("Config")
 local Assets = Shared:WaitForChild("Assets")
 
 local SharedConfig = require(Configs.SharedConfig)
+local GameClock = require(Shared:WaitForChild("Util"):WaitForChild("GameClock"))
 
 --[[
 	Modulo de VFX de terceiros (ReplicatedStorage.vfx). Ele mesmo se recusa a rodar
@@ -290,7 +291,9 @@ function VFXController:playFreezeAura(assetName : string?, root : BasePart, dura
 
 	VFX.enable(clone)
 
-	task.delay(duration, function()
+	-- A `duration` e o prazo do congelamento, que corre no relogio da partida: a
+	-- aura tem que apagar quando a unidade descongela, e nao segundos depois.
+	GameClock.Delay(duration, function()
 		-- A unidade pode ter sido vendida, ou uma aura nova pode ter substituido
 		-- esta: nos dois casos o clone ja saiu do Workspace e nao ha o que desligar.
 		if not clone.Parent then return end

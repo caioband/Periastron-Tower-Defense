@@ -780,6 +780,84 @@ a de fim de round em dois casos:
 Com o desconto, o total de quem entra e sai no meio nunca passa do que recebeu
 quem ficou o round inteiro. O ledger zera no `StartRound` e no `ResetRound`.
 
+## Velocidade da partida (`StarterGui.Interface.Speed`)
+
+O `ImageButton` `Interface.Speed` acelera a partida. Um clique avança um degrau e
+volta ao 1x depois do último; a arte do botão é **a velocidade em que a partida
+está agora**, não a próxima.
+
+| Degrau | Escala | Imagem |
+| --- | --- | --- |
+| 1 | 1x (padrão) | `rbxassetid://132899761008925` |
+| 2 | 2x | `rbxassetid://106089741438137` |
+| 3 | 3x | `rbxassetid://122729764545333` |
+
+Os degraus vivem no `SharedConfig.SpeedConfig` — velocidade nova é uma linha lá, e
+as duas pontas a leem pela mesma tabela (o cliente pega a arte, o servidor pega a
+escala).
+
+**A velocidade é da sala, não de quem clicou.** A simulação inteira (mob andando,
+torre atacando, wave nascendo) é do servidor, então ou todos jogam acelerado ou
+ninguém joga. Quem clica acelera a partida dos outros junto, e a arte do botão de
+todo mundo muda no mesmo instante.
+
+O cliente **pede o degrau que quer**, e não um "avança um": dois jogadores clicando
+ao mesmo tempo param os dois no 2x, em vez de um empurrar o outro até o 3x. O
+`SpeedService` valida o índice (vem pela rede), ignora clique repetido do mesmo
+jogador dentro de 0,15s e só então avisa a sala pelo `GameSpeedChanged`. A arte
+local só muda com essa confirmação — trocar na hora mostraria 2x para quem clicou
+enquanto os outros ainda estão no 1x.
+
+O `SpeedService` está na lista de round-scoped do `WaveService`, então **partida
+nova começa no 1x**, e não no 3x que alguém deixou ligado na anterior.
+
+### O relógio da partida (`Shared.Util.GameClock`)
+
+Não existe uma regra de "x2" espalhada pelas durações do jogo. Todo o gameplay já
+comparava instantes contra `os.clock()` — `StunnedUntil`, `lastAttack`, `expiresAt`
+da carga —, então o que a velocidade troca é a **fonte do "agora"**: o `GameClock`
+soma `dt * escala` por Heartbeat, e cooldown, atordoamento, buff e cadência de spawn
+encolhem juntos sem ninguém tocar num número de config.
+
+Ele começa em `os.clock()` de propósito: muito código faz `now - (entry.lastAttack
+or 0)` contando com um número grande de um lado e zero do outro para dizer "nunca
+atacou, pode atacar já". Um relógio começando em zero faria a unidade recém-colocada
+esperar um cooldown a mais.
+
+Cada máquina tem a sua cópia, e o `SpeedService` mantém as escalas iguais avisando
+todo mundo a cada troca. O cliente precisa da dele porque quem move o modelo do mob
+na tela é o `MobController` — ele soma `speed * GameClock.Scaled(dt)`, o mesmo `dt`
+acelerado que o `MobService` usa do lado de lá. Sem isso o servidor entregaria o mob
+na base com o boneco ainda no meio do caminho.
+
+Quem passou a usar o relógio, e por quê:
+
+| Onde | O que encolhe |
+| --- | --- |
+| `MobService` | distância andada por quadro, cadência de spawn (`SpawnDelay`), stun de gimmick |
+| `UnitService` | cooldown de ataque, windup, `HitInterval`, atordoamento e carga |
+| `WaveService` | o respiro entre waves (`WaveInterval`) |
+| `ThunderService` / `SnowService` | o intervalo entre raios e entre congelamentos |
+| `MobController` | o passo do mob na tela e a velocidade das animações dele |
+| `Classes.Unit` | a animação de ataque e as esperas de golpe do lado do cliente |
+| `TargetingController` | o cache de progresso no caminho, no mesmo ritmo do servidor |
+
+**O que continua em tempo real, de propósito:**
+
+- **o intervalo antes da wave** (`runIntermission`) — é tempo de o jogador montar a
+  defesa, e já tem o botão `ReadyWave` para encurtar;
+- **as setas do caminho** (`getArrowLeadTime`) — quem as anima é o `WaveController`,
+  em tempo de tela; encurtar só o lado do servidor poria o mob no mapa com a seta
+  ainda no meio da rota;
+- **VFX, telas de resultado e os estrangulamentos de rede** (flush de dano, VFX da
+  aura) — acelerar aquilo não é acelerar a partida, é tirar do jogador o tempo de
+  ler.
+
+A renda da farm não entra na conta porque ela é paga **por wave** (`payFarmUnits` no
+`Signals.Ended`), e não por segundo: acelerar não imprime dinheiro. As recompensas de
+fim de round também são por wave sobrevivida, então o 3x muda o ritmo da partida, não
+o que ela paga.
+
 ## Bug conhecido (não corrigido)
 
 `src/Controllers/UILibraryController/Components/Wave.luau` → `module:destroy()`

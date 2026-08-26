@@ -26,6 +26,7 @@ local TargetPriority = SharedConfig.TargetPriority
 local ClientConfig = require(Configs.Client)
 local PointerUtil = require(Utils.PointerUtil)
 local PlacementUtil = require(Utils.PlacementUtil)
+local GameClock = require(Utils.GameClock)
 
 local Maid = require(Vendor.Maid)
 local Promise = require(Packages.Promise)
@@ -1594,7 +1595,12 @@ function UnitPlacementController:construct()
 				highlight.OutlineTransparency = 0.2
 				highlight.Parent = unitModel
 
-				task.delay(duration, function()
+				--[[
+					A duracao vem do servidor em tempo de partida, entao a espera tambem
+					corre no relogio da partida: no 3x o atordoamento de 5s acaba em pouco
+					menos de 2s reais, e o realce tem que apagar junto com ele.
+				]]
+				GameClock.Delay(duration, function()
 					if highlight and highlight.Parent then
 						highlight:Destroy()
 					end

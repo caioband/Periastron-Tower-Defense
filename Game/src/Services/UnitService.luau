@@ -19,6 +19,7 @@ local DeckConfig = SharedConfig.DeckConfig
 local ServerConfig = require(ServerConfigs)
 local PathUtil = require(Shared:WaitForChild("Util"):WaitForChild("PathUtil"))
 local PlacementUtil = require(Shared:WaitForChild("Util"):WaitForChild("PlacementUtil"))
+local GameClock = require(Shared:WaitForChild("Util"):WaitForChild("GameClock"))
 
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
@@ -285,7 +286,7 @@ function UnitService:ChargeUnit(entry, damage : number?, attackSpeed : number?, 
 	entry.Charge = {
 		Damage = damage or 1,
 		AttackSpeed = attackSpeed or 1,
-		expiresAt = os.clock() + (duration or 0),
+		expiresAt = GameClock.Now() + (duration or 0),
 	}
 
 	for _, plr in ipairs(Players:GetPlayers()) do
@@ -305,7 +306,7 @@ end
 function UnitService:StunUnit(entry, duration : number, source : string?)
 	if not entry then return end
 
-	local until_ = os.clock() + (duration or 0)
+	local until_ = GameClock.Now() + (duration or 0)
 	if (entry.StunnedUntil or 0) >= until_ then return end
 
 	entry.StunnedUntil = until_
@@ -718,7 +719,10 @@ function UnitService:stepCombat()
 	local mobService = self.Services.MobService
 	if not mobService then return end
 
-	local now = os.clock()
+	-- Tempo de partida, e nao `os.clock()`: e o mesmo "agora" que gravou
+	-- `lastAttack`, `StunnedUntil` e o prazo da carga, entao acelerar o relogio
+	-- encurta os tres juntos sem tocar em nenhum numero do `UnitUpgradeConfig`.
+	local now = GameClock.Now()
 	local scansLeft = TARGET_SCANS_PER_FRAME
 
 	-- Uma leitura por quadro, repassada para baixo: o clima nao muda no meio de um
@@ -820,7 +824,7 @@ end
 function UnitService:getDamage(entry, stats, weather : string?) : number
 	local base = stats.Damage or 0
 	local multiplier = SharedConfig.UnitUpgradeConfig:GetDamageMultiplier(entry.unitName, entry.upgrades or 0, weather)
-	local charge = self:chargeMultiplier(entry, "Damage", os.clock())
+	local charge = self:chargeMultiplier(entry, "Damage", GameClock.Now())
 
 	return math.floor(base * multiplier * charge + 0.5)
 end
@@ -915,7 +919,7 @@ function UnitService:stepTripminer(entry, stats, now, weather : string?)
 		Framework:Fire("UnitSwing", plr, entry.unitId, entry.unitName, false, 1)
 	end
 
-	task.delay(windup, function()
+	GameClock.Delay(windup, function()
 		entry.pendingMines = math.max(0, (entry.pendingMines or 1) - 1)
 		if not self.UnitsById[entry.unitId] then return end
 		entry.mines[mineId] = { position = position, cf = mineCF }
@@ -1017,7 +1021,7 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 
 	task.spawn(function()
 		if windup > 0 then
-			task.wait(windup)
+			GameClock.Wait(windup)
 		end
 
 		for i = 1, totalHits do
@@ -1056,7 +1060,7 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 			end
 
 			if i < totalHits then
-				task.wait(unitStats.HitInterval)
+				GameClock.Wait(unitStats.HitInterval)
 			end
 		end
 	end)

@@ -13,6 +13,7 @@ local ServerConfigs = ServerScriptService:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 local ServerConfig = require(ServerConfigs)
 local PathUtil = require(Shared.Util.PathUtil)
+local GameClock = require(Shared.Util.GameClock)
 
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
@@ -50,7 +51,7 @@ local ROUND_STATE = {
 
 -- Services que guardam estado de partida e sabem se limpar sozinhos. Cada um
 -- expoe `ResetRound()`; quem entrar nessa lista passa a ser zerado junto.
-local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService", "WeatherRoundService" }
+local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService", "WeatherRoundService", "SpeedService" }
 
 local WaveService = {
 	Services = {
@@ -58,7 +59,8 @@ local WaveService = {
 		UnitService = {},
 		DifficultyService = {},
 		DataService = {},
-		WeatherRoundService = {}
+		WeatherRoundService = {},
+		SpeedService = {}
 	},
 	Signals = {
 		Ended = Signal.new(),
@@ -325,6 +327,22 @@ function WaveService:onRoundEnded(won : boolean)
 		self:grantReward(player, rewards)
 
 		if won then
+			--[[
+				A vitoria no perfil. E o unico lugar que escreve `Stats.Wins` -- a coluna
+				"Wins" do leaderstats da Lobby le exatamente esta chave, e sem isto ela
+				ficava parada no zero do template para sempre.
+
+				Separado do `grantReward` de proposito: aquilo e proporcional as waves e
+				tambem paga quem sai no meio; isto e binario e so vale para quem estava na
+				sala quando a ultima wave caiu.
+			]]
+			if dataService then
+				dataService:Update(player, "Stats", function(stats)
+					stats.Wins = (stats.Wins or 0) + 1
+					return stats
+				end)
+			end
+
 			Framework:Fire("Win", player)
 		end
 
@@ -412,6 +430,12 @@ function WaveService:runRound(generation : number)
 	while not self.GameOver do
 		self:setWave((self.WaveCount or 0) + 1)
 
+		--[[
+			Tempo real de proposito, mesmo no 3x: esta espera existe para as setas do
+			caminho terminarem de correr antes do primeiro mob nascer, e quem as
+			desenha e o `WaveController`, que anima em tempo de tela. Encurtar so
+			este lado poria o mob no mapa com a seta ainda no meio da rota.
+		]]
 		task.wait(self:getArrowLeadTime())
 		if not self:isCurrent(generation) then return end
 
@@ -430,7 +454,8 @@ function WaveService:runRound(generation : number)
 			break
 		end
 
-		task.wait(preset.WaveInterval or WAVE_INTERVAL)
+		-- O respiro entre waves e ritmo de partida, entao encolhe junto com ela.
+		GameClock.Wait(preset.WaveInterval or WAVE_INTERVAL)
 		if not self:isCurrent(generation) then return end
 	end
 

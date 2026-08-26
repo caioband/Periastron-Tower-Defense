@@ -13,6 +13,7 @@ local SharedConfig = require(Config.SharedConfig)
 local TargetPriority = SharedConfig.TargetPriority
 local ServerConfig = require(ServerConfigs)
 local PathUtil = require(Shared.Util.PathUtil)
+local GameClock = require(Shared.Util.GameClock)
 
 local WaveConfig = ServerConfig.Wave
 local DifficultyConfig = ServerConfig.Difficulty
@@ -84,14 +85,14 @@ local GimmickHandlers = {
 			mob.GimmickState[gimmick] = true
 
 			local freezeTime = gimmick.AnimTime or 0
-			mob.StunnedUntil = math.max(mob.StunnedUntil or 0, os.clock() + freezeTime)
+			mob.StunnedUntil = math.max(mob.StunnedUntil or 0, GameClock.Now() + freezeTime)
 
 			for _, player in Players:GetPlayers() do
 				Framework:Fire("MobPlayAttack", player, mobId)
 				Framework:Fire("UpdateMobSpeed", player, mobId, 0)
 			end
 
-			task.delay(freezeTime, function()
+			GameClock.Delay(freezeTime, function()
 				if not self.ActiveMobs[mobId] then return end
 
 				for _, player in Players:GetPlayers() do
@@ -204,7 +205,7 @@ end
 	mob nao muda de node a cada quadro, a conta vale por `NODE_PROGRESS_REFRESH`.
 ]=]
 function MobService:getMobPathProgress(mob, position : Vector3, nodeDistances)
-	local now = os.clock()
+	local now = GameClock.Now()
 
 	if mob.NodeProgress and now - (mob.NodeProgressClock or 0) < NODE_PROGRESS_REFRESH then
 		return mob.NodeProgress
@@ -478,7 +479,7 @@ function MobService:SpawnWave(waveNumber)
 							Route = routeIndex,
 						})
 					end
-					task.wait(spawnEntry.SpawnDelay or 1)
+					GameClock.Wait(spawnEntry.SpawnDelay or 1)
 				end
 			end
 		end
@@ -734,7 +735,16 @@ function MobService:construct()
 
 	RunService.Heartbeat:Connect(function(dt)
 		self.FrameId += 1
-		local now = os.clock()
+
+		--[[
+			O quadro em tempo de partida. No 3x o mob anda o triplo por segundo real
+			sem ninguem mexer na velocidade dele: e o mesmo `CurrentSpeed`, so que
+			multiplicado por um `dt` maior. O cliente faz a mesma conta no
+			`MobController`, com a escala que o `SpeedService` mandou.
+		]]
+		dt = GameClock.Scaled(dt)
+
+		local now = GameClock.Now()
 
 		--[[
 			O clima e conferido aqui em vez de ser empurrado por quem o liga.

@@ -17,6 +17,7 @@ local ClientConfig = require(Configs.Client)
 local MobConfig = require(Configs.SharedConfig.Mob)
 local PathUtil = require(Shared.Util.PathUtil)
 local PointerUtil = require(Shared.Util.PointerUtil)
+local GameClock = require(Shared.Util.GameClock)
 
 local Me = require(Vendor.Me)
 
@@ -413,6 +414,8 @@ function MobController:createEntity(entityData)
 	elseif walkAnim then
 		local track = animator:LoadAnimation(walkAnim)
 		track:Play()
+		self.MobMovement[mobId].walkTrack = track
+		track:AdjustSpeed(self.TimeScale or 1)
 	end
 end
 
@@ -429,6 +432,8 @@ function MobController:updateWalkAnimation(mobId)
 	if not targetTrack.IsPlaying then
 		targetTrack:Play(0.2)
 	end
+
+	targetTrack:AdjustSpeed(self.TimeScale or 1)
 end
 
 function MobController:playAttackAnimation(mobId)
@@ -446,10 +451,40 @@ function MobController:playAttackAnimation(mobId)
 	end
 
 	movement.attackTrack:Play(0.1)
+	movement.attackTrack:AdjustSpeed(self.TimeScale or 1)
+end
+
+--[=[
+	Poe as animacoes dos mobs na velocidade da partida.
+
+	Sem isto o boneco no 3x desliza: ele anda o triplo da distancia por segundo
+	com a caminhada tocando no ritmo de sempre. Vale para o ataque pelo mesmo
+	motivo -- o servidor bate tres vezes mais rapido.
+]=]
+function MobController:applyTimeScale(scale : number)
+	for _, data in self.MobMovement do
+		for _, key in { "slowTrack", "fastTrack", "walkTrack", "attackTrack" } do
+			local track = data[key]
+			if track then
+				track:AdjustSpeed(scale)
+			end
+		end
+	end
 end
 
 function MobController:startMovementLoop()
 	RunService.Heartbeat:Connect(function(dt)
+		--[[
+			A escala e lida do relogio a cada quadro em vez de empurrada pelo
+			`SpeedController`: sao duas comparacoes, e em troca este laco nao depende
+			da ordem em que os controllers ligam nem de quem avisou quem.
+		]]
+		local scale = GameClock.GetScale()
+		if scale ~= self.TimeScale then
+			self.TimeScale = scale
+			self:applyTimeScale(scale)
+		end
+
 		for mobId, data in self.MobMovement do
 			local mobClone = data.model
 			if not mobClone or not mobClone.Parent then
@@ -478,7 +513,10 @@ function MobController:startMovementLoop()
 
 			local posH = Vector3.new(currentPos.X, 0, currentPos.Z)
 			local currentHeight = currentPos.Y - (extentsSize.Y / 2)
-			local remaining = data.speed * dt
+			-- O mesmo `dt` acelerado que o `MobService` usa para somar a distancia
+			-- do lado dele. Os dois tem que andar juntos, senao o mob some da tela
+			-- antes de chegar ou chega depois de ja ter batido na base.
+			local remaining = data.speed * GameClock.Scaled(dt)
 			local lookTargetH = nil
 
 			while remaining > 0 and data.pointIndex <= #points do

@@ -5,6 +5,7 @@ local Vendor = Shared:WaitForChild("Vendor")
 local Configs = Shared:WaitForChild("Config")
 
 local SharedConfig = require(Configs.SharedConfig)
+local GameClock = require(Shared:WaitForChild("Util"):WaitForChild("GameClock"))
 local Me = require(Vendor.Me)
 local Framework = Me.new()
 
@@ -91,10 +92,27 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?)
 		end
 	end
 
+	--[[
+		A velocidade da partida entra na animacao e nas esperas daqui.
+
+		Quem decide quando o dano sai e o servidor (`UnitService:executeAttack`), e
+		la o windup e o intervalo entre golpes ja correm no relogio acelerado. Este
+		lado desenha o mesmo ataque: sem a escala, no 3x a torre bateria tres vezes
+		enquanto o boneco ainda termina o primeiro golpe.
+
+		Na Lobby a escala e sempre 1 -- nao existe `SpeedService` la --, entao isto
+		nao muda nada para as unidades do menu.
+	]]
+	local timeScale = GameClock.GetScale()
+
 	local freshSwing = false
 	if track and not track.IsPlaying then
 		track:Play()
 		freshSwing = true
+	end
+
+	if track then
+		track:AdjustSpeed(timeScale)
 	end
 
 	if freshSwing and step and step.SwingSound then
@@ -140,12 +158,12 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?)
 		local interval = self.stats.HitInterval or 0
 		fireHit()
 		for i = 2, totalHits do
-			task.delay(interval * (i - 1), fireHit)
+			GameClock.Delay(interval * (i - 1), fireHit)
 		end
 	end
 
 	if hitTime > 0 then
-		task.delay(hitTime, scheduleHits)
+		GameClock.Delay(hitTime, scheduleHits)
 	elseif track and freshSwing then
 		local fired = false
 		local function once()
@@ -159,7 +177,7 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?)
 			once()
 		end)
 		local safetyDelay = track.Length > 0 and track.Length or (self.stats.Cooldown or 3)
-		task.delay(safetyDelay, function()
+		GameClock.Delay(safetyDelay, function()
 			markerConn:Disconnect()
 			once()
 		end)
