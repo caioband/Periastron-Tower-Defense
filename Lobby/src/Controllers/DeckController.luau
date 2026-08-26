@@ -56,8 +56,6 @@ local WAIT_TIMEOUT = 10
 
 local OPEN_INFO = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local POP_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local BUTTON_POP_SCALE = 0.85
 
 -- A entrada das cartas: a posição estica (Back) e a opacidade só acompanha, mais
 -- curta, porque transparência com overshoot passaria de 0 e piscaria.
@@ -1610,31 +1608,22 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 	self:_render()
 end
 
+--[=[
+	Liga o botão do HUD. Ele mora dentro de um wrapper, então é procurado pelo nome
+	em qualquer profundidade do frame — e quem anima o hover e o clique dele é o
+	HUDButtonController, que cuida de todos os botões de lá.
+]=]
 function DeckController:_bindHud(screenGui : ScreenGui)
 	local hudFrame = screenGui:WaitForChild(HUD_FRAME_NAME, WAIT_TIMEOUT)
-	local button = hudFrame and hudFrame:WaitForChild(HUD_BUTTON_NAME, WAIT_TIMEOUT)
+	local button = hudFrame and UIUtil.waitForDescendant(hudFrame, HUD_BUTTON_NAME, WAIT_TIMEOUT)
 
 	if not button or not button:IsA("GuiButton") then
 		warn(`[DeckController]: não achei {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
 		return
 	end
 
-	local buttonScale = button:FindFirstChildWhichIsA("UIScale")
-
 	self.HudMaid:DoCleaning()
 	self.HudMaid:GiveTask(button.Activated:Connect(function()
-		if buttonScale then
-			self.ButtonMaid:DoCleaning()
-			buttonScale.Scale = BUTTON_POP_SCALE
-
-			local pop = TweenService:Create(buttonScale, POP_INFO, { Scale = 1 })
-			self.ButtonMaid:GiveTask(function()
-				pop:Cancel()
-			end)
-
-			pop:Play()
-		end
-
 		-- O mesmo botão fecha o que ele abriu.
 		self:Toggle()
 	end))
@@ -1783,7 +1772,6 @@ function DeckController:init()
 	self.TweenMaid = Maid.new()
 	self.AnimMaid = Maid.new()
 	self.HudMaid = Maid.new()
-	self.ButtonMaid = Maid.new()
 
 	self.Maid:GiveTask(self.UIMaid)
 	self.Maid:GiveTask(function()
@@ -1793,7 +1781,6 @@ function DeckController:init()
 	self.Maid:GiveTask(self.TweenMaid)
 	self.Maid:GiveTask(self.AnimMaid)
 	self.Maid:GiveTask(self.HudMaid)
-	self.Maid:GiveTask(self.ButtonMaid)
 
 	self.IsOpenState = false
 	self.SelectedUnit = nil

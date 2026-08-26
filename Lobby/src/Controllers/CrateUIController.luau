@@ -5,10 +5,13 @@ local TweenService = game:GetService("TweenService")
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
+local Util = Shared:WaitForChild("Util")
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
 local Signal = require(Packages.Signal)
+
+local UIUtil = require(Util.UIUtil)
 
 local Framework = Me.new()
 
@@ -23,11 +26,9 @@ local TOGGLE_BUTTON_NAME = "Backpack"
 local OPEN_INFO = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local FADE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local POP_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
 local OPEN_FROM_SCALE = 0.85
 local CLOSE_TO_SCALE = 0.9
-local BUTTON_POP_SCALE = 0.85
 
 --[=[
 	Owns the crate panel: the Backpack button opens and closes it.
@@ -116,32 +117,22 @@ function CrateUIController:_bindPanel(screenGui : ScreenGui)
 	panel.Visible = false
 end
 
+--[=[
+	Binds the Backpack button on the HUD. It sits inside a wrapper frame, so it is
+	looked up by name anywhere under the HUD frame -- and its hover and click
+	animations belong to HUDButtonController, shared by every button up there.
+]=]
 function CrateUIController:_bindHud(screenGui : ScreenGui)
 	local hudFrame = screenGui:WaitForChild(HUD_FRAME_NAME, 10)
-	local button = hudFrame and hudFrame:WaitForChild(TOGGLE_BUTTON_NAME, 10)
+	local button = hudFrame and UIUtil.waitForDescendant(hudFrame, TOGGLE_BUTTON_NAME, 10)
 
 	if not button or not button:IsA("GuiButton") then
 		warn(`[CrateUIController]: Could not find {HUD_UI_NAME}.{HUD_FRAME_NAME}.{TOGGLE_BUTTON_NAME}.`)
 		return
 	end
 
-	local buttonScale = button:FindFirstChildWhichIsA("UIScale")
-
 	self.HudMaid:DoCleaning()
 	self.HudMaid:GiveTask(button.Activated:Connect(function()
-		if buttonScale then
-			self.ButtonMaid:DoCleaning()
-
-			buttonScale.Scale = BUTTON_POP_SCALE
-
-			local pop = TweenService:Create(buttonScale, POP_INFO, { Scale = 1 })
-			self.ButtonMaid:GiveTask(function()
-				pop:Cancel()
-			end)
-
-			pop:Play()
-		end
-
 		self:Toggle()
 	end))
 end
@@ -198,11 +189,9 @@ function CrateUIController:init()
 	self.Maid = Maid.new()
 	self.TweenMaid = Maid.new()
 	self.HudMaid = Maid.new()
-	self.ButtonMaid = Maid.new()
 
 	self.Maid:GiveTask(self.TweenMaid)
 	self.Maid:GiveTask(self.HudMaid)
-	self.Maid:GiveTask(self.ButtonMaid)
 
 	self.IsOpenState = false
 

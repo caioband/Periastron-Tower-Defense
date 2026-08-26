@@ -30,4 +30,27 @@ function UIUtil.formatCommas(num: number): string
 	return formatted
 end
 
+--[=[
+	Espera um descendente pelo nome, em qualquer profundidade. O `WaitForChild` só
+	olha filhos diretos, e a GUI muda de forma com o tempo — um botão do HUD pode
+	estar solto no frame hoje e dentro de um wrapper amanhã.
+
+	Devolve nil se estourar o tempo (10s por padrão), do mesmo jeito que o
+	`WaitForChild` com timeout.
+]=]
+function UIUtil.waitForDescendant(root: Instance, name: string, timeout: number?): Instance?
+	local deadline = os.clock() + (timeout or 10)
+
+	repeat
+		local found = root:FindFirstChild(name, true)
+		if found then
+			return found
+		end
+
+		task.wait(0.05)
+	until os.clock() >= deadline
+
+	return root:FindFirstChild(name, true)
+end
+
 return UIUtil

@@ -69,6 +69,32 @@ impede o descarte depois é ter uma instância viva apontando para cada uma. A
 `ScreenGui` tem `ResetOnSpawn = false` de propósito: o HUD é recriado a cada
 respawn (e por isso o bind roda de novo), o cache não.
 
+### Os botões da coluna (Loja, Backpack, Deck)
+
+`HUDButtonController` anima **todo `GuiButton` dentro do `HUDFrame`**, em qualquer
+profundidade — hoje cada um mora dentro de um `Wrapper`, e um botão novo entra na
+animação só de nascer ali (o `DescendantAdded` fica ligado porque a GUI replica em
+pedaços).
+
+| Evento | O que faz |
+| --- | --- |
+| `MouseEnter` | desliza a `Position` para `X.Scale = 0.3` (`Circular`, 0.28s) e toca `SharedSounds.SFX.UIHover` |
+| `MouseLeave` | volta para a posição autorada, lida uma vez no bind |
+| `MouseButton1Down` | encolhe o `UIScale` para 0.9 |
+| `MouseButton1Up` | volta a escala (`Back`) e toca `SharedSounds.SFX.UIClick` |
+
+Com `AnchorPoint` 0.5 dentro do wrapper (e `X.Scale = 0.5` em repouso), `X.Scale =
+0.3` é um quinto da largura para fora da coluna; o Y e os offsets ficam como estão. O `MouseLeave` também solta a escala,
+porque soltar o clique fora do botão não dispara o `MouseButton1Up` dele e a escala
+ficaria presa no apertado.
+
+Só o visual e o som moram ali. Quem **abre** cada painel continua sendo o controller
+dele (`ShopController`, `CrateUIController`, `DeckController`), pelo `Activated` do
+mesmo botão — por isso a animação de clique é `Down`/`Up`, que não consome o clique
+de ninguém. Esses três procuram o botão pelo nome em qualquer profundidade do
+`HUDFrame` (`UIUtil.waitForDescendant`), então mexer nos wrappers no Studio não
+quebra o bind.
+
 ## leaderstats: Coins, Wins e Shards
 
 O `LeaderstatsService` (`Lobby/src/Services`) põe as três colunas na lista de

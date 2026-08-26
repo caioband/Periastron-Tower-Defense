@@ -1,7 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -43,9 +42,6 @@ local CONFIRM_NAME = "Confirm"
 local HUD_UI_NAME = "HUD"
 local HUD_FRAME_NAME = "HUDFrame"
 local HUD_BUTTON_NAME = "Shop"
-
-local POP_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local BUTTON_POP_SCALE = 0.85
 
 --[=[
 	Owns StarterGui.ShopUI: renders one row per ShopConfig item and plays the two
@@ -398,35 +394,22 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 end
 
 --[=[
-	Binds the shop button on the HUD. Like the crate panel's Backpack button, it pops
-	the icon on click -- the UIScale is already there for it -- and then walks the
-	player over to the shop.
+	Binds the shop button on the HUD, which walks the player over to the shop. The
+	icon lives inside a wrapper frame, so the button is looked up by name anywhere
+	under the HUD frame -- and the hover and click animations are the
+	HUDButtonController's, shared by every button up there.
 ]=]
 function ShopController:_bindHud(screenGui : ScreenGui)
 	local hudFrame = screenGui:WaitForChild(HUD_FRAME_NAME, 10)
-	local button = hudFrame and hudFrame:WaitForChild(HUD_BUTTON_NAME, 10)
+	local button = hudFrame and UIUtil.waitForDescendant(hudFrame, HUD_BUTTON_NAME, 10)
 
 	if not button or not button:IsA("GuiButton") then
 		warn(`[ShopController]: could not find {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
 		return
 	end
 
-	local buttonScale = button:FindFirstChildWhichIsA("UIScale")
-
 	self.HudMaid:DoCleaning()
 	self.HudMaid:GiveTask(button.Activated:Connect(function()
-		if buttonScale then
-			self.ButtonMaid:DoCleaning()
-			buttonScale.Scale = BUTTON_POP_SCALE
-
-			local pop = TweenService:Create(buttonScale, POP_INFO, { Scale = 1 })
-			self.ButtonMaid:GiveTask(function()
-				pop:Cancel()
-			end)
-
-			pop:Play()
-		end
-
 		self:TeleportToShop()
 	end))
 end
@@ -580,12 +563,10 @@ function ShopController:init()
 	self.UIMaid = Maid.new()
 	self.ItemMaid = Maid.new()
 	self.HudMaid = Maid.new()
-	self.ButtonMaid = Maid.new()
 
 	self.Maid:GiveTask(self.UIMaid)
 	self.Maid:GiveTask(self.ItemMaid)
 	self.Maid:GiveTask(self.HudMaid)
-	self.Maid:GiveTask(self.ButtonMaid)
 
 	self.Wrappers = {}
 	self.IsOpenState = false
