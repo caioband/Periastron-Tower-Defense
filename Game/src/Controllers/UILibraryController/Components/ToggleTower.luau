@@ -275,6 +275,40 @@ local Framework = Me.new()
 local module = {}
 module.currentUnit = nil
 
+--[[
+	Os atalhos de teclado do card, e o que sai escrito no botao de cada um.
+
+	O formato de sufixo entre colchetes e o que o card ja trazia desenhado no
+	StarterGui ("First [V]"): o texto util primeiro, a tecla no fim. As tres letras
+	estao livres -- o unico atalho que o jogo ja tinha por perto e o `R`, que gira o
+	fantasma durante o posicionamento.
+]]
+local KEYBINDS = {
+	Upgrade = Enum.KeyCode.E,
+	Priority = Enum.KeyCode.V,
+	Sell = Enum.KeyCode.X,
+}
+
+--[=[
+	`text` com a tecla do atalho no fim: "SELL $250" vira "SELL $250 [X]".
+
+	Fora do PC devolve o texto cru. Celular e console nao tem tecla para apertar, e
+	os labels do card sao todos `TextScaled` num botao baixo -- quatro caracteres de
+	atalho que ninguem pode usar sairiam do tamanho justamente do numero que
+	interessa ler.
+
+	A escuta de teclado la embaixo nao depende deste teste: quem por acaso tiver um
+	teclado ligado num aparelho de toque continua conseguindo usar o atalho, so nao
+	ve o convite na tela.
+]=]
+local function withBind(text : string, keyCode : Enum.KeyCode) : string
+	if not PointerUtil.isPC() then
+		return text
+	end
+
+	return string.format("%s [%s]", text, keyCode.Name)
+end
+
 --[=[
 	Numero com no maximo `decimals` casas e sem zeros sobrando: 12.00 -> "12",
 	0.75 -> "0.75". So mexe na parte decimal, entao 100 continua "100".
@@ -409,6 +443,44 @@ function module:create(unitModel, ...)
 	self.maid = Maid.new()
 	self.currentUnit = unitModel
 
+	--[[
+		As tres acoes do card, cada uma numa funcao propria.
+
+		O clique e o atalho de teclado chamam a mesma funcao, entao nao existe uma
+		segunda copia das regras para sair de sincronia com a primeira -- o teto de
+		nivel do upgrade vale para os dois pelo mesmo `if`.
+
+		A trava de arrasto (`isClickSuppressed`) fica de fora delas de proposito: ela
+		existe para engolir o clique que fecha um arrasto, e quem apertou uma tecla
+		nao arrastou card nenhum.
+	]]
+	local function doSell()
+		if not unitModel then return end
+
+		local unitId = unitModel:GetAttribute("UnitID")
+		Framework:Fire("SellUnit", unitId)
+		self:destroy()
+	end
+
+	local function doUpgrade()
+		if not unitModel then return end
+
+		local level = unitModel:GetAttribute("Upgrades") or 0
+		if SharedConfig.UnitUpgradeConfig:IsMaxed(level) then return end
+
+		local unitId = unitModel:GetAttribute("UnitID")
+		Framework:Fire("UpgradeUnit", unitId)
+	end
+
+	local function doPriority()
+		if not unitModel then return end
+
+		local unitId = unitModel:GetAttribute("UnitID")
+		if not unitId then return end
+
+		Framework:Fire("SetUnitPriority", unitId, TargetPriority.Next(unitModel:GetAttribute("TargetPriority")))
+	end
+
 	local sellButton = CardUpgrade:FindFirstChild("Sell")
 	if sellButton and self.sellConnection then
 		self.sellConnection:Disconnect()
@@ -422,9 +494,7 @@ function module:create(unitModel, ...)
 			-- Quem acabou de arrastar o card pelo botao nao quis vender nada.
 			if isClickSuppressed() then return end
 
-			local unitId = unitModel:GetAttribute("UnitID")
-			Framework:Fire("SellUnit", unitId)
-			self:destroy()
+			doSell()
 		end)
 		self.maid:GiveTask(function()
 			if self.sellConnection then
@@ -444,10 +514,7 @@ function module:create(unitModel, ...)
 		self.upgradeConnection = upgradeButton.Activated:Connect(function()
 			if isClickSuppressed() then return end
 
-			local level = unitModel:GetAttribute("Upgrades") or 0
-			if SharedConfig.UnitUpgradeConfig:IsMaxed(level) then return end
-			local unitId = unitModel:GetAttribute("UnitID")
-			Framework:Fire("UpgradeUnit", unitId)
+			doUpgrade()
 		end)
 		self.maid:GiveTask(function()
 			if self.upgradeConnection then
@@ -498,10 +565,7 @@ function module:create(unitModel, ...)
 		self.priorityConnection = priorityButton.Activated:Connect(function()
 			if isClickSuppressed() then return end
 
-			local unitId = unitModel:GetAttribute("UnitID")
-			if not unitId then return end
-
-			Framework:Fire("SetUnitPriority", unitId, TargetPriority.Next(unitModel:GetAttribute("TargetPriority")))
+			doPriority()
 		end)
 		self.maid:GiveTask(function()
 			if self.priorityConnection then
@@ -510,6 +574,39 @@ function module:create(unitModel, ...)
 			end
 		end)
 	end
+
+	--[[
+		Os atalhos. Uma escuta so para os tres, presa ao maid: eles nascem e morrem
+		junto com o card, e uma tecla nao pode sobreviver ao card que a anunciou.
+
+		A pergunta que libera cada tecla e o `Visible` do proprio botao, e nao uma
+		copia das regras dele: e ali que ja moram "so o dono vende e melhora"
+		(`refreshOwnership`) e "Farm nao tem prioridade" (`refreshPriority`). Assim a
+		tecla nunca faz o que o botao ao lado dela nao faria -- inclusive quando o
+		botao esta fora da tela.
+
+		`gameProcessed` corta o que a interface do Roblox ja consumiu: digitar um "x"
+		no chat nao pode vender a unidade selecionada.
+	]]
+	local function isButtonActive(button : Instance?) : boolean
+		return CardUpgrade.Visible
+			and button ~= nil
+			and button:IsA("GuiObject")
+			and button.Visible
+	end
+
+	self.maid:GiveTask(UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed then return end
+		if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+		if input.KeyCode == KEYBINDS.Upgrade then
+			if isButtonActive(upgradeButton) then doUpgrade() end
+		elseif input.KeyCode == KEYBINDS.Priority then
+			if isButtonActive(priorityButton) then doPriority() end
+		elseif input.KeyCode == KEYBINDS.Sell then
+			if isButtonActive(sellButton) then doSell() end
+		end
+	end))
 
 	if unitModel then
 		-- Upgrade muda dano/alcance/cooldown e o custo do proximo nivel; o dano total
@@ -696,11 +793,16 @@ function module:refresh()
 	CardUpgrade.Info.UnitLevel.Text = "LVL." .. level
 	applyClassIcon(unitName)
 
+	-- No nivel maximo o atalho nao entra: a tecla nao faz nada ali, e anunciar uma
+	-- que nao responde e pior do que nao anunciar nenhuma.
 	if upgradeLabel then
 		if upgradeConfig:IsMaxed(level) then
 			upgradeLabel.Text = "MAX"
 		else
-			upgradeLabel.Text = "$" .. UIUtil.formatAbbreviated(upgradeConfig:GetCost(unitName, level))
+			upgradeLabel.Text = withBind(
+				"$" .. UIUtil.formatAbbreviated(upgradeConfig:GetCost(unitName, level)),
+				KEYBINDS.Upgrade
+			)
 		end
 	end
 
@@ -708,7 +810,7 @@ function module:refresh()
 	if sellLabel then
 		local invested = upgradeConfig:GetInvested(unitName, level)
 		local refund = math.floor(invested * SharedConfig.SellRefundRatio)
-		sellLabel.Text = "SELL $" .. UIUtil.formatAbbreviated(refund)
+		sellLabel.Text = withBind("SELL $" .. UIUtil.formatAbbreviated(refund), KEYBINDS.Sell)
 	end
 
 	--[[
@@ -801,7 +903,7 @@ function module:refreshPriority()
 	local unitStats = SharedConfig.UnitStats[unitModel.Name]
 	button.Visible = isOwnedByMe(unitModel) and not (unitStats and unitStats.Farm)
 
-	label.Text = TargetPriority.Label(unitModel:GetAttribute("TargetPriority"))
+	label.Text = withBind(TargetPriority.Label(unitModel:GetAttribute("TargetPriority")), KEYBINDS.Priority)
 end
 
 function module:refreshDamageDone()

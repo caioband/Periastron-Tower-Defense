@@ -21,6 +21,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local UserInputService = RunService:IsClient() and game:GetService("UserInputService") or nil
+local GuiService = RunService:IsClient() and game:GetService("GuiService") or nil
 
 local PointerUtil = {}
 
@@ -119,6 +120,26 @@ end
 function PointerUtil.isTouchOnly() : boolean
 	if not UserInputService then return false end
 	return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+end
+
+--[=[
+	Verdadeiro so num PC: teclado e mouse de verdade, e nao um console.
+
+	E o teste que decide se vale anunciar um atalho de teclado na interface, e por
+	isso ele e feito pelo lado positivo. Perguntar `not isTouchOnly()` nao serve:
+	num console nao ha toque nem mouse, entao aquela pergunta responde "nao e so
+	toque" -- e o jogador de controle acabaria lendo um "[E]" que ele nao tem como
+	apertar.
+
+	Tablet com teclado bluetooth tambem fica de fora. A tecla ate funcionaria la,
+	mas a interface daquele aparelho e a de toque, e nao e no meio de um botao
+	`TextScaled` que se descobre a excecao.
+]=]
+function PointerUtil.isPC() : boolean
+	if not UserInputService then return false end
+	if GuiService and GuiService:IsTenFootInterface() then return false end
+
+	return UserInputService.KeyboardEnabled and UserInputService.MouseEnabled
 end
 
 --[=[
