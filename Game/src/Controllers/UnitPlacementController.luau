@@ -121,6 +121,43 @@ local function getGhostCollisionGroup() : string?
 	return nil
 end
 
+--[=[
+	O Humanoid do fantasma, injetado na hora quando o rig nao traz um.
+
+	Os rigs das unidades sao R6 montados a mao -- MeshParts penduradas por Motor6D
+	numa HumanoidRootPart ancorada -- e nenhum deles guarda um Humanoid: quem toca a
+	animacao da unidade de verdade e o `AnimationController` que a classe `Unit`
+	cria, e o rig parado nao precisa de nada alem das juntas.
+
+	O fantasma precisa. Por um bug antigo da engine, Highlight nao renderiza em part
+	transparente quando o modelo nao tem Humanoid -- e o fantasma e meio transparente
+	por natureza. Sem ele o modelo aparece nas cores normais e some justamente o
+	verde/vermelho que diz se da para colocar ali.
+
+	Entao ele entra calado. `EvaluateStateMachine = false` porque e a maquina de
+	estado quem manda na colisao de um personagem: ao entrar num estado novo
+	(Running, Landed...) ela religa o `CanCollide` do torso e desfaz o laco de
+	`visualize`. E os dois displays saem para o nome do modelo e a barra de vida nao
+	flutuarem sobre o fantasma, que e o unico rastro que um Humanoid recem-criado
+	deixaria na tela.
+]=]
+local function prepareGhostHumanoid(ghost : Model) : Humanoid
+	local humanoid = ghost:FindFirstChildOfClass("Humanoid") or Instance.new("Humanoid")
+
+	-- Tudo configurado antes de parentear: e o parenteamento no workspace que
+	-- dispara a primeira avaliacao, e ela ja tem que achar a maquina desligada.
+	humanoid.EvaluateStateMachine = false
+	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+	-- O rig nao e personagem: nao ha pescoco a vigiar nem morte a encenar, e um
+	-- Humanoid que se der por morto desmonta as juntas e derruba o fantasma.
+	humanoid.RequiresNeck = false
+	humanoid.BreakJointsOnDeath = false
+	humanoid.Parent = ghost
+
+	return humanoid
+end
+
 local TILT_MAX = math.rad(16)
 local TILT_PER_STUD = 0.08
 local TILT_LERP_SPEED = 10
@@ -964,31 +1001,30 @@ function UnitPlacementController:visualize(unitName : string)
 
 		**O `CanCollide = false`** continua sendo feito, como plano B do acima.
 
-		**A maquina de estado do Humanoid** sai (`EvaluateStateMachine = false`), e
-		antes de parentear no workspace, que e o que dispara a primeira avaliacao. E
-		ela quem manda na colisao de um personagem: ao entrar num estado novo
-		(Running, Landed...) ela religa o `CanCollide` do torso e desfaz o laco abaixo.
-
-		O Humanoid em si **precisa** ficar. Por um bug antigo da engine, Highlight nao
-		renderiza em part transparente quando o modelo nao tem Humanoid -- e o
-		fantasma e meio transparente por natureza. Sem Humanoid o Highlight some, e
-		com ele o verde/vermelho que diz se da para colocar ali.
+		**O Humanoid** e cuidado do `prepareGhostHumanoid`: os rigs de hoje nao trazem
+		um, e sem Humanoid o Highlight nao pinta part transparente -- o fantasma
+		ficaria sem o verde/vermelho. Ele entra com a maquina de estado desligada,
+		antes de o modelo ir para o workspace.
 
 		As perguntas de posicionamento nao mudam de resposta por causa do grupo: elas
 		sao feitas com `OverlapParams` no grupo `Default`, e e o grupo do *params* que
 		vale, nao o da part consultada.
 	]]
-	local ghostHumanoid = ghost:FindFirstChildOfClass("Humanoid")
-	if ghostHumanoid then
-		ghostHumanoid.EvaluateStateMachine = false
-	end
+	local ghostHumanoid = prepareGhostHumanoid(ghost)
 
 	local ghostGroup = getGhostCollisionGroup()
 
 	for _, descendant in pairs(ghost:GetDescendants()) do
 		if descendant:IsA("BasePart") then
 			descendant.CanCollide = false
-			descendant.Transparency = 0.5
+
+			-- Part invisivel continua invisivel. A HumanoidRootPart dos rigs novos e
+			-- uma caixa opaca de 0.76 stud que so nao aparece porque esta em
+			-- Transparency = 1; pintada de 0.5 ela vira um bloco dentro do fantasma,
+			-- estourando pelo torso das unidades mais magras.
+			if descendant.Transparency < 1 then
+				descendant.Transparency = 0.5
+			end
 
 			if ghostGroup then
 				descendant.CollisionGroup = ghostGroup
@@ -996,16 +1032,22 @@ function UnitPlacementController:visualize(unitName : string)
 		end
 	end
 
-	-- A animacao nao depende da maquina de estado: quem toca a faixa e o Animator,
-	-- e a faixa e pedida na mao aqui.
-	if ghostHumanoid then
-		local animator = Instance.new("Animator")
-		animator.Parent = ghostHumanoid
-		local idleAnim = ghost:FindFirstChild("Idle")
-		if idleAnim then
-			local track = animator:LoadAnimation(idleAnim)
-			track:Play()
-		end
+	--[[
+		A animacao nao depende da maquina de estado: quem toca a faixa e o Animator,
+		e a faixa e pedida na mao aqui.
+
+		O Animator vai no Humanoid injetado, e nao num `AnimationController` como faz
+		a classe `Unit`. Os dois tocam igual, e o Humanoid ja esta ali de qualquer
+		forma pelo Highlight -- somar um AnimationController seria um segundo dono de
+		faixa no mesmo modelo, sem nada em troca.
+	]]
+	local animator = ghostHumanoid:FindFirstChildWhichIsA("Animator") or Instance.new("Animator")
+	animator.Parent = ghostHumanoid
+
+	local idleAnim = ghost:FindFirstChild("Idle")
+	if idleAnim and idleAnim:IsA("Animation") then
+		local track = animator:LoadAnimation(idleAnim)
+		track:Play()
 	end
 
 	local highlight = Instance.new("Highlight")
