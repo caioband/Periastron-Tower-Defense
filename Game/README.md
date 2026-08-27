@@ -473,6 +473,41 @@ mantém no modelo.
 Em unidade de farm o botão sai da tela: ela não mira em ninguém. E o `[V]` do
 mockup não está ligado — a troca é só por clique.
 
+## Votação de dificuldade (`StarterGui.Difficulty.DifficultyBoard`)
+
+**O nome da instância do botão é o voto.** O `DifficultyController` varre os
+`ImageButton` filhos do board e dispara `SelectDifficulty(child.Name)`; o
+`DifficultyService` recusa o que não existir em `DifficultyConfig.Presets`. O mesmo
+nome é a chave do `VoteCount` (`votes[name]`) e do destaque de quem você votou.
+
+Ou seja: renomear um botão no Studio troca em que dificuldade ele vota. Os cinco
+precisam se chamar exatamente `Easy`, `Medium`, `Hard`, `Impossible` e `Nightmare` —
+o texto que o jogador lê fica no `TextLabel` dentro deles e não é olhado por
+ninguém.
+
+### O bug que isso já causou
+
+O board vinha com dois botões com o nome trocado, e o par produzia dois sintomas que
+pareciam problemas separados:
+
+| Botão (nome) | Label lido | O que acontecia |
+| --- | --- | --- |
+| `Extreme` | IMPOSSIBLE | `SelectDifficulty("Extreme")` — **recusado**, o voto sumia |
+| `Impossible` | NIGHTMARE | `SelectDifficulty("Impossible")` — aceito, mas como Impossible |
+
+Resultado: **Impossible era impossível de votar** (o botão estava vivo, clicava, e o
+voto era descartado em silêncio), e **quem votava Nightmare jogava e recebia o prêmio
+de Impossible** — 2,75x de cash e 2,5x de shards em vez de 4x e 7,5x, com 30 waves em
+vez de 35. `Nightmare` não tinha botão nenhum. Corrigido renomeando as duas
+instâncias.
+
+Nada disso deixava rastro: o servidor descarta nome inválido sem log, e o board
+continuava com cinco botões acesos. Por isso o `DifficultyController:auditButtons`
+agora confere, na primeira vez que um estado chega, se cada botão tem preset do outro
+lado e se cada preset tem botão — e avisa no console nos dois casos. A conferência
+mora ali, e não no bind, porque a lista de presets é server-side: ela só chega pelo
+`state.options` do `DifficultySelection`.
+
 ## Hotbar antes da partida (`StarterGui.Interface.TowerContainer`)
 
 O `TowerContainer` fica escondido enquanto a partida não começou — servidor

@@ -40,9 +40,55 @@ function DifficultyController:setHotbarVisible(visible : boolean)
 	end
 end
 
+--[=[
+	Confere se cada botao do board tem um preset do outro lado.
+
+	O nome da instancia **e** o voto: o controller dispara `SelectDifficulty` com
+	ele, e o servidor recusa em silencio o que nao existir no `DifficultyConfig`.
+	Um botao com o nome errado nao quebra nada visivelmente -- ele so nunca conta
+	voto, e o jogador fica clicando num botao morto sem nenhum aviso em lugar
+	nenhum.
+
+	Foi exatamente o que aconteceu: o board tinha `Extreme` escrito "IMPOSSIBLE"
+	(voto recusado, dificuldade inalcancavel) e `Impossible` escrito "NIGHTMARE"
+	(voto aceito como Impossible, com o jogador lendo Nightmare e recebendo o
+	premio da de baixo). Nenhum dos dois deixava rastro.
+
+	A lista de presets so chega do servidor (`state.options`), entao a conferencia
+	nao tem como acontecer no bind -- ela mora aqui, na primeira vez que um estado
+	chega, e roda uma vez so.
+]=]
+function DifficultyController:auditButtons(options : { string }?)
+	if self.audited or not options then return end
+	self.audited = true
+
+	local known = {}
+	for _, name in options do
+		known[name] = true
+	end
+
+	for name in self.Buttons do
+		if not known[name] then
+			warn(string.format(
+				"[DifficultyController]: o botao '%s' do DifficultyBoard nao e uma dificuldade (%s). O voto dele e recusado pelo servidor -- renomeie a instancia para o nome do preset.",
+				name, table.concat(options, ", ")))
+		end
+	end
+
+	for _, name in options do
+		if not self.Buttons[name] then
+			warn(string.format(
+				"[DifficultyController]: a dificuldade '%s' nao tem botao no DifficultyBoard; ninguem consegue votar nela.",
+				name))
+		end
+	end
+end
+
 function DifficultyController:updateUI(state)
 	self:updateClock(state)
 	self:setHotbarVisible(state.locked ~= nil)
+
+	self:auditButtons(state.options)
 
 	local board = self.board
 	if not board then return end
