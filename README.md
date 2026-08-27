@@ -203,6 +203,7 @@ cash <ação> <jogadores> <valor>      Cash salvo (Stats.Cash), o do lobby
 shards <ação> <jogadores> <valor>    Shards salvos (Stats.Shards)
 roundcash <ação> <jogadores> <valor> (só na Game) o dinheiro que paga as torres na partida
 strike [unidade]                     (só na Game) derruba um raio numa unidade posicionada
+units <ação> <jogadores> <unidade> [qtd]  o inventário salvo de unidades (Units do perfil)
 ```
 
 **Quem pode rodar comando.** A permissão é do servidor: o hook `BeforeRun` chama
@@ -248,6 +249,44 @@ registra o mapa carregado.
 > `common/server/CmdrDefinitions`, e o `Game/wally.toml` ganhou a dependência. Os
 > comandos de crate (`setcrates`, `unbox`) continuam em `Lobby/src/CmdrDefinitions`,
 > que é onde fazem sentido.
+
+#### Inventário de unidades pelo console
+
+```
+units <ação> <jogadores> <unidade> [quantidade]
+```
+
+Mexe no `Units` do perfil — **quantas** de cada unidade o jogador tem. Aliases:
+`unit`, `giveunit`, `inventory`. A ação é a mesma dos comandos de moeda (`set`,
+`add`, `remove`, com tab), a quantidade omitida vale 1, e nada desce de zero.
+
+`Units` é o inventário; `EquippedUnits` é quais delas estão nos slots. O comando
+mexe só no primeiro **de propósito**: o `DeckConfig.sanitize` roda a cada leitura do
+deck e já corta o `Amount` de cada slot pelo que a pessoa possui, então tirar unidade
+do inventário esvazia o slot sozinho. Reescrever o deck aqui seria fazer à mão o que
+o config já faz sozinho — e em dois lugares que poderiam discordar.
+
+Unidade que chega a zero **sai da tabela** em vez de virar `= 0`: é assim que se
+parece o perfil de quem nunca teve aquela unidade, e o `DeckConfig` trata os dois
+casos pelo mesmo `owned[unitName] or 0`.
+
+O nome aceita diferença de maiúsculas (`units add me slasher 3` funciona) e a
+resposta devolve a grafia oficial. Nome com espaço precisa de aspas:
+`units add me "Subspace Tripminer" 3`.
+
+⚠️ **Na Game, o round que já começou não muda.** As cartas da partida são
+fotografadas do perfil no `UnitService:initPlayerCards`, que roda no começo do round
+— dar unidade no meio de uma wave só aparece no round seguinte, ou depois de um
+`ResetRound`. No Lobby o efeito é imediato: o deck lê o perfil a cada mudança da
+replica.
+
+O comando mora no `common/` porque as duas places têm `DataService` e as duas leem o
+`Units` — o Lobby para montar o deck, a Game para as cartas da partida. Por causa
+dele o tipo `unitName` saiu de `Game/src/CmdrDefinitions/Types` para
+`common/server/CmdrDefinitions/Types`: ele só lê o `UnitStats`, que é compartilhado,
+e o `strike` continua servido pela cópia comum. Com isso o nó `Types/Game` do
+`Game/default.project.json` ficaria apontando para uma pasta vazia — que o git não
+versiona e o Rojo não encontraria num clone novo —, então saiu junto.
 
 #### Moedas pelo console
 

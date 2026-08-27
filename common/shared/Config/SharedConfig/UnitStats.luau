@@ -45,15 +45,23 @@ local UnitStats = {
 		},
 	},
 
-	-- Area grande e alcance medio: o raio da explosao (8) cabe dentro do alcance,
-	-- que era 3 e fazia a unidade explodir uma area que ela nao enxergava.
+	--[[
+		Area em alcance longo: o raio da explosao cabe folgado dentro do alcance, que
+		ja foi 3 e fazia a unidade explodir uma area que ela nao enxergava.
+
+		Ela passou a dividir a faixa longa (12) com o Slingshot e o Archer, e isso e
+		de proposito: os tres alcancam o mesmo tanto e se separam pelo que fazem la --
+		o Slingshot cutuca barato, o Archer bate mais forte e mais devagar, e este
+		explode. Vale reler a regra 2 la de cima antes de mexer nos tres juntos: o
+		alcance so diferencia enquanto as faixas continuarem distintas.
+	]]
 	["Rocket"] = {
 		Rarity = "Legendary",
 		Class = "Ranged",
 		Cost = 450,
 		Damage = 50,
-		Range = 4,
-		Cooldown = 6,
+		Range = 12,
+		Cooldown = 2.5,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
@@ -62,7 +70,7 @@ local UnitStats = {
 
 		RangeStats = {
 			Increment = 1,
-			Max = 14,
+			Max = 15,
 		},
 	},
 
@@ -153,6 +161,38 @@ local UnitStats = {
 		Damage = 11,
 		Range = 12,
 		Cooldown = 1.4,
+		AttackType = "SingleShot",
+		HitInterval = 0,
+		Hits = 1,
+		Projectile = { Asset = "Bullet", Speed = 75 },
+		RangeStats = {
+			Increment = 1,
+			Max = 20,
+		},
+	},
+
+	--[[
+		O Slingshot com outro boneco: mesma familia (Ranged de tiro unico e projetil
+		`Bullet`), so que o arco puxa mais devagar e bate mais forte.
+
+		**Os numeros sao provisorios** e existem para a unidade entrar em jogo
+		coerente, nao para fechar balanceamento. Duas coisas neles nao sao chute e
+		vale saber antes de mexer:
+
+		- `Cooldown = 2` e a duracao da animacao `Attack` do modelo (2,00s). Com um
+		  cooldown menor a unidade pediria um golpe novo antes de o boneco terminar o
+		  anterior, e o `playAttackVisual` nao reinicia uma track que ja esta tocando
+		  -- a flecha sairia sem o gesto acompanhar.
+		- 16 de dano em 2s da 8,0 de DPS, ou 5,3 por 100 de caixa: a mesma faixa do
+		  Slingshot (5,2), bem abaixo do teto de 15 da regra 1 la de cima.
+	]]
+	["Archer"] = {
+		Rarity = "Rare",
+		Class = "Ranged",
+		Cost = 150,
+		Damage = 16,
+		Range = 12,
+		Cooldown = 2,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,

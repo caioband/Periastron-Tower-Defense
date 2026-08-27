@@ -45,6 +45,12 @@ UnitUpgradeConfig.Units = {
 		CostMultiplier = 1.6,
 		DamageMultiplier = 1.25,
 	},
+	-- Mesma escada do Slingshot, que e a unidade de que ele e uma variacao.
+	["Archer"] = {
+		BaseCost = 100,
+		CostMultiplier = 1.6,
+		DamageMultiplier = 1.25,
+	},
 	["Rocket"] = {
 		BaseCost = 150,
 		CostMultiplier = 1.7,

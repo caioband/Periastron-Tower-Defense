@@ -18,9 +18,9 @@
 
 	Unidade sem entrada aqui fica com a arte que o `CardWrapper` trouxe autorada do
 	StarterGui: carta com a arte errada é melhor do que carta invisível na hotbar.
-	Hoje é o caso do `Subspace Tripminer` — e como a arte autorada é a do Slasher,
-	ele aparece com a carta dele até o id chegar. É aqui que se conserta, uma linha
-	por unidade.
+	Hoje é o caso do `Subspace Tripminer` e do `Archer` — e como a arte autorada é a
+	do Slasher, os dois aparecem com a carta dele até o id chegar. É aqui que se
+	conserta, uma linha por unidade.
 ]]
 
 local CardConfig = {}
@@ -32,6 +32,7 @@ CardConfig.Images = {
 	Sword = "rbxassetid://78316687499130",
 	Azure = "rbxassetid://117289931783490",
 	Slingshot = "rbxassetid://101061040163272",
+	Archer = "rbxassetid://95837523891408",
 }
 
 --[=[
@@ -61,14 +62,14 @@ end
 	como no `ClassIcon`: o `Info` carrega o nome e o nível da unidade dentro dele, e
 	sumir com a moldura levaria os dois junto.
 
-	Faltam Azure, Slingshot e Subspace Tripminer. É aqui que se conserta, uma linha
-	por unidade.
+	Faltam Azure, Slingshot, Subspace Tripminer e Archer. É aqui que se conserta,
+	uma linha por unidade.
 ]]
 CardConfig.Icons = {
 	Slasher = "rbxassetid://77799937837921",
 	Entrepreneur = "rbxassetid://97283177894419",
 	Sword = "rbxassetid://77707891613366",
-	Rocket = "rbxassetid://77613129311941",
+	Rocket = "rbxassetid://119165882760846",
 }
 
 --[=[

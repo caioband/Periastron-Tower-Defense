@@ -42,8 +42,7 @@
           "$className": "Folder",
           "$ignoreUnknownInstances": false,
 
-          "Common": { "$path": "../common/server/CmdrDefinitions/Types" },
-          "Game": { "$path": "src/CmdrDefinitions/Types" }
+          "Common": { "$path": "../common/server/CmdrDefinitions/Types" }
         },
 
         "Commands": {

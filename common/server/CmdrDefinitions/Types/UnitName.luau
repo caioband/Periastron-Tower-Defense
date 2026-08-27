@@ -9,6 +9,14 @@
 	Nao e a lista das unidades *posicionadas*: essa e estado de servidor, e recusar
 	aqui um nome que existe seria pior do que deixar o comando responder que nao ha
 	nenhuma daquele tipo no mapa.
+
+	Mora no `common/` porque as duas places usam: a Game pelo `strike` (unidade no
+	mapa) e as duas pelo `units` (o inventario do perfil, que o Lobby e quem monta
+	em deck). O `UnitStats` que ele le e compartilhado, entao nada aqui depende de
+	service de um lado so.
+
+	> Unidade com espaco no nome precisa de aspas na linha de comando:
+	> `units add me "Subspace Tripminer" 3`.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
