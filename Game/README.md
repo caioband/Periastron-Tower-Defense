@@ -349,7 +349,7 @@ nível moram dentro do `Info`, e sumir com a moldura levaria os dois junto. Ela 
 para a arte autorada no StarterGui, lida uma vez no carregamento do módulo e antes de
 qualquer troca — sem guardar esse padrão, o card abriria com o rosto da unidade
 *anterior*, que é um erro pior porque parece certo. Hoje têm retrato o Slasher, o
-Entrepreneur e o Sword; faltam Azure, Rocket, Slingshot e Subspace Tripminer.
+Entrepreneur, o Sword e o Rocket; faltam Azure, Slingshot e Subspace Tripminer.
 
 Tudo menos o `DmgDone` sai do `UnitUpgradeConfig` — o cliente refaz a mesma conta
 do servidor a partir do nível, então não precisa de replicação. O `DmgDone` só o
@@ -1049,9 +1049,49 @@ limite, senão o cooldown de 3s contra windup mais voo deixaria plantar acima de
 O arco lê o relógio a cada quadro em vez de converter para segundos reais na chamada,
 então acelerar a partida **com uma mina no ar** encurta o que falta dela.
 
-O `EXPLOSION_LIFETIME` (5s) continua em tempo real, e é o único do arquivo: o que
-sobra na tela depois do estouro são `ParticleEmitter`s, e partícula não anda no
-relógio da partida — acelerar essa limpeza cortaria a fumaça pela metade no 3x.
+#### A mina some depois de explodir?
+
+Sim, em qualquer velocidade — verificado. O `EXPLOSION_LIFETIME` (5s) e as partículas
+são **os dois** em tempo real, então a folga entre eles não muda com a velocidade: a
+partícula mais longa do asset dura 4s e a limpeza vem 1s depois dela. O
+`task.delay` que destrói segura uma referência ao modelo e sempre dispara; o único
+caminho que pula o agendamento é o modelo já ter sido destruído antes (venda da
+unidade ou reset de round, pelo `clearUnitMines`).
+
+`EXPLOSION_LIFETIME` é o único tempo real que sobrou no arquivo, e é o certo: partícula
+não anda no relógio da partida, e acelerar essa limpeza cortaria a fumaça pela metade
+no 3x.
+
+O que **muda** com a velocidade é quantos convivem. O plantio custa 3 segundos de
+partida, então acelerado ele sai mais vezes por segundo real enquanto a limpeza
+continua nos mesmos 5s:
+
+| Velocidade | Planta a cada | Modelos já explodidos vivos |
+| --- | --- | --- |
+| 1x | 3,0s reais | 1,7 |
+| 2x | 1,5s reais | 3,3 |
+| 3x | 1,0s reais | 5,0 |
+
+São invisíveis (o `Transparency = 1` entra no mesmo quadro do estouro) e carregam 12
+`ParticleEmitter` cada. Um Tripminer nível 5 no 3x chega a ~13 modelos sob o
+`workspace.CurrentCamera` — 8 armados mais 5 apagando. É esperado, não vazamento: cada
+um tem o seu prazo.
+
+#### A explosão sai no chão, e não no ar
+
+O servidor arma a mina quando ela pousa e o cliente gasta o mesmo `ThrowTime`
+desenhando o arco, então no caso normal o voo já acabou quando o `TripmineTriggered`
+chega — a latência atrasa os dois lados igualmente e se cancela.
+
+Os dois relógios não viram ao mesmo tempo, porém: trocar a velocidade da partida com
+uma mina no ar só chega no cliente uma viagem de rede depois, e nesse intervalo o arco
+dele anda mais devagar que o cronômetro do servidor. A mina podia então explodir com o
+voo ainda correndo, e como partícula fica onde foi emitida, o estouro aparecia **no
+meio do ar**.
+
+O `TripmineController:endArc` fecha isso: o gatilho encerra o arco e põe o modelo no
+lugar de descanso antes de emitir. O `clearUnitMines` chama o mesmo, sem o `snap` — o
+modelo está indo embora, não há lugar de descanso para ele.
 
 **O que continua em tempo real, de propósito:**
 

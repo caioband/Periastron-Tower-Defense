@@ -30,7 +30,46 @@ local TripmineController = {
 	},
 	Mines = {},
 	MinesByUnit = {},
+
+	--[[
+		Os arremessos em andamento: `[mineId] = { conn, endCF }`. Uma entrada so
+		existe enquanto a mina esta no ar.
+	]]
+	Arcs = {},
 }
+
+--[=[
+	Encerra o arremesso de uma mina, se ele ainda estiver correndo, e poe o modelo
+	no lugar de descanso dela.
+
+	Existe por causa da corrida entre o voo e a explosao. O servidor arma a mina
+	quando ela pousa e o cliente gasta o mesmo `throwTime` desenhando o arco, entao
+	no caso normal o voo ja acabou quando o `TripmineTriggered` chega. Mas os dois
+	relogios nao viram ao mesmo tempo: trocar a velocidade da partida com uma mina
+	no ar so chega neste cliente uma viagem de rede depois, e nesse intervalo o arco
+	dele anda mais devagar que o cronometro do servidor.
+
+	Sem isto, a explosao dessa mina sairia **no meio do ar**, no ponto onde o arco
+	estivesse -- e as particulas ficam onde foram emitidas. Acertar a posicao antes
+	de emitir custa uma linha e tira a rede da conta.
+]=]
+function TripmineController:endArc(mineId, snap : boolean?)
+	local arc = self.Arcs[mineId]
+	if not arc then return end
+
+	self.Arcs[mineId] = nil
+
+	if arc.conn.Connected then
+		arc.conn:Disconnect()
+	end
+
+	if snap then
+		local mine = self.Mines[mineId]
+		if mine and mine.Parent then
+			mine:PivotTo(arc.endCF)
+		end
+	end
+end
 
 function TripmineController:getTemplate()
 	if not self.template then
@@ -69,7 +108,7 @@ end
 	partida com uma mina no ar encurta o que falta dela, do mesmo jeito que o
 	`GameClock.Wait` faz do lado do servidor.
 ]=]
-function TripmineController:throwMine(mineModel, startCF, endCF, throwTime)
+function TripmineController:throwMine(mineId, mineModel, startCF, endCF, throwTime)
 	mineModel:PivotTo(startCF)
 
 	local duration = math.max(throwTime or THROW_DURATION, 1e-3)
@@ -79,7 +118,7 @@ function TripmineController:throwMine(mineModel, startCF, endCF, throwTime)
 	local conn
 	conn = RunService.RenderStepped:Connect(function()
 		if not mineModel.Parent then
-			conn:Disconnect()
+			self:endArc(mineId)
 			return
 		end
 		local alpha = math.min(1, (GameClock.Now() - startedAt) / duration)
@@ -87,10 +126,12 @@ function TripmineController:throwMine(mineModel, startCF, endCF, throwTime)
 		local cf = startCF:Lerp(endCF, alpha) + Vector3.new(0, height, 0)
 		mineModel:PivotTo(cf * CFrame.Angles(spin * alpha, 0, 0))
 		if alpha >= 1 then
-			conn:Disconnect()
+			self:endArc(mineId)
 			mineModel:PivotTo(endCF)
 		end
 	end)
+
+	self.Arcs[mineId] = { conn = conn, endCF = endCF }
 end
 
 function TripmineController:spawnMine(unitId, mineId, mineCF, throwTime)
@@ -111,10 +152,14 @@ function TripmineController:spawnMine(unitId, mineId, mineCF, throwTime)
 		startCF = CFrame.new(unitModel:GetPivot().Position + Vector3.new(0, 2, 0))
 	end
 
-	self:throwMine(mine, startCF, mineCF, throwTime)
+	self:throwMine(mineId, mine, startCF, mineCF, throwTime)
 end
 
 function TripmineController:triggerMine(unitId, mineId)
+	-- A mina explode no chao, e nao onde o arco estiver: se ele ainda corria, ele
+	-- termina aqui e o modelo vai para o lugar de descanso antes de emitir.
+	self:endArc(mineId, true)
+
 	local mine = self.Mines[mineId]
 	self.Mines[mineId] = nil
 	if self.MinesByUnit[unitId] then
@@ -148,6 +193,9 @@ function TripmineController:clearUnitMines(unitId)
 	local mines = self.MinesByUnit[unitId]
 	if not mines then return end
 	for mineId in mines do
+		-- Sem `snap`: o modelo esta indo embora, nao ha lugar de descanso para ele.
+		self:endArc(mineId)
+
 		local mine = self.Mines[mineId]
 		self.Mines[mineId] = nil
 		if mine and mine.Parent then

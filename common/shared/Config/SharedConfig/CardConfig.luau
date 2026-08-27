@@ -61,13 +61,14 @@ end
 	como no `ClassIcon`: o `Info` carrega o nome e o nível da unidade dentro dele, e
 	sumir com a moldura levaria os dois junto.
 
-	Faltam Azure, Rocket, Slingshot e Subspace Tripminer. É aqui que se conserta,
-	uma linha por unidade.
+	Faltam Azure, Slingshot e Subspace Tripminer. É aqui que se conserta, uma linha
+	por unidade.
 ]]
 CardConfig.Icons = {
 	Slasher = "rbxassetid://77799937837921",
 	Entrepreneur = "rbxassetid://97283177894419",
 	Sword = "rbxassetid://77707891613366",
+	Rocket = "rbxassetid://77613129311941",
 }
 
 --[=[
