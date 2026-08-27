@@ -72,8 +72,8 @@ end
 	conta roda por unidade e por mob, e o node do mob nao muda a cada quadro.
 ]=]
 function TargetingController:getMobPathProgress(mob, position : Vector3, nodeDistances)
-	-- Tempo de partida, como no servidor: no 3x o mob anda o triplo por segundo
-	-- real, e um cache preso ao relogio de parede envelheceria tres vezes mais.
+	-- Tempo de partida, como no servidor: acelerado o mob anda mais por segundo
+	-- real, e um cache preso ao relogio de parede envelheceria fora do ritmo.
 	local now = GameClock.Now()
 	local cached = self.MobProgress[mob]
 

@@ -457,9 +457,9 @@ end
 --[=[
 	Poe as animacoes dos mobs na velocidade da partida.
 
-	Sem isto o boneco no 3x desliza: ele anda o triplo da distancia por segundo
+	Sem isto o boneco no 1,35x desliza: ele anda 35% mais distancia por segundo
 	com a caminhada tocando no ritmo de sempre. Vale para o ataque pelo mesmo
-	motivo -- o servidor bate tres vezes mais rapido.
+	motivo -- o servidor bate na mesma proporcao mais rapido.
 ]=]
 function MobController:applyTimeScale(scale : number)
 	for _, data in self.MobMovement do

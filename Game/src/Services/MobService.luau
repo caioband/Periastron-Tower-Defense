@@ -763,7 +763,7 @@ function MobService:construct()
 		self.FrameId += 1
 
 		--[[
-			O quadro em tempo de partida. No 3x o mob anda o triplo por segundo real
+			O quadro em tempo de partida. Acelerado o mob anda mais por segundo real
 			sem ninguem mexer na velocidade dele: e o mesmo `CurrentSpeed`, so que
 			multiplicado por um `dt` maior. O cliente faz a mesma conta no
 			`MobController`, com a escala que o `SpeedService` mandou.

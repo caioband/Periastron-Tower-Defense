@@ -1597,8 +1597,8 @@ function UnitPlacementController:construct()
 
 				--[[
 					A duracao vem do servidor em tempo de partida, entao a espera tambem
-					corre no relogio da partida: no 3x o atordoamento de 5s acaba em pouco
-					menos de 2s reais, e o realce tem que apagar junto com ele.
+					corre no relogio da partida: no 1,35x o atordoamento de 5s acaba em pouco
+					mais de 3,7s reais, e o realce tem que apagar junto com ele.
 				]]
 				GameClock.Delay(duration, function()
 					if highlight and highlight.Parent then

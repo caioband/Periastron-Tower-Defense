@@ -31,11 +31,11 @@ local SpeedConfig = SharedConfig.SpeedConfig
 
 	**O cliente pede, o servidor decide.** O clique manda o degrau desejado (e nao
 	um "avanca um"): dois jogadores clicando no mesmo instante param os dois no
-	2x, em vez de um empurrar o outro ate o 3x. O indice vem pela rede, entao
+	1,15x, em vez de um empurrar o outro ate o 1,35x. O indice vem pela rede, entao
 	passa pelo `SpeedConfig.IsValid` antes de valer.
 
 	**Volta ao 1x a cada round.** O service esta na lista de round-scoped do
-	`WaveService`: partida nova comeca na velocidade normal, e nao no 3x que
+	`WaveService`: partida nova comeca na velocidade normal, e nao no 1,35x que
 	alguem deixou ligado na anterior.
 ]]
 

@@ -431,7 +431,7 @@ function WaveService:runRound(generation : number)
 		self:setWave((self.WaveCount or 0) + 1)
 
 		--[[
-			Tempo real de proposito, mesmo no 3x: esta espera existe para as setas do
+			Tempo real de proposito, mesmo acelerado: esta espera existe para as setas do
 			caminho terminarem de correr antes do primeiro mob nascer, e quem as
 			desenha e o `WaveController`, que anima em tempo de tela. Encurtar so
 			este lado poria o mob no mapa com a seta ainda no meio da rota.

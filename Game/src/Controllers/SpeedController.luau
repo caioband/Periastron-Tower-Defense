@@ -33,8 +33,8 @@ local CLICK_SOUND = "UIClick"
 
 	Um clique pede o proximo degrau do `SpeedConfig`; a arte do botao so muda
 	quando o servidor confirma. E de proposito: a velocidade e da sala, e trocar a
-	imagem na hora mostraria 2x para quem clicou enquanto os outros ainda estao no
-	1x -- e o clique de outro jogador tambem troca a arte deste aqui, o que so
+	imagem na hora mostraria 1,15x para quem clicou enquanto os outros ainda estao
+	no 1x -- e o clique de outro jogador tambem troca a arte deste aqui, o que so
 	funciona se a unica fonte for o `GameSpeedChanged`.
 
 	Alem da arte, cada confirmacao ajusta o `GameClock` local. Ele e quem faz o

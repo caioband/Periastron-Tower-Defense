@@ -97,8 +97,8 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?)
 
 		Quem decide quando o dano sai e o servidor (`UnitService:executeAttack`), e
 		la o windup e o intervalo entre golpes ja correm no relogio acelerado. Este
-		lado desenha o mesmo ataque: sem a escala, no 3x a torre bateria tres vezes
-		enquanto o boneco ainda termina o primeiro golpe.
+		lado desenha o mesmo ataque: sem a escala, no 1,35x a torre bateria mais vezes
+		do que o boneco consegue animar, e o golpe sairia fora do desenho.
 
 		Na Lobby a escala e sempre 1 -- nao existe `SpeedService` la --, entao isto
 		nao muda nada para as unidades do menu.
