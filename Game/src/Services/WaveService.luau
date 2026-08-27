@@ -51,7 +51,7 @@ local ROUND_STATE = {
 
 -- Services que guardam estado de partida e sabem se limpar sozinhos. Cada um
 -- expoe `ResetRound()`; quem entrar nessa lista passa a ser zerado junto.
-local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService", "WeatherRoundService", "SpeedService" }
+local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService", "WeatherRoundService", "SpeedService", "CardShopService" }
 
 local WaveService = {
 	Services = {
@@ -60,7 +60,8 @@ local WaveService = {
 		DifficultyService = {},
 		DataService = {},
 		WeatherRoundService = {},
-		SpeedService = {}
+		SpeedService = {},
+		CardShopService = {}
 	},
 	Signals = {
 		Ended = Signal.new(),

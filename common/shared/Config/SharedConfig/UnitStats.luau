@@ -83,6 +83,18 @@ local UnitStats = {
 			LimitPerUpgrade = 1,
 			TriggerRadius = 2.5,
 			AOE = { Radius = 6 },
+
+			--[[
+				Quanto a mina leva no ar, do fim do arremesso ate o chao.
+
+				E tempo de partida, como o resto: acelerado, ela voa mais rapido junto
+				com todo o resto. E o unico numero desta tabela que os dois lados usam
+				para a mesma coisa -- o servidor **so arma a mina quando ela pousa**, e
+				o cliente gasta exatamente este tempo desenhando o arco. Mexer aqui move
+				os dois juntos; separa-los poria a mina explodindo com o modelo ainda no
+				ar (ou o contrario).
+			]]
+			ThrowTime = 0.35,
 		},
 		RangeStats = {
 			Increment = 1,

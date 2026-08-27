@@ -51,6 +51,9 @@ local SpeedController = {
 
 SpeedController.Index = SpeedConfig.DEFAULT_INDEX
 
+-- A escala imposta por fora do botao, quando ha uma. Ver `applyOverride`.
+SpeedController.Override = nil
+
 --[[ INTERNAL ]]
 
 --[=[
@@ -109,16 +112,35 @@ function SpeedController:bindClickPop(button : GuiButton)
 	end)
 end
 
+--[=[
+	A escala que o relogio local deve estar: a imposta por fora do botao (a carta
+	Time Acceleration), se houver; o degrau da sala, se nao.
+]=]
+function SpeedController:effectiveScale() : number
+	return self.Override or SpeedConfig.GetScale(self.Index)
+end
+
 --- Passa a valer o degrau que o servidor mandou: relogio local e arte do botao.
 function SpeedController:apply(index : number)
 	if not SpeedConfig.IsValid(index) then return end
 
 	self.Index = index
-	GameClock.SetScale(SpeedConfig.GetScale(index))
+	GameClock.SetScale(self:effectiveScale())
 
 	if self.button then
 		self.button.Image = SpeedConfig.GetImage(index)
 	end
+end
+
+--[=[
+	A escala imposta por fora do botao. So o relogio muda: a arte continua sendo a
+	do degrau que a sala escolheu, porque o 3x da carta nao e um degrau e nao tem
+	imagem -- e o botao continua servindo para voltar ao 1x depois.
+]=]
+function SpeedController:applyOverride(scale : number?)
+	self.Override = if typeof(scale) == "number" then scale else nil
+
+	GameClock.SetScale(self:effectiveScale())
 end
 
 --[[ CICLO DE VIDA ]]
@@ -126,6 +148,10 @@ end
 function SpeedController:construct()
 	Framework:Listen("GameSpeedChanged", function(index : number)
 		self:apply(index)
+	end)
+
+	Framework:Listen("GameSpeedOverride", function(scale : number?)
+		self:applyOverride(scale)
 	end)
 
 	local Interface = PlayerGui:WaitForChild("Interface", 60)

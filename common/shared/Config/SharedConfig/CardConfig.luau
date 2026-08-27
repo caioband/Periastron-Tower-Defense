@@ -46,4 +46,40 @@ function CardConfig.GetImage(unitName : string?) : string?
 	return CardConfig.Images[unitName]
 end
 
+--[[
+	O retrato da unidade no card de upgrade — o `Info` de
+	`Interface.CardUpgrade`, a moldura onde ficam o nome e o nível.
+
+	É outra arte que a de `Images`: aquela é a carta inteira da hotbar, esta é só o
+	rosto, num quadrado pequeno. Elas vivem no mesmo módulo porque são a mesma
+	pergunta ("como esta unidade aparece na tela?") e erram pelo mesmo motivo — a
+	chave é o nome de `UnitStats`, e não o nome que o jogador lê na arte: o retrato
+	do **Gladiator** é da unidade `Sword`, e o do **Rocketeer** é da `Rocket`.
+
+	Unidade sem entrada aqui fica com a arte que o designer deixou autorada no
+	`Info` — quem desenha guarda esse padrão e volta para ele. Esconder não é opção
+	como no `ClassIcon`: o `Info` carrega o nome e o nível da unidade dentro dele, e
+	sumir com a moldura levaria os dois junto.
+
+	Faltam Azure, Rocket, Slingshot e Subspace Tripminer. É aqui que se conserta,
+	uma linha por unidade.
+]]
+CardConfig.Icons = {
+	Slasher = "rbxassetid://77799937837921",
+	Entrepreneur = "rbxassetid://97283177894419",
+	Sword = "rbxassetid://77707891613366",
+}
+
+--[=[
+	O `rbxassetid` do retrato da unidade no card de upgrade, ou `nil` quando ela
+	ainda não tem um.
+]=]
+function CardConfig.GetIcon(unitName : string?) : string?
+	if not unitName then
+		return nil
+	end
+
+	return CardConfig.Icons[unitName]
+end
+
 return CardConfig

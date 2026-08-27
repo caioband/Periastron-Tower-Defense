@@ -77,6 +77,9 @@ WeatherRoundService.ActiveUntilWave = nil :: number?
 WeatherRoundService.Scheduled = nil :: string?
 WeatherRoundService.ScheduledWave = nil :: number?
 
+-- Até que wave o céu fica limpo à força. Ver `Suppress` (carta Weather Report).
+WeatherRoundService.SuppressedUntilWave = nil :: number?
+
 --[[ ESCOLHA ]]
 
 --[=[
@@ -198,7 +201,68 @@ end
 	A ordem importa: o clima velho sai e o novo entra **antes** do dado, para o
 	dado enxergar o estado desta wave e não o da anterior.
 ]=]
+--[=[
+	Se o céu está limpo à força nesta wave.
+]=]
+function WeatherRoundService:IsSuppressed(waveNumber : number?) : boolean
+	if not self.SuppressedUntilWave then return false end
+
+	local waveService = self.Services.WaveService
+	local wave = waveNumber or (waveService and waveService.WaveCount) or 0
+
+	return wave <= self.SuppressedUntilWave
+end
+
+--[=[
+	Tira o clima do céu e segura o próximo por `waves` waves. Quem chama é o
+	`CardShopService` (carta Weather Report).
+
+	`Clear` do `WeatherService` direto, e não o `ClearActive` daqui: o `ClearActive`
+	só desliga o que **este** service ligou, e a carta promete tirar a weather —
+	inclusive a que veio pelo comando `weather`. O `ClearActive` vai junto para o
+	estado interno não continuar achando que tem clima no ar.
+
+	O aviso que já estava na tela **não** é cancelado: o clima avisado continua
+	agendado e entra na primeira wave depois da janela. Cancelar seria fazer o
+	jogador pagar por um aviso que ele viu e depois não aconteceu; adiar é o que a
+	carta diz que faz.
+
+	A janela é contada da wave que está no ar: comprada no meio da wave 5 com
+	`waves = 1`, ela cobre o resto da 5 e a 6 inteira, e a 7 volta ao normal.
+]=]
+function WeatherRoundService:Suppress(waves : number?) : boolean
+	local waveService = self.Services.WaveService
+	local current = (waveService and waveService.WaveCount) or 0
+	local span = math.max(1, waves or 1)
+
+	self.SuppressedUntilWave = math.max(self.SuppressedUntilWave or 0, current + span)
+
+	local hadWeather = false
+	local weatherService = self.Services.WeatherService
+
+	if weatherService and weatherService:GetCurrent() then
+		hadWeather = true
+		weatherService:Clear(RoundConfig.TransitionTime)
+	end
+
+	self:ClearActive()
+
+	roundPrint(string.format("ceu limpo a forca ate a wave %d.", self.SuppressedUntilWave))
+
+	return hadWeather
+end
+
 function WeatherRoundService:OnWaveStarted(waveNumber : number, _preset, maxWaves : number)
+	--[[
+		Janela do Weather Report: nada entra e nada é sorteado. O `ClearActive` cobre
+		o clima que tenha sido ligado depois da compra (o comando `weather`, por
+		exemplo) — enquanto a janela vale, o céu volta a limpar a cada wave.
+	]]
+	if self:IsSuppressed(waveNumber) then
+		self:ClearActive()
+		return
+	end
+
 	if self.ActiveUntilWave and waveNumber > self.ActiveUntilWave then
 		self:ClearActive()
 	end
@@ -235,6 +299,7 @@ end
 function WeatherRoundService:ResetRound()
 	self.Scheduled = nil
 	self.ScheduledWave = nil
+	self.SuppressedUntilWave = nil
 	self:ClearActive()
 end
 

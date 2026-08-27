@@ -49,6 +49,13 @@ local SpeedService = {
 	-- O degrau em uso, indice de `SpeedConfig.Steps`.
 	Index = SpeedConfig.DEFAULT_INDEX,
 
+	--[[
+		A escala imposta por fora do botao (hoje, a carta Time Acceleration), e o
+		token do override que esta valendo. Nil quando quem manda e o degrau.
+	]]
+	Override = nil,
+	OverrideToken = 0,
+
 	-- [UserId] = os.clock() do ultimo clique aceito.
 	LastClick = {},
 }
@@ -62,12 +69,29 @@ local SpeedService = {
 function SpeedService:broadcast(player : Player?)
 	if player then
 		Framework:Fire("GameSpeedChanged", player, self.Index)
+		Framework:Fire("GameSpeedOverride", player, self.Override)
 		return
 	end
 
 	for _, other in Players:GetPlayers() do
 		Framework:Fire("GameSpeedChanged", other, self.Index)
 	end
+end
+
+--[=[
+	Manda a escala imposta por fora do botao. Sai separada do degrau porque as
+	duas coisas convivem: o botao continua marcando o degrau que a sala escolheu
+	enquanto a carta acelera o relogio por cima.
+]=]
+function SpeedService:broadcastOverride()
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("GameSpeedOverride", player, self.Override)
+	end
+end
+
+--- A escala que o relogio deve estar agora: o override, se houver; o degrau, se nao.
+function SpeedService:effectiveScale() : number
+	return self.Override or SpeedConfig.GetScale(self.Index)
 end
 
 --[[ API ]]
@@ -89,23 +113,64 @@ function SpeedService:SetIndex(index : number) : boolean
 	if index == self.Index then return false end
 
 	self.Index = index
-	GameClock.SetScale(self:GetScale())
+
+	-- Com um override no ar, o degrau troca a arte do botao e nao o relogio: quem
+	-- manda no tempo e a carta ate ela vencer.
+	GameClock.SetScale(self:effectiveScale())
 
 	self:broadcast()
 
 	return true
 end
 
+--[=[
+	Impoe uma escala por fora do botao, por `duration` **segundos reais**. Quem
+	chama e o `CardShopService` (carta Time Acceleration).
+
+	Fora do ciclo do botao de proposito: 3x nao e um degrau do `SpeedConfig`, e
+	nao ha arte para ele -- o botao continua marcando o degrau que a sala
+	escolheu, e o override so mexe no relogio.
+
+	Os segundos sao reais, e nao de partida. Um override de 15s medido no proprio
+	relogio que ele acelera duraria 5 segundos de tela, e o que a carta promete e
+	quinze segundos de jogo acelerado.
+
+	Vencido o prazo, o relogio volta ao degrau que estiver valendo naquele momento
+	-- e nao ao que valia quando a carta foi usada: alguem pode ter clicado no
+	botao no meio dos quinze segundos.
+]=]
+function SpeedService:SetOverride(scale : number?, duration : number?)
+	self.OverrideToken += 1
+	local token = self.OverrideToken
+
+	self.Override = scale and math.max(SpeedConfig.GetScale(SpeedConfig.DEFAULT_INDEX), scale) or nil
+	GameClock.SetScale(self:effectiveScale())
+	self:broadcastOverride()
+
+	if not self.Override or not duration or duration <= 0 then return end
+
+	task.delay(duration, function()
+		-- Outro override entrou no meio: o prazo dele e que manda agora.
+		if self.OverrideToken ~= token then return end
+
+		self.Override = nil
+		GameClock.SetScale(self:effectiveScale())
+		self:broadcastOverride()
+	end)
+end
+
 --- Partida nova comeca no 1x, mesmo que a anterior tenha acabado acelerada.
 function SpeedService:ResetRound()
 	table.clear(self.LastClick)
+
+	self:SetOverride(nil)
 	self:SetIndex(SpeedConfig.DEFAULT_INDEX)
 end
 
 --[[ CICLO DE VIDA ]]
 
 function SpeedService:construct()
-	GameClock.SetScale(self:GetScale())
+	GameClock.SetScale(self:effectiveScale())
 
 	Framework:Listen("SetGameSpeed", function(player : Player, index : any)
 		local now = os.clock()
@@ -122,6 +187,7 @@ function SpeedService:construct()
 	end)
 
 	Framework:Listen("GameSpeedChanged", function() end)
+	Framework:Listen("GameSpeedOverride", function() end)
 
 	Players.PlayerRemoving:Connect(function(player : Player)
 		self.LastClick[player.UserId] = nil

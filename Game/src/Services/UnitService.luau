@@ -919,13 +919,42 @@ function UnitService:stepTripminer(entry, stats, now, weather : string?)
 		Framework:Fire("UnitSwing", plr, entry.unitId, entry.unitName, false, 1)
 	end
 
+	--[[
+		A mina sai da mao no fim do windup e **so arma quando pousa**.
+
+		Sao dois instantes, e nao um: antes, a mina entrava em `entry.mines` no mesmo
+		quadro em que o cliente comecava a desenhar o arco, entao ela passava o voo
+		inteiro armada e invisivel no destino -- um mob que cruzasse o ponto nessa
+		janela via a explosao sair de um lugar onde ainda nao havia mina nenhuma.
+
+		O `ThrowTime` vai junto no evento em vez de o cliente ler do config: assim os
+		dois lados gastam o mesmo numero por construcao, e o arco termina exatamente
+		no quadro em que o gatilho liga.
+
+		As duas esperas sao de partida (`GameClock`), como o cooldown e o windup: no
+		3x a mina e arremessada e pousa tres vezes mais rapido, junto com o resto.
+	]]
+	local throwTime = config.ThrowTime or 0
+
 	GameClock.Delay(windup, function()
-		entry.pendingMines = math.max(0, (entry.pendingMines or 1) - 1)
-		if not self.UnitsById[entry.unitId] then return end
-		entry.mines[mineId] = { position = position, cf = mineCF }
-		for _, plr in ipairs(Players:GetPlayers()) do
-			Framework:Fire("TripmineThrown", plr, entry.unitId, mineId, mineCF)
+		if not self.UnitsById[entry.unitId] then
+			entry.pendingMines = math.max(0, (entry.pendingMines or 1) - 1)
+			return
 		end
+
+		for _, plr in ipairs(Players:GetPlayers()) do
+			Framework:Fire("TripmineThrown", plr, entry.unitId, mineId, mineCF, throwTime)
+		end
+
+		GameClock.Delay(throwTime, function()
+			-- A vaga so e liberada aqui: a mina no ar ja conta para o limite, senao o
+			-- cooldown de 3s contra windup mais voo deixaria plantar acima dele.
+			entry.pendingMines = math.max(0, (entry.pendingMines or 1) - 1)
+
+			if not self.UnitsById[entry.unitId] then return end
+
+			entry.mines[mineId] = { position = position, cf = mineCF }
+		end)
 	end)
 end
 
@@ -938,7 +967,17 @@ function UnitService:stepTripmines(now, weather : string?)
 		local config = stats and stats.Tripmine
 		if config and entry.mines then
 			for mineId, mine in entry.mines do
-				local triggeredBy = mobService:GetNearestMobInRange(mine.position, config.TriggerRadius or 2.5)
+				--[[
+					O trecho que o mob andou neste quadro, e nao onde ele esta parado.
+
+					Um mob anda `CurrentSpeed * dt` por quadro, e acelerado esse passo
+					passa do diametro do gatilho: no 3x com o servidor a 30Hz, o inimigo
+					mais rapido do Nightmare da quase 6 studs de uma vez e atravessaria os
+					5 studs de gatilho da mina sem nunca ser visto parado dentro dela. Com
+					o segmento, a mina explode pela distancia -- e nao pela sorte de o
+					quadro cair em cima dela.
+				]]
+				local triggeredBy = mobService:GetMobCrossing(mine.position, config.TriggerRadius or 2.5)
 				if triggeredBy then
 					entry.mines[mineId] = nil
 					local damage = self:getDamage(entry, stats, weather)

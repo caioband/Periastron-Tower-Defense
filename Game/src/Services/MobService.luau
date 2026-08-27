@@ -119,6 +119,10 @@ local MobService = {
 	ActiveMobs = {},
 	DebugParts = {},
 	PositionCache = {},
+
+	-- Onde cada mob estava no comeco do quadro. Ver `getPreviousMobPosition`.
+	PreviousPositionCache = {},
+
 	FrameId = 0,
 	BaseHealth = BASE_MAX_HEALTH,
 	MaxBaseHealth = BASE_MAX_HEALTH,
@@ -141,6 +145,14 @@ local MobService = {
 		quem esta olhando, e nao o ritmo da partida.
 	]]
 	LastContact = 0,
+
+	--[[
+		Ate quando o Time Stop segura todo mundo, no relogio da partida, e o token
+		do congelamento que esta valendo. Nil fora de um congelamento. Ver
+		`FreezeAll`.
+	]]
+	FreezeUntil = nil,
+	FreezeToken = 0,
 
 	-- A sobra fracionaria do bonus da aura, por jogador. Ver `applyCashBonus`.
 	BonusRemainder = {},
@@ -176,6 +188,65 @@ end
 
 function MobService:GetWeather() : string?
 	return self.Weather
+end
+
+--[=[
+	Para todos os inimigos do mapa por `duration`. Quem chama e o `CardShopService`
+	(carta Time Stop).
+
+	O congelamento e o mesmo `StunnedUntil` que o gimmick do boss ja usava: o laco
+	do Heartbeat so soma distancia quando o relogio da partida passa dele. Isso
+	significa que o tempo do congelamento e **de partida**, e nao de tela -- quatro
+	segundos no 2x sao dois segundos reais, do mesmo jeito que todo o resto do
+	gameplay. E o unico jeito de o congelamento valer o mesmo tanto de caminho
+	andado em qualquer velocidade.
+
+	`FreezeUntil` fica guardado no service porque a wave pode continuar nascendo
+	durante o congelamento: mob que nasce dentro da janela ja nasce parado, em vez
+	de o Time Stop virar "para quem ja estava no mapa".
+
+	O `UpdateMobSpeed` para zero e o outro lado da mesma coisa: quem move o modelo
+	na tela e o `MobController`, e sem isso o boneco continuaria andando ate o
+	servidor entregar a posicao de volta.
+]=]
+function MobService:FreezeAll(duration : number?) : number
+	duration = math.max(0, duration or 0)
+	if duration <= 0 then return 0 end
+
+	self.FreezeUntil = math.max(self.FreezeUntil or 0, GameClock.Now() + duration)
+
+	local frozen = 0
+	for mobId, mob in self.ActiveMobs do
+		mob.StunnedUntil = math.max(mob.StunnedUntil or 0, self.FreezeUntil)
+		frozen += 1
+
+		for _, player in Players:GetPlayers() do
+			Framework:Fire("UpdateMobSpeed", player, mobId, 0)
+		end
+	end
+
+	--[[
+		Um token por congelamento. Dois Time Stops sobrepostos estendem a janela
+		(`FreezeUntil` e um max), e ai so o ultimo degelo pode valer: sem isso o
+		primeiro terminaria no meio do segundo e devolveria a velocidade dos mobs
+		com a janela ainda aberta.
+	]]
+	self.FreezeToken = (self.FreezeToken or 0) + 1
+	local token = self.FreezeToken
+
+	GameClock.Delay(self.FreezeUntil - GameClock.Now(), function()
+		if self.FreezeToken ~= token then return end
+
+		self.FreezeUntil = nil
+
+		for mobId, mob in self.ActiveMobs do
+			for _, player in Players:GetPlayers() do
+				Framework:Fire("UpdateMobSpeed", player, mobId, mob.CurrentSpeed)
+			end
+		end
+	end)
+
+	return frozen
 end
 
 --[=[
@@ -288,6 +359,7 @@ function MobService:removeMob(mobId)
 	if not self.ActiveMobs[mobId] then return end
 	self.ActiveMobs[mobId] = nil
 	self.PositionCache[mobId] = nil
+	self.PreviousPositionCache[mobId] = nil
 	self.ActiveMobCount = math.max(0, self.ActiveMobCount - 1)
 
 	for _, player in Players:GetPlayers() do
@@ -321,6 +393,7 @@ function MobService:onGameOver()
 	end
 	table.clear(self.ActiveMobs)
 	table.clear(self.PositionCache)
+	table.clear(self.PreviousPositionCache)
 	self.ActiveMobCount = 0
 	self.AllMobsSpawned = false
 
@@ -354,11 +427,17 @@ function MobService:ResetRound()
 
 	table.clear(self.ActiveMobs)
 	table.clear(self.PositionCache)
+	table.clear(self.PreviousPositionCache)
 	table.clear(self.SessionDamage)
 	table.clear(self.BonusRemainder)
 	self.ActiveMobCount = 0
 	self.AllMobsSpawned = false
 	self.LastContact = os.clock()
+
+	-- Um Time Stop do round anterior nao pode congelar a primeira wave do proximo.
+	-- O `FreezeToken` sobe para o degelo agendado nao mexer mais em nada.
+	self.FreezeUntil = nil
+	self.FreezeToken = (self.FreezeToken or 0) + 1
 
 	-- As rotas sao reconstruidas no proximo SpawnWave; largar o cache evita
 	-- carregar geometria velha caso o mapa mude entre rounds.
@@ -378,6 +457,85 @@ function MobService:PredictPosition(mobId)
 	if not mob then return nil end
 
 	return PathUtil.GetPositionAtDistance(self:getSmoothPath(mob.RouteIndex), mob.Distance)
+end
+
+--[=[
+	Onde o mob estava no comeco deste quadro.
+
+	Cacheado por quadro pelo mesmo motivo do `getMobPosition`: quem pergunta e o
+	gatilho das tripmines, uma vez por mina, e sem cache a conta viraria o produto
+	de minas por mobs.
+
+	Sem `LastDistance` (o mob nasceu neste quadro), a resposta e a posicao de agora
+	-- ele nao andou nada ainda, entao o "segmento" dele e um ponto.
+]=]
+function MobService:getPreviousMobPosition(mobId)
+	local cached = self.PreviousPositionCache[mobId]
+	if cached and cached.frame == self.FrameId then
+		return cached.pos
+	end
+
+	local mob = self.ActiveMobs[mobId]
+	if not mob then return nil end
+
+	local pos = if mob.LastDistance
+		then PathUtil.GetPositionAtDistance(self:getSmoothPath(mob.RouteIndex), mob.LastDistance)
+		else self:getMobPosition(mobId)
+
+	self.PreviousPositionCache[mobId] = { frame = self.FrameId, pos = pos }
+
+	return pos
+end
+
+--[=[
+	A menor distancia de `point` ate o segmento `a`-`b`. So o plano XZ interessa:
+	tudo aqui anda no chao, e a mina fica 0.35 stud acima dele.
+]=]
+local function distanceToSegment(point : Vector3, a : Vector3, b : Vector3) : number
+	local flatPoint = Vector3.new(point.X, 0, point.Z)
+	local flatA = Vector3.new(a.X, 0, a.Z)
+	local segment = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+
+	local lengthSquared = segment:Dot(segment)
+	if lengthSquared < 1e-6 then
+		return (flatPoint - flatA).Magnitude
+	end
+
+	local t = math.clamp((flatPoint - flatA):Dot(segment) / lengthSquared, 0, 1)
+
+	return (flatPoint - (flatA + segment * t)).Magnitude
+end
+
+--[=[
+	Um mob cujo **caminho percorrido neste quadro** passou a menos de `radius` de
+	`position`, ou nil. Qual deles nao importa: quem pergunta e o gatilho da
+	tripmine, que so quer saber se alguem cruzou.
+
+	E diferente de perguntar quem esta perto agora, e a diferenca so aparece rapido:
+	um mob anda `CurrentSpeed * dt` por quadro, e nesse pulo ele pode entrar e sair
+	do raio sem nunca ser visto parado dentro dele. Com o jogo em 3x e o servidor a
+	30Hz, o inimigo mais rapido do Nightmare da passos de quase 6 studs -- mais que
+	o diametro do gatilho de uma tripmine, que ele entao atravessa intacto.
+
+	Testar o segmento em vez do ponto tira o quadro da conta: a mina explode pela
+	**distancia**, e nao pela sorte de o quadro ter caido em cima dela.
+
+	Devolve o primeiro que servir, sem montar lista: isto roda uma vez por mina por
+	quadro, e uma tabela por chamada seria lixo a coletar em cada um deles.
+]=]
+function MobService:GetMobCrossing(position : Vector3, radius : number) : string?
+	for mobId, _ in self.ActiveMobs do
+		local current = self:getMobPosition(mobId)
+		if not current then continue end
+
+		local previous = self:getPreviousMobPosition(mobId) or current
+
+		if distanceToSegment(position, previous, current) <= radius then
+			return mobId
+		end
+	end
+
+	return nil
 end
 
 function MobService:processTurnGimmicks(mobId, mob)
@@ -473,15 +631,19 @@ function MobService:SpawnWave(waveNumber)
 					local routeIndex = math.random(1, #routes)
 					local route = routes[routeIndex]
 
+					-- Nascer dentro de um Time Stop e nascer parado: ver `FreezeAll`.
+					local frozenUntil = self.FreezeUntil or 0
+					local spawnSpeed = baseSpeed * self.WeatherSpeedScale
+
 					self.ActiveMobs[mobId] = {
 						Name = spawnEntry.Entity,
 						Health = maxHealth,
 						MaxHealth = maxHealth,
 						BaseSpeed = baseSpeed,
 						SpeedScale = 1,
-						CurrentSpeed = baseSpeed * self.WeatherSpeedScale,
+						CurrentSpeed = spawnSpeed,
 						Distance = 0,
-						StunnedUntil = 0,
+						StunnedUntil = frozenUntil,
 						RouteIndex = routeIndex,
 						PathLength = route.smooth.length,
 						TurnDistances = route.turnDistances,
@@ -496,7 +658,7 @@ function MobService:SpawnWave(waveNumber)
 						Framework:Fire("SpawnClientMob", player, {
 							Id = mobId,
 							Name = spawnEntry.Entity,
-							Speed = baseSpeed * self.WeatherSpeedScale,
+							Speed = if frozenUntil > GameClock.Now() then 0 else spawnSpeed,
 							MaxHealth = maxHealth,
 							Route = routeIndex,
 						})
@@ -788,6 +950,17 @@ function MobService:construct()
 		end
 
 		for mobId, mob in self.ActiveMobs do
+			--[[
+				De onde ele saiu neste quadro. E o que deixa o gatilho da tripmine testar
+				o **trecho andado** em vez da posicao parada -- acelerado, o passo de um
+				quadro passa do diametro do gatilho e o mob atravessaria a mina intacto.
+				Ver `GetMobCrossing`.
+
+				Escrito mesmo com o mob parado (congelado ou atordoado): ai o segmento e
+				um ponto, que e a resposta certa para quem nao andou.
+			]]
+			mob.LastDistance = mob.Distance
+
 			if now >= mob.StunnedUntil then
 				mob.Distance += mob.CurrentSpeed * dt
 				self:processTurnGimmicks(mobId, mob)

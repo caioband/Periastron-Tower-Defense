@@ -264,6 +264,7 @@ local Utils = Shared:WaitForChild("Util")
 local SharedConfig = require(Configs.SharedConfig)
 local TargetPriority = SharedConfig.TargetPriority
 local ClassConfig = SharedConfig.ClassConfig
+local CardConfig = SharedConfig.CardConfig
 local UIUtil = require(Utils.UIUtil)
 local PointerUtil = require(Utils.PointerUtil)
 
@@ -727,6 +728,36 @@ local function applyClassIcon(unitName : string?)
 	icon.Visible = image ~= nil
 end
 
+--[[
+	A arte que o `Info` trouxe autorada, lida uma vez e antes de qualquer troca.
+
+	E o padrao para onde a unidade sem retrato proprio volta. Sem guardar isso, o
+	card abriria com o rosto da unidade **anterior** -- que e um erro pior do que
+	uma moldura generica, porque ele parece certo.
+]]
+local INFO_DEFAULT_ICON : string? = (function()
+	local info = CardUpgrade:FindFirstChild("Info")
+
+	return info and info:IsA("ImageLabel") and info.Image or nil
+end)()
+
+--[=[
+	O retrato da unidade no card: o `Info`, a moldura onde ficam o nome e o nivel.
+
+	Ao contrario do `ClassIcon`, ele **nao some** quando a unidade nao tem arte
+	propria: o nome e o nivel moram dentro dele, e esconder a moldura levaria os
+	dois junto. Ele volta para a arte autorada, que e a moldura generica.
+
+	`FindFirstChild` pelo mesmo motivo do `applyClassIcon`: sem o `Info` no
+	StarterGui o card inteiro continua funcionando, so sem o retrato.
+]=]
+local function applyUnitIcon(unitName : string?)
+	local info = CardUpgrade:FindFirstChild("Info")
+	if not info or not info:IsA("ImageLabel") then return end
+
+	info.Image = CardConfig.GetIcon(unitName) or INFO_DEFAULT_ICON or ""
+end
+
 --[=[
 	A unidade selecionada e deste jogador?
 
@@ -781,6 +812,7 @@ function module:refresh()
 		if upgradeLabel then upgradeLabel.Text = "" end
 		if sellLabel then sellLabel.Text = "SELL" end
 		applyClassIcon(nil)
+		applyUnitIcon(nil)
 		return
 	end
 
@@ -792,6 +824,7 @@ function module:refresh()
 	CardUpgrade.Info.UnitName.Text = unitName
 	CardUpgrade.Info.UnitLevel.Text = "LVL." .. level
 	applyClassIcon(unitName)
+	applyUnitIcon(unitName)
 
 	-- No nivel maximo o atalho nao entra: a tecla nao faz nada ali, e anunciar uma
 	-- que nao responde e pior do que nao anunciar nenhuma.

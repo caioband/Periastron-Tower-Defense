@@ -24,6 +24,10 @@ local Framework = Me.new()
 local WRAPPER_NAME = "CardWrapper"
 local CARD_NAME = "Card"
 local BUTTON_NAME = "Button"
+
+-- A carta dentro do wrapper que a loja de round entrega. Ela e o proprio botao,
+-- ao contrario da carta de unidade, que tem um `Button` por dentro.
+local ROUND_CARD_NAME = "CardTemplate"
 local COUNT_NAME = "Count"
 local COST_NAME = "Cost"
 local UNIT_NAME_NAME = "UnitName"
@@ -142,14 +146,48 @@ local KEYBINDS = {
 	existir sem brigar com o layout.
 
 	Quem alimenta este modulo e o `CardController`, pelo `doComponent`.
+
+	**Nem toda carta da mao vem do deck.** As cartas compradas na loja de round
+	(`RoundCardShopController`) entram por `addRound` e ficam em `self.entries` do
+	mesmo jeito que as outras: elas caem no arco, crescem no hover, sao empurradas
+	pelas vizinhas e apagam quando outra carta e escolhida. O que muda e so a
+	origem -- o wrapper delas vem pronto de outro molde, e quem sabe o que o clique
+	faz e quem as entregou.
+
+	A diferenca fica em dois campos do `entry`:
+
+	| Campo | Carta de unidade | Carta de round |
+	| --- | --- | --- |
+	| `Kind` | `"Unit"` | `"Round"` |
+	| `Unit` | o nome da unidade | `nil` |
+
+	`Unit` vazio e o que tira a carta de round de tudo que e do deck: preco, clima,
+	contador, estoque e a nocao de "carta escolhida". Todo o resto -- o arco, a
+	escala, a apagada, a saida -- e o mesmo codigo.
 ]=]
 local module = {}
 
 module.entries = {}
 module.byUnit = {}
+
+-- As cartas de round que estao na mao agora, por `uid` da compra.
+module.byRound = {}
+
 module.counts = {}
 module.cash = 0
 module.selected = nil
+
+--[[
+	A mao inteira escondida sem ninguem perder o lugar. Quem liga e desliga e o
+	`RoundCardShopController`, enquanto a aba da loja esta aberta -- as cartas do
+	jogador saem da tela e voltam exatamente como estavam.
+
+	E um estado do componente, e nao um `Visible` escrito de fora, justamente
+	porque o `Visible` de cada wrapper ja tem dono aqui (`_setPresence`): carta sem
+	unidade sobrando fica fora da tela por conta propria, e devolver "tudo aceso"
+	na volta a poria de volta na mao.
+]]
+module.hidden = false
 
 --[[ INTERNAL ]]
 
@@ -358,12 +396,21 @@ end
 	Sao duas metades: o wrapper, que e quem ocupa a vaga na fila, e o contador, que
 	mora na camada de cima e por isso **nao** some junto com ele. Esquecer o segundo
 	deixaria o numero de uma carta que ja saiu boiando na hotbar.
+
+	`present` e guardado no proprio entry porque ele e a **intencao** ("esta carta
+	deveria estar na mao?"), e a mao inteira pode estar escondida por cima disso
+	(`setHidden`). Sem separar os dois, sair da aba da loja acenderia de volta
+	tambem as cartas que estavam fora da tela por nao ter unidade sobrando.
 ]=]
 function module:_setPresence(entry, present : boolean)
-	entry.Wrapper.Visible = present
+	entry.Present = present
+
+	local visible = present and not self.hidden
+
+	entry.Wrapper.Visible = visible
 
 	if entry.Badge then
-		entry.Badge.Visible = present
+		entry.Badge.Visible = visible
 	end
 end
 
@@ -750,11 +797,22 @@ function module:_setDimmed(entry)
 end
 
 --[=[
+	Se esta e a carta que esta na mao do jogador agora.
+
+	O `entry.Unit ~= nil` nao e detalhe: carta de round nao tem unidade, e sem essa
+	metade da conta `nil == nil` daria "escolhida" para **todas** elas sempre que
+	nao houvesse nenhuma unidade equipada.
+]=]
+function module:_isSelected(entry) : boolean
+	return entry.Unit ~= nil and entry.Unit == self.selected
+end
+
+--[=[
 	Onde a escala da carta descansa quando o mouse nao esta em cima dela: 1.1 se ela
 	e a escolhida, 1 no resto do tempo.
 ]=]
 function module:_restScale(entry) : number
-	return if entry.Unit == self.selected then SELECTED_SCALE else 1
+	return if self:_isSelected(entry) then SELECTED_SCALE else 1
 end
 
 --[=[
@@ -808,17 +866,31 @@ function module:_refreshDepth(entry)
 		return
 	end
 
-	entry.Wrapper.ZIndex = if entry.Unit == self.selected then SELECTED_ZINDEX else BASE_ZINDEX
+	entry.Wrapper.ZIndex = if self:_isSelected(entry) then SELECTED_ZINDEX else BASE_ZINDEX
 end
 
-function module:_createEntry(unitName : string, index : number, callbackDo : (string) -> ())
-	local wrapper = (getTemplate() :: Frame):Clone()
-	local card = wrapper:FindFirstChild(CARD_NAME)
+--[=[
+	Monta o `entry` de uma carta ja desenhada e a poe na mao.
 
-	if not card or not card:IsA("GuiObject") then
-		wrapper:Destroy()
-		return nil
-	end
+	Tudo que e do arco mora aqui, e nada disto sabe de onde a carta veio: a escala,
+	a posicao e a rotacao de descanso, a lista de transparencias para a apagada, os
+	maids e os tres eventos do botao. E o que faz uma carta comprada na loja se
+	comportar exatamente como uma carta de unidade -- ela cai no arco, cresce no
+	hover, empurra as vizinhas e apaga quando outra e escolhida, pelo mesmo codigo.
+
+	Quem chama diz o que e especifico da origem:
+
+	| Campo | O que e |
+	| --- | --- |
+	| `Wrapper` / `Card` | as duas pecas: o wrapper ocupa a vaga na fila, a carta e que anima |
+	| `Button` | quem recebe o clique; a carta de unidade tem um `Button` dentro, a de round e o proprio botao |
+	| `Badge` | o contador, que ja saiu para a camada de cima (so a carta de unidade tem) |
+	| `Activate` | o que o clique (e o atalho de teclado) faz |
+]=]
+function module:_buildEntry(config)
+	local wrapper = config.Wrapper
+	local card = config.Card
+	local badge = config.Badge
 
 	local scale = card:FindFirstChildOfClass("UIScale")
 	if not scale then
@@ -826,21 +898,15 @@ function module:_createEntry(unitName : string, index : number, callbackDo : (st
 		scale.Parent = card
 	end
 
-	wrapper.Name = unitName
-	wrapper.LayoutOrder = index
+	wrapper.LayoutOrder = config.Index
 	wrapper.ZIndex = BASE_ZINDEX
 
-	-- O contador sai da carta e vai para a camada de cima, onde ele nao some atras
-	-- do card vizinho. Quem o mantem colado na carta e o `_followCounts`.
-	local badge = card:FindFirstChild(COUNT_NAME)
-	if badge and self.CountLayer then
-		badge.AnchorPoint = Vector2.new(0.5, 0.5)
-		badge.Parent = self.CountLayer
-	end
-
 	local entry = {
-		Unit = unitName,
-		Index = index,
+		Kind = config.Kind,
+		Unit = config.Unit,
+		Activate = config.Activate,
+
+		Index = config.Index,
 		Wrapper = wrapper,
 		Card = card,
 		Badge = badge,
@@ -856,6 +922,7 @@ function module:_createEntry(unitName : string, index : number, callbackDo : (st
 		Hovered = false,
 		Dimmed = false,
 		ScaleTarget = 1,
+		Present = true,
 
 		-- Lido do clone intocado: e para ca que qualquer apagada volta.
 		Fades = captureFades({ card, badge }),
@@ -878,6 +945,79 @@ function module:_createEntry(unitName : string, index : number, callbackDo : (st
 		entry.Maid:GiveTask(badge)
 	end
 
+	-- Mexer no tamanho da carta (no Studio, ou em tempo de execucao) reacomoda o
+	-- deck pelo mesmo caminho que a escala.
+	entry.Maid:GiveTask(card:GetPropertyChangedSignal("Size"):Connect(function()
+		self:_layout()
+	end))
+
+	local button = config.Button
+	if button and button:IsA("GuiButton") then
+		entry.Maid:GiveTask(button.Activated:Connect(function()
+			entry.Activate()
+		end))
+
+		entry.Maid:GiveTask(button.MouseEnter:Connect(function()
+			self:_setHovered(entry, true)
+		end))
+
+		entry.Maid:GiveTask(button.MouseLeave:Connect(function()
+			self:_setHovered(entry, false)
+		end))
+	end
+
+	wrapper.Parent = TowerContainer
+
+	return entry
+end
+
+--[=[
+	A ordem da fila e o que decide o arco: `_vertex` conta a partir dela, e o
+	`UIListLayout` espalha os wrappers por ela.
+
+	Corre `self.entries` inteiro em vez de guardar um contador porque a lista muda
+	pelos dois lados -- o deck e reconstruido do zero a cada troca, e as cartas de
+	round entram e saem no meio de tudo isso.
+]=]
+function module:_reindex()
+	for index, entry in self.entries do
+		entry.Index = index
+		entry.Wrapper.LayoutOrder = index
+	end
+end
+
+function module:_createEntry(unitName : string, index : number, callbackDo : (string) -> ())
+	local wrapper = (getTemplate() :: Frame):Clone()
+	local card = wrapper:FindFirstChild(CARD_NAME)
+
+	if not card or not card:IsA("GuiObject") then
+		wrapper:Destroy()
+		return nil
+	end
+
+	wrapper.Name = unitName
+
+	-- O contador sai da carta e vai para a camada de cima, onde ele nao some atras
+	-- do card vizinho. Quem o mantem colado na carta e o `_followCounts`.
+	local badge = card:FindFirstChild(COUNT_NAME)
+	if badge and self.CountLayer then
+		badge.AnchorPoint = Vector2.new(0.5, 0.5)
+		badge.Parent = self.CountLayer
+	end
+
+	local entry = self:_buildEntry({
+		Kind = "Unit",
+		Unit = unitName,
+		Index = index,
+		Wrapper = wrapper,
+		Card = card,
+		Badge = badge,
+		Button = card:FindFirstChild(BUTTON_NAME),
+		Activate = function()
+			callbackDo(unitName)
+		end,
+	})
+
 	if entry.Parts.UnitName then
 		entry.Parts.UnitName.Text = unitName
 	end
@@ -897,40 +1037,33 @@ function module:_createEntry(unitName : string, index : number, callbackDo : (st
 		card.Image = cardImage
 	end
 
-	-- Mexer no tamanho da carta (no Studio, ou em tempo de execucao) reacomoda o
-	-- deck pelo mesmo caminho que a escala.
-	entry.Maid:GiveTask(card:GetPropertyChangedSignal("Size"):Connect(function()
-		self:_layout()
-	end))
-
-	local button = card:FindFirstChild(BUTTON_NAME)
-	if button and button:IsA("GuiButton") then
-		entry.Maid:GiveTask(button.Activated:Connect(function()
-			callbackDo(unitName)
-		end))
-
-		entry.Maid:GiveTask(button.MouseEnter:Connect(function()
-			self:_setHovered(entry, true)
-		end))
-
-		entry.Maid:GiveTask(button.MouseLeave:Connect(function()
-			self:_setHovered(entry, false)
-		end))
-	end
-
-	wrapper.Parent = TowerContainer
-
 	return entry
 end
 
 --[[ EXTERNAL ]]
 
+--[=[
+	Derruba as cartas de unidade. As de round **ficam**.
+
+	`clean` e a primeira coisa que o `set` faz, e `set` e "redesenhe a hotbar a
+	partir do deck". Uma carta comprada na loja nao veio do deck e nao tem como ser
+	reconstruida a partir dele: destrui-la aqui faria trocar de unidade no meio da
+	partida evaporar uma carta que o jogador pagou.
+
+	Quem quer a mao inteira vazia chama `destroy`.
+]=]
 function module:clean()
+	local kept = {}
+
 	for _, entry in self.entries do
-		entry.Maid:DoCleaning()
+		if entry.Kind == "Round" then
+			table.insert(kept, entry)
+		else
+			entry.Maid:DoCleaning()
+		end
 	end
 
-	self.entries = {}
+	self.entries = kept
 	self.byUnit = {}
 
 	if self.maid then
@@ -941,12 +1074,28 @@ function module:clean()
 	return true
 end
 
+--- Derruba as cartas de round. So o `destroy` passa por aqui.
+function module:_cleanRound()
+	for _, entry in self.entries do
+		if entry.Kind == "Round" then
+			entry.Maid:DoCleaning()
+		end
+	end
+
+	self.entries = {}
+	self.byRound = {}
+end
+
 --[=[
 	Desenha a hotbar a partir do deck.
 
 	`Cards` e a lista de unidades na ordem dos slots (ver `DeckConfig.unitList`).
 	Cada uma vira um clone do molde, e no fim todas sao acomodadas no arco de uma
 	vez -- e por isso que tirar ou por uma carta reposiciona o deck inteiro.
+
+	As cartas de round que o jogador ja tinha comprado sobrevivem a isto e voltam
+	para a fila **depois** das de unidade: elas nao vem do deck, e a ordem dos
+	slots e a do deck.
 ]=]
 function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ())
 	-- Primeira montagem nasce pronta; troca de deck com a hotbar ja na tela entra
@@ -962,6 +1111,11 @@ function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ()
 	self.CountLayer = ensureCountLayer()
 	self.counts = Counts or {}
 	self.maid = Maid.new()
+
+	-- O que o `clean` deixou de pe sao as cartas de round; as de unidade entram na
+	-- frente delas.
+	local rounds = self.entries
+	self.entries = {}
 
 	for index, unitName in Cards do
 		local entry = self:_createEntry(unitName, index, callbackDo)
@@ -981,6 +1135,12 @@ function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ()
 		end
 	end
 
+	for _, entry in rounds do
+		table.insert(self.entries, entry)
+		self:_setDimmed(entry)
+	end
+
+	self:_reindex()
 	self:_layout(not hadCards)
 	self:_followCounts()
 
@@ -994,17 +1154,19 @@ function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ()
 		if gpe then return end
 
 		-- Hotbar fora da tela e hotbar que nao responde: quem esconde o
-		-- TowerContainer (o DifficultyController, antes da partida comecar) nao
-		-- precisa se lembrar de desligar os atalhos tambem.
-		if not TowerContainer.Visible then return end
+		-- TowerContainer (o DifficultyController, antes da partida comecar) e quem
+		-- esconde a mao inteira (a aba da loja de round) nao precisam se lembrar de
+		-- desligar os atalhos tambem.
+		if not TowerContainer.Visible or self.hidden then return end
 
 		-- O numero segue o que esta na tela: carta que caiu para fora nao ocupa
-		-- tecla, do mesmo jeito que nao ocupa vaga.
+		-- tecla, do mesmo jeito que nao ocupa vaga. E o `Activate` de cada uma sabe
+		-- o que fazer -- equipar a unidade, ou gastar a carta de round.
 		local index = KEYBINDS[input.KeyCode.Name]
 		local entry = index and self:_liveEntries()[index]
 
 		if entry then
-			callbackDo(entry.Unit)
+			entry.Activate()
 		end
 	end))
 
@@ -1017,6 +1179,127 @@ function module:setCount(unitName : string, count : number)
 	local entry = self.byUnit[unitName]
 	if entry then
 		self:_writeCount(entry)
+	end
+end
+
+--[[ CARTAS DE ROUND ]]
+
+--[=[
+	Poe na mao uma carta comprada na loja de round.
+
+	O `wrapper` chega **pronto** -- o `RoundCardShopController` clonou o molde dele,
+	escreveu titulo, descricao e arte e tirou a placa de preco. Deste lado ela vira
+	uma carta da hotbar como qualquer outra: entra na fila, cai no arco, cresce no
+	hover e apaga quando outra e escolhida.
+
+	Duas normalizacoes acontecem aqui, e as duas sao sobre o **molde de origem** ser
+	outro. A carta da loja e ancorada no canto (`0, 0`) e a da hotbar no centro: sem
+	trocar isso, a inclinacao do arco giraria a carta em torno do canto superior
+	esquerdo dela, e o crescer do hover a empurraria para o lado em vez de crescer no
+	lugar.
+
+	A entrada e a mesma de uma carta que volta a ter estoque: ela nasce fora da mao
+	e **sobe** para a vaga, empurrando as vizinhas no caminho.
+
+	`uid` e por compra, e nao por carta: a mesma carta comprada duas vezes sao duas
+	cartas na mao, e usar uma nao pode mexer na outra.
+]=]
+function module:addRound(uid : string, wrapper : Frame, activate : () -> ()) : boolean
+	if not uid or not wrapper or self.byRound[uid] then
+		return false
+	end
+
+	local card = wrapper:FindFirstChild(ROUND_CARD_NAME)
+	if not card or not card:IsA("GuiObject") then
+		warn(`[Card]: a carta de round '{uid}' veio sem o {ROUND_CARD_NAME}.`)
+		wrapper:Destroy()
+		return false
+	end
+
+	card.AnchorPoint = Vector2.new(0.5, 0.5)
+	card.Position = UDim2.fromScale(0.5, 0.5)
+
+	local entry = self:_buildEntry({
+		Kind = "Round",
+		Unit = nil,
+		Index = #self.entries + 1,
+		Wrapper = wrapper,
+		Card = card,
+
+		-- A carta da loja e o proprio botao; a de unidade tem um `Button` dentro.
+		Button = if card:IsA("GuiButton") then card else card:FindFirstChild(BUTTON_NAME),
+		Activate = activate,
+	})
+
+	table.insert(self.entries, entry)
+	self.byRound[uid] = entry
+
+	-- Fora da mao para poder entrar nela: o `_setAvailable` logo abaixo e que faz a
+	-- carta subir para a vaga e o resto do deck abrir espaco.
+	entry.Available = false
+	entry.Card.Position = self:_exitGoal(entry)
+	self:_setPresence(entry, false)
+
+	self:_reindex()
+	self:_setDimmed(entry)
+	self:_refreshDepth(entry)
+	self:_setAvailable(entry, true)
+
+	return true
+end
+
+--[=[
+	Tira da mao a carta de round que foi usada.
+
+	Ela sai como qualquer outra carta que deixa o deck: cai para fora da tela, e a
+	vaga so fecha quando ela termina de cair (`EXIT_INFO`). O `entry` sai da lista no
+	fim da queda, e nao no comeco, porque enquanto ela esta caindo ela ainda ocupa a
+	vaga dela -- fechar antes faria o deck se reacomodar por baixo da carta que ainda
+	esta na tela.
+]=]
+function module:removeRound(uid : string) : boolean
+	local entry = self.byRound[uid]
+	if not entry then
+		return false
+	end
+
+	self.byRound[uid] = nil
+
+	self:_setAvailable(entry, false)
+
+	task.delay(EXIT_INFO.Time, function()
+		local index = table.find(self.entries, entry)
+		if index then
+			table.remove(self.entries, index)
+		end
+
+		entry.Maid:DoCleaning()
+
+		self:_reindex()
+		self:_layout()
+	end)
+
+	return true
+end
+
+--[=[
+	Esconde (ou devolve) a mao inteira, sem ninguem perder o lugar.
+
+	Quem liga e o `RoundCardShopController`, enquanto a aba da loja esta aberta. A
+	volta devolve cada carta ao estado que ela tinha (`entry.Present`), e nao um
+	"tudo aceso": carta sem unidade sobrando continua fora da tela.
+]=]
+function module:setHidden(hidden : boolean)
+	hidden = hidden == true
+
+	if self.hidden == hidden then
+		return
+	end
+
+	self.hidden = hidden
+
+	for _, entry in self.entries do
+		self:_setPresence(entry, entry.Present ~= false)
 	end
 end
 
@@ -1069,7 +1352,13 @@ end
 
 function module:destroy()
 	self:clean()
+
+	-- O `clean` poupa as cartas de round de proposito (ele e a reconstrucao do
+	-- deck); aqui a mao vai embora inteira.
+	self:_cleanRound()
+
 	self.selected = nil
+	self.hidden = false
 end
 
 return module

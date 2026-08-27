@@ -8,9 +8,9 @@ compartilhado entre as duas places. Aqui fica só o que é exclusivo deste place
 | Pasta | Vai para | Conteúdo |
 |---|---|---|
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | LocalScript de entrada |
-| `src/Controllers/` | `Client.Controllers.Game` | Card, Difficulty, Loading, Mob, Music, Projectile, Ready, SkipPrompt, Targeting, Tripmine, UILibrary, UnitPlacement, VFX, Wave |
-| `src/Services/` | `ServerScriptService.Services.Game` | Collision, Data, Difficulty, Map, Mob, Skip, Snow, Thunder, Unit, Wave, WeatherRound |
-| `src/CmdrDefinitions/` | `ServerScriptService.CmdrDefinitions.*.Game` | comandos `strike` e `roundcash`, e o tipo `unitName` |
+| `src/Controllers/` | `Client.Controllers.Game` | Card, Difficulty, Loading, Mob, Music, Projectile, Ready, RoundCardShop, SkipPrompt, Targeting, Tripmine, UILibrary, UnitPlacement, VFX, Wave |
+| `src/Services/` | `ServerScriptService.Services.Game` | CardShop, Collision, Data, Difficulty, Map, Mob, Skip, Snow, Thunder, Unit, Wave, WeatherRound |
+| `src/CmdrDefinitions/` | `ServerScriptService.CmdrDefinitions.*.Game` | comandos `strike`, `roundcash` e `roundshop`, e o tipo `unitName` |
 
 O `Summon` no `ServerScriptService.Config` vem do compartilhado e não é usado aqui
 — é pequeno e fica por consistência entre as places. O `Cmdr` do mesmo lugar **é**
@@ -322,6 +322,7 @@ unidade selecionada. Cada TextLabel do StarterGui já traz o sufixo desenhado
 | `Range` | `GetRange` |
 | `DmgDone` | atributo `DamageDone` do modelo |
 | `ClassIcon` | `ClassConfig.GetIcon`, pela `Class` da unidade em `UnitStats` |
+| `Info` (a imagem) | `CardConfig.GetIcon`, o retrato da unidade |
 
 O nome `DamagePerSecond` é só o do label no StarterGui: ele mostra o **dano por
 golpe**, e não DPS — quem quiser a conta por segundo tem o cooldown no próprio
@@ -335,6 +336,20 @@ mostra a **primeira** da lista (é uma casa só na tela), e unidade sem classe �
 `Azure`, que ainda não foi classificada — esconde o label em vez de mostrar um
 quadrado vazio. Classe nova é uma linha em `ClassConfig.Icons` e outra em
 `WeatherConfig.ClassList`.
+
+O `Info` é a moldura que carrega o nome e o nível, e a imagem dela é o **retrato da
+unidade** — os ids ficam em `CardConfig.Icons`. Ela é outra arte que a de
+`CardConfig.Images`: aquela é a carta inteira da hotbar, esta é só o rosto num
+quadrado pequeno. As duas vivem no mesmo módulo porque erram pelo mesmo motivo — a
+chave é o nome de `UnitStats`, e não o nome que o jogador lê: o retrato do
+**Gladiator** é da unidade `Sword`, e o do **Rocketeer** é da `Rocket`.
+
+Ao contrário do `ClassIcon`, unidade sem retrato **não esconde** o label: o nome e o
+nível moram dentro do `Info`, e sumir com a moldura levaria os dois junto. Ela volta
+para a arte autorada no StarterGui, lida uma vez no carregamento do módulo e antes de
+qualquer troca — sem guardar esse padrão, o card abriria com o rosto da unidade
+*anterior*, que é um erro pior porque parece certo. Hoje têm retrato o Slasher, o
+Entrepreneur e o Sword; faltam Azure, Rocket, Slingshot e Subspace Tripminer.
 
 Tudo menos o `DmgDone` sai do `UnitUpgradeConfig` — o cliente refaz a mesma conta
 do servidor a partir do nível, então não precisa de replicação. O `DmgDone` só o
@@ -537,6 +552,12 @@ aparecem com a carta dele até os ids chegarem.
 O `TowerContainer` não tem mais um `CardN` por slot: ele tem **um** `CardWrapper`
 autorado, que é o molde. O componente o tira da tela no primeiro uso e clona um
 por unidade do deck, então a hotbar na tela é sempre 100% deck.
+
+> Nem toda carta da mão vem do deck: as compradas na
+> [loja de round](#loja-de-cartas-de-round-starterguiroundcardshop) entram por
+> `addRound` e ficam no mesmo `self.entries`, sujeitas a este mesmo arco. O que as
+> distingue é o `entry.Kind` e o `entry.Unit` vazio — ver
+> [A carta na hotbar](#a-carta-na-hotbar).
 
 Quem espalha os **wrappers** na horizontal é o `UIListLayout` do container. O que
 o componente desenha é a posição **Y da carta dentro do wrapper** — e é daí que
@@ -918,6 +939,84 @@ Quem passou a usar o relógio, e por quê:
 | `MobController` | o passo do mob na tela e a velocidade das animações dele |
 | `Classes.Unit` | a animação de ataque e as esperas de golpe do lado do cliente |
 | `TargetingController` | o cache de progresso no caminho, no mesmo ritmo do servidor |
+| `TripmineController` | o arco da mina arremessada, que termina quando o servidor a arma |
+
+### As minas do Subspace Tripminer em velocidade alta
+
+O Tripminer não é uma torre que atira: ele planta minas no caminho. O plantio
+(`UnitService:stepTripminer`) e o gatilho (`stepTripmines`) sempre correram no
+`GameClock`, mas **duas coisas fora dele** só apareciam acelerado.
+
+#### O gatilho não podia ser um ponto
+
+A mina detonava quando havia um mob a menos de `TriggerRadius` (2,5) **dela naquele
+quadro**. Só que um mob anda `CurrentSpeed * dt` por quadro, e o `dt` já vem
+multiplicado pela velocidade da partida: acelerado, o passo de um quadro passa do
+diâmetro do gatilho e o inimigo atravessa a mina intacto.
+
+O teto de velocidade do jogo é ~57 studs/s (o `CourageBearer`, `SpeedMultiplier` 2,5,
+no Nightmare com o `SpeedGrowthCap` e os 2,5x que o gimmick de curva acumula). Contra
+os 5 studs de diâmetro do gatilho:
+
+| | passo por quadro | minas atravessadas |
+| --- | --- | --- |
+| 60 fps, 3x | 2,9 studs | 0% |
+| 30 fps, 2x | 3,8 studs | 0% |
+| 30 fps, 3x | 5,7 studs | **13%** |
+| 20 fps, 3x | 8,6 studs | **42%** |
+| 15 fps, 3x | 11,5 studs | **57%** |
+
+(Taxa medida varrendo 200 fases de quadro por cenário — o acerto do teste por ponto
+depende de onde o quadro cai em relação à mina, então ele falhava *por sorte*, não
+por distância. Mina plantada fora do centro do caminho, que é o caso comum por causa
+do desvio perpendicular de até 1,5 stud, falhava ainda mais: 30% já a 30 fps no 3x.)
+
+É o framerate do **servidor**, que cai justamente nas waves grandes — e o 3x é o que a
+carta Time Acceleration entrega. Os dois se encontram exatamente onde dói.
+
+A correção é `MobService:GetMobCrossing`: em vez de perguntar quem está perto agora,
+pergunta **quem passou perto neste quadro**, testando a distância da mina até o
+segmento que o mob percorreu. O `MobService` guarda `mob.LastDistance` no começo de
+cada Heartbeat, e a posição anterior é cacheada por quadro pelo mesmo motivo que a
+atual — o gatilho roda uma vez por mina, e sem cache a conta viraria minas × mobs.
+Zero falhas em toda a tabela acima.
+
+> O raio de dano (`GetMobsInRadius`, 6 studs) continua sendo uma foto do instante da
+> explosão, de propósito: com 12 studs de diâmetro ele tem 2,4x mais margem que o
+> gatilho, e só um mob a 15 fps no 3x chegaria perto de atravessá-lo. Um respingo é
+> uma foto; o gatilho é uma travessia.
+
+#### O arco do arremesso, e quando a mina arma
+
+O `TripmineController` desenhava o voo da mina em `os.clock()`, com 0,35s fixos. Era o
+único tempo de gameplay do sistema fora do `GameClock`, e no 3x o windup e a animação
+do arremesso encolhiam para um terço enquanto a mina continuava levando os mesmos
+0,35s reais no ar — ela boiava enquanto o resto da partida corria.
+
+Junto disso havia um segundo problema, que a velocidade agravava: a mina entrava em
+`entry.mines` **no mesmo quadro** em que o cliente começava a desenhar o arco. Ela
+passava o voo inteiro armada e invisível no destino, e um mob que cruzasse o ponto
+nessa janela via a explosão sair de um lugar onde ainda não havia mina nenhuma.
+Acelerado, o mob cobre 3x mais caminho nessa janela.
+
+Agora são dois instantes, os dois no relógio da partida:
+
+1. **fim do windup** (`HitTime`, 1,15s) — a mina sai da mão: sai o `TripmineThrown` e
+   o cliente começa o arco;
+2. **`ThrowTime` depois** (0,35s) — a mina pousa **e arma**.
+
+O `ThrowTime` vive em `UnitStats["Subspace Tripminer"].Tripmine` e viaja no próprio
+evento em vez de o cliente lê-lo do config: assim os dois lados gastam o mesmo número
+por construção, e o arco termina no quadro em que o gatilho liga, em qualquer
+velocidade. A `pendingMines` só libera a vaga no pouso — mina no ar já conta para o
+limite, senão o cooldown de 3s contra windup mais voo deixaria plantar acima dele.
+
+O arco lê o relógio a cada quadro em vez de converter para segundos reais na chamada,
+então acelerar a partida **com uma mina no ar** encurta o que falta dela.
+
+O `EXPLOSION_LIFETIME` (5s) continua em tempo real, e é o único do arquivo: o que
+sobra na tela depois do estouro são `ParticleEmitter`s, e partícula não anda no
+relógio da partida — acelerar essa limpeza cortaria a fumaça pela metade no 3x.
 
 **O que continua em tempo real, de propósito:**
 
@@ -934,6 +1033,241 @@ A renda da farm não entra na conta porque ela é paga **por wave** (`payFarmUni
 `Signals.Ended`), e não por segundo: acelerar não imprime dinheiro. As recompensas de
 fim de round também são por wave sobrevivida, então acelerar muda o ritmo da partida, não
 o que ela paga.
+
+## Loja de cartas de round (`StarterGui.RoundCardShop`)
+
+De X em X waves cada jogador recebe uma oferta de **três cartas sorteadas**. A carta
+comprada sai do caixa da partida (o `roundcash` do `MobService`, e não o `Cash` do
+perfil), vai para a hotbar e vale **um uso**: clicar nela dispara o efeito e a carta
+some.
+
+Elas não são cartas de deck. Não passam pelo perfil, não sobrevivem ao round e não
+têm nada a ver com o `DeckConfig` — o que elas mexem é no estado da sala: os
+inimigos, o relógio e o céu.
+
+| Onde | O quê |
+| --- | --- |
+| `SharedConfig.RoundCardConfig` | o catálogo, os intervalos por dificuldade, os nomes da GUI e os tempos da animação |
+| `Services/CardShopService` | sorteio, cobrança, estoque e os efeitos |
+| `Controllers/RoundCardShopController` | tudo o que aparece na tela |
+
+### De quantas em quantas waves
+
+Múltiplo exato do intervalo da dificuldade (`RoundCardConfig.Intervals`), disparado
+pelo sinal `WaveStarted` do `WaveService` — a loja entra junto com o contador de
+wave, e não quando os mobs nascem.
+
+| Dificuldade | Intervalo | Waves de loja |
+| --- | --- | --- |
+| Easy | 4 | 4, 8, 12 |
+| Medium | 4 | 4, 8, 12, 16, 20 |
+| Hard | 5 | 5, 10, 15, 20, 25 |
+| Impossible | 6 | 6, 12, 18, 24, 30 |
+| Nightmare | 6 | 6, 12, 18, 24, 30 |
+
+Dificuldade mais longa espaça mais de propósito: o Nightmare tem 35 waves contra as
+15 do Easy, e um intervalo fixo faria a partida do topo oferecer mais que o dobro de
+cartas da de baixo.
+
+**A oferta é por jogador, o efeito é da sala.** O caixa da partida é individual, então
+cada um sorteia o seu e compra com o seu dinheiro — mas o Time Stop para os inimigos
+de todo mundo. Uma compra por abertura: a oferta fecha para quem comprou.
+
+### As cartas
+
+| Carta | Preço | O que faz | Onde o efeito mora |
+| --- | --- | --- | --- |
+| **Time Stop** | 350 | congela todos os inimigos por 4s | `MobService:FreezeAll` |
+| **Time Acceleration** | 250 | a partida vai a 3x por 15s | `SpeedService:SetOverride` |
+| **Weather Report** | 300 | tira o clima por 1 wave | `WeatherRoundService:Suppress` |
+
+Carta nova são duas linhas: uma entrada em `RoundCardConfig.Cards` e uma função em
+`CardShopService.Effects` com o nome que estiver em `Effect`. O sorteio **só oferece
+carta cujo efeito existe** — entrada com `Effect` errado é descartada com um aviso,
+em vez de virar uma carta que o jogador paga e não faz nada.
+
+O sorteio é com peso e **sem reposição**: a carta que sai deixa a urna e os pesos das
+outras continuam valendo entre si, então uma carta rara não fica mais provável só
+porque a comum já saiu. Catálogo menor que três mostra o que tem, em vez de repetir.
+
+#### Time Stop
+
+É o mesmo `StunnedUntil` que o gimmick do boss já usava: o laço do Heartbeat só soma
+distância quando o relógio da partida passa dele. Os quatro segundos são de
+**partida**, e não de tela — no 2x são dois segundos reais, como todo o resto do
+gameplay. É o que faz o congelamento valer o mesmo tanto de caminho andado em
+qualquer velocidade.
+
+O `MobService.FreezeUntil` fica guardado no service porque a wave pode continuar
+nascendo durante o congelamento: mob que nasce dentro da janela **já nasce parado**,
+em vez de o Time Stop virar "para quem já estava no mapa". Dois Time Stops
+sobrepostos estendem a janela, e um `FreezeToken` garante que só o último degelo
+valha.
+
+#### Time Acceleration
+
+O 3x **não é um degrau** do `SpeedConfig` (que vai até 2x) e não tem arte. Ele entra
+como um override: `SpeedService.Override` manda no `GameClock` por cima do degrau,
+e a arte do botão `Interface.Speed` continua marcando a velocidade que a sala
+escolheu — o botão continua servindo para voltar ao 1x depois.
+
+Os 15 segundos são **reais**, e não de partida: um prazo medido no próprio relógio que
+ele acelera duraria 5 segundos de tela. Vencido o prazo, o relógio volta ao degrau que
+estiver valendo naquele momento, e não ao que valia na hora da compra — alguém pode
+ter clicado no botão no meio.
+
+O override tem o evento próprio `GameSpeedOverride`, separado do `GameSpeedChanged`,
+porque as duas coisas convivem: o degrau desenha o botão, o override anda com o
+relógio.
+
+#### Weather Report
+
+Limpa o céu e segura o próximo clima por uma wave
+(`WeatherRoundService.SuppressedUntilWave`). Enquanto a janela vale, nada entra e
+nada é sorteado — e o `ClearActive` roda a cada wave, então um clima ligado na mão
+pelo comando `weather` também sai.
+
+O `Clear` do `WeatherService` é chamado direto, e não o `ClearActive` daqui: aquele só
+desliga o que o próprio service ligou, e a carta promete tirar a weather, seja de
+onde ela vier.
+
+**O aviso na tela não é cancelado.** O clima avisado continua agendado e entra na
+primeira wave depois da janela: cancelar seria fazer o jogador pagar por um aviso que
+ele viu e depois não aconteceu; adiar é o que a carta diz que faz.
+
+A janela é contada da wave que está no ar. Comprada no meio da wave 5, ela cobre o
+resto da 5 e a 6 inteira, e a 7 volta ao normal.
+
+### A animação
+
+1. **O botão entra pela direita.** O `RCSFrame` nasce em `Position.X.Scale = 1` e
+   corre até o X que o designer deixou autorado, em `Circular` — ele chega devagar no
+   fim, que é o que dá o encaixe na beirada em vez de o botão parar seco.
+2. **O clique escurece a tela.** O `Background` acende com `BackgroundTransparency`
+   de 1 até o valor autorado (0.5), e as cartas do jogador no `TowerContainer`
+   apagam junto.
+3. **As cartas caem, uma a cada 0,5s.** Cada `CardTemplate` desce de `DropOffset`
+   alturas acima do lugar dele enquanto a **imagem** sai de transparente; só quando
+   isso termina é que o conteúdo — título, descrição, preço, contornos, sombra — sobe
+   de 1 até o valor autorado. Revelar tudo junto faria o texto aparecer boiando antes
+   de existir carta por trás dele.
+4. **A compra recolhe a loja.** O escurecido some na hora, o botão volta para
+   `X.Scale = 1` e se desliga quando termina de sair.
+
+As transparências de destino são lidas de **cada clone recém-feito**, antes de
+qualquer animação: "voltar ao original" é literal, e repintar a carta no Studio basta.
+`GuiObject.Transparency` fica de fora da lista de propósito (é apelido de
+`BackgroundTransparency`, e os dois tweens brigariam pela mesma propriedade), e um
+`Transparency` que não seja número também — o do `UIGradient` é uma `NumberSequence`.
+
+O `CardWrapper` autorado dentro do `Background.RoundCardShop` **sai da tela** na
+primeira vez que é preciso, virando molde — o mesmo que o `Components/Card` faz com o
+`CardWrapper` da hotbar. O que fica na fileira é sempre 100% do que o servidor
+sorteou.
+
+A hotbar apaga pelo `Card:setHidden`, e não por um `Visible` escrito daqui — ver
+[A carta na hotbar](#a-carta-na-hotbar).
+
+### A carta na hotbar
+
+Do lado da loja sai só a **aparência**: um clone do mesmo molde, no tamanho
+`UDim2.fromScale(0.128, 1.07)` e **sem a placa de preço** — no deck a carta já foi
+paga. A partir do `Card:addRound`, quem cuida dela é o componente `Components/Card`,
+e ela vira uma carta da hotbar como qualquer outra: cai no arco, cresce no hover,
+empurra e é empurrada pelas vizinhas, apaga quando outra carta é escolhida e ganha o
+atalho de teclado da posição dela.
+
+A diferença fica em dois campos do `entry`:
+
+| Campo | Carta de unidade | Carta de round |
+| --- | --- | --- |
+| `Kind` | `"Unit"` | `"Round"` |
+| `Unit` | o nome da unidade | `nil` |
+
+`Unit` vazio é o que tira a carta de round de tudo que é do deck: preço, desconto de
+clima, contador, estoque e a noção de "carta escolhida". Todo o resto é o mesmo
+código.
+
+**O `entry.Activate`.** O clique e o atalho de teclado deixaram de chamar
+`callbackDo(entry.Unit)` e passaram a chamar `entry.Activate()`, que cada origem
+preenche: a carta de unidade equipa a unidade, a de round pede o uso ao servidor. Era
+isso ou a hotbar passar a saber o que uma carta de loja faz.
+
+**`_isSelected`.** A conta de "esta é a carta na mão" ganhou um `entry.Unit ~= nil`.
+Sem essa metade, `nil == nil` daria "escolhida" para **todas** as cartas de round
+sempre que não houvesse nenhuma unidade equipada — as três cresceriam para
+`SELECTED_SCALE` sozinhas.
+
+**Duas normalizações no `addRound`.** O molde da loja ancora a carta no canto
+(`0, 0`) e o da hotbar no centro. Sem trocar isso, a inclinação do arco giraria a
+carta em torno do canto superior esquerdo dela, e o crescer do hover a empurraria
+para o lado em vez de crescer no lugar.
+
+**A entrada e a saída são as que o componente já tinha.** Ela chega fora da mão e
+**sobe** para a vaga (`RESTORE_INFO`, o mesmo caminho de uma carta que voltou a ter
+estoque), abrindo espaço nas vizinhas; usada, ela **cai** para fora (`EXIT_INFO`), e
+a vaga só fecha quando ela termina de cair — o `entry` sai da lista no fim da queda,
+e não no começo, senão o deck se reacomodaria por baixo de uma carta que ainda está
+na tela.
+
+**O `clean` poupa as cartas de round.** `set` é "redesenhe a hotbar a partir do
+deck", e uma carta comprada não veio do deck: destruí-la ali faria trocar de unidade
+no meio da partida evaporar uma carta que o jogador pagou. Elas voltam para a fila
+**depois** das de unidade — a ordem dos slots é a do deck —, e o `_reindex` reescreve
+o `LayoutOrder` de todo mundo. Quem quer a mão inteira vazia chama `destroy`.
+
+**Esconder a mão é do componente.** Enquanto a aba da loja está aberta, o
+`Card:setHidden(true)` apaga todas as cartas sem ninguém perder o lugar: cada `entry`
+guarda a intenção em `Present` ("esta carta deveria estar na mão?") e o `hidden` passa
+por cima. Escrever `Visible` de fora acenderia de volta, na saída da loja, uma carta
+que o deck tinha derrubado por falta de unidade.
+
+Some por dentro, e não pelo `Visible` do `TowerContainer`: quem manda no container é o
+`DifficultyController` (a hotbar só aparece com a dificuldade decidida), e duas mãos
+no mesmo interruptor acabariam com a hotbar sumindo no meio da partida.
+
+### O cliente não decide nada
+
+O cliente não sorteia, não cobra e não executa efeito nenhum. Ele manda "quero comprar
+a carta X da oferta com token T" e "quero usar a carta de id U"; o servidor confere as
+duas coisas contra o que ele mesmo guardou.
+
+| Conferência | O que ela pega |
+| --- | --- |
+| oferta existe | clique depois de a loja ter fechado |
+| `Token` bate | clique atrasado numa oferta que a wave seguinte já substituiu |
+| carta estava naquela oferta | id trocado na mão |
+| dinheiro dá | duas compras no mesmo instante |
+| `uid` está com o jogador | uso de carta que já foi gasta |
+
+O `uid` é por compra, e não por carta: a mesma carta pode ser comprada duas vezes em
+ofertas diferentes, e usar uma não pode gastar a outra.
+
+A carta **só entra na hotbar quando o `RoundCardBought` confirma**, e só sai quando o
+`RoundCardUsed` confirma. Recusada, o `RoundCardState` que chega em seguida devolve a
+tela ao que o servidor sabe — e a oferta reaparece. O `RequestRoundCardState` do bind
+cobre quem entra no meio de uma oferta aberta ou recarrega a interface: sem ele, as
+cartas já compradas sumiriam da hotbar dele.
+
+O `CardShopService` está na lista de round-scoped do `WaveService`: as cartas são de
+partida, e não há o que carregar para a próxima nem oferta que sobreviva à tela de
+resultado.
+
+### O comando
+
+```
+roundshop [players]
+```
+
+Abre a oferta na hora, sem esperar a wave certa, e re-sorteia as três cartas. Sem
+argumento, para a sala inteira. Aliases: `cardshop`, `rcs`.
+
+### Feito no Studio
+
+O `RoundCardShop` estava com `ResetOnSpawn = true` e `DisplayOrder = 0`. Virou
+`false` e `1`: com o reset, a GUI seria recriada a cada respawn e o controller
+ficaria segurando um `RCSFrame` que não está mais na tela; com o `DisplayOrder` zero,
+o escurecido dividia camada com a `Interface`.
 
 ## Bug conhecido (não corrigido)
 
