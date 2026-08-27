@@ -16,8 +16,8 @@ local SpeedConfig = {}
 --- Os degraus, na ordem do ciclo.
 SpeedConfig.Steps = {
 	{ Scale = 1, Image = "rbxassetid://132899761008925" },
-	{ Scale = 1.15, Image = "rbxassetid://106089741438137" },
-	{ Scale = 1.35, Image = "rbxassetid://122729764545333" },
+	{ Scale = 1.5, Image = "rbxassetid://106089741438137" },
+	{ Scale = 2, Image = "rbxassetid://122729764545333" },
 }
 
 SpeedConfig.DEFAULT_INDEX = 1

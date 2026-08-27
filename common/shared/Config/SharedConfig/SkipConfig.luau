@@ -7,7 +7,7 @@
 	`SkipPromptController`.
 
 	`IdleTime` é medido em **tempo real**, e não no `GameClock`: ele existe para
-	medir a paciência de quem está olhando a tela, e não o ritmo da partida. No 1,35x
+	medir a paciência de quem está olhando a tela, e não o ritmo da partida. No 2x
 	o jogo anda mais rápido, mas cinco segundos parados continuam sendo cinco
 	segundos parados.
 

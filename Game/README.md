@@ -790,7 +790,7 @@ Quem marca o contato é o `MobService:DamageMob`, que é por onde passa **todo**
 jogo (torre, tripmine, respingo de área): cada golpe que entra escreve
 `MobService.LastContact = os.clock()`. O `SkipService` só lê esse relógio a cada
 `PollInterval`. Tempo real, e não `GameClock`: o que se mede aqui é a paciência de
-quem está olhando a tela, e não o ritmo da partida — no 1,35x, cinco segundos parados
+quem está olhando a tela, e não o ritmo da partida — no 2x, cinco segundos parados
 continuam sendo cinco segundos parados.
 
 A janela recomeça a cada wave (`SpawnWave` também escreve `LastContact`): os mobs
@@ -860,8 +860,8 @@ está agora**, não a próxima.
 | Degrau | Escala | Imagem |
 | --- | --- | --- |
 | 1 | 1x (padrão) | `rbxassetid://132899761008925` |
-| 2 | 1,15x | `rbxassetid://106089741438137` |
-| 3 | 1,35x | `rbxassetid://122729764545333` |
+| 2 | 1,5x | `rbxassetid://106089741438137` |
+| 3 | 2x | `rbxassetid://122729764545333` |
 
 Os degraus vivem no `SharedConfig.SpeedConfig` — velocidade nova é uma linha lá, e
 as duas pontas a leem pela mesma tabela (o cliente pega a arte, o servidor pega a
@@ -879,14 +879,14 @@ ninguém joga. Quem clica acelera a partida dos outros junto, e a arte do botão
 todo mundo muda no mesmo instante.
 
 O cliente **pede o degrau que quer**, e não um "avança um": dois jogadores clicando
-ao mesmo tempo param os dois no 1,15x, em vez de um empurrar o outro até o 1,35x. O
+ao mesmo tempo param os dois no 1,5x, em vez de um empurrar o outro até o 2x. O
 `SpeedService` valida o índice (vem pela rede), ignora clique repetido do mesmo
 jogador dentro de 0,15s e só então avisa a sala pelo `GameSpeedChanged`. A arte
-local só muda com essa confirmação — trocar na hora mostraria 1,15x para quem clicou
+local só muda com essa confirmação — trocar na hora mostraria 1,5x para quem clicou
 enquanto os outros ainda estão no 1x.
 
 O `SpeedService` está na lista de round-scoped do `WaveService`, então **partida
-nova começa no 1x**, e não no 1,35x que alguém deixou ligado na anterior.
+nova começa no 1x**, e não no 2x que alguém deixou ligado na anterior.
 
 ### O relógio da partida (`Shared.Util.GameClock`)
 
