@@ -1218,16 +1218,59 @@ resto da 5 e a 6 inteira, e a 7 volta ao normal.
 1. **O botão entra pela direita.** O `RCSFrame` nasce em `Position.X.Scale = 1` e
    corre até o X que o designer deixou autorado, em `Circular` — ele chega devagar no
    fim, que é o que dá o encaixe na beirada em vez de o botão parar seco.
-2. **O clique escurece a tela.** O `Background` acende com `BackgroundTransparency`
-   de 1 até o valor autorado (0.5), e as cartas do jogador no `TowerContainer`
-   apagam junto.
-3. **As cartas caem, uma a cada 0,5s.** Cada `CardTemplate` desce de `DropOffset`
+2. **Encaixado, ele fica balançando.** O `CardShop` sobe `IdleLift` pixels e ginga
+   entre `+IdleSwing` e `-IdleSwing` graus, para sempre, num tween só com
+   `repeatCount = -1` e `reverses = true`. É chamariz: a oferta vale poucas waves e
+   o botão mora na beirada, onde é fácil não ver que ele chegou. O balanço só começa
+   **depois** que o deslize termina — gingar durante a entrada faria o botão chegar
+   torto.
+3. **O clique recolhe o próprio botão e escurece a tela.** O `RCSFrame` volta para
+   `X.Scale = 1` (e o `CardShop` desfaz a ginga, voltando à rotação e à altura
+   autoradas em `IdleReturn`), o `Background` acende com `BackgroundTransparency` de
+   1 até o valor autorado (0.5), e as cartas do jogador no `TowerContainer` apagam
+   junto. O botão sai porque ele é o **atalho** para a oferta, e a oferta já está na
+   tela inteira.
+4. **As cartas caem, uma a cada 0,5s.** Cada `CardTemplate` desce de `DropOffset`
    alturas acima do lugar dele enquanto a **imagem** sai de transparente; só quando
    isso termina é que o conteúdo — título, descrição, preço, contornos, sombra — sobe
    de 1 até o valor autorado. Revelar tudo junto faria o texto aparecer boiando antes
    de existir carta por trás dele.
-4. **A compra recolhe a loja.** O escurecido some na hora, o botão volta para
-   `X.Scale = 1` e se desliga quando termina de sair.
+5. **O clique fora das cartas toca isso ao contrário.** O conteúdo desce de volta ao
+   transparente (`CardReveal`) e só então a carta sobe apagando a imagem
+   (`CardDrop`), uma a cada `CardExitStagger` — bem mais rápido que a entrada, porque
+   aqui não há nada para ler. O escurecido sai em `BackgroundFadeOut`.
+6. **A compra recolhe a loja.** O escurecido some na hora — sem fade, porque a compra
+   já tem a animação dela.
+
+**O botão é gasto na abertura, e não na compra.** Clicou uma vez, ele não volta nesta
+oferta: nem depois do clique fora, nem depois de uma compra recusada, nem quando o
+servidor reenvia o estado por outro motivo. Quem o acende de novo é uma oferta com
+`token` diferente — a próxima wave de loja da dificuldade (`Intervals`), que é o
+mesmo que dizer a próxima vez que o `CardShopService:Open` roda.
+
+Isso mora no `OpenedToken`: o controller guarda o `token` da oferta que o jogador
+abriu, e o `_applyState` só chama o `_showFrame` quando o `token` que chegou é outro.
+Sair sem comprar continua sendo uma escolha, e não um engano a desfazer.
+
+**Quem escuta o clique fora é o `UserInputService`.** O `Background` parecia o dono
+natural do assunto — ele cobre a tela —, mas um `GuiObject` só recebe o clique que
+ninguém mais quis: qualquer `ScreenGui` com `DisplayOrder` maior (o HUD, o container
+da hotbar) come o clique antes dele, e a loja ficava aberta sem jeito de sair a não
+ser comprando. O `UserInputService` vê o clique independentemente de quem o consumiu,
+e a loja é modal: clique em lugar nenhum e clique em qualquer outra coisa fecham
+igual. O que **não** fecha é o clique numa das três cartas — a carta marca o próprio
+`InputObject` e a conferência sai um quadro depois, num `task.defer`, porque a ordem
+entre os dois handlers do mesmo evento não é promessa de lugar nenhum.
+
+O `Background` continua `Active`, agora só como barreira: é o que impede que o clique
+dado com a loja aberta atravesse a tela e vire uma torre colocada no chão atrás dela.
+
+Nada disso mede retângulo na tela — a conta entre `InputObject.Position` e
+`AbsolutePosition` muda com o `IgnoreGuiInset` e com a barra do topo no celular, e a
+comparação certa é a do próprio `InputObject`.
+
+Carta que ainda estava caindo entra na saída do mesmo jeito: o atraso que não começou
+é cancelado e a queda em andamento é cortada, então ela sobe do ponto onde estava.
 
 As transparências de destino são lidas de **cada clone recém-feito**, antes de
 qualquer animação: "voltar ao original" é literal, e repintar a carta no Studio basta.

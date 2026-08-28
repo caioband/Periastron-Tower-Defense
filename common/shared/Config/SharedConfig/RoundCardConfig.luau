@@ -97,6 +97,26 @@ RoundCardConfig.Animation = {
 	SlideOut = 0.35,
 	SlideEasing = Enum.EasingStyle.Circular,
 
+	--[[
+		O balanço do botão, enquanto a oferta está de pé e ninguém clicou nele.
+
+		Ele sobe `IdleLift` pixels e fica lá em cima gingando entre `+IdleSwing` e
+		`-IdleSwing` graus, gastando `IdleSwingTime` em cada travessia. É chamariz: a
+		oferta vale poucas waves e o botão mora na beirada da tela, onde é fácil não
+		ver que ele chegou.
+
+		O clique desliga o balanço e devolve o botão ao que está autorado no Studio em
+		`IdleReturn` segundos. O alvo da volta é lido do `CardShop` no bind, e não
+		escrito aqui: girar ou mover o botão no Studio não deixa ele torto depois da
+		primeira loja.
+	]]
+	IdleSwing = 10,
+	IdleSwingTime = 0.9,
+	IdleLift = 6,
+	IdleLiftTime = 0.35,
+	IdleReturn = 0.2,
+	IdleEasing = Enum.EasingStyle.Sine,
+
 	-- O escurecido de tela cheia. O alvo é a transparência autorada do
 	-- `Background`, e não um valor escrito aqui.
 	BackgroundFade = 0.3,
@@ -117,6 +137,18 @@ RoundCardConfig.Animation = {
 
 	--- O intervalo entre o começo de uma carta e o da seguinte.
 	CardStagger = 0.5,
+
+	--[[
+		A saída sem compra: o clique fora das cartas toca a entrada ao contrário — o
+		conteúdo some primeiro (`CardReveal`) e só então a carta sobe de volta com a
+		imagem apagando (`CardDrop`).
+
+		O escalonamento da saída é bem mais curto que o `CardStagger` da entrada
+		porque aqui não há nada para ler: o jogador já decidiu que não quer nenhuma
+		das três, e a oferta continua de pé no botão da beirada.
+	]]
+	CardExitStagger = 0.08,
+	BackgroundFadeOut = 0.25,
 
 	CardEasing = Enum.EasingStyle.Quad,
 	CardDirection = Enum.EasingDirection.Out,

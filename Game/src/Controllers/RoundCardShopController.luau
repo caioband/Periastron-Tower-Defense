@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local Player = Players.LocalPlayer
 local PlayerGui = Player:WaitForChild("PlayerGui")
@@ -37,18 +38,24 @@ local CARD_SOUND = "CardFlip"
 	O caminho de uma oferta:
 
 		1. o servidor manda `RoundCardState` com um `token` e tres ids de carta; o
-		   botao `RCSFrame` entra pela direita;
-		2. o clique no `CardShop` escurece a tela, apaga a hotbar e desenha as tres
-		   cartas, uma a cada `CardStagger`;
+		   botao `RCSFrame` entra pela direita e fica balancando na beirada;
+		2. o clique no `CardShop` recolhe o proprio botao, escurece a tela, apaga a
+		   hotbar e desenha as tres cartas, uma a cada `CardStagger`;
 		3. o clique numa carta pede a compra e recolhe a loja na hora; a carta so
 		   entra na hotbar quando o `RoundCardBought` confirma;
-		4. o clique na carta da hotbar pede o uso, e ela some quando o
+		4. o clique (ou toque) **fora** das cartas toca a entrada delas ao contrario e
+		   fecha a loja; o botao **nao** volta -- ele foi gasto no clique de abrir, e
+		   so a proxima oferta (outro `token`, na proxima wave de loja) o traz de
+		   volta para a beirada;
+		5. o clique na carta da hotbar pede o uso, e ela some quando o
 		   `RoundCardUsed` confirma.
 
 	**Nada e desenhado por conta propria.** A carta nao entra no deck no clique e
 	nao sai dele no uso: as duas coisas esperam a confirmacao do servidor, que e
 	quem tem o dinheiro e o estoque. Recusado, o `RoundCardState` que chega em
-	seguida devolve a tela ao que o servidor sabe -- e a oferta reaparece.
+	seguida devolve a tela ao que o servidor sabe -- a carta nao aparece na hotbar,
+	e o botao da beirada continua recolhido: ele e gasto na abertura, e nao na
+	compra.
 
 	**A carta e um clone do molde autorado**, e o molde e tirado da tela na primeira
 	vez que ele e preciso (como o `Components/Card` faz com o `CardWrapper` da
@@ -122,9 +129,15 @@ local function captureFades(root : Instance)
 	return fades
 end
 
---- Escreve a transparencia de todos os descendentes de uma vez.
-local function applyFades(fades, progress : number, time : number?)
-	local info = time and TweenInfo.new(time, ANIM.CardEasing, ANIM.CardDirection)
+--[=[
+	Escreve a transparencia de todos os descendentes de uma vez.
+
+	`direction` existe para a saida: a entrada chega desacelerando (`CardDirection`,
+	que e `Out`), e a saida sai acelerando (`In`). Sem isso o sumico das cartas
+	arrastaria no comeco e pareceria travamento, e nao resposta ao clique.
+]=]
+local function applyFades(fades, progress : number, time : number?, direction : Enum.EasingDirection?)
+	local info = time and TweenInfo.new(time, ANIM.CardEasing, direction or ANIM.CardDirection)
 
 	for _, fade in fades do
 		local object = fade.Object :: any
@@ -199,6 +212,7 @@ function RoundCardShopController:_showFrame()
 
 	self.FrameShown = true
 	self.FrameToken += 1
+	local token = self.FrameToken
 
 	self.FrameMaid:DoCleaning()
 
@@ -215,6 +229,14 @@ function RoundCardShopController:_showFrame()
 		tween:Cancel()
 	end)
 
+	-- O balanco so comeca com o botao ja encaixado na beirada: gingar durante a
+	-- entrada brigaria com o proprio deslize e faria o botao chegar torto.
+	tween.Completed:Connect(function(state : Enum.PlaybackState)
+		if state ~= Enum.PlaybackState.Completed or self.FrameToken ~= token then return end
+
+		self:_startIdle()
+	end)
+
 	tween:Play()
 end
 
@@ -228,6 +250,7 @@ function RoundCardShopController:_hideFrame()
 	local token = self.FrameToken
 
 	self.FrameMaid:DoCleaning()
+	self:_stopIdle()
 
 	local tween = TweenService:Create(
 		frame,
@@ -245,6 +268,88 @@ function RoundCardShopController:_hideFrame()
 		if state ~= Enum.PlaybackState.Completed or self.FrameToken ~= token then return end
 
 		frame.Visible = false
+	end)
+
+	tween:Play()
+end
+
+--[=[
+	Poe o botao para balancar enquanto ninguem clica nele.
+
+	Sao dois movimentos ao mesmo tempo: ele sobe `IdleLift` pixels e fica gingando
+	entre `+IdleSwing` e `-IdleSwing` graus, para sempre. O vai-e-vem infinito e um
+	tween so, com `repeatCount = -1` e `reverses = true` -- o `swingIn` existe
+	porque o balanco comeca no meio (na rotacao autorada) e o loop precisa partir
+	de uma das pontas, senao a primeira travessia sairia pela metade.
+
+	**A altura e a rotacao de volta sao lidas do Studio**, e nao escritas aqui: e o
+	`ButtonPosition` / `ButtonRotation` que o bind guardou antes de qualquer
+	animacao tocar.
+]=]
+function RoundCardShopController:_startIdle()
+	local button = self.Button
+	if not button then return end
+
+	self.IdleMaid:DoCleaning()
+
+	local base = self.ButtonPosition
+	local rotation = self.ButtonRotation
+
+	local lift = TweenService:Create(
+		button,
+		TweenInfo.new(ANIM.IdleLiftTime, ANIM.IdleEasing, Enum.EasingDirection.Out),
+		{ Position = UDim2.new(base.X.Scale, base.X.Offset, base.Y.Scale, base.Y.Offset - ANIM.IdleLift) }
+	)
+
+	local swingIn = TweenService:Create(
+		button,
+		TweenInfo.new(ANIM.IdleSwingTime / 2, ANIM.IdleEasing, Enum.EasingDirection.Out),
+		{ Rotation = rotation + ANIM.IdleSwing }
+	)
+
+	local swing = TweenService:Create(
+		button,
+		TweenInfo.new(ANIM.IdleSwingTime, ANIM.IdleEasing, Enum.EasingDirection.InOut, -1, true),
+		{ Rotation = rotation - ANIM.IdleSwing }
+	)
+
+	self.IdleMaid:GiveTask(function()
+		lift:Cancel()
+		swingIn:Cancel()
+		swing:Cancel()
+	end)
+
+	self.IdleMaid:GiveTask(swingIn.Completed:Connect(function(state : Enum.PlaybackState)
+		if state ~= Enum.PlaybackState.Completed then return end
+
+		swing:Play()
+	end))
+
+	lift:Play()
+	swingIn:Play()
+end
+
+--[=[
+	Desliga o balanco e devolve o botao ao estado autorado.
+
+	A volta e um tween, e nao uma escrita seca: o botao pode estar em qualquer
+	ponto da ginga na hora do clique, e cortar para a rotacao zero no mesmo quadro
+	daria um solavanco bem na resposta ao clique.
+]=]
+function RoundCardShopController:_stopIdle()
+	local button = self.Button
+	if not button then return end
+
+	self.IdleMaid:DoCleaning()
+
+	local tween = TweenService:Create(
+		button,
+		TweenInfo.new(ANIM.IdleReturn, ANIM.CardEasing, Enum.EasingDirection.Out),
+		{ Position = self.ButtonPosition, Rotation = self.ButtonRotation }
+	)
+
+	self.IdleMaid:GiveTask(function()
+		tween:Cancel()
 	end)
 
 	tween:Play()
@@ -327,8 +432,18 @@ function RoundCardShopController:_writeCard(card : GuiObject, definition, showPr
 	end
 end
 
---- Tira as cartas que estao na fileira. A da compra ja foi clonada antes disto.
+--[=[
+	Tira as cartas que estao na fileira. A da compra ja foi clonada antes disto.
+
+	O `DismissToken` sobe junto: uma saida em andamento nao pode continuar mexendo
+	em cartas que acabaram de ser destruidas -- e a oferta nova, que chega quando a
+	wave vira com a loja aberta, faz exatamente isso.
+]=]
 function RoundCardShopController:_clearRow()
+	self.CardEntries = {}
+	self.Dismissing = false
+	self.DismissToken += 1
+
 	self.RowMaid:DoCleaning()
 end
 
@@ -381,6 +496,21 @@ function RoundCardShopController:_renderCards()
 		local fades = captureFades(card)
 		local basePosition = card.Position
 
+		--[[
+			O que a saida precisa saber para tocar esta mesma animacao ao contrario:
+			onde a carta mora, para onde as transparencias voltam e o que ainda esta
+			no ar (o atraso da entrada e o tween da queda) e precisa ser cancelado.
+		]]
+		local entry = {
+			Wrapper = wrapper,
+			Card = card,
+			Fades = fades,
+			BasePosition = basePosition,
+			Ready = false,
+		}
+
+		table.insert(self.CardEntries, entry)
+
 		-- Estado de partida: a carta acima do lugar dela, a imagem e o conteudo
 		-- transparentes.
 		card.Position = UDim2.new(
@@ -403,20 +533,29 @@ function RoundCardShopController:_renderCards()
 			-- que so entra um segundo depois -- poderia ser comprada enquanto ainda
 			nao ha nada para o jogador ver.
 		]]
-		local ready = false
-
 		if card:IsA("GuiButton") then
 			self.RowMaid:GiveTask(card.Activated:Connect(function()
-				if not ready then return end
+				if not entry.Ready or self.Dismissing then return end
 
 				self:_buy(cardId)
+			end))
+
+			--[[
+				A marca do clique que **foi** numa carta.
+
+				Quem escuta o clique-fora e o `UserInputService`, que ve **todo** clique,
+				inclusive o que caiu numa carta. Esta marca e o que diz a ele que aquele
+				input ja tinha dono -- ver o `InputBegan` em `_openShop`.
+			]]
+			self.RowMaid:GiveTask(card.InputBegan:Connect(function(input : InputObject)
+				self.CardInput = input
 			end))
 		end
 
 		local delayed = task.delay((index - 1) * ANIM.CardStagger, function()
 			if not wrapper.Parent then return end
 
-			ready = true
+			entry.Ready = true
 
 			local dropInfo = TweenInfo.new(ANIM.CardDrop, ANIM.CardEasing, ANIM.CardDirection)
 			local goal : { [string] : any } = { Position = basePosition }
@@ -426,6 +565,7 @@ function RoundCardShopController:_renderCards()
 			end
 
 			local drop = TweenService:Create(card, dropInfo, goal)
+			entry.Drop = drop
 
 			drop.Completed:Connect(function(state : Enum.PlaybackState)
 				if state ~= Enum.PlaybackState.Completed or not wrapper.Parent then return end
@@ -436,6 +576,8 @@ function RoundCardShopController:_renderCards()
 			drop:Play()
 		end)
 
+		entry.Delayed = delayed
+
 		self.RowMaid:GiveTask(function()
 			pcall(task.cancel, delayed)
 		end)
@@ -445,11 +587,17 @@ end
 --[[ ABRIR E FECHAR ]]
 
 --[=[
-	Abre a aba da loja: a tela escurece, a hotbar apaga e, quando o escurecido
-	termina, as cartas comecam a cair.
+	Abre a aba da loja: o botao da beirada recolhe, a tela escurece, a hotbar apaga
+	e, quando o escurecido termina, as cartas comecam a cair.
 
 	As cartas so entram depois do fundo de proposito -- a queda delas e contra o
 	escuro, e desenha-las durante o fade as poria aparecendo por cima da partida.
+
+	O botao sai junto com a abertura e **nao volta nesta oferta**. Ele e o convite de
+	uma wave de loja, e o clique e a resposta: sair sem comprar continua sendo uma
+	escolha, e nao um engano a desfazer. O `OpenedToken` e o que guarda isso -- a
+	beirada so acende de novo com um `token` diferente, ou seja, na proxima wave de
+	loja da dificuldade.
 ]=]
 function RoundCardShopController:_openShop()
 	local background = self.Background
@@ -459,8 +607,43 @@ function RoundCardShopController:_openShop()
 	self.OpenToken += 1
 	local token = self.OpenToken
 
+	self.OpenedToken = self.Offer.token
+
+	self:_hideFrame()
 	self:_setDeckHidden(true)
 	self:_clearRow()
+
+	--[=[
+		O clique (ou toque) fora das cartas desfaz a oferta na tela.
+
+		Quem escuta e o `UserInputService`, e nao o escurecido. O fundo parecia o
+		dono natural do assunto -- ele cobre a tela -- mas ele so recebe o clique que
+		ninguem mais quis: **qualquer** `ScreenGui` com `DisplayOrder` maior (o HUD,
+		o container da hotbar) come o clique antes dele, e ali a loja ficava aberta
+		sem jeito de sair a nao ser comprando. O `UserInputService` ve o clique
+		independentemente de quem o consumiu, e a loja e modal: clique em lugar
+		nenhum e clique em qualquer outra coisa fecham igual.
+
+		O que **nao** fecha e o clique numa das tres cartas, e e o `CardInput` que
+		diz isso: a carta marca o proprio `InputObject`, e a conferencia sai num
+		`task.defer` porque a ordem entre os dois handlers do mesmo evento nao e
+		promessa de lugar nenhum -- um quadro depois os dois ja rodaram. Comparar
+		objeto de input dispensa medir retangulo na tela, e medir seria pior: a
+		conta entre `InputObject.Position` e `AbsolutePosition` muda com o
+		`IgnoreGuiInset` da tela e com a barra do topo no celular.
+	]=]
+	self.ShopMaid:GiveTask(UserInputService.InputBegan:Connect(function(input : InputObject)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1
+			and input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+
+		task.defer(function()
+			if input == self.CardInput then return end
+
+			self:_dismissShop()
+		end)
+	end))
 
 	background.BackgroundTransparency = 1
 	background.Visible = true
@@ -481,25 +664,153 @@ function RoundCardShopController:_openShop()
 end
 
 --[=[
-	Fecha a aba: o escurecido some na hora (e o que a compra pede) e a hotbar volta.
+	Fecha a aba e devolve a hotbar.
 
-	Sem tween de saida de proposito: a compra ja tem a animacao dela, que e o botao
-	da beirada recolhendo, e um segundo fade por cima disso so atrasaria o jogador
-	de voltar a partida.
+	Sem `fade`, o escurecido some na hora -- e o que a compra pede: ela ja tem a
+	animacao dela, que e o botao da beirada recolhendo, e um segundo fade por cima
+	disso so atrasaria o jogador de voltar a partida.
+
+	Com `fade`, o escurecido sai em `fade` segundos. E o caminho do clique fora das
+	cartas, onde nao houve compra nenhuma: ali a tela some sozinha, e cortar o
+	escuro de uma vez pareceria erro em vez de recuo.
 ]=]
-function RoundCardShopController:_closeShop()
+function RoundCardShopController:_closeShop(fade : number?)
 	if not self.ShopOpen then return end
 
 	self.ShopOpen = false
 	self.OpenToken += 1
+	local token = self.OpenToken
 
+	self.ShopMaid:DoCleaning()
 	self:_clearRow()
 
-	if self.Background then
-		self.Background.Visible = false
+	local background = self.Background
+	if background then
+		if fade then
+			local tween = TweenService:Create(
+				background,
+				TweenInfo.new(fade, ANIM.CardEasing, Enum.EasingDirection.In),
+				{ BackgroundTransparency = 1 }
+			)
+
+			-- Reabrir durante o fade manda: o escurecido que esta na tela agora e o da
+			-- loja nova, e desliga-lo aqui apagaria uma aba que acabou de abrir.
+			tween.Completed:Connect(function(state : Enum.PlaybackState)
+				if state ~= Enum.PlaybackState.Completed or self.OpenToken ~= token then return end
+
+				background.Visible = false
+				background.BackgroundTransparency = self.BackgroundTarget
+			end)
+
+			tween:Play()
+		else
+			background.Visible = false
+			background.BackgroundTransparency = self.BackgroundTarget
+		end
 	end
 
 	self:_setDeckHidden(false)
+end
+
+--[=[
+	Toca a entrada das cartas ao contrario e chama `onFinished` quando a ultima
+	termina.
+
+	A ordem e o espelho da entrada: o conteudo desce de volta ao transparente
+	(`CardReveal`) e so entao a carta sobe apagando a imagem (`CardDrop`) -- se as
+	duas metades saissem juntas, o texto ficaria boiando sozinho no ar depois que a
+	carta ja tivesse subido.
+
+	Carta que ainda estava caindo entra na saida do mesmo jeito: o atraso que nao
+	comecou e cancelado e a queda em andamento e cortada, entao ela sobe do ponto
+	onde estava, em vez de continuar descendo enquanto o resto some.
+]=]
+function RoundCardShopController:_dismissCards(onFinished : (() -> ())?)
+	self.DismissToken += 1
+	local token = self.DismissToken
+	self.Dismissing = true
+
+	local longest = 0
+
+	for index, entry in self.CardEntries do
+		local stagger = (index - 1) * ANIM.CardExitStagger
+		longest = math.max(longest, stagger + ANIM.CardReveal + ANIM.CardDrop)
+
+		local dismiss = task.delay(stagger, function()
+			local card = entry.Card
+			if self.DismissToken ~= token or not card.Parent then return end
+
+			entry.Ready = false
+
+			if entry.Delayed then
+				pcall(task.cancel, entry.Delayed)
+			end
+
+			if entry.Drop then
+				entry.Drop:Cancel()
+			end
+
+			applyFades(entry.Fades, 0, ANIM.CardReveal, Enum.EasingDirection.In)
+
+			task.wait(ANIM.CardReveal)
+			if self.DismissToken ~= token or not card.Parent then return end
+
+			local base = entry.BasePosition
+			local goal : { [string] : any } = {
+				Position = UDim2.new(
+					base.X.Scale, base.X.Offset,
+					base.Y.Scale - ANIM.DropOffset, base.Y.Offset
+				),
+			}
+
+			if card:IsA("ImageLabel") or card:IsA("ImageButton") then
+				goal.ImageTransparency = 1
+			end
+
+			TweenService:Create(
+				card,
+				TweenInfo.new(ANIM.CardDrop, ANIM.CardEasing, Enum.EasingDirection.In),
+				goal
+			):Play()
+		end)
+
+		self.RowMaid:GiveTask(function()
+			pcall(task.cancel, dismiss)
+		end)
+	end
+
+	--[[
+		Este e o unico atraso que **nao** entra no maid da fileira: e ele quem fecha a
+		loja, e fechar a loja limpa o maid -- ele se cancelaria no meio da propria
+		chamada, e a hotbar nunca voltaria. O `DismissToken` ja faz o servico: uma
+		oferta nova que chegue antes da hora derruba este fim quando ele acordar.
+	]]
+	task.delay(longest, function()
+		if self.DismissToken ~= token then return end
+
+		self.Dismissing = false
+
+		if onFinished then
+			onFinished()
+		end
+	end)
+end
+
+--[=[
+	A saida sem compra: as cartas somem ao contrario e o escurecido apaga.
+
+	O botao **nao** volta, e e de proposito: ele foi gasto no clique que abriu a
+	loja, e quem o traz de volta e a proxima oferta -- ver o `OpenedToken` em
+	`_openShop`. A oferta em si continua de pe no servidor (quem a tira e a compra
+	ou a virada do round), entao a carta segue comprável se o estado for redesenhado
+	por outro caminho; o que acabou foi o convite na beirada.
+]=]
+function RoundCardShopController:_dismissShop()
+	if not self.ShopOpen or self.Dismissing then return end
+
+	self:_dismissCards(function()
+		self:_closeShop(ANIM.BackgroundFadeOut)
+	end)
 end
 
 --[[ COMPRAR E USAR ]]
@@ -632,11 +943,27 @@ function RoundCardShopController:_applyState(state)
 		return
 	end
 
-	self:_showFrame()
+	--[[
+		O botao so acende para uma oferta que este jogador ainda nao abriu.
+
+		Sao duas recusas em uma. Com a aba aberta ele esta recolhido de proposito, e
+		um estado que chegue do servidor no meio disso nao pode traze-lo de volta por
+		cima do escurecido. E, aberta a loja uma vez, o `token` daquela oferta fica
+		marcado no `OpenedToken`: os estados que o servidor reenvia depois (uma compra
+		recusada, um uso recusado, a interface recarregando) redesenham a hotbar sem
+		fazer o convite de novo. Quem acende a beirada e `token` diferente -- a
+		proxima wave de loja da dificuldade.
+	]]
+	if not self.ShopOpen and offer.token ~= self.OpenedToken then
+		self:_showFrame()
+	end
 
 	-- Oferta nova com a aba ja aberta (a wave virou enquanto o jogador olhava as
-	-- cartas): as cartas na tela sao da oferta velha e precisam ser redesenhadas.
+	-- cartas): as cartas na tela sao da oferta velha e precisam ser redesenhadas, e
+	-- e esta oferta, e nao mais a anterior, que a aba esta gastando.
 	if self.ShopOpen and not sameOffer then
+		self.OpenedToken = offer.token
+
 		self:_renderCards()
 	end
 end
@@ -668,11 +995,26 @@ function RoundCardShopController:_bind() : boolean
 	frame.Position = self:_hiddenPosition()
 	background.Visible = false
 
+	--[[
+		O escurecido passa a comer input: e o que impede que o clique dado com a loja
+		aberta atravesse a tela e vire uma torre colocada no chao atras dela. Quem
+		**escuta** o clique fora e o `UserInputService` (ver `_openShop`); isto aqui
+		e so a barreira. So vale enquanto ele esta visivel -- fechado, ele nao come
+		clique de ninguem.
+	]]
+	background.Active = true
+
 	local button = frame:FindFirstChild(GUI.Button)
 	if button and button:IsA("GuiButton") then
+		self.Button = button
+
+		-- Lidos antes de qualquer animacao tocar: e para ca que o balanco volta.
+		self.ButtonPosition = button.Position
+		self.ButtonRotation = button.Rotation
+
 		button.Activated:Connect(function()
 			if self.ShopOpen then
-				self:_closeShop()
+				self:_dismissShop()
 				return
 			end
 
@@ -741,15 +1083,26 @@ function RoundCardShopController:init()
 	self.Cash = 0
 	self.ShopOpen = false
 	self.FrameShown = false
+	self.Dismissing = false
 	self.OpenToken = 0
 	self.FrameToken = 0
+	self.DismissToken = 0
+
+	-- O `token` da oferta que o jogador ja abriu: o botao nao se oferece duas vezes
+	-- pela mesma. Nil ate a primeira loja da partida.
+	self.OpenedToken = nil
 
 	-- [uid] = Maid do wrapper que esta na hotbar.
 	self.DeckCards = {}
 	self.UsePending = {}
 
+	-- As tres cartas na tela, na ordem em que cairam: e por ela que a saida escalona.
+	self.CardEntries = {}
+
 	self.RowMaid = Maid.new()
 	self.FrameMaid = Maid.new()
+	self.ShopMaid = Maid.new()
+	self.IdleMaid = Maid.new()
 
 	self:construct()
 end
