@@ -33,7 +33,7 @@ CardConfig.Images = {
 	Azure = "rbxassetid://117289931783490",
 	Slingshot = "rbxassetid://101061040163272",
 	Archer = "rbxassetid://95837523891408",
-	["Subspace Tripminer"] = "rbxassetid://82009993475483",
+	["Subspace Tripminer"] = "rbxassetid://106851377383587",
 }
 
 --[=[
