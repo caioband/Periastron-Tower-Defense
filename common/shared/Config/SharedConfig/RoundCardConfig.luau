@@ -77,6 +77,20 @@ RoundCardConfig.DefaultInterval = 4
 --- Quantas cartas a loja mostra por oferta.
 RoundCardConfig.DrawCount = 3
 
+--[[
+	Os **parâmetros** do marcador de keyframe do `Visual` — não são nomes de
+	marcador. A animação carrega um marcador só, o que estiver no `Visual.Marker` da
+	carta, e o parâmetro dele diz qual metade do gesto dispara.
+
+	Moram aqui porque as duas pontas precisam da mesma palavra: o cliente compara com
+	o que o marcador entrega, e o servidor procura por `VFX` na animação quando vai
+	conferir o `EffectDelay`.
+]]
+RoundCardConfig.Markers = {
+	Sound = "Sound",
+	VFX = "VFX",
+}
+
 --[[ ANIMAÇÃO ]]
 
 --[[
@@ -180,6 +194,30 @@ RoundCardConfig.DeckCardSize = UDim2.fromScale(0.128, 1.07)
 	| `Effect` | o nome do efeito no `CardShopService.Effects` |
 	| `Params` | os números que o efeito lê |
 	| `Image` | a arte da carta; sem ela, fica a autorada no `CardTemplate` |
+	| `Visual` | o que o **personagem** faz ao usar a carta; sem ele, nada acontece |
+
+	O `Visual` é uma animação e o que ela dispara:
+
+	| Campo | O que é |
+	| --- | --- |
+	| `Animation` | o `AnimationId` que toca no personagem de quem usou |
+	| `Marker` | o nome do marcador de keyframe que a animação carrega |
+	| `Sound` | o `Sound` em `SoundService` que o marcador `"Sound"` toca |
+	| `VFX` | o asset em `Assets.VFX` que o marcador `"VFX"` estoura |
+	| `EffectDelay` | em que segundo da animação o **efeito** entra (o instante do marcador `"VFX"`) |
+
+	**Quem manda no tempo é a animação, e não um `task.delay`.** O mesmo marcador
+	dispara as duas coisas, e o que separa uma da outra é o **parâmetro** dele:
+	`"Sound"` toca o som, `"VFX"` estoura as partículas. Reanimar a carta no Moon
+	Animator remarca os dois sem passar por aqui — e é para isso que o marcador é um
+	só com dois parâmetros, em vez de dois marcadores com nomes diferentes.
+
+	O `EffectDelay` é a exceção, e é uma exceção necessária: **o efeito é do
+	servidor**, e ele não escuta marcador de animação nenhum — a animação toca no
+	cliente. O número aqui é uma cópia do instante do marcador `"VFX"`, e é assim que
+	o congelamento cai junto com o estouro em vez de cair no clique. Cópia envelhece,
+	então o `CardShopService` confere as duas contra a animação de verdade quando
+	sobe e avisa se elas se afastarem.
 
 	Carta nova é uma entrada aqui **mais** uma função no `CardShopService.Effects`
 	com o nome que estiver em `Effect`. O sorteio só oferece o que tem efeito do
@@ -195,6 +233,15 @@ RoundCardConfig.Cards = {
 		Weight = 1,
 		Effect = "TimeStop",
 		Params = { Duration = 4 },
+		Visual = {
+			Animation = "rbxassetid://76323247675563",
+			Marker = "TimeStop",
+			Sound = "TimeStopSFX",
+			VFX = "PlayerStopTime",
+
+			-- O marcador `VFX` está em 0,917s da animação (que dura 1,317s).
+			EffectDelay = 0.917,
+		},
 	},
 
 	{

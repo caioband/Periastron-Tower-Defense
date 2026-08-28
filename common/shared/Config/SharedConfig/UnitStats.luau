@@ -7,7 +7,7 @@
 	   pena, e o teto e 15 por 100 de caixa. O Slasher ficava em 26,7 — quase tres
 	   vezes o segundo colocado — e por isso encher o mapa de Slasher era a jogada
 	   otima em qualquer dificuldade. A escada por raridade nao vale mais: Slasher
-	   3,5 e Slingshot 4,6 contra Sword ~10, Epic ~11 e Legendary 11 a 14.
+	   5,9 e Slingshot 5,2 contra Sword 10,0, Epic ~11 e Legendary 11 a 14.
 
 	2. Alcance como eixo de diferenciacao. Cinco das sete unidades tinham alcance
 	   3, o que tornava posicionamento irrelevante — todas precisavam colar no
@@ -260,19 +260,35 @@ local UnitStats = {
 		Hits = 1
 	},
 
-	-- A unidade de entrada: continua custando 100 porque e o que o jogador compra
-	-- na wave 1, e o dano por golpe e o preco de bater a cada 0,85 s: 3,5 de DPS
-	-- por 100 de caixa, abaixo do Slingshot, que e Rare e custa mais.
+	--[[
+		A unidade de entrada: continua custando 100 porque e o que o jogador compra
+		na wave 1.
+
+		5 de dano a cada 0,85 s da 5,9 de DPS, ou 5,9 por 100 de caixa -- longe do
+		teto de 15 da regra 1, e agora **acima** do Slingshot (5,2) e do Archer (5,3),
+		que sao Rare e custam 150. A escada por raridade ja nao valia (ver a regra 1
+		la em cima), e o que separa os tres continua sendo o alcance: ela precisa
+		colar no caminho para bater, e eles nao.
+
+		O alcance sobe ate 8 com upgrade (`RangeStats`), e isso e o mais perto que
+		uma Melee chega da faixa media da regra 2. O teto e 8 de proposito: em 10 ela
+		alcancaria o mesmo que as unidades de tiro medio sem ter deixado de ser
+		corpo a corpo em nada.
+	]]
 	["Slasher"] = {
 		Rarity = "Common",
 		Class = "Melee",
 		Cost = 100,
-		Damage = 3,
+		Damage = 5,
 		Range = 5,
 		Cooldown = 0.85,
 		AttackType = "MultiShot",
 		HitInterval = 0,
-		Hits = 1
+		Hits = 1,
+		RangeStats = {
+			Increment = 1,
+			Max = 8,
+		},
 	},
 }
 

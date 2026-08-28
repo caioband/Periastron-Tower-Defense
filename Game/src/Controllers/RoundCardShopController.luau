@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
@@ -27,6 +28,17 @@ local WAIT_TIMEOUT = 60
 -- O som de carta, o mesmo do painel de deck e da hotbar.
 local CARD_SOUND = "CardFlip"
 
+-- Os **parametros** do marcador de keyframe do gesto (ver `_playUseVisual`). Vem do
+-- config porque o servidor procura pela mesma palavra ao conferir o `EffectDelay`.
+local MARKERS = RoundCardConfig.Markers
+
+local CHARACTER_ROOT = "HumanoidRootPart"
+
+-- Quanto o jogador pode ficar ancorado, no maximo, esperando a animacao terminar.
+-- E rede de seguranca, e nao a duracao do gesto: ver o `task.delay` no fim do
+-- `_playUseVisual`.
+local ANCHOR_TIMEOUT = 8
+
 --[=[
 	A loja de cartas de round, do lado da tela.
 
@@ -48,7 +60,8 @@ local CARD_SOUND = "CardFlip"
 		   so a proxima oferta (outro `token`, na proxima wave de loja) o traz de
 		   volta para a beirada;
 		5. o clique na carta da hotbar pede o uso, e ela some quando o
-		   `RoundCardUsed` confirma.
+		   `RoundCardUsed` confirma -- que e tambem quando o personagem de quem usou
+		   faz o gesto da carta, se ela tiver um `Visual` no config.
 
 	**Nada e desenhado por conta propria.** A carta nao entra no deck no clique e
 	nao sai dele no uso: as duas coisas esperam a confirmacao do servidor, que e
@@ -66,6 +79,7 @@ local RoundCardShopController = {
 	Controllers = {
 		MusicController = {},
 		UILibraryController = {},
+		VFXController = {},
 	},
 }
 
@@ -904,6 +918,145 @@ function RoundCardShopController:_removeFromDeck(uid : string)
 	self:_deck("removeRound", uid)
 end
 
+--[=[
+	O gesto de usar a carta: a animacao no personagem de quem usou, e o som e as
+	particulas que ela dispara.
+
+	**Quem manda no tempo e a animacao.** O `Marker` do config e um marcador de
+	keyframe so, e o que separa as duas metades e o **parametro** dele: `Sound` toca
+	o som, `VFX` estoura as particulas. Reanimar a carta no Moon Animator remarca as
+	duas sem passar por aqui -- que e o que um `task.delay` com o tempo escrito no
+	codigo nao daria.
+
+	O clone do VFX nasce **agora**, no uso, e nao no marcador: pendurado na
+	`HumanoidRootPart` ele acompanha o jogador, e fazer isso no meio da animacao
+	arriscaria o quadro do estouro chegar antes de o asset estar no lugar. Em troca,
+	quem pendura deve o estouro **ou** a faxina -- e por isso a animacao que termina
+	sem passar pelo marcador leva o clone junto.
+
+	So quem usou a carta ve isto: o `RoundCardUsed` sai do servidor para ele. A
+	animacao em si replica sozinha (ela toca no proprio personagem), mas o som e as
+	particulas ficam no cliente de quem usou.
+]=]
+function RoundCardShopController:_playUseVisual(cardId : any)
+	local definition = RoundCardConfig.Get(cardId)
+	local visual = definition and definition.Visual
+	if not visual then return end
+
+	local character = Player.Character
+	local root = character and character:FindFirstChild(CHARACTER_ROOT)
+	if not root or not root:IsA("BasePart") then return end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+	if not animator or not visual.Animation then
+		warn(`[RoundCardShopController]: a carta '{tostring(cardId)}' tem Visual, mas o personagem nao tem Animator (ou falta o AnimationId).`)
+		return
+	end
+
+	local vfx = self.Controllers.VFXController
+	local clone = vfx and vfx:AttachAsset(visual.VFX, root)
+
+	--[[
+		A `Animation` fica solta de proposito: quem a segura viva e a propria track,
+		e as duas somem juntas quando a animacao termina e ninguem mais aponta para
+		ela. Destrui-la aqui seria arrancar a referencia debaixo da track que acabou
+		de nascer dela.
+	]]
+	local animation = Instance.new("Animation")
+	animation.AnimationId = visual.Animation
+
+	local track = animator:LoadAnimation(animation)
+
+	--[[
+		`Action` para o gesto passar por cima da idle do personagem. A prioridade vem
+		assada no asset, e uma exportada como `Idle` ou `Core` empataria com a
+		animacao que o `Animate` padrao ja esta tocando -- a carta seria usada e o
+		boneco nao faria nada.
+	]]
+	track.Priority = Enum.AnimationPriority.Action
+
+	local maid = Maid.new()
+	local emitted = false
+
+	--[[
+		O jogador trava no lugar enquanto o gesto acontece: a carta para o tempo, e um
+		personagem andando por baixo da propria pose entregaria que nada parou.
+		Ancorar a `HumanoidRootPart` basta -- o resto do corpo vem pendurado nela.
+
+		O estado anterior e lido, e nao presumido: ancorado ele ja podia estar por
+		outro motivo, e devolver um `false` escrito na mao destravaria o que nao era
+		nosso para destravar.
+	]]
+	local wasAnchored = root.Anchored
+	root.Anchored = true
+
+	--[=[
+		O fim do gesto, de onde quer que ele venha: destrava o jogador, recolhe o que
+		sobrou e desliga as escutas.
+
+		Ele existe como funcao unica de proposito. Sao tres fins possiveis -- a
+		animacao terminou, a animacao foi cortada, a animacao nunca tocou -- e o
+		jogador **precisa** ser destravado nos tres. Deixar o `Anchored = false` em
+		um caminho so era a maneira de a partida dele acabar ali.
+	]=]
+	local done = false
+	local function finish()
+		if done then return end
+		done = true
+
+		-- O personagem pode ter morrido no meio: a peca ja nao esta em lugar nenhum,
+		-- e o proximo `Character` vem com a `HumanoidRootPart` dele, solta.
+		if root.Parent then
+			root.Anchored = wasAnchored
+		end
+
+		if not emitted and clone and clone.Parent then
+			clone:Destroy()
+		end
+
+		maid:DoCleaning()
+	end
+
+	maid:GiveTask(track:GetMarkerReachedSignal(visual.Marker):Connect(function(parameter : string?)
+		if parameter == MARKERS.Sound then
+			local sound = visual.Sound and SoundService:FindFirstChild(visual.Sound)
+			if sound and sound:IsA("Sound") then
+				sound:Play()
+			end
+		elseif parameter == MARKERS.VFX then
+			emitted = true
+
+			-- Daqui em diante a vida do clone e do proprio asset: o modulo tira o
+			-- prazo do tempo de vida das particulas dele.
+			if vfx then
+				vfx:EmitAttached(clone)
+			end
+		end
+	end))
+
+	-- O fim normal: a animacao acabou, o jogador anda de novo.
+	maid:GiveTask(track.Stopped:Connect(finish))
+
+	track:Play()
+
+	--[=[
+		A rede de seguranca.
+
+		Uma animacao que nao carrega (id errado, asset sem permissao) nunca toca e,
+		por isso, nunca **para**: o `Stopped` nao vem, e sem prazo maximo o jogador
+		ficaria ancorado no lugar ate morrer. Preso alguns segundos e um defeito;
+		preso para sempre acaba a partida dele.
+
+		O prazo e folgado de proposito -- ele so precisa ser maior que a animacao
+		mais longa que uma carta venha a ter, e nunca cortar um gesto legitimo. Ele
+		tambem nao e cancelado quando a animacao termina antes: acordar e ver que o
+		`done` ja passou nao custa nada, e cancelar o fio de dentro dele mesmo seria
+		mata-lo no meio da propria faxina.
+	]=]
+	task.delay(ANCHOR_TIMEOUT, finish)
+end
+
 --[[ ESTADO DO SERVIDOR ]]
 
 --[=[
@@ -1052,6 +1205,10 @@ function RoundCardShopController:construct()
 		if typeof(payload) ~= "table" then return end
 
 		self:_removeFromDeck(payload.uid)
+
+		-- O gesto sai na confirmacao, e nao no clique: quem gasta a carta e o
+		-- servidor, e um uso recusado nao pode deixar o personagem posando.
+		self:_playUseVisual(payload.id)
 	end)
 
 	-- O preco esta escrito na carta e o caixa da partida e quem paga: sem isto o

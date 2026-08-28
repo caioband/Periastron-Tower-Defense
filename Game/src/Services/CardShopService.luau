@@ -1,6 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local KeyframeSequenceProvider = game:GetService("KeyframeSequenceProvider")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -13,6 +14,15 @@ local Me = require(Vendor.Me)
 local Framework = Me.new()
 
 local RoundCardConfig = SharedConfig.RoundCardConfig
+
+--[[
+	Quanto o `EffectDelay` pode se afastar do marcador da animacao antes de virar
+	aviso, em segundos. Ver `_auditEffectDelays`.
+
+	Nao e zero porque o numero do config e escrito a mao, arredondado do que o Moon
+	Animator mostra: um milesimo de diferenca e transcricao, e nao desencontro.
+]]
+local EFFECT_DELAY_TOLERANCE = 0.05
 
 --[=[
 	A loja de cartas de round.
@@ -289,6 +299,16 @@ end
 	O uso. A carta e gasta **antes** do efeito rodar: se o efeito estourar, a carta
 	nao volta para a mao do jogador com o estado da sala ja meio mexido.
 
+	**O efeito espera o gesto.** Carta com `Visual.EffectDelay` roda o efeito aquele
+	tanto de segundos depois, que e o instante do marcador `VFX` da animacao: o
+	congelamento cai junto com o estouro das particulas, e nao no clique. O que **nao**
+	espera e nada disso: a carta sai da mao e o `RoundCardUsed` e disparado na hora,
+	senao o jogador clicaria de novo achando que o primeiro clique nao pegou.
+
+	O atraso e daqui, e nao do cliente que esta tocando a animacao. Ele e quem tem o
+	marcador na mao, mas quem executa efeito e o servidor -- deixar o cliente dizer
+	"agora" seria deixa-lo escolher a hora de congelar a sala inteira.
+
 	Devolve a carta usada, ou nil e o motivo.
 ]=]
 function CardShopService:Use(player : Player, uid : any)
@@ -317,12 +337,27 @@ function CardShopService:Use(player : Player, uid : any)
 		id = card.Id,
 	})
 
-	local ok, result = pcall(effect, self, player, card.Params or {})
+	local function run()
+		local ok, result = pcall(effect, self, player, card.Params or {})
 
-	if not ok then
-		warn(string.format("[CardShopService]: o efeito de '%s' estourou (%s).", card.Id, tostring(result)))
+		if not ok then
+			warn(string.format("[CardShopService]: o efeito de '%s' estourou (%s).", card.Id, tostring(result)))
+		else
+			print(string.format("[CardShopService]: %s usou '%s' -- %s.", player.Name, card.Id, tostring(result)))
+		end
+	end
+
+	--[[
+		Tempo real, e nao `GameClock`: o gesto e uma animacao tocando no personagem, e
+		ela nao acelera com a partida. Passar pelo relogio acelerado faria o efeito
+		entrar antes do estouro justamente quando o jogo esta a 3x.
+	]]
+	local delay = card.Visual and card.Visual.EffectDelay
+
+	if delay and delay > 0 then
+		task.delay(delay, run)
 	else
-		print(string.format("[CardShopService]: %s usou '%s' -- %s.", player.Name, card.Id, tostring(result)))
+		run()
 	end
 
 	return card
@@ -343,7 +378,61 @@ end
 
 --[[ CICLO DE VIDA ]]
 
+--[=[
+	Confere se o `EffectDelay` das cartas ainda bate com a animacao delas.
+
+	O numero no config e uma **copia** do instante do marcador `VFX`, e copia
+	envelhece: reanimar a carta no Moon Animator move o marcador e deixa o efeito
+	entrando fora do gesto -- sem erro nenhum no log, so torto na tela. E o mesmo tipo
+	de desencontro silencioso que os nomes dos botoes de dificuldade ja causaram, e a
+	resposta e a mesma: conferir na subida e avisar.
+
+	**So avisa.** Ele nao corrige o numero com o que baixou: cronometrar o efeito da
+	sala por uma chamada web que pode falhar ou demorar seria pior do que o desvio
+	que ele pega. Falha de download tambem passa calada -- o jogo nao depende dela.
+]=]
+function CardShopService:_auditEffectDelays()
+	for _, card in RoundCardConfig.Cards do
+		local visual = card.Visual
+		if not visual or not visual.Animation or not visual.EffectDelay then continue end
+
+		local ok, sequence = pcall(function()
+			return KeyframeSequenceProvider:GetKeyframeSequenceAsync(visual.Animation)
+		end)
+
+		if not ok or not sequence then continue end
+
+		local markedAt = nil
+		for _, keyframe in sequence:GetKeyframes() do
+			for _, marker in keyframe:GetMarkers() do
+				if marker.Name == visual.Marker and marker.Value == RoundCardConfig.Markers.VFX then
+					markedAt = keyframe.Time
+				end
+			end
+		end
+
+		if not markedAt then
+			warn(string.format(
+				"[CardShopService]: a animacao de '%s' nao tem marcador '%s' com o parametro '%s'; o efeito vai entrar em %.3fs sem nada acontecendo na tela.",
+				card.Id, tostring(visual.Marker), RoundCardConfig.Markers.VFX, visual.EffectDelay))
+			continue
+		end
+
+		if math.abs(markedAt - visual.EffectDelay) > EFFECT_DELAY_TOLERANCE then
+			warn(string.format(
+				"[CardShopService]: '%s' aplica o efeito em %.3fs, mas o marcador '%s' da animacao esta em %.3fs. Acerte o EffectDelay no RoundCardConfig.",
+				card.Id, visual.EffectDelay, RoundCardConfig.Markers.VFX, markedAt))
+		end
+	end
+end
+
 function CardShopService:construct()
+	-- Num fio proprio: ele baixa as animacoes das cartas, e a loja nao tem por que
+	-- esperar isso para existir.
+	task.spawn(function()
+		self:_auditEffectDelays()
+	end)
+
 	local waveService = self.Services.WaveService
 
 	if waveService and waveService.Signals and waveService.Signals.WaveStarted then

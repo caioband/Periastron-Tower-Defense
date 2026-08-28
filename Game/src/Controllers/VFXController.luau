@@ -223,6 +223,19 @@ local function attachVFX(template : Instance, root : BasePart) : Instance
 	if clone:IsA("BasePart") then
 		clone.CFrame = root.CFrame
 		disarmPart(clone)
+	elseif clone:IsA("Attachment") then
+		--[[
+			**Zerar o deslocamento.** Attachment herda a posicao do pai, mas nao zera a
+			propria: a que vem autorada e onde o asset estava no mapa quando o plugin o
+			salvou. O `PlayerStopTime` veio com Y = 22,25 -- a altura do lugar onde ele
+			foi montado --, e pendurado no jogador isso punha as particulas 22 studs
+			acima da cabeca dele: o efeito tocava, so que fora da tela.
+
+			A rotacao fica, que essa o autor escolhe de verdade (e dela sai a direcao
+			das particulas); o deslocamento some, que e resto de montagem. O
+			`MoneyEntrepreneur` nunca precisou disto so porque veio salvo em 0, 0, 0.
+		]]
+		clone.CFrame = clone.CFrame.Rotation
 	end
 
 	for _, descendant in clone:GetDescendants() do
@@ -235,24 +248,44 @@ local function attachVFX(template : Instance, root : BasePart) : Instance
 end
 
 --[=[
-	O estouro do congelamento: o instante em que a unidade trava.
+	Pendura um asset de `Assets.VFX` numa Part e devolve o clone, **sem estourar**.
 
-	Emissores de rajada, um `emit` so. A faxina sai do maior tempo de vida das
-	particulas do proprio asset, entao mexer nele no Studio nao deixa lixo para tras.
+	E a metade da frente do `playFreezeBurst`, separada porque nem todo efeito nasce
+	e estoura no mesmo instante: o da carta de round e pendurado no jogador na hora
+	em que ela e usada e so estoura quando a animacao chega no marcador. Quem separa
+	os dois fica devendo o `EmitAttached` -- ou a destruicao do clone, se o estouro
+	nunca vier.
 ]=]
-function VFXController:playFreezeBurst(assetName : string?, root : BasePart)
-	if not assetName then return end
+function VFXController:AttachAsset(assetName : string?, root : BasePart) : Instance?
+	if not assetName then return nil end
 
 	local template = self.Library[assetName]
 	if not template then
 		warn(`[VFXController]: nao achei o VFX "{assetName}" em Assets.VFX.`)
-		return
+		return nil
 	end
 
-	local clone = attachVFX(template, root)
+	return attachVFX(template, root)
+end
+
+--[=[
+	O estouro de um asset ja pendurado.
+
+	Um `emit` so, que e o que emissor de rajada pede. A faxina sai do maior tempo de
+	vida das particulas do proprio asset -- `fallback` so entra quando o modulo nao
+	sabe dizer (asset sem particula, ou com `EmitDuration` infinito) --, entao mexer
+	no emitter no Studio nao deixa lixo para tras.
+]=]
+function VFXController:EmitAttached(clone : Instance?, fallback : number?)
+	if not clone or not clone.Parent then return end
 
 	VFX.emit(clone)
-	VFX.destroyAfter(clone, VFX.maxLifetime(clone) or FREEZE_VFX_FALLBACK)
+	VFX.destroyAfter(clone, VFX.maxLifetime(clone) or fallback or DEFAULT_LIFETIME)
+end
+
+--- O estouro do congelamento: o instante em que a unidade trava.
+function VFXController:playFreezeBurst(assetName : string?, root : BasePart)
+	self:EmitAttached(self:AttachAsset(assetName, root), FREEZE_VFX_FALLBACK)
 end
 
 --[=[

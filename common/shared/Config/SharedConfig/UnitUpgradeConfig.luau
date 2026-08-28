@@ -34,10 +34,24 @@ UnitUpgradeConfig.Units = {
 		DamageMultiplier = 1.25,
 		CooldownMultiplier = 0.9,
 	},
+	--[[
+		O dano do Slasher vai de **5 (base) a 9 (nivel maximo)**, e o multiplicador e
+		a raiz `MaxUpgrades`-esima de 9/5 -- escrito como conta, e nao como 1.12475,
+		para o topo cair exatamente em 9 e continuar caindo se o teto de upgrades
+		mudar. A escada que sai disso, ja arredondada como o servidor arredonda:
+
+		| Nivel | 0 | 1 | 2 | 3 | 4 | 5 |
+		| Dano  | 5 | 6 | 6 | 7 | 8 | 9 |
+
+		**O nivel 2 repete o dano, e nao ha como nao repetir**: sao cinco degraus
+		para quatro pontos de dano. Ele nao e um nivel morto porque o
+		`CooldownMultiplier` corta 10% do intervalo em todo nivel -- o DPS sobe de
+		5,9 a 17,9 sem nenhum degrau parado.
+	]]
 	["Slasher"] = {
 		BaseCost = 100,
 		CostMultiplier = 1.6,
-		DamageMultiplier = 1.25,
+		DamageMultiplier = (9 / UnitStats.Slasher.Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 		CooldownMultiplier = 0.9,
 	},
 	["Slingshot"] = {

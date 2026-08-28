@@ -1237,6 +1237,88 @@ Carta nova são duas linhas: uma entrada em `RoundCardConfig.Cards` e uma funç�
 carta cujo efeito existe** — entrada com `Effect` errado é descartada com um aviso,
 em vez de virar uma carta que o jogador paga e não faz nada.
 
+### O gesto de usar (`Visual`)
+
+Carta com um `Visual` no config toca uma animação no personagem de quem usou, e é
+**a animação** que dispara o som e as partículas — não um `task.delay` com o tempo
+escrito no código. Hoje só o Time Stop tem:
+
+```lua
+Visual = {
+    Animation = "rbxassetid://76323247675563",
+    Marker = "TimeStop",
+    Sound = "TimeStopSFX",      -- em SoundService
+    VFX = "PlayerStopTime",     -- em Assets.VFX
+}
+```
+
+O marcador de keyframe é **um só**, e o que separa as duas metades é o **parâmetro**
+dele: `"Sound"` toca `SoundService.TimeStopSFX`, `"VFX"` estoura o asset. Reanimar a
+carta no Moon Animator remarca as duas sem passar pelo código, que é o motivo de ser
+um marcador com dois parâmetros em vez de dois marcadores com nomes diferentes.
+
+**O clone do VFX nasce no uso, e não no marcador.** Pendurado na `HumanoidRootPart`
+ele acompanha o jogador; criá-lo no meio da animação arriscaria o quadro do estouro
+chegar antes de o asset estar no lugar. Em troca, quem pendura deve o estouro **ou** a
+faxina — por isso o `track.Stopped` recolhe o clone quando a animação termina sem ter
+passado pelo marcador (ela não carregou, ou foi cortada porque o jogador morreu).
+
+**O jogador fica ancorado durante o gesto.** A carta para o tempo, e um personagem
+andando por baixo da própria pose entregaria que nada parou. Ancorar a
+`HumanoidRootPart` basta — o resto do corpo vem pendurado nela —, e o estado anterior
+é lido em vez de presumido: devolver um `false` escrito na mão destravaria o que
+estivesse ancorado por outro motivo.
+
+Desancorar, recolher o clone e desligar as escutas moram no **mesmo** `finish`, que só
+roda uma vez. São três fins possíveis — a animação terminou, foi cortada, ou nunca
+tocou — e o jogador precisa ser destravado nos três; deixar o `Anchored = false` em um
+caminho só era a maneira de a partida dele acabar ali. Por isso existe também o
+`ANCHOR_TIMEOUT` (8 s): animação que não carrega nunca toca e, por isso, nunca
+**para**, então o `Stopped` não vem. Preso alguns segundos é um defeito; preso para
+sempre acaba a partida. O prazo é folgado de propósito — ele só precisa ser maior que
+a animação mais longa que uma carta venha a ter.
+
+A track sobe para `AnimationPriority.Action`: a prioridade vem assada no asset, e uma
+exportada como `Idle` ou `Core` empataria com o que o `Animate` padrão já está
+tocando — a carta seria usada e o boneco não faria nada.
+
+O `VFXController` ganhou o par `AttachAsset` / `EmitAttached` para isso: pendurar e
+estourar deixaram de ser o mesmo instante. O `playFreezeBurst`, que sempre fez as duas
+coisas juntas, agora é uma linha em cima desse par.
+
+O gesto sai na confirmação do servidor (`RoundCardUsed`), e não no clique: quem gasta
+a carta é ele, e um uso recusado não pode deixar o personagem posando. **Só quem usou
+vê o efeito completo** — o evento é individual. A animação replica sozinha, por tocar
+no próprio personagem; o som e as partículas ficam no cliente de quem usou.
+
+### O efeito entra junto com o estouro (`EffectDelay`)
+
+O congelamento não cai no clique: ele espera o marcador `VFX`. No Time Stop são
+0,917 s de animação antes de os inimigos travarem, e é isso que faz o efeito parecer
+consequência do gesto em vez de coincidência.
+
+**O atraso é do servidor, não do cliente.** Quem tem o marcador na mão é quem toca a
+animação, mas quem executa efeito é o servidor — deixar o cliente dizer "agora" seria
+deixá-lo escolher a hora de congelar a sala inteira, e a regra da seção *O cliente não
+decide nada* vale aqui igual. O `CardShopService:Use` roda o efeito num `task.delay`
+de `Visual.EffectDelay`; em **tempo real**, não pelo `GameClock`, porque a animação é
+um gesto do personagem e não acelera com a partida.
+
+O que **não** espera é o resto: a carta sai da mão e o `RoundCardUsed` dispara na
+hora, senão o jogador clicaria de novo achando que o primeiro clique não pegou.
+
+**O número é uma cópia, e cópia envelhece.** Reanimar a carta no Moon Animator move o
+marcador e deixa o efeito entrando fora do gesto — sem erro no log, só torto na tela.
+Por isso o `CardShopService:_auditEffectDelays` baixa a `KeyframeSequence` de cada
+carta com `Visual` quando o servidor sobe, acha o marcador com parâmetro `"VFX"` e
+avisa se ele estiver a mais de 0,05 s do `EffectDelay`. É o mesmo remédio do audit dos
+nomes dos botões de dificuldade, pelo mesmo motivo: desencontro de config que não
+levanta exceção nenhuma.
+
+Ele **só avisa**. Não corrige o número com o que baixou — cronometrar o efeito da sala
+por uma chamada web que pode falhar ou demorar seria pior que o desvio que ele pega —,
+e falha de download passa calada.
+
 O sorteio é com peso e **sem reposição**: a carta que sai deixa a urna e os pesos das
 outras continuam valendo entre si, então uma carta rara não fica mais provável só
 porque a comum já saiu. Catálogo menor que três mostra o que tem, em vez de repetir.
