@@ -241,6 +241,82 @@ estrangulamento, um Rocket dentro da aura mandaria dez efeitos no mesmo quadro p
 mesma torre. O bônus em si continua valendo em **todos** os golpes; só o dinheirinho
 na tela é que espaça.
 
+## Projéteis (`Projectile` no `UnitStats`)
+
+Unidade que atira declara um `Projectile`, e as duas pontas leem a mesma tabela: o
+cliente desenha o voo (`ProjectileController`, chamado pelo `Unit:playAttackVisual`) e
+o servidor resolve quem levou dano (`UnitService:executeAttack`). **O projétil na tela
+nunca decide dano** — ele pode até passar longe que o hit já foi creditado.
+
+### De onde a flecha sai
+
+Do `RootPart` da unidade, por `Unit:projectileOrigin`.
+
+Saía do pivô do modelo **mais dois studs**, e os dois studs eram o bug: as unidades
+têm pouco mais de dois studs de altura inteira (o Archer mede 2,26 e o Slingshot
+2,07), com o `HumanoidRootPart` no meio do torso, a ~1,15 do chão. Somar dois punha a
+origem em 12,15 num boneco que termina em 11,26 — quase um stud **acima da cabeça**.
+Era visível no Slingshot e no Archer porque a flecha é fina e o voo é reto; no Rocket
+o rastro e a explosão escondiam.
+
+Ler o root também é mais seguro que ler o pivô: `GetPivot` responde pelo `WorldPivot`,
+que só coincide com o root enquanto o `PrimaryPart` estiver certo — perdido o
+`PrimaryPart`, o modelo passa a responder pelo centro da caixa delimitadora, que muda
+de altura conforme a pose da animação. Não há offset nenhum no código de propósito: o
+lugar de nascer mais alto (a ponta do arco, a boca do cano) é uma peça no modelo, e
+não um número somado que vale para todas as unidades ao mesmo tempo.
+
+### `Subtype = "Piercing"` — a flecha atravessa
+
+Hoje só o Archer. O golpe deixa de ser "o alvo" e passa a ser **a linha** que sai da
+unidade, passa por onde o alvo vai estar e segue até o **alcance dela** — não até o
+alvo. Quem estiver nessa linha leva o dano cheio, inclusive quem vem atrás.
+
+| Peça | Onde |
+| --- | --- |
+| quem está na linha | `MobService:GetMobsAlongLine(origin, through, length, width)` |
+| o dano | o ramo `pierce` do `executeAttack`, antes do alvo único |
+| o desenho | `ProjectileController:_flyThrough` |
+
+### A flecha perde força a cada corpo (`PierceFalloff`)
+
+No Archer, `0.1`: cada inimigo furado leva 10% menos que o anterior. A queda é
+**composta**, e não descontada do dano cheio — os 16 saem `16, 14, 13, 12, 10, 9, 9,
+8`, então oito em linha somam **91** de dano e não os 128 de oito tiros cheios.
+
+Composta ela nunca chega a zero (uma flecha que furou dez corpos ainda machuca um
+pouco), enquanto tirar 10 pontos percentuais de cada vez faria o 11º levar nada e o
+12º levar dano negativo. O arredondamento é o mesmo do `getDamage`
+(`math.floor(x + 0.5)`) e o piso é 1, para o fim da fila não virar um "0" flutuando na
+tela: acertou, tirou vida.
+
+Sem o campo, atravessar é de graça — e era esse o risco: um Archer bem posto num mapa
+que enfileira estouraria sozinho o teto de 15 de DPS por 100 de caixa da regra 1 do
+`UnitStats`. Com a queda, alinhar mais inimigos continua valendo a pena e para de
+escalar reto.
+
+Três decisões que não são detalhe:
+
+- **A conta é no plano, ignorando o Y.** A unidade fica na plataforma e o mob anda no
+  chão, então a linha entre os dois desce. Medindo em 3D, um inimigo no caminho ficaria
+  "longe da linha" só por estar mais baixo que a torre, e a flecha o atravessaria sem
+  tirar vida.
+- **A direção é congelada no disparo.** O projétil comum persegue — recalcula o alvo a
+  cada quadro e curva atrás dele —, e uma flecha que atravessa não pode: ela curvaria
+  para o primeiro inimigo em vez de riscar a linha por onde os outros vão levar dano. O
+  `onArrive` sai quando ela **passa** por onde o alvo estava, e não quando ela some.
+- **A mira é a posição prevista** (`PredictPosition`), a mesma que o cliente usou.
+  Mirar em onde o mob está agora poria a linha atrás dele.
+
+Se o alvo sair da linha entre a mira e o disparo (ele virou uma esquina durante o
+windup), ele leva o tiro assim mesmo: um golpe inteiro perdido por causa de uma curva
+seria pior que a imprecisão.
+
+**Isso muda a conta da regra 1 do `UnitStats` quando o mapa enfileira**: o DPS efetivo
+do Archer é 8,0 vezes quantos couberem na linha. Contra um inimigo sozinho ele continua
+igual ao que era. Se ele virar escolha óbvia em algum mapa, o botão a girar é o
+`Damage`, e não o subtipo.
+
 ## Onde pode colocar unidade (tag `Grid`)
 
 As parts com a tag `Grid` são o caminho — trilhos finos (0,25 stud) deitados

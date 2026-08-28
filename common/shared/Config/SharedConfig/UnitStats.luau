@@ -20,6 +20,30 @@
 	"Fire", "Ice" ou "Electric" (a lista vive em `WeatherConfig.ClassList`). Aceita
 	uma lista quando a unidade for de dois tipos — `Class = {"Melee", "Fire"}`. E o
 	unico lugar onde a classe e escrita; quem le e o `WeatherConfig`.
+
+	`Projectile` e a unidade que atira em vez de bater. Ele e lido pelas duas pontas
+	— o cliente desenha o voo, o servidor resolve quem levou dano —, e por isso mora
+	aqui e nao num config de tela:
+
+	| Campo | O que e |
+	| --- | --- |
+	| `Asset` | o nome do modelo em `Assets.Projectiles` |
+	| `Speed` | studs por segundo do voo |
+	| `Subtype` | `"Piercing"` faz a flecha atravessar; sem ele, o tiro para no alvo |
+	| `PierceWidth` | studs de folga da linha que acerta; sem ele, 2 |
+	| `PierceFalloff` | quanto do dano a flecha perde a cada corpo furado, de 0 a 1 |
+	| `PierceRange` | ate onde o desenho segue depois do disparo; sem ele, 24 |
+
+	**Atravessar muda o alvo do golpe, e nao o numero dele.** Um `Piercing` acerta
+	cada inimigo na linha que sai da unidade e vai ate o alcance dela, inclusive quem
+	esta atras do alvo. `PierceWidth` e a unica coisa entre "pega quem a linha corta
+	de raspao" e "limpa a fileira do lado".
+
+	`PierceFalloff` e o que impede que atravessar seja de graca. Ele e **composto**:
+	com 0.1, o segundo inimigo leva 90% do primeiro, o terceiro 90% do segundo. Nunca
+	chega a zero de proposito -- uma flecha que furou dez corpos ainda machuca um
+	pouco -- e o resultado e arredondado com piso de 1, para o fim da fila nao virar
+	um "0" flutuando na tela. Sem o campo, a flecha atravessa sem perder nada.
 ]]
 
 local UnitStats = {
@@ -185,6 +209,24 @@ local UnitStats = {
 		  -- a flecha sairia sem o gesto acompanhar.
 		- 16 de dano em 2s da 8,0 de DPS, ou 5,3 por 100 de caixa: a mesma faixa do
 		  Slingshot (5,2), bem abaixo do teto de 15 da regra 1 la de cima.
+
+		**A flecha atravessa** (`Projectile.Subtype = "Piercing"`), e e isso que separa
+		o Archer do Slingshot agora que os dois tem o mesmo alcance: o tiro deixa de
+		valer por alvo e passa a valer por **fila**. Contra um inimigo sozinho ele
+		continua sendo os mesmos 8,0 de DPS; contra a fileira que anda em coluna pelo
+		caminho, ele cobra de cada um que estiver na linha, e por isso o lugar onde a
+		unidade e posta passa a importar mais que o numero dela.
+
+		`PierceFalloff = 0.1` e o freio disso. Cada corpo furado tira 10% do que o
+		anterior levou, entao os 16 de dano saem 16, 14, 13, 12, 10, 9, 9, 8: oito
+		inimigos em linha somam 91 de dano, e nao os 128 de oito tiros cheios. Sem a
+		queda, um Archer bem posto num mapa que enfileira estouraria o teto de 15 por
+		100 de caixa da regra 1 la de cima sozinho; com ela, alinhar mais inimigos
+		continua valendo a pena e para de escalar reto.
+
+		Se ele ainda virar escolha obvia em algum mapa, os botoes a girar sao o
+		`Damage` e o `PierceFalloff`, nesta ordem -- o subtipo e a identidade da
+		unidade, e nao um numero de balanceamento.
 	]]
 	["Archer"] = {
 		Rarity = "Rare",
@@ -196,7 +238,7 @@ local UnitStats = {
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
-		Projectile = { Asset = "Bullet", Speed = 75 },
+		Projectile = { Asset = "Bullet", Speed = 75, Subtype = "Piercing", PierceFalloff = 0.1 },
 		RangeStats = {
 			Increment = 1,
 			Max = 20,

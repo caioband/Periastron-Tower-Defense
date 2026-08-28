@@ -737,6 +737,62 @@ function MobService:GetMobsInRadius(position, radius)
 	return result
 end
 
+--[=[
+	Quem esta na linha que sai de `origin` passando por `through`, ate `length`
+	studs de distancia e a no maximo `width` studs da linha.
+
+	E a conta do projetil que atravessa: ele nao para no alvo, entao quem vem
+	**atras** dele na mesma linha leva junto. A linha nao para no alvo tambem --
+	ela vai ate o alcance da unidade, que e o que decide quem ainda esta perto o
+	bastante para ser acertado.
+
+	**A conta e no plano, ignorando o Y.** A unidade fica numa plataforma e o mob
+	anda no chao, entao a linha entre os dois desce; medindo em 3D, um inimigo no
+	caminho ficaria "longe da linha" so por estar mais baixo que a torre, e a
+	flecha o atravessaria sem tirar vida.
+
+	Sai ordenado pela distancia ao longo da linha: e a ordem em que a flecha passa
+	por eles, que e a ordem que o cliente desenha e a que um dano decrescente por
+	inimigo atravessado usaria, se um dia existir.
+]=]
+function MobService:GetMobsAlongLine(origin : Vector3, through : Vector3, length : number, width : number)
+	local flat = Vector3.new(1, 0, 1)
+
+	local heading = (through - origin) * flat
+	if heading.Magnitude < 1e-4 then
+		return {}
+	end
+
+	local direction = heading.Unit
+	local found = {}
+
+	for mobId, _ in self.ActiveMobs do
+		local pos = self:getMobPosition(mobId)
+		if not pos then continue end
+
+		local offset = (pos - origin) * flat
+		local along = offset:Dot(direction)
+
+		-- Atras da unidade, ou passado o alcance dela.
+		if along < 0 or along > length then continue end
+
+		if (offset - direction * along).Magnitude <= width then
+			table.insert(found, { id = mobId, along = along })
+		end
+	end
+
+	table.sort(found, function(a, b)
+		return a.along < b.along
+	end)
+
+	local result = {}
+	for _, entry in ipairs(found) do
+		table.insert(result, entry.id)
+	end
+
+	return result
+end
+
 -- Placar de dano da partida. Guarda o nome junto porque o MVP e reportado no
 -- fim do round, quando o jogador pode ja ter saido do servidor.
 function MobService:addDamageStat(userId, damage)

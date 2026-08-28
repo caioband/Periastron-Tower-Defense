@@ -65,6 +65,34 @@ function Unit:playSound(soundName, cutAfter)
 	return sound
 end
 
+--[=[
+	De onde o projetil sai: o `RootPart` da unidade.
+
+	Era o pivo do modelo **mais dois studs**, e os dois studs eram o problema. As
+	unidades tem pouco mais de dois studs de altura inteira (o `HumanoidRootPart`
+	fica no meio do torso, a cerca de um stud do chao), entao somar dois punha a
+	flecha nascendo acima da cabeca do boneco, no ar. Some do pivo do modelo por
+	seguranca tambem: `GetPivot` responde pelo `WorldPivot`, que so coincide com o
+	root enquanto o `PrimaryPart` estiver certo -- e um modelo que perca o
+	`PrimaryPart` passa a responder pelo centro da caixa delimitadora, que muda de
+	altura conforme a pose da animacao.
+
+	Nao ha offset nenhum aqui de proposito: o lugar de nascer mais alto (na ponta do
+	arco, na boca do cano) e uma peca no modelo, e nao um numero somado no codigo
+	que vale para todas as unidades ao mesmo tempo.
+]=]
+function Unit:projectileOrigin() : Vector3?
+	local model = self.model
+	if not model or not model.Parent then return nil end
+
+	local root = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart")
+	if not root or not root:IsA("BasePart") then
+		root = model:FindFirstChildWhichIsA("BasePart")
+	end
+
+	return if root then root.Position else model:GetPivot().Position
+end
+
 function Unit:playAttackVisual(target : Model?, stepIndex : number?)
 	if not self.model or not self.model.Parent then return end
 
@@ -132,7 +160,8 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?)
 		end
 		if projController and stats and stats.Projectile then
 			if not liveTarget and not lastTargetPos then return end
-			local startPos = self.model:GetPivot().Position + Vector3.new(0, 2, 0)
+			local startPos = self:projectileOrigin()
+			if not startPos then return end
 			local launchSound = self:playSound("Launch")
 			self:playSound("Shot", 2)
 			projController:Fire(startPos, liveTarget, stats.Projectile, function(impactPos)

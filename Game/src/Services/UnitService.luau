@@ -33,6 +33,16 @@ local AURA_VFX_COOLDOWN = 0.35
 
 local MAX_PLACE_DISTANCE = 2048
 
+--[[
+	A largura, em studs, do risco que um projetil `Piercing` deixa, quando a
+	unidade nao diz outra em `Projectile.PierceWidth`.
+
+	Nao e a espessura da flecha: e a folga que decide quem estava "no caminho". Dois
+	studs pegam o mob que a linha corta de raspao -- eles tem cerca de dois de
+	largura -- sem transformar a flecha num cone que limpa a fileira do lado.
+]]
+local PIERCE_WIDTH = 2
+
 -- O total de dano por unidade so alimenta um label do card de upgrade, entao vai
 -- em lote algumas vezes por segundo em vez de um evento por golpe.
 local DAMAGE_FLUSH_INTERVAL = 0.25
@@ -1041,6 +1051,15 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 	local auraBonus = self:getAuraBonus(entry, weather)
 
 	local aoe = unitStats.AOE
+
+	--[[
+		O projetil que atravessa: o golpe deixa de ser "o alvo" e passa a ser a linha
+		ate ele. Quem estiver nela leva o mesmo dano, inclusive quem vem atras do
+		alvo -- a flecha nao para no primeiro.
+	]]
+	local projectile = unitStats.Projectile
+	local pierce = projectile and projectile.Subtype == "Piercing" and projectile or nil
+
 	local range = SharedConfig.UnitUpgradeConfig:GetRange(unitName, upgradeLevel, weather)
 	local totalHits = unitStats.Hits or 1
 
@@ -1083,6 +1102,54 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 					table.insert(hits, { mobId = targetId, damage = damage })
 				end
 				if #hits == 0 and resolvedMobId then
+					self:creditDamage(entry, resolvedMobId, damage, auraBonus)
+					table.insert(hits, { mobId = resolvedMobId, damage = damage })
+				end
+			elseif pierce and resolvedMobId then
+				--[[
+					A linha sai da unidade, passa por onde o alvo vai estar e segue ate
+					o **alcance** dela -- e nao ate o alvo. Parar no alvo faria a flecha
+					atravessar e nao machucar ninguem do outro lado, que e justamente o
+					que a unidade vende.
+
+					A mira e a posicao prevista, a mesma que o cliente usou para desenhar
+					o tiro: mirar em onde o mob esta agora poria a linha atras dele. Sem
+					previsao (o mob nasceu neste quadro e ainda nao tem caminho andado),
+					nao ha linha para tracar e o golpe cai no alvo unico, la embaixo.
+				]]
+				local along = predictedPos and self.Services.MobService:GetMobsAlongLine(
+					unitPosition, predictedPos, range, pierce.PierceWidth or PIERCE_WIDTH
+				) or {}
+
+				--[[
+					A flecha vai perdendo forca a cada corpo que fura.
+
+					A queda e **composta**, e nao subtraida do dano cheio: com 10%, o
+					segundo inimigo leva 90% do primeiro, o terceiro 90% do segundo, e
+					assim por diante. Composta ela nunca chega a zero -- uma flecha que
+					atravessou dez inimigos ainda machuca um pouco --, enquanto descontar
+					10 pontos percentuais de cada vez faria o 11o levar nada e o 12o
+					levar dano negativo.
+
+					O arredondamento e o mesmo do `getDamage`, e o piso de 1 existe para
+					o fim da fila nao virar um "0" flutuando na tela: acertou, tirou vida.
+				]]
+				local falloff = math.clamp(pierce.PierceFalloff or 0, 0, 1)
+
+				for index, targetId in ipairs(along) do
+					local scaled = damage
+					if falloff > 0 and index > 1 then
+						scaled = math.max(1, math.floor(damage * (1 - falloff) ^ (index - 1) + 0.5))
+					end
+
+					self:creditDamage(entry, targetId, scaled, auraBonus)
+					table.insert(hits, { mobId = targetId, damage = scaled })
+				end
+
+				-- O alvo saiu da linha entre a mira e o disparo (ele virou uma esquina
+				-- durante o windup): ele levou o tiro do mesmo jeito, senao o golpe
+				-- inteiro se perderia por causa de uma curva.
+				if #hits == 0 then
 					self:creditDamage(entry, resolvedMobId, damage, auraBonus)
 					table.insert(hits, { mobId = resolvedMobId, damage = damage })
 				end
