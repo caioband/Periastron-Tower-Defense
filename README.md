@@ -1152,6 +1152,155 @@ o pendente com `RequestServerRestart`, igual ao clima.
 > publicar uma atualização. Por isso existe o `restartwarning` do Cmdr, que entra
 > pelo mesmo `ServerRestartService:Schedule` sem nada ser realmente agendado.
 
+## Cartas de round
+
+De X em X waves a loja da beirada oferece três cartas sorteadas. O catálogo inteiro
+mora em `RoundCardConfig.Cards`, e cada entrada diz três coisas que o resto do
+sistema lê: **como ela é usada**, **o que ela faz** e **qual é a arte dela**.
+
+### O tipo de uso
+
+`Use` diz o que a carta pede entre o clique na hotbar e o efeito:
+
+| `Use` | O clique na hotbar… | Exemplo |
+| --- | --- | --- |
+| `Instant` | já é o uso | Time Stop, Money Bag, Trumpet |
+| `Unit` | pede uma torre; o próximo clique no mapa escolhe | Bloxy Cola, Bloxiade |
+| `Area` | pede um lugar; um anel segue o ponteiro | os cajados, Staff of Healing |
+| `Move` | pede os dois, nesta ordem: a torre e o destino | Zippers |
+
+Carta sem `Use` é `Instant` — é o que as três cartas originais sempre foram.
+
+**Uma carta em mira é uma carta na mão**, e a hotbar a desenha como desenha uma
+unidade equipada: ela cresce (`setSelectedRound`) e as vizinhas apagam. Não há
+painel nem botão de cancelar — o feedback é a própria carta, e desistir é clicar
+nela de novo, igual a largar uma unidade (Esc também serve, no PC). O botão
+direito ficou de fora de propósito: no PC ele é a câmera, e quem gira a tela
+procurando onde pôr o anel cancelaria a carta sem querer.
+
+Enquanto a mira dura, **o clique no mundo pertence à carta**: o
+`RoundCardShopController` tranca a seleção de torre do `UnitPlacementController`
+(`setPointerLocked`, que larga o fantasma, a torre selecionada e a carta de unidade
+equipada) e a destranca quando a mira acaba, de que jeito for. Sem isso o mesmo
+clique escolheria o alvo *e* abriria o card de upgrade daquela torre — e o fantasma
+de uma unidade equipada disputaria o mesmo clique.
+
+A carta só é gasta quando o servidor confirma o uso, e **um alvo recusado não gasta
+a compra**: o `CardShopService:Use` confere o alvo *antes* de tirar a carta da mão.
+
+### O que a carta faz
+
+Quase tudo que uma carta faz é **deixar uma regra valendo no campo**, e essa regra
+tem gramática própria: o `SharedConfig.CardModifier`. Por isso são sete efeitos no
+`CardShopService.Effects` para as duas dezenas de cartas do catálogo — a maioria
+usa `Effect = "Modifier"` e descreve em `Params.Modifiers` os registros que cria:
+
+```lua
+-- Electric bate 25% mais; todo o resto, 11% menos.
+Params = {
+    Modifiers = {
+        { Classes = { "Electric" }, Stats = { Damage = 1.25 } },
+        { Classes = { "Electric" }, Exclude = true, Stats = { Damage = 0.89 } },
+    },
+},
+```
+
+Um registro filtra por classe (`Classes` / `Exclude`), por tipo (`Farm`), por
+unidade (`Target = true`, preenchido com a torre escolhida), por área
+(`Zone = true`, preenchido com onde o jogador desenhou o anel) ou pela vizinhança
+(`Condition = "Isolated"` / `"NearClass"`, recontada a cada quadro de combate).
+`Duration` dá prazo em tempo de partida; **sem ele, a regra vale até o fim do
+round**.
+
+Carta nova que só mexa em números não precisa de código nenhum: ela é uma entrada
+no `RoundCardConfig` e mais nada.
+
+**Quem guarda a lista é o `CardModifierService`**, e é ele quem a poda e a replica
+inteira aos clientes (`RoundCardModifiers`). O cliente precisa dela para duas
+coisas que só existem na tela: desenhar o anel dos cajados no chão e mostrar o
+alcance **de verdade** no círculo de seleção e no card — as duas pela mesma função
+que o servidor usa, e não por uma segunda conta que possa divergir dela.
+
+O combate lê os multiplicadores uma vez por quadro
+(`UnitService:refreshCardModifiers`), e não uma vez por pergunta: duas das
+condições varrem a vizinhança inteira para responder, e perguntar por unidade e por
+estatística multiplicaria essa varredura por cinco.
+
+### Os dois anéis
+
+São desenhos diferentes para momentos diferentes, e é de propósito:
+
+- **o da mira** é o círculo neutro do posicionamento (`Assets.UI.AOE.Ring`), colorido
+  pelo tipo de alvo. Ele só existe entre o clique na carta e o clique no mapa, e diz
+  "esta área";
+- **o do chão** é a arte da carta (`Assets.VFX.Rings`, escolhida pelo campo `Ring`
+  dela — `Celestial`, `Robux`, `Windy`, `Healing`, ou `Base` para quem não declara).
+  Ele nasce onde o jogador clicou, **com o mesmo raio que ele viu na mira**, e vive o
+  tempo do efeito.
+
+O raio sai da mesma `Zone` que o servidor replica, então os dois nunca discordam. A
+escala do Model é medida pela Part `<nome>_Ring` de dentro dele, e não pela caixa do
+Model: um Model de VFX tem emissor e attachment espalhados, e medir a caixa inteira
+faria o anel encolher só porque alguém arrastou uma faísca para fora dele.
+
+O Staff of Healing não deixa zona nenhuma — o efeito dele acontece num instante —,
+mas a **imunidade** que ele dá dura dez segundos. Por isso ele declara um
+modificador sem `Stats` nenhum: ele não modifica nada, ele *é* o anel, e nasce e
+morre junto com a imunidade que representa.
+
+### O buff e o debuff em cima da unidade
+
+O que uma carta faz com uma torre aparece **na torre**: o mesmo Highlight e a mesma
+billboard na cabeça que o clima já usava (`WeatherFeedbackController`). O
+vocabulário — asset, cores e a lista de ícones — é `WeatherConfig.Feedback.Stats`,
+que deixou de ser "os ícones do clima" e passou a ser "os ícones da billboard":
+dano, alcance, cooldown e **dinheiro** (`BuffEco` / `DebuffEco`, que cobre `Income`
+e `HitIncome` num ícone só, porque para o jogador é um número só — o do bolso).
+
+São três camadas e elas **se multiplicam**, por estatística:
+
+1. o clima;
+2. as cartas já usadas (a lista do `CardModifierController`);
+3. a **prévia** — uma carta que está sendo mirada agora e ainda não foi usada.
+
+O ícone que acende é o do efeito líquido: neblina (0.7 de alcance) com o Staff of
+the Winds (1.2) dá 0.84 e acende `DebuffRange`, e não os dois ícones lado a lado.
+`Kind` é `Debuff` sempre que houver um debuff junto, que é o caso normal de quem
+está dentro do anel de um cajado — ganha numa coisa, paga em outra.
+
+**A torre sob o ponteiro fica amarela** enquanto uma carta procura alvo, e é um
+realce só: quem o pinta é o `WeatherFeedbackController` (junto com os ícones do que
+ela vai sentir) nas cartas que mexem em estatística, e o próprio
+`RoundCardShopController` nas que não mexem — o Zippers. A cor mora em
+`Targeting.Colors.Unit`, e os dois a leem de lá. Dois Highlights no mesmo modelo
+deixariam as duas cores brigando.
+
+No instante em que a carta encosta na torre, ela solta o `AppliedVFX`
+(`Assets.VFX.EffectUnitAppliedVFX`), pendurado na `HumanoidRootPart` dela e
+estourado pelo `VFXController`. Quem dispara é o servidor, para todo mundo na sala
+ver o estouro na mesma torre — e só depois de o efeito ter dado certo, senão o
+estouro prometeria uma coisa que não aconteceu.
+
+**A prévia é o ponto.** Arrastando o anel de uma carta de área pelo mapa, cada torre
+que ele alcança acende com o que ela vai sentir, e apaga quando o anel sai de cima
+dela; numa carta de alvo único é a torre sob o ponteiro que acende. É o mesmo
+desenho do efeito de verdade, de propósito — a decisão "onde ponho o cajado" é
+tomada olhando o mapa, e não relendo a descrição da carta.
+
+A varredura roda a cada quadro enquanto a mira estiver aberta, e por isso ela é
+barata de propósito: o `world` é montado uma vez por varredura (e não por torre), o
+anel só refaz a prévia quando anda mais de `PREVIEW_STEP`, e cada torre compara uma
+assinatura antes de reescrever a billboard.
+
+### Duas cartas ainda não fazem nada
+
+`Chill Out` (+10% na lentidão do gelo) e `Fire Hazard` (+20% no dano de
+queimadura) são multiplicadores globais que o `MobService` já lê (`ApplySlow`,
+`ApplyBurn`), mas **nenhuma unidade do roster de hoje congela ou queima**: é
+`UnitStats[nome].Slow` / `.Burn` que liga as duas mecânicas, e ainda não existe
+unidade `Ice` nem `Fire`. As duas cartas passam a valer no dia em que existir uma,
+sem passar por aqui.
+
 ## Configuração: o que é replicado e o que não é
 
 Antes, `ReplicatedStorage.Shared.Config.Server` era replicado para todo cliente —
@@ -1161,7 +1310,7 @@ e a lista de admins do Cmdr. Isso foi separado:
 | | Onde | Conteúdo |
 |---|---|---|
 | **Servidor** | `ServerScriptService.Config` ← `common/server/Config` | `Data` (PROFILE_KEY + template), `Wave`, `Summon`, `Difficulty`, `Cmdr` (ADMIN_USER_IDS, GROUP_ID, ALLOW_IN_STUDIO) |
-| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, DeckConfig, RoundCardConfig, `Mob`, `Cmdr` cosmético) |
+| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, DeckConfig, RoundCardConfig, CardModifier, `Mob`, `Cmdr` cosmético) |
 
 Convenção nos scripts de servidor:
 

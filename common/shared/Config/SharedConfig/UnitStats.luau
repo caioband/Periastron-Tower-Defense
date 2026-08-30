@@ -39,6 +39,20 @@
 	esta atras do alvo. `PierceWidth` e a unica coisa entre "pega quem a linha corta
 	de raspao" e "limpa a fileira do lado".
 
+	`Slow` e `Burn` sao o que o golpe **deixa** no inimigo, alem do dano. Nenhuma
+	unidade de hoje declara os dois -- eles existem para quando o roster ganhar uma
+	unidade `Ice` ou `Fire`:
+
+	| Campo | O que e |
+	| --- | --- |
+	| `Slow` | `{ Amount, Duration }` -- `Amount` e a fracao de velocidade tirada (0.3 e "anda 30% mais devagar") |
+	| `Burn` | `{ Damage, Ticks, Interval }` -- tantos tiques de tanto dano, de tantos em tantos segundos |
+
+	Quem os executa e o `MobService` (`ApplySlow`, `ApplyBurn`), que e o dono do
+	estado do inimigo; quem os dispara e o `UnitService:creditDamage`, depois de o
+	dano ter entrado. As cartas de round Chill Out e Fire Hazard multiplicam
+	exatamente estes numeros.
+
 	`PierceFalloff` e o que impede que atravessar seja de graca. Ele e **composto**:
 	com 0.1, o segundo inimigo leva 90% do primeiro, o terceiro 90% do segundo. Nunca
 	chega a zero de proposito -- uma flecha que furou dez corpos ainda machuca um

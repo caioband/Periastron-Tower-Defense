@@ -54,6 +54,8 @@ local CardShopService = {
 		DifficultyService = {},
 		SpeedService = {},
 		WeatherRoundService = {},
+		UnitService = {},
+		CardModifierService = {},
 	},
 
 	--[[
@@ -81,15 +83,166 @@ local CardShopService = {
 --[=[
 	O que cada carta faz, pelo nome que o `RoundCardConfig` declara em `Effect`.
 
-	Cada funcao recebe quem usou e os `Params` da carta, e devolve a frase que vai
-	para o log do servidor. Nenhuma delas conhece a loja: sao chamadas nos services
-	que ja donos daquele estado -- o congelamento e do `MobService`, o relogio e do
-	`SpeedService`, o ceu e do `WeatherRoundService`.
+	Cada funcao recebe quem usou, os `Params` da carta e o `context` do uso (o alvo
+	escolhido, o `uid` da carta gasta e o `Id` dela), e devolve a frase que vai para
+	o log do servidor. Nenhuma delas conhece a loja: sao chamadas nos services que ja
+	sao donos daquele estado -- o congelamento e do `MobService`, o relogio e do
+	`SpeedService`, o ceu e do `WeatherRoundService`, as regras de campo sao do
+	`CardModifierService` e o tabuleiro e do `UnitService`.
 
-	Carta nova e uma entrada aqui mais uma no catalogo do config. O sorteio so
-	oferece carta cujo efeito existe nesta tabela (ver `_pool`).
+	**Sao sete efeitos para vinte e tantas cartas**, e nao um por carta. Quase tudo
+	que uma carta de round faz e deixar uma regra valendo no campo, e a regra tem
+	gramatica propria (o `CardModifier`): dai o `Modifier`, que le a lista que a
+	carta declarou e a entrega ao service. Carta nova que so mexa em numeros nao
+	precisa de codigo nenhum -- ela e uma entrada no `RoundCardConfig` e mais nada.
+
+	Carta com efeito que nao exista nesta tabela e descartada do sorteio com aviso
+	(ver `_pool`), em vez de virar uma carta que o jogador paga e nao faz nada.
 ]=]
 CardShopService.Effects = {
+	--[=[
+		O efeito de quase todo o catalogo: por as regras da carta no campo.
+
+		Os registros vem do config; o que o **uso** acrescenta e o alvo (a zona onde o
+		jogador desenhou o anel, ou a torre que ele escolheu) e o prazo. Quem guarda,
+		poda e replica e o `CardModifierService`.
+	]=]
+	Modifier = function(self, player : Player, params, context)
+		local service = self.Services.CardModifierService
+		if not service then return "sem CardModifierService" end
+
+		local records = params.Modifiers
+		if typeof(records) ~= "table" or #records == 0 then
+			return "a carta nao declarou modificador nenhum"
+		end
+
+		local target = context.Target
+
+		local zone = nil
+		if target and target.Position then
+			zone = { Position = target.Position, Radius = RoundCardConfig.GetRadius(context.Card) }
+		end
+
+		local applied = service:Apply(records, {
+			Uid = context.Uid,
+			Card = context.Card,
+			Duration = params.Duration,
+			Zone = zone,
+			UnitId = target and target.UnitId or nil,
+		})
+
+		return string.format("%d regra(s) no campo%s", applied,
+			params.Duration and string.format(" por %ss", tostring(params.Duration)) or " ate o fim do round")
+	end,
+
+	--[=[
+		Caixa direto na mao de quem usou.
+
+		E do caixa da **partida** (`roundcash`), o mesmo que paga torre e que pagou a
+		propria carta -- e nao o `Cash` do perfil. Uma carta de round nao pode virar
+		uma torneira de moeda de progressao.
+	]=]
+	GrantCash = function(self, player : Player, params)
+		local mobService = self.Services.MobService
+		if not mobService then return "sem MobService" end
+
+		local amount = math.max(0, params.Amount or 0)
+		mobService:addCash(player, amount)
+
+		return string.format("%d de caixa para %s", amount, player.Name)
+	end,
+
+	--[=[
+		O Staff of Healing: tira o atordoamento de quem esta no circulo e deixa essas
+		unidades imunes por alguns segundos.
+
+		Vale para as torres de **todo mundo** dentro do circulo, e nao so para as de
+		quem usou. E a mesma regra do resto das cartas: quem paga e uma pessoa, mas o
+		efeito e da sala.
+	]=]
+	Cleanse = function(self, player : Player, params, context)
+		local unitService = self.Services.UnitService
+		if not unitService then return "sem UnitService" end
+
+		local target = context.Target
+		if not target or not target.Position then return "sem area escolhida" end
+
+		local radius = RoundCardConfig.GetRadius(context.Card)
+		local touched = unitService:CleanseUnits(target.Position, radius, params.Immunity or 0)
+
+		--[[
+			O circulo no chao enquanto a imunidade dura.
+
+			Ele entra pelo mesmo caminho das zonas dos cajados -- um modificador com
+			`Zone`, guardado no `CardModifierService` -- e por isso ele nasce, e some,
+			e reaparece para quem entrou no meio da partida sem nenhum desenho proprio.
+			O modificador nao mexe em estatistica nenhuma: ele **e** o anel. Ver o
+			`Modifiers` desta carta no `RoundCardConfig`.
+		]]
+		local modifiers = self.Services.CardModifierService
+		if modifiers and params.Modifiers then
+			modifiers:Apply(params.Modifiers, {
+				Uid = context.Uid,
+				Card = context.Card,
+				Duration = params.Immunity,
+				Zone = { Position = target.Position, Radius = radius },
+			})
+		end
+
+		return string.format("%d unidade(s) curadas e imunes por %ss", touched, tostring(params.Immunity or 0))
+	end,
+
+	--[=[
+		O Staff of Azure Ever Ice: a sala inteira mais lenta por alguns segundos.
+
+		O clima e lido **no uso**, e nao na compra: comprar a carta e segurar ate a
+		neve chegar e a jogada, e decidir o bonus na compra tiraria a decisao do
+		jogador.
+	]=]
+	ChillEnemies = function(self, player : Player, params)
+		local mobService = self.Services.MobService
+		if not mobService then return "sem MobService" end
+
+		local slow = params.Slow or 0.5
+		local brittle = nil
+
+		local weather = mobService:GetWeather()
+		if params.Weather and weather == params.Weather then
+			slow = params.WeatherSlow or slow
+			brittle = params.WeatherBrittle
+		end
+
+		local chilled = mobService:ChillAll(slow, params.Duration, brittle)
+
+		return string.format("%d inimigos a -%d%% por %ss%s", chilled, math.floor(slow * 100 + 0.5),
+			tostring(params.Duration), brittle and " (quebradicos)" or "")
+	end,
+
+	--[=[
+		O Zippers: a unidade escolhida muda de lugar.
+
+		O destino passa pelas mesmas conferencias do `PlaceUnit`. Recusado, o efeito
+		devolve o motivo -- mas a carta **ja foi gasta**, e por isso o destino e
+		conferido antes, no `Use`: quando este efeito roda, o lugar ja tinha sido
+		aceito.
+	]=]
+	MoveUnit = function(self, player : Player, params, context)
+		local unitService = self.Services.UnitService
+		if not unitService then return "sem UnitService" end
+
+		local target = context.Target
+		if not target or not target.UnitId or not target.Position then
+			return "faltou a unidade ou o destino"
+		end
+
+		local entry, reason = unitService:MoveUnit(target.UnitId, target.Position)
+		if not entry then
+			return string.format("mudanca recusada (%s)", tostring(reason))
+		end
+
+		return string.format("%s mudou de lugar", entry.unitName)
+	end,
+
 	TimeStop = function(self, player : Player, params)
 		local mobService = self.Services.MobService
 		if not mobService then return "sem MobService" end
@@ -150,6 +303,69 @@ function CardShopService:_pool()
 	end
 
 	return pool
+end
+
+--[=[
+	Confere o alvo que o cliente mandou contra o tipo de uso da carta. Devolve o
+	alvo ja limpo, ou `nil` e o motivo.
+
+	O cliente escolhe o alvo, e por isso **nada** do que ele manda entra sem passar
+	por aqui: um `Id` de unidade que nao existe, um ponto a dez mil studs daqui, um
+	`Vector3` que na verdade e uma string. Nenhum desses e erro de programa -- e o
+	que chega de um cliente adulterado, e o que chega de um clique legitimo numa
+	torre que foi vendida no mesmo quadro.
+
+	O alvo devolvido e **remontado**, campo por campo, em vez de repassado: assim
+	nada mais do que estas duas chaves atravessa para o efeito, por mais que o
+	cliente tenha enfiado na tabela.
+]=]
+function CardShopService:_checkTarget(card, target : any)
+	local use = RoundCardConfig.GetUse(card.Id)
+
+	if use == RoundCardConfig.Use.Instant then
+		return {}
+	end
+
+	if typeof(target) ~= "table" then
+		return nil, "sem alvo"
+	end
+
+	local checked = {}
+
+	if use == RoundCardConfig.Use.Unit or use == RoundCardConfig.Use.Move then
+		local unitService = self.Services.UnitService
+		if not unitService then
+			return nil, "sem UnitService"
+		end
+
+		if typeof(target.UnitId) ~= "string" or not unitService.UnitsById[target.UnitId] then
+			return nil, "unidade fora do mapa"
+		end
+
+		checked.UnitId = target.UnitId
+	end
+
+	if use == RoundCardConfig.Use.Area or use == RoundCardConfig.Use.Move then
+		local position = target.Position
+
+		if typeof(position) ~= "Vector3" then
+			return nil, "sem posicao"
+		end
+
+		-- NaN passa por qualquer comparacao de tamanho, entao ele e pego pelo unico
+		-- teste que ele nao passa: ser igual a si mesmo.
+		if position.X ~= position.X or position.Y ~= position.Y or position.Z ~= position.Z then
+			return nil, "posicao NaN"
+		end
+
+		if position.Magnitude > RoundCardConfig.Targeting.MaxDistance then
+			return nil, "posicao longe demais"
+		end
+
+		checked.Position = position
+	end
+
+	return checked
 end
 
 --- A dificuldade em uso, pelo nome. E ela que decide o intervalo da loja.
@@ -311,7 +527,7 @@ end
 
 	Devolve a carta usada, ou nil e o motivo.
 ]=]
-function CardShopService:Use(player : Player, uid : any)
+function CardShopService:Use(player : Player, uid : any, target : any)
 	local owned = self.Owned[player.UserId]
 	local cardId = owned and owned[uid]
 
@@ -330,6 +546,20 @@ function CardShopService:Use(player : Player, uid : any)
 		return nil, "carta sem efeito"
 	end
 
+	--[[
+		O alvo e conferido **antes** de a carta sair da mao. Errar o lugar -- clicar
+		no ceu, escolher uma torre que acabou de ser vendida -- devolve a mira ao
+		jogador com a carta ainda na hotbar; so um alvo aceito gasta a compra.
+
+		E a unica coisa que e conferida antes: o resto (o efeito estourar, por
+		exemplo) acontece com a carta ja gasta, de proposito, para o estado da sala
+		nunca ficar meio mexido com a carta de volta na mao.
+	]]
+	local checked, reason = self:_checkTarget(card, target)
+	if not checked then
+		return nil, reason
+	end
+
 	owned[uid] = nil
 
 	Framework:Fire("RoundCardUsed", player, {
@@ -337,13 +567,37 @@ function CardShopService:Use(player : Player, uid : any)
 		id = card.Id,
 	})
 
+	local context = { Uid = uid, Card = card.Id, Target = checked }
+
 	local function run()
-		local ok, result = pcall(effect, self, player, card.Params or {})
+		local ok, result = pcall(effect, self, player, card.Params or {}, context)
 
 		if not ok then
 			warn(string.format("[CardShopService]: o efeito de '%s' estourou (%s).", card.Id, tostring(result)))
-		else
-			print(string.format("[CardShopService]: %s usou '%s' -- %s.", player.Name, card.Id, tostring(result)))
+			return
+		end
+
+		print(string.format("[CardShopService]: %s usou '%s' -- %s.", player.Name, card.Id, tostring(result)))
+
+		--[[
+			O estouro na torre que a carta pegou.
+
+			Junto com o efeito, e nao no clique: carta com `EffectDelay` entra depois do
+			gesto, e o estouro tem que cair com ela. E depois do efeito ter dado certo --
+			um efeito que estourou nao encostou em torre nenhuma, e o estouro estaria
+			prometendo uma coisa que nao aconteceu.
+
+			Fica aqui, e nao dentro de cada efeito, porque quem sabe que a carta tinha
+			uma torre por alvo e o alvo dela: um efeito novo de alvo unico ja nasce com
+			o estouro sem escrever nada.
+
+			Vai para **todos**: a carta e comprada por uma pessoa, mas a sala inteira ve
+			a torre reagir.
+		]]
+		if checked.UnitId then
+			for _, plr in Players:GetPlayers() do
+				Framework:Fire("RoundCardApplied", plr, checked.UnitId)
+			end
 		end
 	end
 
@@ -370,6 +624,13 @@ end
 function CardShopService:ResetRound()
 	table.clear(self.Offers)
 	table.clear(self.Owned)
+
+	-- As regras que as cartas deixaram no campo saem junto: um anel de cajado nao
+	-- pode sobreviver a tela de resultado.
+	local modifiers = self.Services.CardModifierService
+	if modifiers then
+		modifiers:ResetRound()
+	end
 
 	for _, player in Players:GetPlayers() do
 		self:_sendState(player)
@@ -457,8 +718,8 @@ function CardShopService:construct()
 		end
 	end)
 
-	Framework:Listen("UseRoundCard", function(player : Player, uid : any)
-		local card, reason = self:Use(player, uid)
+	Framework:Listen("UseRoundCard", function(player : Player, uid : any, target : any)
+		local card, reason = self:Use(player, uid, target)
 
 		if not card then
 			self:_sendState(player)
@@ -498,6 +759,7 @@ function CardShopService:init()
 	Framework:Listen("RoundCardState", function() end)
 	Framework:Listen("RoundCardBought", function() end)
 	Framework:Listen("RoundCardUsed", function() end)
+	Framework:Listen("RoundCardApplied", function() end)
 end
 
 return CardShopService

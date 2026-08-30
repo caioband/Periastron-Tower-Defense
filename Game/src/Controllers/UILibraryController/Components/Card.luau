@@ -72,10 +72,20 @@ local ARC_EASING = Enum.EasingStyle.Quad
 local ARC_DIRECTION = Enum.EasingDirection.Out
 
 --[[
-	A escala de cada carta tem tres estados, e o maior deles ganha: debaixo do mouse
-	ela vai a `HOVER_SCALE`, escolhida ela descansa em `SELECTED_SCALE`, e no resto
-	do tempo em 1. Toda troca entre eles e o mesmo tween, entao tirar o mouse de uma
-	carta escolhida desce de 1.2 para 1.1 sem salto.
+	A escala de cada carta sai de duas coisas que se **multiplicam**: onde ela
+	descansa (1, ou `SELECTED_SCALE` se ela e a escolhida) vezes `HOVER_SCALE`
+	enquanto o mouse esta em cima dela.
+
+	Os dois eram alternativas, e o maior ganhava. Como `HOVER_SCALE` e o maior dos
+	dois, escolher uma carta **com o mouse em cima dela** -- que e como todo clique
+	de mouse acontece -- ia de 1.2 para 1.2: a carta era escolhida e nao mexia um
+	pixel, e o unico momento em que a escolha aparecia era ao tirar o mouse dali. No
+	celular, onde nao ha hover, a mesma escolha animava normalmente.
+
+	Multiplicados, a carta escolhida sob o mouse vai a 1.32 e o clique responde na
+	hora; hover em carta nao escolhida continua exatamente em 1.2, e escolhida sem
+	mouse em cima continua em 1.1. Toda troca e o mesmo tween, entao nenhuma delas
+	salta.
 
 	As cartas se sobrepoem bastante, entao a que cresce tambem vem para a frente --
 	senao ela cresceria por baixo da vizinha.
@@ -176,6 +186,17 @@ module.byRound = {}
 module.counts = {}
 module.cash = 0
 module.selected = nil
+
+--[[
+	A carta de **round** escolhida, pelo `uid` da compra.
+
+	Ela e um estado separado do `selected` porque as duas nao se identificam do
+	mesmo jeito -- uma carta de unidade e um nome de unidade, e uma de round e uma
+	compra --, mas as duas sao a mesma ideia: o que esta na mao do jogador agora. Por
+	isso so uma das duas pode estar valendo (ver `setSelected`), e as duas passam
+	pelo mesmo crescer e pela mesma apagada das vizinhas.
+]]
+module.selectedRound = nil
 
 --[[
 	A mao inteira escondida sem ninguem perder o lugar. Quem liga e desliga e o
@@ -786,7 +807,8 @@ end
 	-- ou nela mesma --, nada apaga.
 ]=]
 function module:_setDimmed(entry)
-	local dimmed = self.selected ~= nil and entry.Unit ~= self.selected
+	local hasSelection = self.selected ~= nil or self.selectedRound ~= nil
+	local dimmed = hasSelection and not self:_isSelected(entry)
 
 	if entry.Dimmed == dimmed then
 		return
@@ -799,11 +821,16 @@ end
 --[=[
 	Se esta e a carta que esta na mao do jogador agora.
 
-	O `entry.Unit ~= nil` nao e detalhe: carta de round nao tem unidade, e sem essa
-	metade da conta `nil == nil` daria "escolhida" para **todas** elas sempre que
-	nao houvesse nenhuma unidade equipada.
+	Carta de round se identifica pelo `uid` da compra e carta de unidade pelo nome
+	da unidade, entao a pergunta e uma so mas a chave e outra. O `~= nil` dos dois
+	lados nao e detalhe: sem ele, `nil == nil` daria "escolhida" para **todas** as
+	cartas de round sempre que nao houvesse unidade equipada.
 ]=]
 function module:_isSelected(entry) : boolean
+	if entry.Uid ~= nil then
+		return entry.Uid == self.selectedRound
+	end
+
 	return entry.Unit ~= nil and entry.Unit == self.selected
 end
 
@@ -826,7 +853,10 @@ end
 	uma carta so ou varias de uma vez.
 ]=]
 function module:_applyScale(entry) : boolean
-	local target = if entry.Hovered then HOVER_SCALE else self:_restScale(entry)
+	local target = self:_restScale(entry)
+	if entry.Hovered then
+		target *= HOVER_SCALE
+	end
 
 	if entry.ScaleTarget == target then
 		return false
@@ -904,6 +934,11 @@ function module:_buildEntry(config)
 	local entry = {
 		Kind = config.Kind,
 		Unit = config.Unit,
+
+		-- So a carta de round tem: e o `uid` da compra, e e por ele que ela e a
+		-- escolhida (ver `_isSelected`).
+		Uid = config.Uid,
+
 		Activate = config.Activate,
 
 		Index = config.Index,
@@ -1084,6 +1119,10 @@ function module:_cleanRound()
 
 	self.entries = {}
 	self.byRound = {}
+
+	-- A carta escolhida saiu da mao junto com todas as outras.
+	self.selectedRound = nil
+	self.roundCleared = nil
 end
 
 --[=[
@@ -1222,6 +1261,7 @@ function module:addRound(uid : string, wrapper : Frame, activate : () -> ()) : b
 	local entry = self:_buildEntry({
 		Kind = "Round",
 		Unit = nil,
+		Uid = uid,
 		Index = #self.entries + 1,
 		Wrapper = wrapper,
 		Card = card,
@@ -1264,6 +1304,24 @@ function module:removeRound(uid : string) : boolean
 	end
 
 	self.byRound[uid] = nil
+
+	--[[
+		A carta escolhida esta saindo da mao (foi usada, ou o servidor a devolveu):
+		sem largar a escolha aqui, as vizinhas ficariam apagadas para sempre em volta
+		de uma carta que ja nao existe.
+	]]
+	if self.selectedRound == uid then
+		self.selectedRound = nil
+		self.roundCleared = nil
+
+		for _, other in self.entries do
+			if other ~= entry then
+				self:_applyScale(other)
+				self:_refreshDepth(other)
+				self:_setDimmed(other)
+			end
+		end
+	end
 
 	self:_setAvailable(entry, false)
 
@@ -1337,6 +1395,23 @@ function module:setSelected(unitName : string?)
 
 	self.selected = unitName
 
+	--[[
+		So uma coisa por vez na mao. Por uma unidade na mao com uma carta de round
+		esperando alvo deixaria as duas em pe: o fantasma da unidade e a mira da
+		carta disputando o mesmo clique no mapa. Quem escolheu a carta e avisado pelo
+		`onCleared` do `setSelectedRound`, e desiste da mira do lado dele.
+	]]
+	if unitName and self.selectedRound then
+		local cleared = self.roundCleared
+
+		self.selectedRound = nil
+		self.roundCleared = nil
+
+		if cleared then
+			task.spawn(cleared)
+		end
+	end
+
 	local changed = false
 	for _, entry in self.entries do
 		changed = self:_applyScale(entry) or changed
@@ -1345,6 +1420,45 @@ function module:setSelected(unitName : string?)
 	end
 
 	-- Trocar de carta escolhida mexe em duas, mas o deck se reacomoda uma vez so.
+	if changed then
+		self:_layout()
+	end
+end
+
+--[=[
+	Qual carta de **round** esta escolhida, pelo `uid` da compra.
+
+	E o gemeo do `setSelected`, e faz exatamente a mesma coisa: a carta cresce, vem
+	para a frente e apaga as vizinhas. E o que faz uma carta de round que pede alvo
+	se comportar como uma carta de unidade equipada -- ela fica "na mao" enquanto o
+	jogador escolhe onde usa-la.
+
+	`onCleared` e chamado quando **outra coisa** toma a mao (o jogador equipou uma
+	unidade). Quem escolheu a carta precisa saber disso para desistir da mira, e nao
+	ha como ele descobrir sozinho: o clique que trocou de mao foi na hotbar, e nao no
+	mapa. Ele nao e chamado quando o proprio dono desfaz a escolha -- ali ele ja
+	sabe.
+
+	> Quem chama deve **largar a unidade antes** (`UnitPlacementController:clearInteraction`).
+	> O `selected` daqui e so o desenho; o fantasma que segue o mouse e a nocao de
+	> unidade equipada sao de outros dois donos, e apaga-lo por aqui os deixaria
+	> discordando da tela.
+]=]
+function module:setSelectedRound(uid : string?, onCleared : (() -> ())?)
+	if self.selectedRound == uid then
+		return
+	end
+
+	self.selectedRound = uid
+	self.roundCleared = if uid then onCleared else nil
+
+	local changed = false
+	for _, entry in self.entries do
+		changed = self:_applyScale(entry) or changed
+		self:_refreshDepth(entry)
+		self:_setDimmed(entry)
+	end
+
 	if changed then
 		self:_layout()
 	end

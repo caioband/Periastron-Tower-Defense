@@ -16,6 +16,7 @@ local Units = Assets:WaitForChild("Units")
 local SharedConfig = require(Configs.SharedConfig)
 local TargetPriority = SharedConfig.TargetPriority
 local DeckConfig = SharedConfig.DeckConfig
+local CardModifier = SharedConfig.CardModifier
 local ServerConfig = require(ServerConfigs)
 local PathUtil = require(Shared:WaitForChild("Util"):WaitForChild("PathUtil"))
 local PlacementUtil = require(Shared:WaitForChild("Util"):WaitForChild("PlacementUtil"))
@@ -60,12 +61,36 @@ local function formatVector(v : Vector3?)
 	return string.format("(%.2f, %.2f, %.2f)", v.X, v.Y, v.Z)
 end
 
+--[[
+	O multiplicador de quem nao esta sob carta nenhuma.
+
+	Uma tabela so, compartilhada por todas as unidades enquanto a lista de
+	modificadores estiver vazia -- que e o comeco de toda partida. Sem ela cada
+	unidade ganharia uma tabela de "tudo 1" por quadro, e a partida sem carta
+	nenhuma pagaria por um sistema que ela nao esta usando.
+
+	Ela nunca e escrita: quem tem modificador ganha uma tabela propria em
+	`refreshCardModifiers`.
+]]
+local NO_CARD_MULTIPLIERS = {
+	Damage = 1,
+	AttackSpeed = 1,
+	Range = 1,
+	Income = 1,
+	HitIncome = 1,
+
+	-- `Cleave` nao e numero: e a tabela de numeros do corte, ou nada. Ver
+	-- `CardModifier.FlagValue`.
+	Cleave = nil,
+}
+
 local UnitService = {
 	Services = {
 		MobService = {},
 		DataService = {},
 		WaveService = {},
-		WeatherService = {}
+		WeatherService = {},
+		CardModifierService = {},
 	},
 	PlacedUnits = {},
 	UnitsById = {},
@@ -78,6 +103,20 @@ local UnitService = {
 
 	-- As farms com aura que estao no mapa. Refeita todo quadro no `stepCombat`.
 	AuraSources = {},
+
+	--[[
+		O campo como o `CardModifier` o enxerga: a lista de unidades (para as
+		condicoes de vizinhanca e para o Abrakadabra) e a fracao de vida da base
+		(para o No Pain, No Gain).
+
+		Reaproveitada em vez de refeita: ela e remontada todo quadro, e a lista de
+		dentro e limpa com `table.clear` para o array nao ser realocado sessenta
+		vezes por segundo.
+	]]
+	CardWorld = { Units = {}, BaseHealthRatio = 1 },
+
+	-- Os modificadores valendo neste quadro, lidos do `CardModifierService`.
+	CardModifiers = {},
 }
 
 for _, model in Units:GetChildren() do
@@ -204,6 +243,160 @@ function UnitService:getGridParts()
 end
 
 --[=[
+	Esta unidade cabe neste CFrame?
+
+	Sao as tres recusas do posicionamento, na ordem em que elas ficam caras: em cima
+	do caminho, perto demais de outra unidade, em cima de um jogador.
+
+	Existe como funcao propria porque agora ha **dois** caminhos que colocam uma
+	unidade num lugar: o `PlaceUnit` de sempre e o Zippers, que a arrasta de um lugar
+	para outro. Duas copias da mesma conferencia acabariam divergindo, e a divergencia
+	que aparece e a pior possivel -- uma carta que poe a torre em cima do caminho.
+
+	`ignoreEntry` e a propria unidade, quando ela esta se mudando: sem isso o Zippers
+	sempre recusaria, porque a torre estaria perto demais dela mesma.
+
+	`label` so entra no log de posicionamento, que so existe no Studio.
+]=]
+function UnitService:isSpotFree(cf : CFrame, unitName : string, label : string?, ignoreEntry : any?) : boolean
+	local position = cf.Position
+	local unitSizeX = self.UnitSizes[unitName] or 2
+
+	--[[
+		A caixa de teste tem que ser a mesma que o cliente usa para pintar o
+		fantasma de verde: a bounding box real do modelo, girada pelo CFrame que
+		ele mandou. Uma caixa maior (ex.: um cubo de 6 studs de altura) desce
+		abaixo do chao e encosta nos trilhos finos do caminho, recusando
+		posicionamentos que o cliente ja tinha aprovado.
+
+		O `PathProbe` estica essa caixa para baixo: so o volume da unidade nao
+		basta, porque qualquer coisa que a levante acima do trilho tira o caminho
+		de dentro da caixa. Ver `PlacementUtil.PathClearance`.
+	]]
+	local checkSize = self.UnitBounds[unitName] or Vector3.new(unitSizeX, 2, unitSizeX)
+	local probeCF, probeSize = PlacementUtil.PathProbe(cf, checkSize)
+	local overlapParams = OverlapParams.new()
+	overlapParams.FilterType = Enum.RaycastFilterType.Include
+	overlapParams.FilterDescendantsInstances = self:getGridParts()
+	local gridProbe = Instance.new("Part")
+	gridProbe.Size = probeSize
+	gridProbe.Anchored = true
+	gridProbe.CanCollide = false
+	gridProbe.CanQuery = false
+	gridProbe.CanTouch = false
+	gridProbe.Transparency = 1
+	gridProbe.CFrame = probeCF
+	gridProbe.Parent = workspace
+	local gridParts = workspace:GetPartsInPart(gridProbe, overlapParams)
+	gridProbe:Destroy()
+	if #gridParts > 0 then
+		placementPrint(label, unitName, "recusado: em cima do caminho", formatVector(position),
+			"caixa de teste", formatVector(probeSize),
+			string.format("%d part(s) de Grid, primeira: %s em %s", #gridParts, gridParts[1]:GetFullName(), formatVector(gridParts[1].Position)))
+		return false
+	end
+
+	for _, entry in ipairs(self.PlacedUnits) do
+		if entry == ignoreEntry then continue end
+
+		local otherSizeX = self.UnitSizes[entry.unitName] or 2
+		local minDist = (unitSizeX + otherSizeX) / 2
+		local posA = Vector3.new(position.X, 0, position.Z)
+		local posB = Vector3.new(entry.cf.Position.X, 0, entry.cf.Position.Z)
+		local dist = (posA - posB).Magnitude
+		if dist < minDist then
+			placementPrint(label, unitName, "recusado: perto demais de outra unidade",
+				formatVector(position), string.format("%s a %.2f studs (minimo %.2f)", entry.unitName, dist, minDist))
+			return false
+		end
+	end
+
+	--[[
+		Ninguem nasce dentro de um jogador.
+
+		E aqui que a regra vale de verdade: o cliente pinta o fantasma de vermelho
+		para o jogador enxergar, mas quem aceita ou recusa e o servidor -- um cliente
+		adulterado manda o CFrame que quiser.
+	]]
+	local blockingCharacter = PlacementUtil.FindBlockingCharacter(cf, checkSize)
+	if blockingCharacter then
+		placementPrint(label, unitName, "recusado: em cima de um personagem",
+			formatVector(position), "personagem", blockingCharacter:GetFullName())
+		return false
+	end
+
+	return true
+end
+
+--[=[
+	Muda uma unidade ja colocada de lugar. E o Zippers, e e a unica carta que mexe
+	no tabuleiro em vez de nos numeros.
+
+	O destino passa pelas **mesmas** conferencias do `PlaceUnit`: fora do caminho,
+	longe das outras torres, sem ninguem em cima. Um destino recusado devolve `nil` e
+	um motivo, e quem chamou nao gasta a carta -- errar o lugar nao pode custar a
+	compra.
+
+	Na tela a unidade e tirada e reposta (`RemoveUnit` + `ReplicateUnit`) em vez de
+	deslizar ate o destino. O `unitId` continua o mesmo, entao o card, a prioridade e
+	o placar de dano dela sobrevivem a viagem; o que se perde e so a animacao de
+	mudanca, e o caminho de reposicionamento e o mesmo que ja replica toda unidade
+	desde sempre.
+
+	O alvo do momento e derrubado junto: mirar do lugar velho depois de ter mudado
+	de lugar faria a torre atirar em quem ela ja nao alcanca.
+]=]
+function UnitService:MoveUnit(unitId : any, position : any)
+	local entry = self.UnitsById[unitId]
+	if not entry then
+		return nil, "unidade nao existe"
+	end
+
+	if typeof(position) ~= "Vector3" then
+		return nil, "destino invalido"
+	end
+
+	if position.X ~= position.X or position.Y ~= position.Y or position.Z ~= position.Z then
+		return nil, "destino NaN"
+	end
+
+	if position.Magnitude > MAX_PLACE_DISTANCE then
+		return nil, "destino longe demais"
+	end
+
+	--[[
+		A rotacao e a que a unidade ja tinha: o jogador escolheu um lugar, e nao uma
+		direcao. O que ele mandou e so o ponto -- ja com a altura que o modelo tem
+		acima do chao dali, medida no cliente pelo mesmo raycast que o posicionamento
+		usa.
+	]]
+	local cf = CFrame.new(position) * (entry.cf - entry.cf.Position)
+
+	if not self:isSpotFree(cf, entry.unitName, "Zippers", entry) then
+		return nil, "destino ocupado"
+	end
+
+	entry.cf = cf
+	entry.targetMobId = nil
+
+	--[[
+		O cliente derruba o placar de dano da unidade junto com o modelo dela (ver o
+		`RemoveUnit` no `UnitPlacementController`), e o lote so manda quem esta sujo:
+		sem isto o card mostraria zero ate a torre bater de novo.
+	]]
+	self.DamageDirty[entry.unitId] = true
+
+	-- A mina ja armada continua onde caiu: ela e do mapa a partir do arremesso, e
+	-- nao da torre. So os arremessos seguintes saem do lugar novo.
+	for _, plr in ipairs(Players:GetPlayers()) do
+		Framework:Fire("RemoveUnit", plr, entry.unitId)
+		Framework:Fire("ReplicateUnit", plr, entry.unitName, cf, entry.ownerUserId, entry.unitId, entry.upgrades or 0, entry.priority)
+	end
+
+	return entry
+end
+
+--[=[
 	Credita dano a uma unidade. O valor e o que de fato entrou no mob (`DamageMob`
 	devolve isso), nao o dano cheio do golpe — assim o `DmgDone` do card fecha com
 	a vida que os mobs perderam.
@@ -252,6 +445,123 @@ function UnitService:flushDamageDone()
 end
 
 --[[ CLIMA ]]
+
+--[[ CARTAS DE ROUND ]]
+
+--[=[
+	Refaz, uma vez por quadro, o que as cartas de round estao fazendo com cada
+	unidade.
+
+	**Uma vez por quadro, e nao por pergunta.** O combate pergunta dano, cadencia e
+	alcance de cada unidade a cada quadro, e duas das condicoes do `CardModifier`
+	(o Iceolated e o Ice to Meet You) varrem a vizinhanca inteira para responder --
+	perguntar por unidade e por estatistica multiplicaria essa varredura por cinco.
+	Aqui a conta e feita uma vez e guardada em `entry.CardMult`, e o resto do quadro
+	so le a tabela.
+
+	O descritor de cada unidade tambem e reaproveitado (`entry.CardDescriptor`): a
+	posicao e reescrita, e nao a tabela refeita. Sem isso seriam algumas dezenas de
+	tabelas por quadro so para dizer ao `CardModifier` coisas que ele ja podia ler.
+
+	Sem carta nenhuma no campo, todo mundo aponta para o `NO_CARD_MULTIPLIERS` e a
+	funcao sai pelo caminho curto -- que e a partida inteira ate a primeira loja.
+]=]
+function UnitService:refreshCardModifiers()
+	local service = self.Services.CardModifierService
+	local modifiers = service and service:GetActive() or nil
+
+	self.CardModifiers = modifiers
+
+	if not modifiers or #modifiers == 0 then
+		for _, entry in self.PlacedUnits do
+			entry.CardMult = NO_CARD_MULTIPLIERS
+		end
+
+		return
+	end
+
+	local world = self.CardWorld
+	table.clear(world.Units)
+
+	local mobService = self.Services.MobService
+	local maxHealth = mobService and mobService.MaxBaseHealth or 0
+	world.BaseHealthRatio = if maxHealth > 0 then (mobService.BaseHealth or 0) / maxHealth else 1
+
+	for _, entry in self.PlacedUnits do
+		local descriptor = entry.CardDescriptor
+
+		if not descriptor then
+			descriptor = { UnitId = entry.unitId, UnitName = entry.unitName }
+			entry.CardDescriptor = descriptor
+		end
+
+		-- A posicao muda quando o Zippers move a torre; o resto do descritor e fixo
+		-- pela vida da unidade.
+		descriptor.Position = entry.cf.Position
+
+		table.insert(world.Units, descriptor)
+	end
+
+	for _, entry in self.PlacedUnits do
+		local descriptor = entry.CardDescriptor
+		local values = entry.CardMult
+
+		-- A tabela compartilhada nao pode ser escrita: quem sai do caminho curto
+		-- ganha a sua.
+		if not values or values == NO_CARD_MULTIPLIERS then
+			values = {}
+			entry.CardMult = values
+		end
+
+		values.Damage = CardModifier.Multiplier(modifiers, "Damage", descriptor, world)
+		values.AttackSpeed = CardModifier.Multiplier(modifiers, "AttackSpeed", descriptor, world)
+		values.Range = CardModifier.Multiplier(modifiers, "Range", descriptor, world)
+		values.Income = CardModifier.Multiplier(modifiers, "Income", descriptor, world)
+		values.HitIncome = CardModifier.Multiplier(modifiers, "HitIncome", descriptor, world)
+		values.Cleave = CardModifier.FlagValue(modifiers, "Cleave", descriptor, world)
+	end
+end
+
+--[=[
+	O multiplicador de carta de uma unidade, do quadro corrente.
+
+	Unidade que ainda nao passou por um `refreshCardModifiers` -- uma colocada neste
+	mesmo quadro, antes de o combate rodar -- vale 1 em tudo. E o valor certo para a
+	fresta: ela entra no proximo quadro, e um multiplicador vazio nunca inventa um
+	bonus que o jogador nao comprou.
+]=]
+function UnitService:cardMultiplier(entry, stat : string) : number
+	local values = entry and entry.CardMult
+
+	return (values and values[stat]) or 1
+end
+
+--[=[
+	O mesmo, para o que nao e numero: hoje so o corte do Cleave It To Me.
+
+	Devolve a tabela de numeros daquele comportamento (quantos corpos, quanto o de
+	tras perde, a largura do risco) ou `nil` quando ele nao esta ligado -- e por isso
+	quem chama pode testar o retorno como um sim-ou-nao.
+]=]
+function UnitService:cardFlag(entry, flag : string)
+	local values = entry and entry.CardMult
+
+	return values and values[flag] or nil
+end
+
+--[=[
+	O alcance de uma unidade: o da tabela, com o clima, vezes o que as cartas
+	fizeram com ele.
+
+	Existe para que nao haja duas contas de alcance no arquivo. O combate mira por
+	ele, a mina cai por ele, a aura da farm cobre por ele -- e o cliente desenha o
+	circulo pela mesma multiplicacao, do outro lado (`CardModifierController`).
+]=]
+function UnitService:getRange(entry, weather : string?) : number
+	local base = SharedConfig.UnitUpgradeConfig:GetRange(entry.unitName, entry.upgrades or 0, weather)
+
+	return base * self:cardMultiplier(entry, "Range")
+end
 
 --[=[
 	O clima no ar, lido do `WeatherService` a cada quadro de combate.
@@ -316,6 +626,15 @@ end
 function UnitService:StunUnit(entry, duration : number, source : string?)
 	if not entry then return end
 
+	--[[
+		O Staff of Healing deixa a unidade imune por alguns segundos. A recusa e aqui,
+		e nao em cada coisa que atordoa: o raio, o congelamento da neve e o gimmick de
+		mob passam todos por esta funcao, e um teste por chamador acabaria com um
+		deles esquecido -- que e justamente o que o jogador leria como "a carta nao
+		funcionou".
+	]]
+	if GameClock.Now() < (entry.StunImmuneUntil or 0) then return end
+
 	local until_ = GameClock.Now() + (duration or 0)
 	if (entry.StunnedUntil or 0) >= until_ then return end
 
@@ -365,11 +684,59 @@ function UnitService:StunRandomUnit(duration, weatherName : string?)
 	return entry
 end
 
+--[=[
+	Tira o atordoamento de quem esta no circulo e deixa essas unidades imunes por
+	`immunity` segundos. E o Staff of Healing.
+
+	Devolve quantas unidades o circulo pegou -- inclusive as que nao estavam
+	atordoadas, porque a imunidade vale para elas do mesmo jeito: a carta e tanto o
+	remedio quanto o guarda-chuva, e quem a joga em cima de um canto do mapa antes
+	do raio cair fez a jogada certa.
+
+	A distancia e medida no plano, como o resto do que e circulo neste jogo: o anel
+	que o jogador viu na tela e um desenho no chao.
+]=]
+function UnitService:CleanseUnits(position : Vector3, radius : number, immunity : number) : number
+	if typeof(position) ~= "Vector3" then return 0 end
+
+	local center = Vector3.new(position.X, 0, position.Z)
+	local until_ = GameClock.Now() + math.max(0, immunity or 0)
+	local touched = 0
+
+	for _, entry in self.PlacedUnits do
+		local at = entry.cf.Position
+		if (Vector3.new(at.X, 0, at.Z) - center).Magnitude > radius then continue end
+
+		touched += 1
+
+		-- O prazo maior manda: um segundo cajado em cima do primeiro estende a
+		-- imunidade, e nunca a encurta.
+		entry.StunImmuneUntil = math.max(entry.StunImmuneUntil or 0, until_)
+
+		local wasStunned = (entry.StunnedUntil or 0) > GameClock.Now()
+		entry.StunnedUntil = 0
+
+		--[[
+			O cliente precisa saber, e nao so por causa do realce amarelo: o
+			congelamento da neve tem uma aura de particulas que fica no ar pelo prazo
+			inteiro dele, e ela nao tem como adivinhar que o prazo acabou mais cedo.
+		]]
+		if wasStunned then
+			for _, plr in ipairs(Players:GetPlayers()) do
+				Framework:Fire("UnitCleansed", plr, entry.unitId)
+			end
+		end
+	end
+
+	return touched
+end
+
 function UnitService:construct()
 	Framework:Listen("ReplicateUnit", function() end)
 	Framework:Listen("RemoveUnit", function() end)
 	Framework:Listen("UnitStunned", function() end)
 	Framework:Listen("UnitCharged", function() end)
+	Framework:Listen("UnitCleansed", function() end)
 	Framework:Listen("UpdateCardCounts", function() end)
 	Framework:Listen("RequestCardCounts", function(player)
 		local cards = self.SessionCards[player.UserId]
@@ -516,74 +883,7 @@ function UnitService:construct()
 			return
 		end
 
-		local unitSizeX = self.UnitSizes[unitName] or 2
-		local isValid = true
-
-		--[[
-			A caixa de teste tem que ser a mesma que o cliente usa para pintar o
-			fantasma de verde: a bounding box real do modelo, girada pelo CFrame que
-			ele mandou. Uma caixa maior (ex.: um cubo de 6 studs de altura) desce
-			abaixo do chao e encosta nos trilhos finos do caminho, recusando
-			posicionamentos que o cliente ja tinha aprovado.
-
-			O `PathProbe` estica essa caixa para baixo: so o volume da unidade nao
-			basta, porque qualquer coisa que a levante acima do trilho tira o caminho
-			de dentro da caixa. Ver `PlacementUtil.PathClearance`.
-		]]
-		local checkSize = self.UnitBounds[unitName] or Vector3.new(unitSizeX, 2, unitSizeX)
-		local probeCF, probeSize = PlacementUtil.PathProbe(cf, checkSize)
-		local overlapParams = OverlapParams.new()
-		overlapParams.FilterType = Enum.RaycastFilterType.Include
-		overlapParams.FilterDescendantsInstances = self:getGridParts()
-		local gridProbe = Instance.new("Part")
-		gridProbe.Size = probeSize
-		gridProbe.Anchored = true
-		gridProbe.CanCollide = false
-		gridProbe.CanQuery = false
-		gridProbe.CanTouch = false
-		gridProbe.Transparency = 1
-		gridProbe.CFrame = probeCF
-		gridProbe.Parent = workspace
-		local gridParts = workspace:GetPartsInPart(gridProbe, overlapParams)
-		gridProbe:Destroy()
-		if #gridParts > 0 then
-			isValid = false
-			placementPrint(player.Name, unitName, "recusado: em cima do caminho", formatVector(position),
-				"caixa de teste", formatVector(probeSize),
-				string.format("%d part(s) de Grid, primeira: %s em %s", #gridParts, gridParts[1]:GetFullName(), formatVector(gridParts[1].Position)))
-		end
-
-		if isValid then
-			for _, entry in ipairs(self.PlacedUnits) do
-				local otherSizeX = self.UnitSizes[entry.unitName] or 2
-				local minDist = (unitSizeX + otherSizeX) / 2
-				local posA = Vector3.new(cf.Position.X, 0, cf.Position.Z)
-				local posB = Vector3.new(entry.cf.Position.X, 0, entry.cf.Position.Z)
-				local dist = (posA - posB).Magnitude
-				if dist < minDist then
-					isValid = false
-					placementPrint(player.Name, unitName, "recusado: perto demais de outra unidade",
-						formatVector(position), string.format("%s a %.2f studs (minimo %.2f)", entry.unitName, dist, minDist))
-					break
-				end
-			end
-		end
-
-		--[[
-			Ninguem nasce dentro de um jogador.
-
-			E aqui que a regra vale de verdade: o cliente pinta o fantasma de vermelho
-			para o jogador enxergar, mas quem aceita ou recusa e este listener -- um
-			cliente adulterado manda o CFrame que quiser.
-		]]
-		if isValid then
-			local blockingCharacter = PlacementUtil.FindBlockingCharacter(cf, checkSize)
-			if blockingCharacter then
-				isValid = false
-				placementPrint(player.Name, unitName, "recusado: em cima de um personagem",
-					formatVector(position), "personagem", blockingCharacter:GetFullName())
-			end
-		end
+		local isValid = self:isSpotFree(cf, unitName, player.Name)
 
 		if isValid then
 			local unitId = HttpService:GenerateGUID(false)
@@ -673,7 +973,7 @@ function UnitService:getAuraBonus(entry, weather : string?) : number
 		if source == entry then continue end
 
 		local level = source.upgrades or 0
-		local radius = SharedConfig.UnitUpgradeConfig:GetRange(source.unitName, level, weather)
+		local radius = self:getRange(source, weather)
 
 		if (source.cf.Position - position).Magnitude <= radius then
 			bonus += SharedConfig.UnitUpgradeConfig:GetAuraBonus(source.unitName, level)
@@ -709,13 +1009,48 @@ end
 	Passa por aqui todo dano que sai de uma unidade -- ataque normal, area e mina.
 ]=]
 function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : number) : number
-	local dealt = self.Services.MobService:DamageMob(mobId, damage, entry.ownerUserId, auraBonus)
+	--[[
+		O `HitIncome` do anel do Robux Royalty entra como **escala** do premio, e nao
+		somado ao bonus da aura: a aura e uma fracao que se acumula entre farms
+		(15% + 15% = 30%), e a carta e um multiplicador em cima do que sobrou. Somar
+		os dois faria "1.1x" virar "+10 pontos percentuais", que e outro numero.
+	]]
+	local dealt = self.Services.MobService:DamageMob(
+		mobId, damage, entry.ownerUserId, auraBonus, self:cardMultiplier(entry, "HitIncome")
+	)
 	self:addDamageDone(entry, dealt)
 
 	-- Golpe que nao encostou em ninguem (o mob ja estava morto) nao rende nem
 	-- efeito: o `DamageMob` devolve 0 e nao pagou nada.
 	if dealt > 0 and auraBonus > 0 then
 		self:playAuraVFX(entry)
+	end
+
+	--[[
+		O que o golpe **deixa** no inimigo, alem do dano: a lentidao do gelo e a
+		queimadura do fogo. Os dois sao declarados na propria unidade
+		(`UnitStats[nome].Slow` / `.Burn`) e executados pelo `MobService`, que e quem
+		e dono do estado do inimigo.
+
+		So depois de o dano ter entrado: um golpe que nao encostou em ninguem nao
+		congela nem queima ninguem.
+
+		> ⚠️ Nenhuma unidade do roster de hoje declara os dois -- ainda nao ha unidade
+		> `Ice` nem `Fire`. As cartas Chill Out e Fire Hazard multiplicam exatamente
+		> estes numeros, e passam a valer no dia em que uma existir.
+	]]
+	if dealt > 0 then
+		local stats = SharedConfig.UnitStats[entry.unitName]
+
+		local slow = stats and stats.Slow
+		if slow then
+			self.Services.MobService:ApplySlow(mobId, slow.Amount, slow.Duration)
+		end
+
+		local burn = stats and stats.Burn
+		if burn then
+			self.Services.MobService:ApplyBurn(mobId, burn.Damage, burn.Ticks, burn.Interval, entry.ownerUserId)
+		end
 	end
 
 	return dealt
@@ -738,6 +1073,13 @@ function UnitService:stepCombat()
 	-- Uma leitura por quadro, repassada para baixo: o clima nao muda no meio de um
 	-- laco, e consultar por unidade so gastaria.
 	local weather = self:GetWeather()
+
+	--[[
+		As cartas antes de tudo: o dano, a cadencia e o alcance lidos daqui para baixo
+		saem ja com o que elas fizeram. Uma leitura por quadro, como o clima -- ver
+		`refreshCardModifiers`.
+	]]
+	self:refreshCardModifiers()
 
 	self:collectAuraSources()
 	self:stepTripmines(now, weather)
@@ -772,7 +1114,7 @@ function UnitService:stepCombat()
 			and now - (entry.lastAttack or 0) >= self:getCooldown(entry, now, weather)
 		then
 			local unitPosition = entry.cf.Position
-			local range = SharedConfig.UnitUpgradeConfig:GetRange(entry.unitName, entry.upgrades or 0, weather)
+			local range = self:getRange(entry, weather)
 
 			local targetId = entry.targetMobId
 			local targetValid = false
@@ -824,6 +1166,17 @@ end
 function UnitService:getCooldown(entry, now : number, weather : string?) : number
 	local cooldown = SharedConfig.UnitUpgradeConfig:GetCooldown(entry.unitName, entry.upgrades or 0, weather)
 
+	--[[
+		A carta entra como divisao, igual ao clima: 1.15 e "bate 15% mais rapido", ou
+		seja, o mesmo ciclo em 1/1.15 do tempo. E aqui, e nao no `UnitUpgradeConfig`,
+		pelo mesmo motivo da carga do raio -- o config so conhece numeros que valem
+		para todo mundo, e uma carta vale para quem ela escolheu.
+	]]
+	local cards = self:cardMultiplier(entry, "AttackSpeed")
+	if cards > 0 then
+		cooldown /= cards
+	end
+
 	local charge = self:chargeMultiplier(entry, "AttackSpeed", now)
 	if charge <= 0 then return cooldown end
 
@@ -835,8 +1188,9 @@ function UnitService:getDamage(entry, stats, weather : string?) : number
 	local base = stats.Damage or 0
 	local multiplier = SharedConfig.UnitUpgradeConfig:GetDamageMultiplier(entry.unitName, entry.upgrades or 0, weather)
 	local charge = self:chargeMultiplier(entry, "Damage", GameClock.Now())
+	local cards = self:cardMultiplier(entry, "Damage")
 
-	return math.floor(base * multiplier * charge + 0.5)
+	return math.floor(base * multiplier * charge * cards + 0.5)
 end
 
 function UnitService:getMineLimit(entry, tripmineConfig)
@@ -855,7 +1209,7 @@ end
 
 function UnitService:getRandomPathPointInRange(entry, weather : string?)
 	local unitPosition = entry.cf.Position
-	local range = SharedConfig.UnitUpgradeConfig:GetRange(entry.unitName, entry.upgrades or 0, weather)
+	local range = self:getRange(entry, weather)
 
 	local step = 1
 	local candidates = {}
@@ -1012,16 +1366,32 @@ function UnitService:stepTripmines(now, weather : string?)
 end
 
 function UnitService:payFarmUnits()
+	--[[
+		A renda e paga no fim da wave, fora do laco de combate: sem esta leitura ela
+		sairia com o que as cartas estavam fazendo no ultimo quadro em que alguem
+		atacou -- que pode ter sido antes de o anel do cajado ser desenhado.
+	]]
+	self:refreshCardModifiers()
+
 	for _, entry in ipairs(self.PlacedUnits) do
 		local stats = SharedConfig.UnitStats[entry.unitName]
 		local farm = stats and stats.Farm
 		if farm then
 			local player = Players:GetPlayerByUserId(entry.ownerUserId)
 			if player then
-				-- Sem clima de proposito: a renda da fazenda nao e dano, e o corte de
-				-- 30% da tempestade de areia mexeria na economia da partida em vez de
-				-- no combate — que e o que os climas foram feitos para fazer.
-				local amount = math.floor((farm.Income or 0) * SharedConfig.UnitUpgradeConfig:GetDamageMultiplier(entry.unitName, entry.upgrades or 0) + 0.5)
+				--[[
+					Sem clima de proposito: a renda da fazenda nao e dano, e o corte de
+					30% da tempestade de areia mexeria na economia da partida em vez de
+					no combate — que e o que os climas foram feitos para fazer.
+
+					A **carta**, essa sim, entra: o anel do Robux Royalty e uma carta de
+					economia, e recusa-la aqui seria recusar a coisa que ela faz.
+				]]
+				local income = (farm.Income or 0)
+					* SharedConfig.UnitUpgradeConfig:GetDamageMultiplier(entry.unitName, entry.upgrades or 0)
+					* self:cardMultiplier(entry, "Income")
+
+				local amount = math.floor(income + 0.5)
 				self.Services.MobService:addCash(player, amount)
 				for _, plr in ipairs(Players:GetPlayers()) do
 					Framework:Fire("FarmPayout", plr, entry.unitId, amount)
@@ -1060,7 +1430,18 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 	local projectile = unitStats.Projectile
 	local pierce = projectile and projectile.Subtype == "Piercing" and projectile or nil
 
-	local range = SharedConfig.UnitUpgradeConfig:GetRange(unitName, upgradeLevel, weather)
+	--[[
+		O corte que a carta Cleave It To Me liga no corpo a corpo, com os numeros dela
+		dentro. Congelado aqui junto com o dano, e nao relido a cada acerto, pelo mesmo
+		motivo: um MultiShot leva quase um segundo, e a carta pode vencer no meio dele.
+
+		So vale para quem nao tem area nem projetil -- os dois ja acertam mais de um
+		alvo por conta propria, e somar o corte por cima seria a mesma unidade cobrando
+		duas vezes pela mesma ideia.
+	]]
+	local cleave = (not aoe and not projectile) and self:cardFlag(entry, "Cleave") or nil
+
+	local range = self:getRange(entry, weather)
 	local totalHits = unitStats.Hits or 1
 
 	local attackConfig = SharedConfig.UnitAttackConfig and SharedConfig.UnitAttackConfig[unitName]
@@ -1149,6 +1530,44 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 				-- O alvo saiu da linha entre a mira e o disparo (ele virou uma esquina
 				-- durante o windup): ele levou o tiro do mesmo jeito, senao o golpe
 				-- inteiro se perderia por causa de uma curva.
+				if #hits == 0 then
+					self:creditDamage(entry, resolvedMobId, damage, auraBonus)
+					table.insert(hits, { mobId = resolvedMobId, damage = damage })
+				end
+			elseif cleave and resolvedMobId and predictedPos then
+				--[[
+					O corte do Cleave It To Me: o golpe deixa de valer por alvo e passa a
+					valer pela **fila**, como a flecha do Archer -- mas curto. A linha sai da
+					unidade, passa por onde o alvo vai estar e para no alcance dela, e so os
+					`Targets` primeiros da fila levam.
+
+					O teto existe porque corpo a corpo nao e projetil: "quem esta atras do
+					alvo" sao um ou dois inimigos colados, e nao a coluna inteira. Sem ele um
+					Sword bem posto num mapa que enfileira limparia a wave sozinho.
+				]]
+				local line = self.Services.MobService:GetMobsAlongLine(
+					unitPosition, predictedPos, range, cleave.Width or PIERCE_WIDTH
+				)
+
+				local falloff = math.clamp(cleave.Falloff or 0, 0, 1)
+				local limit = math.max(1, cleave.Targets or 1)
+
+				for index, targetId in ipairs(line) do
+					if index > limit then break end
+
+					local scaled = damage
+					if falloff > 0 and index > 1 then
+						-- O mesmo arredondamento e o mesmo piso de 1 da flecha: acertou,
+						-- tirou vida, e o fim da fila nao vira um "0" flutuando na tela.
+						scaled = math.max(1, math.floor(damage * (1 - falloff) ^ (index - 1) + 0.5))
+					end
+
+					self:creditDamage(entry, targetId, scaled, auraBonus)
+					table.insert(hits, { mobId = targetId, damage = scaled })
+				end
+
+				-- O alvo saiu da linha entre a mira e o golpe: ele leva assim mesmo, senao
+				-- uma curva no caminho anularia o ataque inteiro.
 				if #hits == 0 then
 					self:creditDamage(entry, resolvedMobId, damage, auraBonus)
 					table.insert(hits, { mobId = resolvedMobId, damage = damage })

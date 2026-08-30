@@ -16,7 +16,11 @@ local NODE_PROGRESS_REFRESH = 0.1
 
 local TargetingController = {
 	Controllers = {
-		WeatherController = {}
+		WeatherController = {},
+
+		-- Quem sabe o alcance de verdade de uma unidade: o de tabela, com o clima e
+		-- com as cartas de round. Ver o laco de mira.
+		UnitPlacementController = {},
 	}
 }
 
@@ -143,7 +147,16 @@ function TargetingController:StartLoop()
 			local unitClass = self.ActiveUnits[self.SliceIndex]
 			if unitClass and unitClass.model and unitClass.model.Parent then
 				local unitPosition = unitClass.model:GetPivot().Position
-				local range = SharedConfig.UnitUpgradeConfig:GetRange(unitClass.name, unitClass.upgrades or 0, weather)
+				--[[
+					O alcance passa pelo `UnitPlacementController` para as cartas de round
+					entrarem nele: o servidor mira pelo alcance com carta, e este laco e
+					quem faz o boneco olhar para o alvo. Divergir poria a unidade encarando
+					um inimigo que ela nao alcanca (ou de costas para um que ela alcanca).
+				]]
+				local placement = self.Controllers.UnitPlacementController
+				local range = if placement
+					then placement:getUnitRange(unitClass.name, unitClass.upgrades or 0, unitPosition, unitClass.unitId)
+					else SharedConfig.UnitUpgradeConfig:GetRange(unitClass.name, unitClass.upgrades or 0, weather)
 
 				local target = self:FindBestTarget(unitPosition, range, unitClass.model:GetAttribute("TargetPriority"))
 				unitClass:setTarget(target)

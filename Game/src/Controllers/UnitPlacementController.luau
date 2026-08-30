@@ -167,6 +167,10 @@ local RING_SPIN_SPEED = 40
 local DOTTED_LINE_SPIN_SPEED = 25
 local SELECT_SCALE = 1.3
 
+-- O nome do realce amarelo do atordoamento. Ele e procurado pelo nome quando uma
+-- carta tira o atordoamento antes da hora -- ver o `UnitCleansed` no `construct`.
+local STUN_HIGHLIGHT = "StunHighlight"
+
 -- Como o caminho fica marcado enquanto o jogador posiciona uma unidade.
 local GRID_PREVIEW_COLOR = Color3.fromRGB(255, 0, 0)
 local GRID_PREVIEW_MATERIAL = Enum.Material.Neon
@@ -569,7 +573,8 @@ local UnitPlacementController = {
 		MobController = {},
 		MusicController = {},
 		WeatherController = {},
-		WeatherFeedbackController = {}
+		WeatherFeedbackController = {},
+		CardModifierController = {},
 	},
 	selectedUnit = nil,
 	selectionHighlight = nil,
@@ -680,11 +685,27 @@ end
 	prometeria uma cobertura que ela nao tem. E a mesma funcao que o servidor usa,
 	so que com o clima que este cliente esta vendo.
 ]=]
-function UnitPlacementController:getUnitRange(unitName : string, upgrades : number) : number
+--[=[
+	O alcance de uma unidade como o servidor o calcula: a tabela, com o clima, vezes
+	o que as cartas de round estao fazendo com ele.
+
+	`position` e `unitId` sao o que uma carta de area precisa para responder -- o
+	anel do Staff of the Winds so vale para quem esta dentro dele. Sem eles (o
+	fantasma do posicionamento, que ainda nao esta em lugar nenhum) so entram os
+	modificadores que nao dependem de onde a unidade esta.
+]=]
+function UnitPlacementController:getUnitRange(unitName : string, upgrades : number, position : Vector3?, unitId : string?) : number
 	local weatherController = self.Controllers.WeatherController
 	local weather = weatherController and weatherController:GetCurrent() or nil
 
-	return SharedConfig.UnitUpgradeConfig:GetRange(unitName, upgrades, weather)
+	local range = SharedConfig.UnitUpgradeConfig:GetRange(unitName, upgrades, weather)
+
+	local cards = self.Controllers.CardModifierController
+	if cards then
+		range *= cards:Multiplier("Range", unitName, position, unitId)
+	end
+
+	return range
 end
 
 --[=[
@@ -699,7 +720,13 @@ function UnitPlacementController:resizeSelectionRing()
 	if not self.selectionRing or not self.selectionRing.Parent then return end
 	if not self.selectionRingBase then return end
 
-	local range = self:getUnitRange(unitModel.Name, unitModel:GetAttribute("Upgrades") or 0)
+	local class = self.createdClasses[unitModel]
+	local range = self:getUnitRange(
+		unitModel.Name,
+		unitModel:GetAttribute("Upgrades") or 0,
+		unitModel:GetPivot().Position,
+		class and class.unitId or nil
+	)
 	local scale = self.selectionRingBase.scale * (range * 2) / self.selectionRingBase.diameter
 
 	self:tweenSelectionRing(scale)
@@ -775,7 +802,8 @@ function UnitPlacementController:selectUnit(unitModel)
 
 	if ringPartSel then
 		local upgrades = unitModel:GetAttribute("Upgrades") or 0
-		local unitRange = self:getUnitRange(unitModel.Name, upgrades)
+		local selectedClass = self.createdClasses[unitModel]
+		local unitRange = self:getUnitRange(unitModel.Name, upgrades, unitPos, selectedClass and selectedClass.unitId or nil)
 		local currentDiameter = ringPartSel.Size.X
 		local scaleFactor = (unitRange * 2) / currentDiameter
 		targetScale = Ring:GetScale() * scaleFactor
@@ -937,9 +965,17 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 		self.Controllers.VFXController:Trigger(unitName, "OnPlace", { unitModel = unit })
 	end
 
-	-- Quem nasce no meio de um clima ja nasce com o realce e a billboard dele.
+	--[[
+		Quem nasce no meio de um clima (ou dentro do anel de um cajado) ja nasce com o
+		realce e a billboard dele.
+
+		O `unitId` viaja junto: o feedback em cima da unidade precisa saber qual torre
+		e qual para acender uma carta de alvo unico (o Bloxiade numa torre so) na torre
+		certa. Ele vem daqui em vez de ser lido de volta do `createdClasses` para nao
+		fechar um ciclo entre os dois controllers.
+	]]
 	if self.Controllers.WeatherFeedbackController then
-		self.Controllers.WeatherFeedbackController:Register(unit)
+		self.Controllers.WeatherFeedbackController:Register(unit, unitId)
 	end
 
 	self.Controllers.MusicController:PlaySFX("UnitPlace")
@@ -1432,6 +1468,75 @@ function UnitPlacementController:flashUpgrade(unitModel)
 	end)
 end
 
+--[=[
+	O que esta debaixo do ponteiro, no mundo. O personagem do proprio jogador fica de
+	fora: ele anda pelo mapa e taparia a torre atras dele.
+
+	Devolve o `RaycastResult`, ou nil quando o raio nao encosta em nada -- o ceu, a
+	beirada do mapa.
+]=]
+function UnitPlacementController:raycastFromPointer(screenPosition : Vector2) : RaycastResult?
+	local pointerRay = workspace.CurrentCamera:ViewportPointToRay(screenPosition.X, screenPosition.Y)
+
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	if Player.Character then
+		raycastParams.FilterDescendantsInstances = {Player.Character}
+	end
+
+	return workspace:Raycast(pointerRay.Origin, pointerRay.Direction * 1000, raycastParams)
+end
+
+--- A unidade colocada a que esta peca pertence, ou nil.
+function UnitPlacementController:findUnitAt(instance : Instance?) : Model?
+	if not instance then return nil end
+
+	for unitModel, _ in pairs(self.createdClasses) do
+		if instance == unitModel or instance:IsDescendantOf(unitModel) then
+			return unitModel
+		end
+	end
+
+	return nil
+end
+
+--[=[
+	A unidade que o ponteiro esta apontando: o modelo e o `unitId` dela.
+
+	Existe para as cartas de round que pedem uma torre (o Bloxy Cola, o Bloxiade, o
+	Zippers). Elas precisam do **id**, que e o que o servidor entende, e ele mora na
+	classe da unidade -- que e deste controller, e nao do modelo.
+]=]
+function UnitPlacementController:getUnitAtPointer(screenPosition : Vector2)
+	local hit = self:raycastFromPointer(screenPosition)
+	local unitModel = hit and self:findUnitAt(hit.Instance) or nil
+	if not unitModel then return nil end
+
+	local class = self.createdClasses[unitModel]
+
+	return unitModel, class and class.unitId or nil
+end
+
+--[=[
+	Tranca (ou destranca) o clique no mundo.
+
+	Enquanto uma carta de round esta pedindo um alvo, o clique pertence a ela: a
+	selecao de torre sai da frente e volta quando a mira termina ou e cancelada.
+]=]
+function UnitPlacementController:setPointerLocked(locked : boolean)
+	self.pointerLocked = locked == true
+
+	--[[
+		A mira comeca com a mao vazia: o fantasma de uma unidade equipada disputaria o
+		mesmo clique no mapa, e o card de upgrade de uma torre selecionada ficaria por
+		cima do que a carta esta pedindo. O `clearInteraction` larga os tres de uma vez
+		-- o fantasma, a selecao e a carta da hotbar.
+	]]
+	if self.pointerLocked then
+		self:clearInteraction()
+	end
+end
+
 function UnitPlacementController:construct()
 	--[[
 		Clique do mouse no PC, toque curto no celular: nos dois casos o que chega
@@ -1443,32 +1548,21 @@ function UnitPlacementController:construct()
 	PointerUtil.onPointerAction(function(screenPosition)
 		if self.isPlacing then return end
 
-		local pointerRay = workspace.CurrentCamera:ViewportPointToRay(screenPosition.X, screenPosition.Y)
+		--[[
+			Uma carta de round esta pedindo um alvo: o clique e dela.
 
-		local raycastParams = RaycastParams.new()
-		raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-		if Player.Character then
-			raycastParams.FilterDescendantsInstances = {Player.Character}
-		end
+			Sem esta porta o mesmo clique faria as duas coisas -- escolher a torre para
+			a carta e selecionar aquela torre --, e o jogador terminaria a mira com o
+			card de upgrade aberto por cima de uma carta que acabou de sumir. Quem abre
+			e fecha a porta e o `RoundCardShopController` (ver `setPointerLocked`).
+		]]
+		if self.pointerLocked then return end
 
-		local raycastResult = workspace:Raycast(pointerRay.Origin, pointerRay.Direction * 1000, raycastParams)
+		local hit = self:raycastFromPointer(screenPosition)
+		local foundUnit = hit and self:findUnitAt(hit.Instance) or nil
 
-		if raycastResult then
-			local hitInstance = raycastResult.Instance
-			local foundUnit = nil
-
-			for unitModel, _ in pairs(self.createdClasses) do
-				if hitInstance == unitModel or hitInstance:IsDescendantOf(unitModel) then
-					foundUnit = unitModel
-					break
-				end
-			end
-
-			if foundUnit then
-				self:selectUnit(foundUnit)
-			else
-				self:deselectCurrent()
-			end
+		if foundUnit then
+			self:selectUnit(foundUnit)
 		else
 			self:deselectCurrent()
 		end
@@ -1505,6 +1599,17 @@ function UnitPlacementController:construct()
 				self.classesById[unitId] = nil
 				self.damageDoneById[unitId] = nil
 				unitModel:Destroy()
+
+				--[[
+					A torre que saiu era vizinha das outras, e duas cartas medem
+					vizinhanca (o Iceolated e o Ice to Meet You): vender uma pode ligar ou
+					desligar o buff de quem ficou. A varredura tambem e o que solta esta do
+					registro do feedback.
+				]]
+				if self.Controllers.WeatherFeedbackController then
+					self.Controllers.WeatherFeedbackController:Refresh()
+				end
+
 				break
 				end
 			end
@@ -1585,10 +1690,18 @@ function UnitPlacementController:construct()
 		o normal). Duas cores porque os dois estados vem do mesmo raio e acontecem
 		lado a lado: sem separar, uma unidade Electric carregada pareceria congelada.
 	]=]
-	local function highlightUnit(unitId, duration, color)
+	local function highlightUnit(unitId, duration, color, name)
 		for unitModel, class in pairs(self.createdClasses) do
 			if class and class.unitId == unitId then
 				local highlight = Instance.new("Highlight")
+
+				--[[
+					Nome proprio para o realce poder ser **apagado antes da hora**: o Staff
+					of Healing tira o atordoamento no meio dele, e sem um nome nao haveria
+					como distinguir este realce do verde da selecao, que mora no mesmo
+					modelo.
+				]]
+				highlight.Name = name or "TempHighlight"
 				highlight.FillColor = color
 				highlight.OutlineColor = color
 				highlight.FillTransparency = 0.6
@@ -1611,11 +1724,36 @@ function UnitPlacementController:construct()
 	end
 
 	Framework:Listen("UnitStunned", function(unitId, duration)
-		highlightUnit(unitId, duration, Color3.fromRGB(255, 200, 60))
+		highlightUnit(unitId, duration, Color3.fromRGB(255, 200, 60), STUN_HIGHLIGHT)
 	end)
 
 	Framework:Listen("UnitCharged", function(unitId, duration)
-		highlightUnit(unitId, duration, Color3.fromRGB(90, 220, 255))
+		highlightUnit(unitId, duration, Color3.fromRGB(90, 220, 255), "ChargeHighlight")
+	end)
+
+	--[=[
+		O Staff of Healing tirou o atordoamento desta unidade antes da hora.
+
+		O realce amarelo tem prazo proprio (um `GameClock.Delay` que nasceu com ele) e
+		nao tem como saber que o atordoamento acabou mais cedo -- ele e apagado pelo
+		nome. O VFX do congelamento da neve some pelo mesmo motivo, e por isso o
+		`VFXController` tambem e avisado.
+	]=]
+	Framework:Listen("UnitCleansed", function(unitId)
+		for unitModel, class in pairs(self.createdClasses) do
+			if class and class.unitId == unitId then
+				local highlight = unitModel:FindFirstChild(STUN_HIGHLIGHT)
+				if highlight then
+					highlight:Destroy()
+				end
+				break
+			end
+		end
+
+		local vfx = self.Controllers.VFXController
+		if vfx and vfx.StopFreeze then
+			vfx:StopFreeze(unitId)
+		end
 	end)
 end
 

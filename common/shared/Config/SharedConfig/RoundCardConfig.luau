@@ -91,6 +91,133 @@ RoundCardConfig.Markers = {
 	VFX = "VFX",
 }
 
+--[[ COMO A CARTA É USADA ]]
+
+--[=[
+	O tipo de uso de uma carta: o que acontece entre o clique nela e o efeito.
+
+	| Tipo | O clique na hotbar… |
+	| --- | --- |
+	| `Instant` | já é o uso. A carta some e o efeito entra |
+	| `Unit` | pede **uma unidade**: o próximo clique no mapa escolhe a torre |
+	| `Area` | pede **um lugar**: um anel segue o ponteiro e o clique confirma |
+	| `Move` | pede os dois, nesta ordem: a unidade e para onde ela vai |
+
+	`Move` não é um quarto conceito, é os dois anteriores em fila — é o que o
+	Zippers precisa (qual torre, e para onde), e escrevê-lo como um tipo próprio
+	evita que a carta tenha que inventar um segundo clique por fora do fluxo.
+
+	Carta sem `Use` é `Instant`: é o que as três cartas originais sempre foram, e
+	assim elas continuam valendo sem ganhar um campo que não muda nada.
+
+	**Quem confere é o servidor.** O cliente escolhe o alvo e manda junto com o uso;
+	o `CardShopService` recusa alvo que não bate com o tipo da carta — unidade que
+	não existe, ponto longe demais, alvo faltando. O tipo aqui é o que a **tela**
+	precisa saber para pedir a coisa certa.
+]=]
+RoundCardConfig.Use = {
+	Instant = "Instant",
+	Unit = "Unit",
+	Area = "Area",
+	Move = "Move",
+}
+
+--[=[
+	A mira: o que o jogador vê enquanto a carta espera um alvo.
+
+	O anel é o mesmo modelo que o posicionamento já usa para o alcance de uma torre
+	(`Assets.UI.AOE.Ring`), e de propósito: o jogador já aprendeu que aquele
+	desenho quer dizer "esta área". Um segundo desenho para a mesma ideia só
+	ensinaria a mesma coisa duas vezes.
+
+	**Não há painel nem botão de cancelar.** Quem diz que a mira está aberta é a
+	própria carta na hotbar: ela cresce e apaga as vizinhas, exatamente como uma
+	carta de unidade equipada. Desistir é clicar nela de novo — a mesma coisa que
+	largar uma unidade —, ou Esc no PC.
+
+	As cores separam o que a mira está pedindo: verde é "escolha um lugar", amarelo é
+	"escolha uma torre" e laranja é o segundo passo do Zippers, quando a torre já foi
+	escolhida e falta o destino.
+
+	O amarelo do `Unit` é o realce que a torre debaixo do ponteiro recebe, e ele vale
+	nos dois caminhos: a carta que não mexe em estatística nenhuma (o Zippers) é
+	pintada pelo próprio `RoundCardShopController`, e a que mexe é pintada pelo
+	`WeatherFeedbackController` junto com os ícones do que ela vai sentir — um realce
+	só na torre, senão as duas cores brigariam no mesmo modelo. Por isso a cor mora
+	aqui, e os dois a leem daqui.
+]=]
+RoundCardConfig.Targeting = {
+	RingAsset = { "AOE", "Ring" },
+
+	-- A part de dentro do anel cujo diâmetro serve de régua para a escala. O nome
+	-- veio assim do Studio, e é o mesmo que o `UnitPlacementController` procura.
+	RingPart = "Renge",
+
+	-- Raio do anel de uma carta de área que não declare o seu, em studs.
+	DefaultRadius = 6,
+
+	--[[
+		O quão longe do centro do mapa um alvo pode estar.
+
+		É o mesmo teto do `PlaceUnit` e existe pelo mesmo motivo: um cliente
+		adulterado manda a posição que quiser, e um efeito de área centrado a dez mil
+		studs daqui não é jogada, é lixo no estado da sala.
+	]]
+	MaxDistance = 2000,
+
+	Colors = {
+		Area = Color3.fromRGB(120, 235, 140),
+		Unit = Color3.fromRGB(255, 215, 60),
+		Move = Color3.fromRGB(255, 150, 60),
+	},
+}
+
+--[=[
+	O estouro que a torre solta quando uma carta de alvo único encosta nela.
+
+	É o nome de um asset em `Assets.VFX` -- um Attachment de emissores de rajada --,
+	pendurado na `HumanoidRootPart` da torre e estourado pelo `VFXController`. Ele é
+	o "pegou": a mira já disse qual torre, e sem nada acontecendo no instante do uso
+	a carta some da mão e o jogador fica sem saber se ela valeu.
+
+	Quem dispara é o servidor, para todo mundo na sala ver o estouro na mesma torre
+	-- do mesmo jeito que o raio e o dinheiro da aura.
+]=]
+RoundCardConfig.AppliedVFX = "EffectUnitAppliedVFX"
+
+--[=[
+	O anel que **fica** no chão depois que a carta de área é usada.
+
+	Não é o mesmo da mira. O da mira é o círculo neutro do posicionamento, que só diz
+	"esta área" enquanto o jogador escolhe; este é a arte da carta, um Model por
+	efeito em `Assets.VFX.Rings` — o dourado do Robux, o vento do Winds, o azul do
+	Celestial. Ele nasce onde o jogador clicou e vive exatamente o tempo do efeito:
+	até o fim do round nos cajados de zona, e os segundos da imunidade no Staff of
+	Healing.
+
+	`Path` é o caminho a partir de `ReplicatedStorage.Shared.Assets`. `Default` é o
+	anel de quem não declara um `Ring` próprio — carta nova de área aparece no chão
+	sem precisar de arte nova. `PartSuffix` é como a régua do raio é achada dentro do
+	Model: o `Celestial` traz um `Celestial_Ring`, e é o diâmetro **dessa** Part que
+	a escala usa.
+
+	A régua é uma Part nomeada, e não a caixa do Model, de propósito: um Model de VFX
+	tem emissor de partícula e attachment espalhados, e medir a caixa inteira faria o
+	anel encolher só porque alguém arrastou uma faísca para fora dele.
+]=]
+RoundCardConfig.Rings = {
+	Path = { "VFX", "Rings" },
+	Default = "Base",
+	PartSuffix = "_Ring",
+
+	-- A pasta que o cliente cria no Workspace para guardar os aneis desenhados. Ver
+	-- `CardModifierController:_ringContainer`.
+	Container = "RoundCardRings",
+
+	-- Quanto o anel leva para crescer até o tamanho dele, em segundos reais.
+	Grow = 0.35,
+}
+
 --[[ ANIMAÇÃO ]]
 
 --[[
@@ -191,9 +318,11 @@ RoundCardConfig.DeckCardSize = UDim2.fromScale(0.128, 1.07)
 	| `Title` / `Description` | o que o jogador lê na carta |
 	| `Price` | quanto sai do caixa da partida (`roundcash`) |
 	| `Weight` | o peso no sorteio; sem ele, 1 |
+	| `Use` | o que a carta pede antes de agir (ver `RoundCardConfig.Use`); sem ele, `Instant` |
 	| `Effect` | o nome do efeito no `CardShopService.Effects` |
 	| `Params` | os números que o efeito lê |
 	| `Image` | a arte da carta; sem ela, fica a autorada no `CardTemplate` |
+	| `Ring` | o anel que fica no chão nas cartas de área (ver `RoundCardConfig.Rings`) |
 	| `Visual` | o que o **personagem** faz ao usar a carta; sem ele, nada acontece |
 
 	O `Visual` é uma animação e o que ela dispara:
@@ -223,14 +352,44 @@ RoundCardConfig.DeckCardSize = UDim2.fromScale(0.128, 1.07)
 	com o nome que estiver em `Effect`. O sorteio só oferece o que tem efeito do
 	outro lado: entrada com `Effect` que não existe é descartada com aviso, em vez
 	de virar uma carta que o jogador paga e não faz nada.
+
+	## A maioria das cartas usa o mesmo efeito
+
+	Quase tudo que uma carta de round faz é **deixar uma regra valendo no campo**, e
+	essa regra tem uma gramática própria: o `CardModifier`. Por isso a maior parte
+	do catálogo tem `Effect = "Modifier"` e descreve em `Params.Modifiers` os
+	registros que ela cria — quem os guarda, poda e replica é o
+	`CardModifierService`.
+
+	Dentro de `Params`:
+
+	| Campo | O que é |
+	| --- | --- |
+	| `Modifiers` | a lista de registros do `CardModifier` que a carta cria |
+	| `Duration` | por quantos segundos de partida eles valem; sem isso, até o fim do round |
+	| `Radius` | o raio do anel, nas cartas de área -- e o alcance do efeito dentro dele |
+
+	Dois campos dos registros são preenchidos **no uso**, e não aqui, porque eles
+	dependem do alvo que o jogador escolheu:
+
+	- `Zone = true` vira `{ Position = <onde ele clicou>, Radius = Params.Radius }`;
+	- `Target = true` vira `UnitId = <a torre que ele escolheu>`.
+
+	**Carta sem `Duration` dura o round inteiro.** Não é esquecimento: um buff de
+	campo comprado com o caixa da partida é uma decisão de build, e um prazo curto
+	transformaria toda carta de regra numa versão pior do Bloxy Cola. O prazo existe
+	onde ele é a graça da carta — as bebidas, que dobram um número por dez segundos.
 ]]
 RoundCardConfig.Cards = {
+	--[[ ============================ AS ORIGINAIS ============================ ]]
+
 	{
 		Id = "TimeStop",
 		Title = "TIME STOP",
 		Description = "Freezes every enemy for 4 seconds",
 		Price = 350,
 		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
 		Effect = "TimeStop",
 		Params = { Duration = 4 },
 		Visual = {
@@ -250,6 +409,7 @@ RoundCardConfig.Cards = {
 		Description = "Game speed goes to 3x for 15 seconds",
 		Price = 250,
 		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
 		Effect = "TimeAcceleration",
 		Params = { Scale = 3, Duration = 15 },
 	},
@@ -260,8 +420,515 @@ RoundCardConfig.Cards = {
 		Description = "Clears the weather for one full wave",
 		Price = 300,
 		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
 		Effect = "WeatherReport",
 		Params = { Waves = 1 },
+	},
+
+	--[[ ============================= INSTANTÂNEAS ============================= ]]
+
+	--[[
+		Caixa na mão. É a única carta que paga mais do que custa, e o preço é o freio:
+		400 por 500 são 100 de lucro por uma vaga de oferta e um uso de hotbar. Mexer
+		nos dois números juntos é o que mantém a carta uma escolha em vez de um imposto
+		para quem não a compra.
+	]]
+	{
+		Id = "MoneyBag",
+		Title = "MONEY BAG",
+		Description = "Gives you 500 cash",
+		Price = 400,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://131268059067009",
+		Effect = "GrantCash",
+		Params = { Amount = 500 },
+	},
+
+	{
+		Id = "Trumpet",
+		Title = "TRUMPET",
+		Description = "Every unit attacks 15% faster",
+		Price = 400,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://74040128583244",
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				{ Stats = { AttackSpeed = 1.15 } },
+			},
+		},
+	},
+
+	--[[
+		O trato do Overcharge: 25% a mais para Electric, 11% a menos para todo o
+		resto. Os dois lados são registros separados porque o `Exclude` é o que faz o
+		segundo pegar exatamente quem o primeiro não pegou — inclusive uma unidade
+		sem classe nenhuma, que leva o corte junto.
+	]]
+	{
+		Id = "Overcharge",
+		Title = "OVERCHARGE",
+		Description = "Electric units deal +25% damage, every other unit deals -11%",
+		Price = 350,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://120364507379076",
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				{ Classes = { "Electric" }, Stats = { Damage = 1.25 } },
+				{ Classes = { "Electric" }, Exclude = true, Stats = { Damage = 0.89 } },
+			},
+		},
+	},
+
+	--[[
+		`Cooldown +1.15x` no pedido original é cadência, e não recarga: o card promete
+		três buffs juntos, e aumentar a recarga em 15% seria um nerf escondido no meio
+		de dois buffs. `AttackSpeed = 1.15` é o que o jogador lê como "recarrega mais
+		rápido" no ícone do card — ver o comentário do `Feedback` no `WeatherConfig`.
+	]]
+	{
+		Id = "WattsUp",
+		Title = "WATT'S UP?",
+		Description = "Electric units get +15% damage, range and attack speed",
+		Price = 400,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://101249133973372",
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				{ Classes = { "Electric" }, Stats = { Damage = 1.15, Range = 1.15, AttackSpeed = 1.15 } },
+			},
+		},
+	},
+
+	{
+		Id = "PunchLine",
+		Title = "PUNCH LINE",
+		Description = "Melee units deal +25% damage, but attack 25% slower",
+		Price = 300,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://125434264829869",
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				{ Classes = { "Melee" }, Stats = { Damage = 1.25, AttackSpeed = 0.75 } },
+			},
+		},
+	},
+
+	{
+		Id = "Axecellent",
+		Title = "AXECELLENT!",
+		Description = "Melee units attack 15% faster, ranged units 15% slower",
+		Price = 300,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://132735756087334",
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				{ Classes = { "Melee" }, Stats = { AttackSpeed = 1.15 } },
+				{ Classes = { "Ranged" }, Stats = { AttackSpeed = 0.85 } },
+			},
+		},
+	},
+
+	--[[
+		O corpo a corpo passa a acertar quem vem atrás do alvo. É `Flags`, e não um
+		multiplicador: não existe "cortar 30% do de trás" — ou o golpe alcança a
+		fileira ou não alcança. Quem lê é o `UnitService:executeAttack`, e o número de
+		corpos por golpe está no `Params`.
+	]]
+	{
+		Id = "CleaveItToMe",
+		Title = "CLEAVE IT TO ME!",
+		Description = "Melee units also hit the enemy behind their target",
+		Price = 400,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://134174928139643",
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				--[[
+					Os números do corte moram no próprio `Flags`, e não numa constante do
+					`UnitService`: quem escolhe quantos corpos um corte pega é a carta, e uma
+					segunda carta de corte com números próprios não devia ter que mexer no
+					combate para existir.
+
+					Dois corpos por golpe, e o segundo leva 30% a menos. A queda existe pelo
+					mesmo motivo da flecha do Archer (ver `UnitStats`): acertar dois de graça
+					faria o corpo a corpo dobrar de DPS em qualquer mapa que enfileire.
+
+					`Width` é a folga da linha que sai da unidade e passa pelo alvo — a mesma
+					ideia do `PierceWidth`, um pouco mais larga porque um golpe de corpo a
+					corpo é um arco, e não uma flecha.
+				]]
+				{ Classes = { "Melee" }, Flags = { Cleave = { Targets = 2, Falloff = 0.3, Width = 3 } } },
+			},
+		},
+	},
+
+	--[[
+		Magia que cresce com magia: +0,1% de dano por unidade Magic no mapa. Com dez
+		Magic em campo são 1%, com cinquenta são 5% — o `Scaling` é recontado a cada
+		quadro de combate, então vender uma torre encolhe o bônus na hora.
+	]]
+	{
+		Id = "Abrakadabra",
+		Title = "ABRAKADABRA",
+		Description = "Magic units deal +0.1% damage for every magic unit placed",
+		Price = 300,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+
+		-- Sem `Image`: esta é a única carta nova que não veio com arte, e sem o campo
+		-- ela fica com a autorada no `CardTemplate` em vez de sumir da tela.
+
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				{ Classes = { "Magic" }, Scaling = { Stat = "Damage", Class = "Magic", Amount = 0.001 } },
+			},
+		},
+	},
+
+	--[[
+		Gelo que trabalha melhor sozinho: a unidade Ice sem nenhuma vizinha a até dez
+		studs bate 25% mais rápido. A condição é recontada por quadro, então colocar
+		uma torre ao lado tira o bônus na hora — e vendê-la devolve.
+	]]
+	{
+		Id = "Iceolated",
+		Title = "ICEOLATED",
+		Description = "Ice units get +25% attack speed while no other unit is nearby",
+		Price = 250,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://89798319191056",
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				{
+					Classes = { "Ice" },
+					Condition = "Isolated",
+					ConditionRadius = 10,
+					Stats = { AttackSpeed = 1.25 },
+				},
+			},
+		},
+	},
+
+	--[[
+		O contrário do Iceolated: aqui o gelo é bom para ele e ruim para a vizinhança.
+		O segundo registro pega quem **não** é Ice e tem um Ice a até dez studs.
+	]]
+	{
+		Id = "IceToMeetYou",
+		Title = "ICE TO MEET YOU",
+		Description = "Ice units attack 50% faster; units near them attack 50% slower",
+		Price = 350,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://105810324385179",
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				{ Classes = { "Ice" }, Stats = { AttackSpeed = 1.5 } },
+				{
+					Classes = { "Ice" },
+					Exclude = true,
+					Condition = "NearClass",
+					ConditionClass = "Ice",
+					ConditionRadius = 10,
+					Stats = { AttackSpeed = 0.5 },
+				},
+			},
+		},
+	},
+
+	--[[
+		A lentidão que as unidades de gelo deixam no inimigo pesa 10% a mais.
+
+		É um modificador **global** (sem classe, sem zona, sem unidade): ele não
+		descreve a torre, e sim o estado que ela deixou no inimigo — quem o lê é o
+		`MobService:ApplySlow`, pelo `CardModifier.Global`.
+	]]
+	{
+		Id = "ChillOut",
+		Title = "CHILL OUT",
+		Description = "Ice units slow enemies 10% harder",
+		Price = 250,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://76479415282650",
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				{ Stats = { Slow = 1.1 } },
+			},
+		},
+	},
+
+	-- O outro lado do Chill Out, do lado do fogo: cada tique de queimadura cobra 20%
+	-- a mais. Também global, e pelo mesmo motivo.
+	{
+		Id = "FireHazard",
+		Title = "FIRE HAZARD",
+		Description = "Burning enemies take +20% burn damage",
+		Price = 250,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://107866423132745",
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				{ Stats = { Burn = 1.2 } },
+			},
+		},
+	},
+
+	--[[
+		O último suspiro: enquanto a base estiver abaixo de 20% da vida, todo mundo
+		bate 20% a mais.
+
+		> ⚠️ O pedido original era "+20% de HP nas unidades". **Unidade não tem vida
+		> neste jogo** — nada nunca ataca uma torre, e não há barra para encher. O que
+		> a carta faz é o mesmo contrato pelo lado que existe: um bônus de última hora,
+		> que só acende quando a partida está por um fio. No dia em que a torre tiver
+		> vida, é trocar `Damage` por `Health` nesta linha e mais nada.
+	]]
+	{
+		Id = "NoPainNoGain",
+		Title = "NO PAIN, NO GAIN",
+		Description = "While the base is under 20% HP, every unit deals +20% damage",
+		Price = 250,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://108872703336271",
+		Effect = "Modifier",
+		Params = {
+			Modifiers = {
+				{ BaseHealthBelow = 0.2, Stats = { Damage = 1.2 } },
+			},
+		},
+	},
+
+	--[[
+		Gelo em todo mundo de uma vez. Durante a neve ele cobra o dobro: a lentidão
+		sobe de 50% para 75% e os inimigos ainda ficam quebradiços, levando 20% a mais
+		de dano de qualquer fonte.
+
+		A leitura do clima é do servidor, no instante do uso: comprar a carta esperando
+		a neve chegar é a jogada, e por isso o bônus é decidido quando ela é usada e
+		não quando é comprada.
+	]]
+	{
+		Id = "AzureEverIce",
+		Title = "STAFF OF AZURE EVER ICE",
+		Description = "Slows every enemy by 50% for 10s -- 75% and brittle during snow",
+		Price = 400,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://112747378880473",
+		Effect = "ChillEnemies",
+		Params = {
+			Slow = 0.5,
+			Duration = 10,
+
+			-- O que muda quando a carta é usada com este clima no ar.
+			Weather = "Snow",
+			WeatherSlow = 0.75,
+			WeatherBrittle = 1.2,
+		},
+	},
+
+	--[[ ========================== ALVO: UMA UNIDADE ========================== ]]
+
+	{
+		Id = "BloxyCola",
+		Title = "BLOXY COLA",
+		Description = "Doubles one unit's fire rate for 10 seconds",
+		Price = 200,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Unit,
+		Image = "rbxassetid://71582562553170",
+		Effect = "Modifier",
+		Params = {
+			Duration = 10,
+			Modifiers = {
+				{ Target = true, Stats = { AttackSpeed = 2 } },
+			},
+		},
+	},
+
+	{
+		Id = "Bloxiade",
+		Title = "BLOXIADE",
+		Description = "Doubles one unit's damage for 10 seconds",
+		Price = 200,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Unit,
+		Image = "rbxassetid://95661475359990",
+		Effect = "Modifier",
+		Params = {
+			Duration = 10,
+			Modifiers = {
+				{ Target = true, Stats = { Damage = 2 } },
+			},
+		},
+	},
+
+	--[[ ============================ ALVO: UM LUGAR ============================ ]]
+
+	--[[
+		Tira o atordoamento de quem está no círculo e deixa essas unidades imunes por
+		dez segundos. É a resposta ao trovão e ao congelamento da neve, que são as
+		duas coisas que hoje tiram uma torre da wave inteira.
+
+		A imunidade tem prazo de propósito: sem ele, um cajado bem colocado apagaria a
+		mecânica do clima para aquele canto do mapa até o fim do round.
+	]]
+	{
+		Id = "StaffOfHealing",
+		Title = "STAFF OF HEALING",
+		Description = "Clears stun in an area and grants 10s of stun immunity",
+		Price = 300,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Area,
+		Image = "rbxassetid://109636982142517",
+		Effect = "Cleanse",
+		Ring = "Healing",
+		Params = {
+			Radius = 6,
+			Immunity = 10,
+
+			--[[
+				Um modificador que não modifica nada.
+
+				Ele existe para uma coisa só: **ser o círculo no chão**. O efeito desta
+				carta não é um multiplicador — é o `CleanseUnits`, que acontece num
+				instante —, mas a imunidade que ele deixa dura dez segundos, e o jogador
+				precisa ver até onde ela chegou e por quanto tempo. Como zona, o anel
+				nasce e morre junto com ela sem nenhum caminho de desenho próprio.
+
+				Sem `Stats` e sem `Flags` de propósito: quem lê os multiplicadores passa
+				direto por ele.
+			]]
+			Modifiers = {
+				{ Zone = true },
+			},
+		},
+	},
+
+	--[[
+		Os três cajados são a mesma ideia: um anel no chão que troca uma coisa por
+		outra para quem estiver dentro dele. O primeiro registro é quem a carta
+		favorece, o segundo é o pedágio que todo o resto paga — e é o `Exclude` que
+		garante que os dois cubram exatamente o mapa inteiro sem sobreposição.
+
+		O anel **fica**: sem `Duration`, ele vale até o fim do round. Onde o jogador o
+		desenha é a decisão inteira da carta.
+	]]
+	{
+		Id = "CelestialStaff",
+		Title = "CELESTIAL STAFF",
+		Description = "Ring of mana: magic units get 1.2x damage and 1.1x fire rate, everyone else is weakened",
+		Price = 500,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Area,
+		Image = "rbxassetid://82581504689393",
+		Ring = "Celestial",
+		Effect = "Modifier",
+		Params = {
+			Radius = 7,
+			Modifiers = {
+				{ Zone = true, Classes = { "Magic" }, Stats = { Damage = 1.2, AttackSpeed = 1.1 } },
+				{
+					Zone = true,
+					Classes = { "Magic" },
+					Exclude = true,
+					Stats = { Damage = 0.8, AttackSpeed = 0.9, Income = 0.9 },
+				},
+			},
+		},
+	},
+
+	{
+		Id = "RobuxRoyaltyStaff",
+		Title = "STAFF OF ROBUX ROYALTY",
+		Description = "Ring of Robux: 1.1x hit income and 1.15x eco income, at 0.8x damage and fire rate",
+		Price = 450,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Area,
+		Image = "rbxassetid://118780034086303",
+		Ring = "Robux",
+		Effect = "Modifier",
+		Params = {
+			Radius = 7,
+			Modifiers = {
+				{ Zone = true, Stats = { HitIncome = 1.1, Damage = 0.8, AttackSpeed = 0.8 } },
+
+				-- A renda da fazenda por cima do anterior: quem está no anel e é de
+				-- renda leva os dois registros, e eles se multiplicam.
+				{ Zone = true, Farm = true, Stats = { Income = 1.15 } },
+			},
+		},
+	},
+
+	--[[
+		O anel de vento favorece quem tem o símbolo do arco -- que neste jogo é a
+		classe `Ranged`, a mesma que o ícone do card desenha (ver `ClassConfig.Icons`).
+	]]
+	{
+		Id = "WindsStaff",
+		Title = "STAFF OF THE WINDS",
+		Description = "Windy zone: ranged units get 1.1x damage and 1.2x range, everyone else 0.8x damage",
+		Price = 450,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Area,
+		Image = "rbxassetid://109862438058085",
+		Ring = "Windy",
+		Effect = "Modifier",
+		Params = {
+			Radius = 7,
+			Modifiers = {
+				{ Zone = true, Classes = { "Ranged" }, Stats = { Damage = 1.1, Range = 1.2 } },
+				{ Zone = true, Classes = { "Ranged" }, Exclude = true, Stats = { Damage = 0.8 } },
+			},
+		},
+	},
+
+	--[[ ====================== ALVO: UMA UNIDADE E UM LUGAR ====================== ]]
+
+	--[[
+		A única carta que mexe no tabuleiro em vez de nos números. O destino passa
+		pelas mesmas conferências de `PlaceUnit` — fora do caminho, longe das outras
+		torres, sem ninguém em cima —, e um destino recusado **não gasta a carta**.
+	]]
+	{
+		Id = "Zippers",
+		Title = "ZIPPERS",
+		Description = "Move one placed unit to any other valid spot",
+		Price = 150,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Move,
+		Image = "rbxassetid://137527028552020",
+		Effect = "MoveUnit",
+
+		--[[
+			O `Radius` desta carta não é área de efeito: ela não tem nenhuma. Ele é o
+			tamanho do anel que marca **o ponto** para onde a torre vai, e por isso é
+			pequeno — o anel de 15 studs do padrão diria ao jogador que ele está
+			escolhendo uma região, e não um lugar.
+		]]
+		Params = { Radius = 2 },
 	},
 }
 
@@ -279,6 +946,29 @@ function RoundCardConfig.Get(id : any)
 	end
 
 	return byId[id]
+end
+
+--[=[
+	O tipo de uso de uma carta, sempre um dos de `RoundCardConfig.Use`.
+
+	Carta sem o campo — e carta que nem existe, porque o `Id` veio da rede — é
+	`Instant`. É o padrão certo nos dois casos: as três cartas originais são
+	instantâneas, e um `Id` desconhecido não pode fazer a tela entrar num modo de
+	mira do qual o jogador não teria como sair.
+]=]
+function RoundCardConfig.GetUse(id : any) : string
+	local card = RoundCardConfig.Get(id)
+	local use = card and card.Use
+
+	return RoundCardConfig.Use[use] or RoundCardConfig.Use.Instant
+end
+
+--- O raio do anel desta carta, para a mira e para a zona que ela deixa.
+function RoundCardConfig.GetRadius(id : any) : number
+	local card = RoundCardConfig.Get(id)
+	local radius = card and card.Params and card.Params.Radius
+
+	return radius or RoundCardConfig.Targeting.DefaultRadius
 end
 
 --- De quantas em quantas waves a loja aparece nesta dificuldade.

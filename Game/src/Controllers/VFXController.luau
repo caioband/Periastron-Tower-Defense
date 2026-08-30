@@ -21,6 +21,7 @@ local Framework = Me.new()
 
 local WeatherConfig = SharedConfig.WeatherConfig
 local ThunderConfig = WeatherConfig.Thunder
+local RoundCardConfig = SharedConfig.RoundCardConfig
 
 local DEFAULT_LIFETIME = 2
 local DEFAULT_EMIT_COUNT = 25
@@ -359,6 +360,62 @@ function VFXController:PlayFreeze(unitId : string, weatherName : string?, durati
 	self:playFreezeAura(freeze.Aura, root, duration or 0)
 end
 
+--[=[
+	Apaga a aura de congelamento de uma unidade antes da hora dela.
+
+	E o Staff of Healing: ele tira o atordoamento no meio, e a aura tem prazo proprio
+	-- um `GameClock.Delay` que nasceu junto com ela e nao tem como saber que o
+	congelamento acabou mais cedo. Sem isto a unidade voltaria a atacar envolvida numa
+	nevasca que ja nao existe.
+
+	As auras sao procuradas pelo nome do asset, que e o mesmo do clone (ver
+	`playFreezeAura`), e os nomes saem do config: um clima novo com `Freeze` proprio
+	entra nesta limpeza sem passar por aqui.
+
+	O desligar e o mesmo do fim normal -- `disable` e destruicao so depois do rabo das
+	ultimas particulas --, senao a aura sumiria com um corte.
+]=]
+function VFXController:StopFreeze(unitId : string)
+	local model = self:resolveUnitModel(unitId)
+	if not model or not model.Parent then return end
+
+	local root = model:FindFirstChild(UNIT_ROOT_NAME) or model.PrimaryPart
+	if not root then return end
+
+	for _, effects in WeatherConfig.Effects do
+		local aura = effects.Freeze and effects.Freeze.Aura
+		local clone = aura and root:FindFirstChild(aura)
+
+		if clone then
+			VFX.disable(clone)
+			VFX.destroyAfter(clone, VFX.maxLifetime(clone) or FREEZE_AURA_FALLBACK)
+		end
+	end
+end
+
+--[=[
+	O estouro de uma carta de round de alvo unico encostando numa torre.
+
+	Quem manda e o `CardShopService`, no servidor, e ele manda para **todos**: a carta
+	e comprada por uma pessoa, mas o efeito e da sala, e o estouro tem que aparecer na
+	mesma torre para todo mundo -- como o raio e o dinheiro da aura.
+
+	O caminho e o mesmo do estouro do congelamento: o asset e pendurado dentro da
+	`HumanoidRootPart` da torre (e por isso ele acompanha o modelo sem weld nenhum) e
+	estourado de uma vez. Os `EmitCount` de cada emissor vem autorados no asset, e a
+	faxina sai do maior tempo de vida das particulas dele -- mexer no emitter no
+	Studio nao deixa lixo para tras.
+]=]
+function VFXController:PlayUnitApplied(unitId : string)
+	local model = self:resolveUnitModel(unitId)
+	if not model or not model.Parent then return end
+
+	local root = model:FindFirstChild(UNIT_ROOT_NAME) or model.PrimaryPart
+	if not root or not root:IsA("BasePart") then return end
+
+	self:EmitAttached(self:AttachAsset(RoundCardConfig.AppliedVFX, root))
+end
+
 function VFXController:resolveUnitModel(unitId)
 	local placement = self.Controllers.UnitPlacementController
 	if not placement or not placement.createdClasses then return nil end
@@ -542,6 +599,10 @@ function VFXController:construct()
 
 	Framework:Listen("AuraBonusVFX", function(unitId : string)
 		self:PlayAuraBonus(unitId)
+	end)
+
+	Framework:Listen("RoundCardApplied", function(unitId : string)
+		self:PlayUnitApplied(unitId)
 	end)
 
 	--[[

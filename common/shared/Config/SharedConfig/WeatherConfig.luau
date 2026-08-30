@@ -344,14 +344,27 @@ WeatherConfig.Feedback = {
 	HighlightName = "WeatherHighlight",
 
 	--[[
-		Uma linha por estatística que o clima mexe, na ordem em que os ícones
-		aparecem na billboard. `Buff` é o label para multiplicador acima de 1 e
-		`Debuff` o de abaixo.
+		Uma linha por ícone da billboard, na ordem em que eles aparecem. `Buff` é o
+		label para multiplicador acima de 1 e `Debuff` o de abaixo.
+
+		**Esta lista não é só do clima.** Ela é o vocabulário da billboard, e quem a
+		lê são as duas coisas que mexem numa unidade em campo: o clima e as cartas de
+		round (ver `CardModifier` e o `WeatherFeedbackController`, que combina as
+		duas). Por isso `Income`/`HitIncome` estão aqui mesmo sem nenhum clima
+		mexendo em renda — o multiplicador de um clima para uma estatística que ele
+		não declara é 1, e a linha simplesmente não acende.
+
+		`Stats` é uma **lista** porque um ícone pode representar mais de uma
+		estatística: o dinheiro da unidade sai de dois números — a renda da farm
+		(`Income`) e o que o dano dela paga (`HitIncome`) —, e são um ícone só na
+		cabeça dela. Os multiplicadores da linha são multiplicados entre si, então o
+		que acende é o efeito líquido no bolso do jogador.
 	]]
 	Stats = {
-		{ Stat = "Damage", Buff = "BuffDamage", Debuff = "DebuffDamage" },
-		{ Stat = "Range", Buff = "BuffRange", Debuff = "DebuffRange" },
-		{ Stat = "AttackSpeed", Buff = "BuffCooldown", Debuff = "DebuffCooldown" },
+		{ Stats = { "Damage" }, Buff = "BuffDamage", Debuff = "DebuffDamage" },
+		{ Stats = { "Range" }, Buff = "BuffRange", Debuff = "DebuffRange" },
+		{ Stats = { "AttackSpeed" }, Buff = "BuffCooldown", Debuff = "DebuffCooldown" },
+		{ Stats = { "Income", "HitIncome" }, Buff = "BuffEco", Debuff = "DebuffEco" },
 	},
 
 	--[[
@@ -658,64 +671,6 @@ function WeatherConfig.GetMobMultiplier(weatherName : string?, stat : string) : 
 	local effects = WeatherConfig.GetEffects(weatherName)
 	local mobs = effects and effects.Mobs
 	return (mobs and mobs[stat]) or 1
-end
-
---[=[
-	O que o clima está fazendo com uma unidade, do ponto de vista da tela.
-
-	Devolve `{ Icons = { nomes }, Kind = "Buff" | "Debuff" }`, ou `nil` quando não há
-	nada a mostrar: sem clima no ar, unidade imune, ou classe que o clima não cita.
-
-	`Icons` sai na ordem de `Feedback.Stats`, e é a mesma ordem em que a billboard os
-	mostra. Só entram estatísticas cujo multiplicador saiu de 1 — um clima que mexe
-	só no alcance acende um ícone só.
-
-	`Kind` é **`Debuff` sempre que houver um debuff**, mesmo com buff junto. Nenhum
-	clima de hoje faz as duas coisas com a mesma unidade, mas quando fizer, o vermelho
-	é o que o jogador precisa ver: o buff ele descobre no card, a perda ele precisa
-	perceber de longe para reagir a tempo.
-]=]
-function WeatherConfig.GetUnitFeedback(weatherName : string?, unitName : string?)
-	if not weatherName then return nil end
-	if not WeatherConfig.GetEffects(weatherName) then return nil end
-	if WeatherConfig.IsImmune(weatherName, unitName) then return nil end
-
-	--[[
-		Unidade desligada tem resposta própria, e curta: o que ela precisa comunicar
-		é "esta não está atacando", não em quanto cada estatística mexeu. Os números
-		dela continuam existindo — só não são usados por ninguém enquanto o clima
-		durar, e mostrá-los sugeriria uma unidade meio funcionando.
-	]]
-	if WeatherConfig.IsDisabled(weatherName, unitName) then
-		return {
-			Icons = { WeatherConfig.Feedback.Disabled },
-			Kind = "Debuff",
-		}
-	end
-
-	local icons = {}
-	local hasDebuff = false
-
-	for _, entry in WeatherConfig.Feedback.Stats do
-		local multiplier = WeatherConfig.GetUnitMultiplier(weatherName, unitName, entry.Stat)
-		if multiplier == 1 then continue end
-
-		if multiplier > 1 then
-			table.insert(icons, entry.Buff)
-		else
-			table.insert(icons, entry.Debuff)
-			hasDebuff = true
-		end
-	end
-
-	if #icons == 0 then
-		return nil
-	end
-
-	return {
-		Icons = icons,
-		Kind = if hasDebuff then "Debuff" else "Buff",
-	}
 end
 
 -- Os climas que um mapa pode sortear. Mapa sem pool devolve lista vazia.

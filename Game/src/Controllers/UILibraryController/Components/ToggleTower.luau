@@ -375,6 +375,48 @@ local function getWeather()
 	return weatherController and weatherController:GetCurrent() or nil
 end
 
+--- Quem nao esta sob carta nenhuma. Ver `getCards`.
+local NO_CARDS = { Damage = 1, AttackSpeed = 1, Range = 1, Income = 1 }
+
+--[=[
+	O que as cartas de round estao fazendo com **esta** unidade.
+
+	E o mesmo motivo do clima logo acima, e o mesmo motivo do circulo de alcance no
+	chao: um anel de cajado desenhado em cima da torre muda o dano, a cadencia e o
+	alcance dela, e um card que continuasse mostrando os numeros de tabela estaria
+	mentindo sobre a unidade que o jogador esta olhando. Quem redesenha o card quando
+	uma carta e usada e o `CardModifierController`.
+
+	A conta e a **mesma** do servidor -- o `CardModifier`, que e compartilhado --, e
+	nao uma segunda que possa divergir dela. O `unitId` sai da classe da unidade, e e
+	o que faz uma carta de alvo unico (o Bloxiade numa torre so) aparecer no card
+	daquela torre e em mais nenhum.
+
+	Sem o controller na mao, ou com a unidade fora do Workspace, tudo vale 1: o card
+	mostra o numero de tabela, que e o que ele sempre mostrou.
+]=]
+local function getCards(unitModel : Model?)
+	local controller = Framework:Get("CardModifierController", false, false)
+	if not controller or not unitModel or not unitModel.Parent then
+		return NO_CARDS
+	end
+
+	local placement = Framework:Get("UnitPlacementController", false, false)
+	local classes = placement and placement.createdClasses
+	local class = classes and classes[unitModel]
+
+	local unitId = class and class.unitId or nil
+	local position = unitModel:GetPivot().Position
+	local unitName = unitModel.Name
+
+	return {
+		Damage = controller:Multiplier("Damage", unitName, position, unitId),
+		AttackSpeed = controller:Multiplier("AttackSpeed", unitName, position, unitId),
+		Range = controller:Multiplier("Range", unitName, position, unitId),
+		Income = controller:Multiplier("Income", unitName, position, unitId),
+	}
+end
+
 --[=[
 	Dano por golpe, ou a renda quando a unidade e uma Farm -- que nao ataca. Mesma
 	conta para o nivel atual e para a previa do proximo.
@@ -383,17 +425,31 @@ end
 	jogador precisa saber para decidir se a farm se paga: a renda cai no fim de
 	cada wave, e nao no fim do round.
 ]=]
-local function formatDamageOrIncome(unitName : string, level : number, weather) : string
+local function formatDamageOrIncome(unitName : string, level : number, weather, cards) : string
 	local upgradeConfig = SharedConfig.UnitUpgradeConfig
 	local unitStats = SharedConfig.UnitStats[unitName]
 	local farm = unitStats and unitStats.Farm
+	cards = cards or NO_CARDS
 
 	if farm then
-		local income = math.floor((farm.Income or 0) * upgradeConfig:GetDamageMultiplier(unitName, level) + 0.5)
+		local income = math.floor((farm.Income or 0)
+			* upgradeConfig:GetDamageMultiplier(unitName, level)
+			* cards.Income + 0.5)
+
 		return "$" .. UIUtil.formatAbbreviated(income) .. " PER WAVE"
 	end
 
-	return formatStat(upgradeConfig:GetDamage(unitName, level, weather)) .. " DMG"
+	--[[
+		Montado a partir do dano base em vez de multiplicar o `GetDamage`, para o
+		arredondamento ser o **mesmo** do servidor: ele arredonda uma vez, no fim
+		(`UnitService:getDamage`), e arredondar duas vezes deixaria o card um ponto
+		acima ou abaixo do que entra no mob.
+	]]
+	local damage = math.floor((unitStats and unitStats.Damage or 0)
+		* upgradeConfig:GetDamageMultiplier(unitName, level, weather)
+		* cards.Damage + 0.5)
+
+	return formatStat(damage) .. " DMG"
 end
 
 --[=[
@@ -411,15 +467,23 @@ end
 	Farm sem aura (uma farm nova que so pague renda) continua caindo no cooldown --
 	nao ha bonus para mostrar.
 ]=]
-local function formatCooldownOrBonus(unitName : string, level : number, weather) : string
+local function formatCooldownOrBonus(unitName : string, level : number, weather, cards) : string
 	local upgradeConfig = SharedConfig.UnitUpgradeConfig
 	local bonus = upgradeConfig:GetAuraBonus(unitName, level)
+	cards = cards or NO_CARDS
 
 	if bonus > 0 then
 		return formatNumber(bonus * 100, 1) .. "% PER UNIT BONUS"
 	end
 
-	return formatNumber(upgradeConfig:GetCooldown(unitName, level, weather), 2) .. " COOLDOWN"
+	-- Cadencia entra como divisao, igual ao clima: 1.15 e "bate 15% mais rapido",
+	-- ou seja, o mesmo ciclo em 1/1.15 do tempo.
+	local cooldown = upgradeConfig:GetCooldown(unitName, level, weather)
+	if cards.AttackSpeed > 0 then
+		cooldown /= cards.AttackSpeed
+	end
+
+	return formatNumber(cooldown, 2) .. " COOLDOWN"
 end
 
 --[=[
@@ -854,10 +918,12 @@ function module:refresh()
 
 		Farm nao ataca: no lugar do dano, a renda por wave.
 	]]
-	CardUpgrade.DamagePerSecond.Text = formatDamageOrIncome(unitName, level, weather)
+	local cards = getCards(self.currentUnit)
 
-	CardUpgrade.AttackSpeed.Text = formatCooldownOrBonus(unitName, level, weather)
-	CardUpgrade.Range.Text = formatStat(upgradeConfig:GetRange(unitName, level, weather)) .. " RANGE"
+	CardUpgrade.DamagePerSecond.Text = formatDamageOrIncome(unitName, level, weather, cards)
+
+	CardUpgrade.AttackSpeed.Text = formatCooldownOrBonus(unitName, level, weather, cards)
+	CardUpgrade.Range.Text = formatStat(upgradeConfig:GetRange(unitName, level, weather) * cards.Range) .. " RANGE"
 
 	self:refreshPreview()
 	self:refreshPriority()
@@ -901,10 +967,12 @@ function module:refreshPreview()
 	local weather = getWeather()
 	local nextLevel = level + 1
 
+	local cards = getCards(unitModel)
+
 	local texts = {
-		DamagePerSecondUpgrade = formatDamageOrIncome(unitName, nextLevel, weather),
-		CooldownUpgrade = formatCooldownOrBonus(unitName, nextLevel, weather),
-		RangeUpgrade = formatStat(upgradeConfig:GetRange(unitName, nextLevel, weather)) .. " RANGE",
+		DamagePerSecondUpgrade = formatDamageOrIncome(unitName, nextLevel, weather, cards),
+		CooldownUpgrade = formatCooldownOrBonus(unitName, nextLevel, weather, cards),
+		RangeUpgrade = formatStat(upgradeConfig:GetRange(unitName, nextLevel, weather) * cards.Range) .. " RANGE",
 	}
 
 	for _, entry in PREVIEW_LABELS do

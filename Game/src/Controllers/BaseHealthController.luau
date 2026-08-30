@@ -124,8 +124,15 @@ end
 function BaseHealthController:construct()
 	-- Ligado antes de procurar o label: a procura cede a thread, e um vazamento no
 	-- meio dela seria um numero perdido.
-	Framework:Listen("UpdateBaseHealth", function(current : number, _max : number)
+	Framework:Listen("UpdateBaseHealth", function(current : number, max : number)
 		self.Current = tonumber(current) or self.Current
+
+		-- O maximo nao aparece no label (ele mostra so o numero de agora), mas quem
+		-- pergunta a **fracao** precisa dele: a carta No Pain, No Gain so vale abaixo
+		-- de 20% da base, e o card tem que mostrar o mesmo bonus que o servidor esta
+		-- dando.
+		self.Max = tonumber(max) or self.Max
+
 		self:_write()
 	end)
 
@@ -139,6 +146,22 @@ function BaseHealthController:construct()
 	-- O primeiro valor. Se um `UpdateBaseHealth` chegou enquanto o mapa carregava,
 	-- este pedido so confirma o que ja esta escrito.
 	Framework:Fire("RequestBaseHealth")
+end
+
+--[=[
+	A vida da base como fracao de 0 a 1, ou `nil` enquanto o primeiro
+	`UpdateBaseHealth` nao chegou.
+
+	`nil` de proposito, e nao 1: quem le e o `CardModifier`, e "ainda nao sei" tem
+	que ser diferente de "esta cheia" -- a diferenca entre as duas decide se um
+	bonus de ultima hora aparece no card.
+]=]
+function BaseHealthController:GetHealthRatio() : number?
+	if not self.Current or not self.Max or self.Max <= 0 then
+		return nil
+	end
+
+	return math.clamp(self.Current / self.Max, 0, 1)
 end
 
 function BaseHealthController:start()

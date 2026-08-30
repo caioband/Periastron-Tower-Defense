@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -10,8 +11,13 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 local Configs = Shared:WaitForChild("Config")
+local Assets = Shared:WaitForChild("Assets")
+local Utils = Shared:WaitForChild("Util")
+
+local UIAssets = Assets:WaitForChild("UI")
 
 local SharedConfig = require(Configs.SharedConfig)
+local PointerUtil = require(Utils.PointerUtil)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
@@ -22,6 +28,8 @@ local RoundCardConfig = SharedConfig.RoundCardConfig
 
 local GUI = RoundCardConfig.Gui
 local ANIM = RoundCardConfig.Animation
+local USE = RoundCardConfig.Use
+local TARGETING = RoundCardConfig.Targeting
 
 local WAIT_TIMEOUT = 60
 
@@ -33,6 +41,17 @@ local CARD_SOUND = "CardFlip"
 local MARKERS = RoundCardConfig.Markers
 
 local CHARACTER_ROOT = "HumanoidRootPart"
+
+--[[
+	Quanto o anel de uma carta de area precisa andar para a previa ser refeita, em
+	studs.
+
+	A previa e uma varredura por todas as unidades do mapa, e o cursor parado manda o
+	mesmo ponto sessenta vezes por segundo. Um decimo de stud e menor do que qualquer
+	movimento que mude quem esta dentro do anel, e corta a varredura inteira nos
+	quadros em que o jogador nao mexeu a mao.
+]]
+local PREVIEW_STEP = 0.1
 
 -- Quanto o jogador pode ficar ancorado, no maximo, esperando a animacao terminar.
 -- E rede de seguranca, e nao a duracao do gesto: ver o `task.delay` no fim do
@@ -59,9 +78,34 @@ local ANCHOR_TIMEOUT = 8
 		   fecha a loja; o botao **nao** volta -- ele foi gasto no clique de abrir, e
 		   so a proxima oferta (outro `token`, na proxima wave de loja) o traz de
 		   volta para a beirada;
-		5. o clique na carta da hotbar pede o uso, e ela some quando o
-		   `RoundCardUsed` confirma -- que e tambem quando o personagem de quem usou
-		   faz o gesto da carta, se ela tiver um `Visual` no config.
+		5. o clique na carta da hotbar pede o uso -- na hora, se a carta for
+		   instantanea, ou depois da **mira**, se ela pedir alvo. A carta some quando o
+		   `RoundCardUsed` confirma, que e tambem quando o personagem de quem usou faz
+		   o gesto dela, se ela tiver um `Visual` no config.
+
+	## A mira
+
+	Nem toda carta age sozinha. O `Use` do `RoundCardConfig` diz o que ela pede antes
+	de agir: nada (`Instant`), uma torre (`Unit`), um lugar (`Area`) ou os dois em
+	fila (`Move`, que e o Zippers). Pedindo alvo, o clique na hotbar nao vira pedido
+	-- ele entra na mira, e quem vira pedido e o clique **seguinte**, o que escolhe.
+
+	**Uma carta em mira e uma carta na mao**, e a hotbar a desenha como desenha uma
+	unidade equipada: ela cresce e as vizinhas apagam (`Card:setSelectedRound`). Nao
+	ha painel nem botao de cancelar -- o aviso e a propria carta, do mesmo jeito que
+	nao ha aviso nenhum quando o jogador poe uma unidade na mao. Desistir e clicar
+	nela de novo, igual a largar a unidade; no PC o Esc tambem serve.
+
+	Enquanto a mira dura, o clique no mundo pertence a carta: o
+	`UnitPlacementController` larga a mao inteira (o fantasma, a torre selecionada e
+	a carta de unidade equipada) e para de selecionar torre. Sem isso o mesmo clique
+	faria as duas coisas, e o fantasma de uma unidade equipada disputaria o mesmo
+	ponto do mapa. Ele volta ao normal quando a mira acaba, de que jeito for --
+	confirmada, cancelada, ou com a carta saindo da mao por baixo dela.
+
+	Desistir nao custa nada: a carta so e gasta quando o servidor confirma o uso, e
+	escolher um lugar e depois mudar de ideia nao e usar a carta. Quem confere o alvo
+	e o servidor, como tudo o mais -- daqui sai a escolha, e nao a permissao.
 
 	**Nada e desenhado por conta propria.** A carta nao entra no deck no clique e
 	nao sai dele no uso: as duas coisas esperam a confirmacao do servidor, que e
@@ -80,6 +124,14 @@ local RoundCardShopController = {
 		MusicController = {},
 		UILibraryController = {},
 		VFXController = {},
+
+		-- Quem sabe que torre esta debaixo do ponteiro, e quem tranca o clique no
+		-- mundo enquanto uma carta esta pedindo alvo. Ver `_beginTargeting`.
+		UnitPlacementController = {},
+
+		-- Quem desenha o buff e o debuff em cima das unidades. E ele quem mostra, na
+		-- cabeca de cada torre, o que a carta que esta sendo mirada faria com ela.
+		WeatherFeedbackController = {},
 	},
 }
 
@@ -891,18 +943,58 @@ function RoundCardShopController:_addToDeck(uid : string, cardId : string)
 	self.DeckCards[uid] = true
 
 	self:_deck("addRound", uid, wrapper, function()
-		--[[
-			Um uso por carta, e quem gasta e o servidor. O trinco local existe para o
-			clique duplo nao virar dois pedidos: o segundo seria recusado, mas o
-			primeiro ja teria sumido com a carta e o jogador veria um erro no log por
-			algo que ele nao fez de errado.
-		]]
-		if self.UsePending[uid] then return end
-		self.UsePending[uid] = true
-
-		Framework:Fire("UseRoundCard", uid)
-		self:_playSound(CARD_SOUND)
+		self:_requestUse(uid, cardId)
 	end)
+end
+
+--[=[
+	O clique numa carta da hotbar.
+
+	Carta instantanea vira pedido na hora, como sempre foi. Carta que pede alvo
+	entra na mira, e so vira pedido no clique seguinte -- o que escolhe a torre ou o
+	lugar.
+
+	Clicar de novo na carta que **ja** esta mirando desiste dela. E o par natural do
+	clique que comecou: quem clicou por engano procura o mesmo lugar para desfazer, e
+	nao o botao de cancelar.
+]=]
+function RoundCardShopController:_requestUse(uid : string, cardId : string)
+	if self.UsePending[uid] then return end
+
+	if self.Targeting and self.Targeting.Uid == uid then
+		self:_cancelTargeting()
+		return
+	end
+
+	local use = RoundCardConfig.GetUse(cardId)
+
+	if use == USE.Instant then
+		self:_sendUse(uid, nil)
+		return
+	end
+
+	self:_beginTargeting(uid, cardId, use)
+end
+
+--[=[
+	Manda o uso para o servidor.
+
+	`target` e o que a mira escolheu -- a torre, o lugar, ou os dois --, e vai como
+	tabela porque o servidor confere campo por campo contra o tipo da carta.
+
+	**Um uso por carta, e quem gasta e o servidor.** O trinco local existe para o
+	clique duplo nao virar dois pedidos: o segundo seria recusado, mas o primeiro ja
+	teria sumido com a carta e o jogador veria um erro no log por algo que ele nao fez
+	de errado.
+]=]
+function RoundCardShopController:_sendUse(uid : string, target : any?)
+	if self.UsePending[uid] then return end
+	self.UsePending[uid] = true
+
+	self:_stopTargeting()
+
+	Framework:Fire("UseRoundCard", uid, target)
+	self:_playSound(CARD_SOUND)
 end
 
 --[=[
@@ -914,6 +1006,15 @@ function RoundCardShopController:_removeFromDeck(uid : string)
 
 	self.DeckCards[uid] = nil
 	self.UsePending[uid] = nil
+
+	--[[
+		A carta que estava mirando saiu da mao: ou o servidor a gastou, ou ele a
+		recusou e devolveu o estado. Nos dois casos nao ha mais o que mirar, e uma mira
+		orfa deixaria o clique do jogador trancado num alvo que nao vai a lugar nenhum.
+	]]
+	if self.Targeting and self.Targeting.Uid == uid then
+		self:_stopTargeting()
+	end
 
 	self:_deck("removeRound", uid)
 end
@@ -1057,6 +1158,464 @@ function RoundCardShopController:_playUseVisual(cardId : any)
 	task.delay(ANCHOR_TIMEOUT, finish)
 end
 
+--[[ A MIRA ]]
+
+--[=[
+	O anel que segue o ponteiro enquanto a carta pede um lugar.
+
+	E o mesmo modelo do circulo de alcance de uma torre selecionada, de proposito: o
+	jogador ja aprendeu que aquele desenho quer dizer "esta area". A escala sai do
+	diametro da part de dentro dele, do mesmo jeito que o `UnitPlacementController`
+	faz -- assim mexer no anel no Studio nao deixa o raio mentindo.
+]=]
+function RoundCardShopController:_buildRing(radius : number, color : Color3?) : Model?
+	local template : Instance? = UIAssets
+	for _, name in TARGETING.RingAsset do
+		template = template and template:FindFirstChild(name)
+	end
+
+	if not template or not template:IsA("Model") then
+		warn(`[RoundCardShopController]: nao achei o anel {table.concat(TARGETING.RingAsset, ".")} em Assets.UI; a mira fica sem circulo.`)
+		return nil
+	end
+
+	local ring = template:Clone()
+	local part = ring:FindFirstChild(TARGETING.RingPart)
+
+	if part and part:IsA("BasePart") and part.Size.X > 0 then
+		ring:ScaleTo(ring:GetScale() * (radius * 2) / part.Size.X)
+	end
+
+	for _, descendant in ring:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			--[[
+				`Anchored` pelo mesmo motivo do anel de chao (ver
+				`CardModifierController:_drawZones`): o Workspace simula o que esta
+				pendurado na Camera, e uma Part solta cai e some sozinha. Este anel e
+				reposicionado a cada quadro, entao a queda seria menos visivel -- e mais
+				dificil de achar.
+			]]
+			descendant.Anchored = true
+			descendant.CanCollide = false
+			descendant.CanQuery = false
+			descendant.CanTouch = false
+
+			if color then
+				descendant.Color = color
+			end
+		end
+	end
+
+	ring.Parent = workspace.CurrentCamera
+	self.TargetMaid:GiveTask(ring)
+
+	return ring
+end
+
+--[=[
+	O chao debaixo do ponteiro.
+
+	Devolve o ponto do mundo, ou nil quando o raio nao encosta em nada -- o ceu, a
+	beirada do mapa. Quem raia e o `UnitPlacementController`, que ja filtra o
+	personagem do proprio jogador: ele anda pelo mapa e taparia o chao atras dele.
+]=]
+function RoundCardShopController:_groundAt(screenPosition : Vector2) : Vector3?
+	local placement = self.Controllers.UnitPlacementController
+	if not placement then return nil end
+
+	local hit = placement:raycastFromPointer(screenPosition)
+
+	return hit and hit.Position or nil
+end
+
+--[=[
+	Os modificadores que esta carta **criaria** se fosse usada agora, para a previa.
+
+	Sao os mesmos registros do `RoundCardConfig` que o servidor poria no campo, com a
+	zona ja preenchida com o ponto do mapa onde o cursor esta -- e e de proposito que
+	seja a mesma lista: quem desenha o feedback e a mesma funcao que desenha o efeito
+	de verdade, entao o que o jogador le antes de soltar a carta e exatamente o que
+	ele vai ver depois.
+
+	Os registros sao **copiados** antes de ganhar a zona: os do config sao a
+	declaracao da carta, e escrever a posicao do cursor neles deixaria o proximo uso
+	daquela carta nascendo com a zona da mira anterior.
+
+	Carta sem `Modifiers` (o Zippers, o Staff of Healing) devolve nil: nao ha buff nem
+	debuff para antecipar, e a mira dela continua so com o anel e o realce.
+]=]
+function RoundCardShopController:_previewRecords(cardId : string, position : Vector3?)
+	local definition = RoundCardConfig.Get(cardId)
+	local records = definition and definition.Params and definition.Params.Modifiers
+
+	if not records or #records == 0 then
+		return nil
+	end
+
+	local preview = {}
+
+	for _, record in records do
+		local copy = table.clone(record)
+
+		if record.Zone then
+			-- Registro que pede zona e ainda nao tem ponto nenhum viraria um buff
+			-- global na previa, que e o oposto do que um cajado de area promete.
+			if not position then
+				return nil
+			end
+
+			copy.Zone = { Position = position, Radius = RoundCardConfig.GetRadius(cardId) }
+		end
+
+		table.insert(preview, copy)
+	end
+
+	return preview
+end
+
+--- Larga a previa, se houver uma no ar.
+function RoundCardShopController:_clearPreview()
+	local feedback = self.Controllers.WeatherFeedbackController
+	if feedback then
+		feedback:ClearPreview()
+	end
+
+	if self.Targeting then
+		self.Targeting.PreviewAt = nil
+		self.Targeting.PreviewUnit = nil
+	end
+end
+
+--[=[
+	Realca a torre debaixo do ponteiro, enquanto a carta espera uma.
+
+	O realce e trocado, e nao redesenhado: passar o ponteiro por uma fileira de
+	torres criaria e destruiria um Highlight por quadro.
+]=]
+function RoundCardShopController:_hoverUnit(unitModel : Model?)
+	if self.HoverModel == unitModel then return end
+
+	self.HoverModel = unitModel
+	self.HoverMaid:DoCleaning()
+
+	if not unitModel then return end
+
+	--[[
+		Carta que mexe em estatistica nao ganha realce proprio: quem pinta a torre
+		debaixo do ponteiro nela e o `WeatherFeedbackController`, com **este mesmo
+		amarelo** (`Targeting.Colors.Unit`) mais os icones do que ela vai sentir. Dois
+		Highlights no mesmo modelo deixariam as duas cores brigando, e o dele diz mais.
+
+		Sobra o realce daqui para quem nao tem o que antecipar: o Zippers, que so muda
+		a torre de lugar.
+	]]
+	if self.Targeting and self.Targeting.PreviewRecords then
+		return
+	end
+
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "RoundCardHover"
+	highlight.FillColor = TARGETING.Colors.Unit
+	highlight.OutlineColor = TARGETING.Colors.Unit
+	highlight.FillTransparency = 0.65
+	highlight.OutlineTransparency = 0.1
+	highlight.Parent = unitModel
+
+	self.HoverMaid:GiveTask(highlight)
+end
+
+--[=[
+	Comeca a mira de uma carta que pede alvo.
+
+	Enquanto ela dura, o clique no mundo pertence a carta: o
+	`UnitPlacementController` para de selecionar torre (senao o mesmo clique faria
+	as duas coisas) e volta a selecionar quando a mira acaba, de que jeito for.
+
+	`Move` (o Zippers) e os dois passos em fila: primeiro a torre, depois o destino.
+	Ele nao e um terceiro modo -- ele **e** os outros dois, um depois do outro, e por
+	isso o `Stage` e que manda no que a tela desenha, e nao o `Use` da carta.
+]=]
+function RoundCardShopController:_beginTargeting(uid : string, cardId : string, use : string)
+	self:_stopTargeting()
+
+	local stage = if use == USE.Move then USE.Unit else use
+
+	self.Targeting = {
+		Uid = uid,
+		CardId = cardId,
+		Use = use,
+		Stage = stage,
+	}
+
+	--[[
+		A tranca sobe agora e so cai no quadro seguinte ao fim da mira -- ver
+		`_stopTargeting`. O token e o que impede que a queda de uma mira anterior
+		destranque esta, que acabou de comecar.
+	]]
+	self.LockToken += 1
+
+	local placement = self.Controllers.UnitPlacementController
+	if placement then
+		placement:setPointerLocked(true)
+	end
+
+	--[[
+		A carta passa a estar **na mao**, e a hotbar a desenha como desenha uma carta
+		de unidade equipada: ela cresce e as outras apagam. E o unico aviso de que a
+		mira esta aberta -- nao ha painel nem botao de cancelar, do mesmo jeito que
+		nao ha nenhum quando o jogador poe uma unidade na mao.
+
+		O `onCleared` e o caso em que a mao muda por fora daqui: o jogador clicou numa
+		carta de unidade, e a mira daquela carta de round nao tem mais dono.
+	]]
+	self:_deck("setSelectedRound", uid, function()
+		self:_stopTargeting()
+	end)
+
+	self:_playSound(CARD_SOUND)
+
+	--[[
+		A lista da previa e montada uma vez aqui, e o que muda a cada quadro e so a
+		posicao da zona dentro dela. Carta sem modificador (o Zippers) fica com nil, e
+		a mira dela nao antecipa nada -- nao ha o que antecipar.
+	]]
+	self.Targeting.PreviewRecords = self:_previewRecords(cardId, Vector3.zero)
+
+	if stage == USE.Area then
+		self.Targeting.Ring = self:_buildRing(RoundCardConfig.GetRadius(cardId), TARGETING.Colors.Area)
+	end
+
+	self.TargetMaid:GiveTask(RunService.RenderStepped:Connect(function()
+		self:_updateTargeting()
+	end))
+
+	self.TargetMaid:GiveTask(PointerUtil.onPointerAction(function(screenPosition : Vector2)
+		self:_confirmTarget(screenPosition)
+	end))
+
+	--[=[
+		Desistir pelo teclado.
+
+		O botao direito ficou de fora de proposito: no celular ele nao existe, e no PC
+		ele e a camera -- quem gira a tela olhando onde por o anel cancelaria a carta
+		sem querer. A saida que vale em qualquer aparelho e clicar de novo na carta,
+		que e como se larga uma unidade equipada (ver `_requestUse`).
+
+		O `gameProcessedEvent` **nao** e filtrado no Esc de proposito: ele pode chegar
+		marcado como processado (o Roblox usa a mesma tecla), e uma mira da qual nao
+		se sai e pior do que uma mira que sai uma vez a mais.
+	]=]
+	self.TargetMaid:GiveTask(UserInputService.InputBegan:Connect(function(input : InputObject)
+		if input.KeyCode == Enum.KeyCode.Escape then
+			self:_cancelTargeting()
+		end
+	end))
+end
+
+--- Redesenha o que a mira mostra, no quadro: o anel no chao ou o realce na torre.
+function RoundCardShopController:_updateTargeting()
+	local targeting = self.Targeting
+	if not targeting then return end
+
+	local screenPosition = PointerUtil.getScreenPosition()
+
+	-- No celular, antes do primeiro toque, nao existe "onde o dedo esta": a mira
+	-- fica esperando em vez de desenhar no canto da tela.
+	if not screenPosition then return end
+
+	local feedback = self.Controllers.WeatherFeedbackController
+
+	if targeting.Stage == USE.Unit then
+		local placement = self.Controllers.UnitPlacementController
+		local unitModel = placement and placement:getUnitAtPointer(screenPosition) or nil
+
+		self:_hoverUnit(unitModel)
+
+		--[[
+			A torre debaixo do ponteiro mostra, na propria cabeca, o que a carta faria
+			com ela. So na troca de torre: enquanto o ponteiro fica na mesma, nao ha nada
+			de novo para desenhar.
+		]]
+		if feedback and targeting.PreviewUnit ~= unitModel then
+			targeting.PreviewUnit = unitModel
+
+			feedback:SetPreview(if unitModel then targeting.PreviewRecords else nil, unitModel)
+		end
+
+		return
+	end
+
+	local ground = self:_groundAt(screenPosition)
+	if not ground then return end
+
+	--[[
+		O anel segue o chao debaixo do cursor. Ele pode nao existir (asset faltando), e
+		a previa continua valendo do mesmo jeito: o que decide onde a carta cai e o
+		ponto, e nao o desenho dele.
+	]]
+	local ring = targeting.Ring
+	if ring and ring.Parent then
+		ring:PivotTo(CFrame.new(ground.X, ground.Y + ring:GetExtentsSize().Y / 2, ground.Z))
+	end
+
+	--[[
+		Toda torre que o anel alcanca acende com o que ela vai sentir, e apaga quando o
+		anel sai de cima dela. E o que faz a decisao "onde por o cajado" ser tomada
+		olhando o mapa, e nao lendo a descricao da carta.
+
+		O `PREVIEW_STEP` e o freio: o cursor parado manda o mesmo ponto sessenta vezes
+		por segundo, e cada previa e uma varredura por todas as torres. Movimento menor
+		que ele nao muda quem esta dentro do anel.
+	]]
+	if not feedback then return end
+
+	local records = targeting.PreviewRecords
+	if not records then return end
+
+	local last = targeting.PreviewAt
+	if last and (last - ground).Magnitude <= PREVIEW_STEP then return end
+
+	targeting.PreviewAt = ground
+
+	--[[
+		A zona e reescrita **no lugar**, e nao remontada: a lista foi clonada uma vez no
+		comeco da mira (ver `_beginTargeting`), e refaze-la a cada quadro alocaria uma
+		copia da carta inteira sessenta vezes por segundo para mudar tres numeros.
+	]]
+	for _, record in records do
+		if record.Zone then
+			record.Zone.Position = ground
+		end
+	end
+
+	feedback:SetPreview(records)
+end
+
+--[=[
+	O clique que escolhe.
+
+	Clique que nao acerta nada (o ceu, um lugar sem chao) **nao** cancela: ele
+	simplesmente nao vale. Cancelar ali faria um clique torto custar a carta -- e a
+	saida ja tem tres portas proprias (botao direito, Esc e o botao de cancelar).
+]=]
+function RoundCardShopController:_confirmTarget(screenPosition : Vector2)
+	local targeting = self.Targeting
+	if not targeting then return end
+
+	if targeting.Stage == USE.Unit then
+		local placement = self.Controllers.UnitPlacementController
+		if not placement then return end
+
+		local unitModel, unitId = placement:getUnitAtPointer(screenPosition)
+		if not unitModel or not unitId then return end
+
+		if targeting.Use == USE.Unit then
+			self:_sendUse(targeting.Uid, { UnitId = unitId })
+			return
+		end
+
+		--[[
+			O Zippers passa para o segundo passo. A altura da torre acima do chao dela e
+			medida **agora**, com ela ainda no lugar velho: o destino e um ponto do chao,
+			e sem essa folga a torre afundaria nele.
+		]]
+		targeting.UnitId = unitId
+		targeting.HeightOffset = self:_heightAboveGround(unitModel)
+		targeting.Stage = USE.Move
+
+		self:_hoverUnit(nil)
+		self:_clearPreview()
+
+		targeting.Ring = self:_buildRing(RoundCardConfig.GetRadius(targeting.CardId), TARGETING.Colors.Move)
+		return
+	end
+
+	local ground = self:_groundAt(screenPosition)
+	if not ground then return end
+
+	if targeting.Use == USE.Move then
+		self:_sendUse(targeting.Uid, {
+			UnitId = targeting.UnitId,
+			Position = ground + Vector3.new(0, targeting.HeightOffset or 0, 0),
+		})
+		return
+	end
+
+	self:_sendUse(targeting.Uid, { Position = ground })
+end
+
+--[=[
+	Quanto o pivo de um modelo esta acima do chao debaixo dele.
+
+	E o que o Zippers precisa levar junto: o servidor guarda o CFrame da unidade, e
+	nao "o ponto do chao onde ela esta". Sem chao embaixo (a torre esta numa ponte
+	sobre o vazio) a folga e zero, e o servidor recusa o destino se ele nao servir.
+]=]
+function RoundCardShopController:_heightAboveGround(unitModel : Model) : number
+	local pivot = unitModel:GetPivot().Position
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { unitModel, Player.Character }
+
+	local hit = workspace:Raycast(pivot, Vector3.new(0, -1000, 0), params)
+
+	return if hit then pivot.Y - hit.Position.Y else 0
+end
+
+--- Recolhe o que a mira desenhou e devolve o clique ao posicionamento.
+function RoundCardShopController:_stopTargeting()
+	if not self.Targeting then return end
+
+	self.Targeting = nil
+
+	self.TargetMaid:DoCleaning()
+	self:_hoverUnit(nil)
+
+	-- As unidades voltam a mostrar o que elas de fato estao sentindo.
+	self:_clearPreview()
+
+	-- A carta sai da mao: ela volta ao tamanho normal e as vizinhas acendem de volta.
+	self:_deck("setSelectedRound", nil)
+
+	local placement = self.Controllers.UnitPlacementController
+	if not placement then return end
+
+	--[=[
+		A tranca do clique cai no **quadro seguinte**, e nao agora.
+
+		O clique que escolheu o alvo e o mesmo `InputBegan` que o `UnitPlacementController`
+		escuta para selecionar torre, e os dois sao escutas separadas do mesmo evento:
+		a ordem entre elas nao e promessa de lugar nenhum. Destrancando aqui, na
+		metade do processamento daquele clique, o handler do posicionamento podia
+		rodar depois -- e ai o mesmo clique que gastou a carta abria o card de upgrade
+		da torre escolhida.
+
+		Um quadro de atraso resolve porque ele e sempre depois de **todas** as escutas
+		daquele input. E o mesmo remedio do clique-fora da loja, que compara o
+		`InputObject` num `task.defer` pelo mesmo motivo.
+
+		O token e a corrida do outro lado: uma carta nova mirada no mesmo quadro em que
+		a anterior terminou nao pode ser destrancada pela queda da anterior.
+	]=]
+	self.LockToken += 1
+	local token = self.LockToken
+
+	task.defer(function()
+		if self.LockToken ~= token then return end
+
+		placement:setPointerLocked(false)
+	end)
+end
+
+--[=[
+	Desistir da mira. A carta **continua na mao**: ela so e gasta quando o servidor
+	confirma o uso, e desistir de escolher um lugar nao e usar a carta.
+]=]
+function RoundCardShopController:_cancelTargeting()
+	self:_stopTargeting()
+end
+
 --[[ ESTADO DO SERVIDOR ]]
 
 --[=[
@@ -1076,6 +1635,20 @@ function RoundCardShopController:_applyState(state)
 		if typeof(entry) == "table" and typeof(entry.Uid) == "string" then
 			owned[entry.Uid] = entry.Id
 			self:_addToDeck(entry.Uid, entry.Id)
+
+			--[[
+				A carta continua na mao do servidor, entao o uso que estava no ar nao
+				aconteceu: ele foi recusado (a torre escolhida foi vendida no meio, o
+				lugar nao servia) e o trinco tem que sair, senao aquela carta ficaria
+				para sempre sem responder ao clique.
+
+				O preco disso e uma corrida estreita: um estado que chegue por outro
+				motivo (a loja abrindo numa wave nova) entre o pedido e a confirmacao
+				solta o trinco cedo, e um clique duplo bem no meio disso vira um segundo
+				pedido -- que o servidor recusa com uma linha no log. Uma carta morta na
+				mao e bem pior do que isso.
+			]]
+			self.UsePending[entry.Uid] = nil
 		end
 	end
 
@@ -1211,6 +1784,14 @@ function RoundCardShopController:construct()
 		self:_playUseVisual(payload.id)
 	end)
 
+	--[[
+		Rede de seguranca: o round reiniciou com uma mira aberta. Sem isto o clique do
+		jogador ficaria trancado no posicionamento de uma partida que ja acabou.
+	]]
+	Framework:Listen("RoundRestarted", function()
+		self:_stopTargeting()
+	end)
+
 	-- O preco esta escrito na carta e o caixa da partida e quem paga: sem isto o
 	-- clique viraria um pedido que o servidor recusa.
 	Framework:Listen("UpdateCash", function(amount : number)
@@ -1245,6 +1826,9 @@ function RoundCardShopController:init()
 	self.FrameToken = 0
 	self.DismissToken = 0
 
+	-- Sobe a cada tranca e a cada destranca do clique no mundo. Ver `_stopTargeting`.
+	self.LockToken = 0
+
 	-- O `token` da oferta que o jogador ja abriu: o botao nao se oferece duas vezes
 	-- pela mesma. Nil ate a primeira loja da partida.
 	self.OpenedToken = nil
@@ -1256,10 +1840,21 @@ function RoundCardShopController:init()
 	-- As tres cartas na tela, na ordem em que cairam: e por ela que a saida escalona.
 	self.CardEntries = {}
 
+	--[[
+		A mira de uma carta que pede alvo: qual carta, em que passo e o que ela ja
+		escolheu. Nil quando ninguem esta mirando.
+	]]
+	self.Targeting = nil
+
 	self.RowMaid = Maid.new()
 	self.FrameMaid = Maid.new()
 	self.ShopMaid = Maid.new()
 	self.IdleMaid = Maid.new()
+
+	-- O que a mira desenhou (o anel, as escutas) e o realce da torre sob o ponteiro.
+	-- Separados porque o realce troca a cada torre, e o resto so no fim da mira.
+	self.TargetMaid = Maid.new()
+	self.HoverMaid = Maid.new()
 
 	self:construct()
 end

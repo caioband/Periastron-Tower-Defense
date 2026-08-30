@@ -47,15 +47,24 @@ end
 
 --[=[
 	Velocidade de um mob agora: a base do spawn, vezes o que os gimmicks dele
-	acumularam, vezes o que o clima faz.
+	acumularam, vezes o que o clima faz, vezes o que as cartas fazem.
 
-	Os tres fatores sao guardados separados de proposito. O clima entra e sai no
+	Os fatores sao guardados separados de proposito. O clima entra e sai no
 	meio da wave, e um mob que ja ganhou 30% por curva tem que manter esse ganho
 	quando o vento parar — o que so funciona se a conta for refeita a partir da
 	base em vez de ir multiplicando o valor corrente.
+
+	As cartas somam dois fatores pelo mesmo motivo, e sao dois porque as duas
+	lentidoes tem donos diferentes: `CardSpeedScale` e da sala (o Staff of Azure
+	Ever Ice, que pega todo mundo de uma vez) e `SlowScale` e do mob (a lentidao que
+	uma unidade de gelo deixou naquele inimigo). Uma nao pode apagar a outra.
 ]=]
 local function computeSpeed(self, mob)
-	return mob.BaseSpeed * (mob.SpeedScale or 1) * (self.WeatherSpeedScale or 1)
+	return mob.BaseSpeed
+		* (mob.SpeedScale or 1)
+		* (self.WeatherSpeedScale or 1)
+		* (self.CardSpeedScale or 1)
+		* (mob.SlowScale or 1)
 end
 
 local GimmickHandlers = {
@@ -114,7 +123,8 @@ local MobService = {
 		UnitService = {},
 		DataService = {},
 		DifficultyService = {},
-		WeatherService = {}
+		WeatherService = {},
+		CardModifierService = {},
 	},
 	ActiveMobs = {},
 	DebugParts = {},
@@ -133,6 +143,21 @@ local MobService = {
 	-- campo equivalente porque ela so vale no spawn — ver `SpawnWave`.
 	Weather = nil,
 	WeatherSpeedScale = 1,
+
+	--[[
+		O que as cartas de round estao fazendo com a sala inteira.
+
+		`CardSpeedScale` e a lentidao global do Staff of Azure Ever Ice, e
+		`BrittleMultiplier` e o "quebradico" que ele deixa quando e usado durante a
+		neve: todo dano que entra num inimigo passa por ele.
+
+		Os dois vivem no service, e nao no mob, porque valem para quem nascer no meio
+		da janela tambem -- a mesma razao do `FreezeUntil` la embaixo.
+	]]
+	CardSpeedScale = 1,
+	CardSlowToken = 0,
+	BrittleMultiplier = 1,
+	BrittleToken = 0,
 	SessionCash = {},
 	SessionDamage = {},
 
@@ -247,6 +272,206 @@ function MobService:FreezeAll(duration : number?) : number
 	end)
 
 	return frozen
+end
+
+--[[ O QUE AS CARTAS FAZEM COM OS INIMIGOS ]]
+
+--[=[
+	O multiplicador global de uma estatistica de carta (`Slow`, `Burn`).
+
+	Atalho para nao espalhar o `CardModifier` por aqui: o que interessa a este
+	service e um numero, e nao a gramatica que o produziu.
+]=]
+function MobService:cardStat(stat : string) : number
+	local service = self.Services.CardModifierService
+
+	return service and service:GetGlobal(stat) or 1
+end
+
+--[=[
+	Manda a velocidade de agora de todo mundo para os clientes.
+
+	Quem move o boneco na tela e o `MobController`, com a velocidade que o servidor
+	mandou por ultimo: sem isso o mob continuaria andando no ritmo antigo ate a
+	proxima vez que alguma outra coisa mexesse nele.
+
+	Mob congelado fica de fora: para ele o cliente ja recebeu zero, e mandar a
+	velocidade "de verdade" no meio de um Time Stop o poria a andar.
+]=]
+function MobService:_broadcastSpeeds()
+	local now = GameClock.Now()
+
+	for mobId, mob in self.ActiveMobs do
+		local speed = computeSpeed(self, mob)
+		mob.CurrentSpeed = speed
+
+		if (mob.StunnedUntil or 0) > now then continue end
+
+		for _, player in Players:GetPlayers() do
+			Framework:Fire("UpdateMobSpeed", player, mobId, speed)
+		end
+	end
+end
+
+--[=[
+	Esfria a sala inteira: todo inimigo anda `slow` mais devagar por `duration`, e
+	com `brittle` todo dano que entrar neles no periodo vale mais. E o Staff of
+	Azure Ever Ice.
+
+	`slow` e a **fracao tirada**: 0.5 e "anda pela metade", 0.75 e "anda a um
+	quarto". Escrito assim porque e assim que a carta se descreve para o jogador, e
+	traduzir para escala num lugar so evita a confusao de ler "0.25" e achar que a
+	carta e fraca.
+
+	Vale para quem nascer no meio da janela tambem -- a escala mora no service e
+	entra no `computeSpeed` de todo mundo, como o clima.
+
+	Duas cartas sobrepostas: a **mais forte** manda, e o prazo e o token de quem
+	entrou por ultimo. Multiplicar as duas faria um segundo uso durante o primeiro
+	parar a sala inteira, que nao e o que nenhuma das duas prometeu.
+]=]
+function MobService:ChillAll(slow : number?, duration : number?, brittle : number?) : number
+	duration = math.max(0, duration or 0)
+	if duration <= 0 then return 0 end
+
+	local scale = 1 - math.clamp(slow or 0, 0, 0.95)
+
+	if scale < (self.CardSpeedScale or 1) then
+		self.CardSpeedScale = scale
+	end
+
+	self.CardSlowToken = (self.CardSlowToken or 0) + 1
+	local slowToken = self.CardSlowToken
+
+	self:_broadcastSpeeds()
+
+	--[[
+		Tempo de partida, e nao real: os dez segundos da carta sao dez segundos de
+		jogo, do mesmo jeito que o Time Stop e o atordoamento. No 3x eles passam em
+		pouco mais de tres segundos de relogio de parede, e e isso que faz a carta
+		valer o mesmo tanto de caminho andado em qualquer velocidade.
+	]]
+	GameClock.Delay(duration, function()
+		if self.CardSlowToken ~= slowToken then return end
+
+		self.CardSpeedScale = 1
+		self:_broadcastSpeeds()
+	end)
+
+	if brittle and brittle > 1 then
+		self.BrittleMultiplier = math.max(self.BrittleMultiplier or 1, brittle)
+
+		self.BrittleToken = (self.BrittleToken or 0) + 1
+		local brittleToken = self.BrittleToken
+
+		GameClock.Delay(duration, function()
+			if self.BrittleToken ~= brittleToken then return end
+
+			self.BrittleMultiplier = 1
+		end)
+	end
+
+	return self.ActiveMobCount
+end
+
+--[=[
+	A lentidao que uma unidade deixa num inimigo so.
+
+	`amount` e a fracao tirada, como no `ChillAll`, e a carta Chill Out entra por
+	cima dela: `Slow` e um multiplicador global, entao 0.2 com a carta no campo vira
+	0.22. O teto de 0.95 existe para nenhuma soma de cartas parar um inimigo de vez
+	-- parar inimigo e o Time Stop, e ele custa outra carta.
+
+	A **mais forte manda**, e nao a mais recente: um respingo fraco no meio de uma
+	lentidao forte nao pode encurtar a forte. O prazo, esse sim, e sempre do ultimo
+	golpe, senao lentidoes iguais em sequencia nunca renovariam.
+
+	> ⚠️ Nenhuma unidade de hoje deixa lentidao: e `UnitStats[nome].Slow` que liga
+	> isto, e o roster ainda nao tem uma unidade `Ice`. A mecanica existe para a
+	> carta Chill Out ter o que multiplicar no dia em que ela existir.
+]=]
+function MobService:ApplySlow(mobId : string, amount : number?, duration : number?)
+	local mob = self.ActiveMobs[mobId]
+	if not mob then return end
+
+	duration = math.max(0, duration or 0)
+	if duration <= 0 then return end
+
+	local effective = math.clamp((amount or 0) * self:cardStat("Slow"), 0, 0.95)
+	if effective <= 0 then return end
+
+	local scale = 1 - effective
+	if scale < (mob.SlowScale or 1) then
+		mob.SlowScale = scale
+	end
+
+	mob.SlowToken = (mob.SlowToken or 0) + 1
+	local token = mob.SlowToken
+
+	mob.CurrentSpeed = computeSpeed(self, mob)
+
+	if (mob.StunnedUntil or 0) <= GameClock.Now() then
+		for _, player in Players:GetPlayers() do
+			Framework:Fire("UpdateMobSpeed", player, mobId, mob.CurrentSpeed)
+		end
+	end
+
+	GameClock.Delay(duration, function()
+		-- O mob pode ter morrido, e a tabela dele ja nao esta em lugar nenhum.
+		if self.ActiveMobs[mobId] ~= mob or mob.SlowToken ~= token then return end
+
+		mob.SlowScale = 1
+		mob.CurrentSpeed = computeSpeed(self, mob)
+
+		if (mob.StunnedUntil or 0) <= GameClock.Now() then
+			for _, player in Players:GetPlayers() do
+				Framework:Fire("UpdateMobSpeed", player, mobId, mob.CurrentSpeed)
+			end
+		end
+	end)
+end
+
+--[=[
+	Poe fogo num inimigo: `damage` de dano a cada `interval` segundos, `ticks`
+	vezes.
+
+	Cada tique passa pelo `DamageMob` como qualquer outro dano -- ele paga caixa,
+	conta para o placar da unidade e mata se der. A carta Fire Hazard entra em cada
+	tique, e nao no total: uma queimadura que ja esta no ar cobra mais assim que a
+	carta e usada, em vez de esperar a proxima.
+
+	Renovar substitui em vez de empilhar: dois golpes de fogo no mesmo inimigo sao
+	uma queimadura com o prazo recomecado, e nao duas correndo em paralelo. Empilhar
+	faria uma unidade de fogo rapida multiplicar o proprio DPS pelo numero de golpes
+	que couberem na duracao.
+
+	> ⚠️ Como a lentidao acima, nenhuma unidade de hoje queima: e
+	> `UnitStats[nome].Burn` que liga isto, e o roster ainda nao tem uma unidade
+	> `Fire`.
+]=]
+function MobService:ApplyBurn(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?)
+	local mob = self.ActiveMobs[mobId]
+	if not mob then return end
+
+	damage = damage or 0
+	ticks = math.floor(ticks or 0)
+	interval = interval or 1
+
+	if damage <= 0 or ticks <= 0 or interval <= 0 then return end
+
+	mob.BurnToken = (mob.BurnToken or 0) + 1
+	local token = mob.BurnToken
+
+	task.spawn(function()
+		for _ = 1, ticks do
+			GameClock.Wait(interval)
+
+			if self.ActiveMobs[mobId] ~= mob or mob.BurnToken ~= token then return end
+
+			local tick = math.max(1, math.floor(damage * self:cardStat("Burn") + 0.5))
+			self:DamageMob(mobId, tick, ownerUserId)
+		end
+	end)
 end
 
 --[=[
@@ -438,6 +663,13 @@ function MobService:ResetRound()
 	-- O `FreezeToken` sobe para o degelo agendado nao mexer mais em nada.
 	self.FreezeUntil = nil
 	self.FreezeToken = (self.FreezeToken or 0) + 1
+
+	-- E o mesmo para as cartas: a lentidao e o quebradico do Azure Ever Ice sao de
+	-- partida, e os tokens sobem para o fim agendado de cada um nao acordar depois.
+	self.CardSpeedScale = 1
+	self.CardSlowToken = (self.CardSlowToken or 0) + 1
+	self.BrittleMultiplier = 1
+	self.BrittleToken = (self.BrittleToken or 0) + 1
 
 	-- As rotas sao reconstruidas no proximo SpawnWave; largar o cache evita
 	-- carregar geometria velha caso o mapa mude entre rounds.
@@ -633,7 +865,7 @@ function MobService:SpawnWave(waveNumber)
 
 					-- Nascer dentro de um Time Stop e nascer parado: ver `FreezeAll`.
 					local frozenUntil = self.FreezeUntil or 0
-					local spawnSpeed = baseSpeed * self.WeatherSpeedScale
+					local spawnSpeed = baseSpeed * self.WeatherSpeedScale * (self.CardSpeedScale or 1)
 
 					self.ActiveMobs[mobId] = {
 						Name = spawnEntry.Entity,
@@ -641,6 +873,10 @@ function MobService:SpawnWave(waveNumber)
 						MaxHealth = maxHealth,
 						BaseSpeed = baseSpeed,
 						SpeedScale = 1,
+
+						-- A lentidao que uma unidade de gelo deixa neste inimigo. Ver
+						-- `ApplySlow`.
+						SlowScale = 1,
 						CurrentSpeed = spawnSpeed,
 						Distance = 0,
 						StunnedUntil = frozenUntil,
@@ -859,20 +1095,34 @@ end
 
 	`bonus` e fracao: 0.15 e "+15%". Sem bonus, o premio volta intocado.
 ]=]
-function MobService:applyCashBonus(player, amount : number, bonus : number?) : number
-	if not bonus or bonus <= 0 or amount <= 0 then
+function MobService:applyCashBonus(player, amount : number, bonus : number?, scale : number?) : number
+	--[[
+		A escala das cartas entra **antes** do bonus da aura, e nao somada a ele: a
+		aura e uma fracao que se acumula entre farms (15% + 15% = 30%), e o anel do
+		Robux Royalty e um multiplicador em cima do premio. Somar os dois faria
+		"1.1x" virar "+10 pontos percentuais", que e outro numero.
+
+		A sobra quebrada da escala cai no mesmo balde da aura, e por isso ela e
+		aplicada aqui dentro em vez de no premio ja arredondado: 1.1 de um premio de
+		1 e 1,1, e arredondar por fora jogaria os 10% fora em todo golpe pequeno --
+		que sao quase todos.
+	]]
+	scale = scale or 1
+
+	if amount <= 0 or (scale == 1 and (not bonus or bonus <= 0)) then
 		return amount
 	end
 
-	local carried = (self.BonusRemainder[player.UserId] or 0) + (amount * bonus)
+	local scaled = amount * scale
+	local carried = (self.BonusRemainder[player.UserId] or 0) + scaled + (scaled * (bonus or 0))
 	local whole = math.floor(carried)
 
 	self.BonusRemainder[player.UserId] = carried - whole
 
-	return amount + whole
+	return whole
 end
 
-function MobService:awardDamageReward(killerUserId, damage, bonus : number?)
+function MobService:awardDamageReward(killerUserId, damage, bonus : number?, cashScale : number?)
 	if not killerUserId then return end
 	local player = Players:GetPlayerByUserId(killerUserId)
 	if not player then return end
@@ -881,15 +1131,15 @@ function MobService:awardDamageReward(killerUserId, damage, bonus : number?)
 	if not scale or scale <= 0 then scale = 1 end
 
 	local reward = math.max(1, math.floor((damage * ServerConfig.Data.CASH_PER_DAMAGE) / scale))
-	self:addCash(player, self:applyCashBonus(player, reward, bonus))
+	self:addCash(player, self:applyCashBonus(player, reward, bonus, cashScale))
 end
 
-function MobService:awardKillReward(killerUserId, reward, bonus : number?)
+function MobService:awardKillReward(killerUserId, reward, bonus : number?, cashScale : number?)
 	if not killerUserId then return end
 	local player = Players:GetPlayerByUserId(killerUserId)
 	if not player then return end
 	local amount = reward or math.random(ServerConfig.Data.CASH_PER_KILL_MIN, ServerConfig.Data.CASH_PER_KILL_MAX)
-	self:addCash(player, self:applyCashBonus(player, amount, bonus))
+	self:addCash(player, self:applyCashBonus(player, amount, bonus, cashScale))
 end
 
 --[=[
@@ -901,7 +1151,7 @@ end
 	que o `UnitService` congela no comeco do golpe, junto com o dano e o alcance.
 	Ela entra nos dois premios, o de dano e o de morte.
 ]=]
-function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?)
+function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?, cashScale : number?)
 	local mob = self.ActiveMobs[mobId]
 	if not mob then return 0 end
 
@@ -909,19 +1159,32 @@ function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?)
 	-- este e o unico caminho de dano do jogo — torre, tripmine, respingo de area.
 	self.LastContact = os.clock()
 
+	--[[
+		O "quebradico" do Staff of Azure Ever Ice usado durante a neve: todo dano que
+		entra num inimigo vale mais enquanto ele durar.
+
+		E aqui, no unico caminho de dano do jogo, e nao em cada unidade: ele nao e um
+		buff de torre — o inimigo e que esta mais fragil, e um tiro de tripmine ou um
+		respingo de area conta igual.
+	]]
+	local incoming = (damage or 10) * (self.BrittleMultiplier or 1)
+	if incoming ~= (damage or 10) then
+		incoming = math.max(1, math.floor(incoming + 0.5))
+	end
+
 	-- Conta o dano que de fato entrou: um golpe de 70 num mob com 5 de vida vale 5.
 	-- Vale tanto para o MVP quanto para a caixa — pagar o valor cheio do golpe
 	-- premiava o excedente e transformava o dano na economia inteira da partida.
-	local effectiveDamage = math.min(mob.Health, damage or 10)
+	local effectiveDamage = math.min(mob.Health, incoming)
 	self:addDamageStat(killerUserId, effectiveDamage)
 
-	mob.Health -= (damage or 10)
-	self:awardDamageReward(killerUserId, effectiveDamage, cashBonus)
+	mob.Health -= incoming
+	self:awardDamageReward(killerUserId, effectiveDamage, cashBonus, cashScale)
 
 	self:processDamageGimmicks(mobId, mob)
 
 	if mob.Health <= 0 then
-		self:awardKillReward(killerUserId, mob.Reward, cashBonus)
+		self:awardKillReward(killerUserId, mob.Reward, cashBonus, cashScale)
 		self:removeMob(mobId)
 	end
 
