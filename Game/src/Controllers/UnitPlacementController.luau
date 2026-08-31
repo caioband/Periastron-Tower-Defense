@@ -1658,12 +1658,12 @@ function UnitPlacementController:construct()
 		return self:replicatePlacedUnit(...)
 	end)
 
-	Framework:Listen("UnitSwing", function(unitId, unitName, targetMobId, stepIndex)
+	Framework:Listen("UnitSwing", function(unitId, unitName, targetMobId, stepIndex, swingWindow)
 		local class = self.classesById[unitId]
 		if not class then return end
 		local mobController = self.Controllers.MobController
 		local target = mobController and mobController.SpawnedMobs and mobController.SpawnedMobs[targetMobId] or nil
-		class:playAttackVisual(target, stepIndex)
+		class:playAttackVisual(target, stepIndex, swingWindow)
 	end)
 
 	Framework:Listen("FarmPayout", function(unitId, amount)

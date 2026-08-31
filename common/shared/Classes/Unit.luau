@@ -32,6 +32,39 @@ function Unit:loadAnimations()
 	end
 end
 
+--[=[
+	Poe as animacoes da unidade na velocidade da partida.
+
+	O `GameClock` acelera as esperas, e nao as `AnimationTrack`. Sem esta varredura
+	duas coisas ficam para tras da escala: a `Idle`, que e tocada uma unica vez no
+	`Unit.new` e nunca mais e tocada por ninguem -- ela passaria a partida inteira
+	no 1x --, e o golpe que ja estava no ar quando o jogador trocou de degrau, que
+	continuaria no ritmo antigo enquanto o `GameClock.Wait` do windup ja encolheu.
+
+	A varredura e a lista toda de proposito, e nao so a track do golpe: a
+	`MoneyWave` do Entrepreneur corre no mesmo tempo de partida que a wave que a
+	pagou.
+
+	`AdjustSpeed` numa track parada e inofensivo -- a velocidade fica guardada e
+	vale quando ela tocar --, entao nao ha o que filtrar aqui.
+
+	O `animationSpeeds` entra como **produto**, e nao como substituto: a track do
+	golpe pode ja estar comprimida para caber no cooldown (ver o
+	`playAttackVisual`), e escrever so a escala da partida por cima apagaria a
+	compressao na primeira troca de degrau.
+
+	O par disto do lado dos mobs e o `MobController:applyTimeScale`.
+]=]
+function Unit:applyTimeScale(scale : number)
+	self.timeScale = scale
+
+	if not self.loadedAnimations then return end
+
+	for name, track in self.loadedAnimations do
+		track:AdjustSpeed(scale * (self.animationSpeeds[name] or 1))
+	end
+end
+
 function Unit:playSound(soundName, cutAfter)
 	if not self.model then return nil end
 	local soundsFolder = self.model:FindFirstChild("Sounds")
@@ -93,7 +126,7 @@ function Unit:projectileOrigin() : Vector3?
 	return if root then root.Position else model:GetPivot().Position
 end
 
-function Unit:playAttackVisual(target : Model?, stepIndex : number?)
+function Unit:playAttackVisual(target : Model?, stepIndex : number?, swingWindow : number?)
 	if not self.model or not self.model.Parent then return end
 
 	local sequence = self.attackConfig and self.attackConfig.AttackSequence
@@ -130,20 +163,84 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?)
 
 		Na Lobby a escala e sempre 1 -- nao existe `SpeedService` la --, entao isto
 		nao muda nada para as unidades do menu.
+
+		A escala e lida de novo aqui, e nao herdada do `self.timeScale`, porque uma
+		track recem-tocada volta ao 1x: o `applyTimeScale` so reage a *mudanca* de
+		escala, e nao veria um golpe que comecou com a escala parada. Por isso o
+		`AdjustSpeed` explicito la embaixo, mesmo com a varredura por quadro ligada.
+
+		E quando a leitura daqui chega antes da do quadro, quem responde e a
+		varredura inteira, e nao so a track do golpe: adiantar o `self.timeScale`
+		sozinho calaria a comparacao do `RenderStepped` e deixaria a `Idle` e a
+		`MoneyWave` presas na escala velha para sempre.
 	]]
 	local timeScale = GameClock.GetScale()
+	if timeScale ~= self.timeScale then
+		self:applyTimeScale(timeScale)
+	end
 
-	local freshSwing = false
-	if track and not track.IsPlaying then
-		track:Play()
-		freshSwing = true
+	--[=[
+		A animacao cabe dentro do golpe.
+
+		Uma animacao mais longa que o cooldown e o que tirava o boneco do lugar: o
+		pedido seguinte chegava com a track ainda no ar, o `Play` daqui nao
+		reiniciava o que ja estava tocando, e o golpe saia sem gesto nenhum -- um
+		tiro com animacao, o proximo sem, alternando. O Rocket e o caso mais visivel
+		(2,667s de animacao para 2,5s de cooldown), e o Azure, o Archer e o `Slash1`
+		do Slasher estao na mesma situacao.
+
+		A saida nao e encurtar a animacao no arquivo nem mexer no `Cooldown` -- que e
+		numero de balanceamento e nao de arte --, e sim **tocar a animacao mais
+		rapido** exatamente o tanto que falta para ela caber. O gesto inteiro
+		aparece, so que espremido no tempo que a unidade tem.
+
+		A janela vem do servidor ja com clima, upgrade, carta e carga dentro, e nao
+		do `stats.Cooldown` daqui: uma carta de `AttackSpeed` encurta o cooldown, e a
+		animacao tem que encurtar junto ou a dessincronizacao volta com a carta em
+		campo. Sem a janela (uma unidade que ainda nao recebeu o campo), o fator e 1
+		e o comportamento e o de antes.
+
+		`track.Length` e zero enquanto a animacao nao terminou de carregar; a
+		comparacao com a janela ja recusa esse caso sozinha.
+	]=]
+	local fit = 1
+	if track and swingWindow and swingWindow > 0 and track.Length > swingWindow then
+		fit = track.Length / swingWindow
 	end
 
 	if track then
-		track:AdjustSpeed(timeScale)
+		self.animationSpeeds[animName] = fit
 	end
 
-	if freshSwing and step and step.SwingSound then
+	--[[
+		O golpe reinicia a track mesmo com ela tocando.
+
+		Com a compressao acima a sobra e de milissegundos -- o suficiente para o
+		pedido seguinte chegar antes de a track fechar, por jitter de rede, e o
+		gesto ser pulado de novo. Reiniciar fecha essa fresta, e para quem ja cabia
+		no cooldown (Sword, Slingshot, Subspace Tripminer) nao muda nada: a track ja
+		tinha terminado quando o pedido chega.
+
+		Como todo golpe passou a ser um golpe novo, o `SwingSound` volta a tocar em
+		todos eles -- antes o Azure perdia o som do Periastron um tiro sim, um nao,
+		pelo mesmo motivo que perdia o gesto.
+
+		Quem volta o gesto para o comeco e o `TimePosition`, e nao um `Play`: `Play`
+		numa track que ja esta tocando nao faz nada. Tambem nao e um `Stop(0)`
+		seguido de `Play`, como no `playFarmVisual` -- aquilo tira a track do ar por
+		um instante e o boneco pisca para a `Idle` antes de voltar.
+	]]
+	if track then
+		if track.IsPlaying then
+			track.TimePosition = 0
+		else
+			track:Play()
+		end
+
+		track:AdjustSpeed(timeScale * fit)
+	end
+
+	if step and step.SwingSound then
 		self:playSound(step.SwingSound)
 	end
 
@@ -193,7 +290,7 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?)
 
 	if hitTime > 0 then
 		GameClock.Delay(hitTime, scheduleHits)
-	elseif track and freshSwing then
+	elseif track then
 		local fired = false
 		local function once()
 			if fired then return end
@@ -224,6 +321,7 @@ function Unit:playFarmVisual()
 		track:Stop(0)
 	end
 	track:Play()
+	track:AdjustSpeed(self.timeScale)
 end
 
 function Unit:setCF()
@@ -264,6 +362,12 @@ function Unit.new(name : string, model : Model)
 	self.attackSequenceIndex = 0
 	self.targetLookCF = model:GetPivot()
 	self.noTargetSince = nil
+	self.timeScale = GameClock.GetScale()
+
+	-- Velocidade propria de cada track, por nome, multiplicada pela escala da
+	-- partida no `applyTimeScale`. Hoje so a do golpe sai de 1 (ver o
+	-- `playAttackVisual`).
+	self.animationSpeeds = {}
 
 	self.parameters = {
 		availableToAttack = true,
@@ -281,8 +385,24 @@ function Unit.new(name : string, model : Model)
 	self:loadAnimations()
 	self.loadedAnimations.Idle:Play()
 
+	-- Uma unidade colocada com a partida ja no 2x nasce no ritmo certo, sem esperar
+	-- a proxima troca de degrau para ser varrida.
+	self:applyTimeScale(self.timeScale)
+
 	self.rotationConn = RunService.RenderStepped:Connect(function(dt)
 		if not self.model or not self.model.Parent then return end
+
+		--[[
+			A escala e lida a cada quadro em vez de empurrada pelo `SpeedController`:
+			e uma comparacao, e em troca a unidade nao depende da ordem em que os
+			controllers ligam nem de quem avisou quem. Mesmo arranjo do
+			`MobController:startMovementLoop`, e pelo mesmo motivo.
+		]]
+		local scale = GameClock.GetScale()
+		if scale ~= self.timeScale then
+			self:applyTimeScale(scale)
+		end
+
 		local currentCF = self.model:GetPivot()
 		local smoothed = currentCF:Lerp(self.targetLookCF, math.min(1, dt * ROTATION_SPEED))
 		self.model:PivotTo(smoothed)

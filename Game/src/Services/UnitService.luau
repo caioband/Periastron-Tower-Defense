@@ -1280,7 +1280,7 @@ function UnitService:stepTripminer(entry, stats, now, weather : string?)
 	local mineCF = CFrame.new(position) * CFrame.Angles(0, yaw, 0)
 
 	for _, plr in ipairs(Players:GetPlayers()) do
-		Framework:Fire("UnitSwing", plr, entry.unitId, entry.unitName, false, 1)
+		Framework:Fire("UnitSwing", plr, entry.unitId, entry.unitName, false, 1, cooldown)
 	end
 
 	--[[
@@ -1454,8 +1454,20 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 		windup = sequence[stepIndex].HitTime or 0
 	end
 
+	--[[
+		A janela do golpe vai junto com o pedido: quanto tempo de partida a unidade
+		tem antes de poder atacar de novo.
+
+		So o servidor sabe esse numero -- o da tabela ja passado pelo clima, pelo
+		upgrade, pela carta e pela carga --, e o cliente precisa dele para caber a
+		animacao dentro do golpe (ver o `Unit:playAttackVisual`). Mandar o
+		`stats.Cooldown` cru nao serviria: uma carta de `AttackSpeed` encurta o
+		ciclo e a animacao tem que encurtar junto.
+	]]
+	local swingWindow = self:getCooldown(entry, GameClock.Now(), weather)
+
 	for _, plr in ipairs(Players:GetPlayers()) do
-		Framework:Fire("UnitSwing", plr, unitId, unitName, initialMobId, stepIndex)
+		Framework:Fire("UnitSwing", plr, unitId, unitName, initialMobId, stepIndex, swingWindow)
 	end
 
 	task.spawn(function()
