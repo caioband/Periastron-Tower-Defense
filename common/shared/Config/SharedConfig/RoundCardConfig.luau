@@ -135,9 +135,13 @@ RoundCardConfig.Use = {
 	carta de unidade equipada. Desistir é clicar nela de novo — a mesma coisa que
 	largar uma unidade —, ou Esc no PC.
 
-	As cores separam o que a mira está pedindo: verde é "escolha um lugar", amarelo é
-	"escolha uma torre" e laranja é o segundo passo do Zippers, quando a torre já foi
-	escolhida e falta o destino.
+	As cores separam o que a mira está pedindo: verde é "escolha um lugar" e amarelo
+	é "escolha uma torre".
+
+	O segundo passo do Zippers -- a torre já escolhida, faltando o destino -- não tem
+	cor aqui porque ele não é uma mira: ele é o posicionamento inteiro, desenhado
+	pelo `UnitPlacementController:visualize`, com o fantasma da própria torre em
+	verde ou vermelho e o anel do alcance dela. Ver `_beginMovePlacement`.
 
 	O amarelo do `Unit` é o realce que a torre debaixo do ponteiro recebe, e ele vale
 	nos dois caminhos: a carta que não mexe em estatística nenhuma (o Zippers) é
@@ -168,7 +172,6 @@ RoundCardConfig.Targeting = {
 	Colors = {
 		Area = Color3.fromRGB(120, 235, 140),
 		Unit = Color3.fromRGB(255, 215, 60),
-		Move = Color3.fromRGB(255, 150, 60),
 	},
 }
 
@@ -410,19 +413,34 @@ RoundCardConfig.Cards = {
 		Price = 250,
 		Weight = 1,
 		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://80964149470422",
 		Effect = "TimeAcceleration",
 		Params = { Scale = 3, Duration = 15 },
 	},
 
+	--[[
+		Um guarda-chuva para a wave que está no ar, e não o cancelamento do clima.
+
+		Um clima dura várias waves (`RoundConfig.Duration`), e a carta apaga só a de
+		agora: comprada na primeira wave de uma nevasca de três, a nevasca volta na
+		segunda. Quem quiser as três limpas compra três cartas -- e é isso que separa
+		esta carta de 300 de uma que desligasse o clima inteiro, que valeria muito
+		mais.
+
+		Comprada na última wave do clima, ele acaba ali e não volta; e com o céu já
+		limpo ela não faz nada, porque não há wave de clima para pular.
+
+		Sem `Params`: a única wave que ela conhece é a atual.
+	]]
 	{
 		Id = "WeatherReport",
 		Title = "WEATHER REPORT",
-		Description = "Clears the weather for one full wave",
+		Description = "Clears the weather for the current wave only",
 		Price = 300,
 		Weight = 1,
 		Use = RoundCardConfig.Use.Instant,
+		Image = "rbxassetid://78191968209780",
 		Effect = "WeatherReport",
-		Params = { Waves = 1 },
 	},
 
 	--[[ ============================= INSTANTÂNEAS ============================= ]]
@@ -911,6 +929,13 @@ RoundCardConfig.Cards = {
 		A única carta que mexe no tabuleiro em vez de nos números. O destino passa
 		pelas mesmas conferências de `PlaceUnit` — fora do caminho, longe das outras
 		torres, sem ninguém em cima —, e um destino recusado **não gasta a carta**.
+
+		"As mesmas conferências" é literal: escolhida a torre, o segundo passo chama o
+		`UnitPlacementController:visualize`, o mesmo fantasma que larga uma torre
+		nova. O jogador escolhe o destino vendo o modelo da própria torre em meio-tom,
+		verde onde ela cabe e vermelho onde não, com o anel do alcance dela — e gira
+		com o R, como giraria uma torre recém-comprada. O fantasma começa no giro que
+		a torre já tem, então mudar só de lugar não custa nenhum passo a mais.
 	]]
 	{
 		Id = "Zippers",
@@ -923,12 +948,11 @@ RoundCardConfig.Cards = {
 		Effect = "MoveUnit",
 
 		--[[
-			O `Radius` desta carta não é área de efeito: ela não tem nenhuma. Ele é o
-			tamanho do anel que marca **o ponto** para onde a torre vai, e por isso é
-			pequeno — o anel de 15 studs do padrão diria ao jogador que ele está
-			escolhendo uma região, e não um lugar.
+			Sem `Params`: esta carta não tem área nem número para ajustar. O `Radius`
+			que morava aqui media o anel do segundo passo, e quem marca o destino agora
+			é o fantasma da torre — o anel que aparece é o do alcance dela, tirado das
+			estatísticas da própria unidade.
 		]]
-		Params = { Radius = 2 },
 	},
 }
 

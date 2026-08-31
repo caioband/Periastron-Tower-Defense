@@ -1417,6 +1417,14 @@ function RoundCardShopController:_updateTargeting()
 	local targeting = self.Targeting
 	if not targeting then return end
 
+	--[[
+		O segundo passo do Zippers e desenhado pelo `UnitPlacementController`: o
+		fantasma, o anel de alcance e o caminho pintado sao dele. Daqui nao sai mais
+		nada enquanto ele estiver no ar, senao seriam dois desenhos disputando o
+		mesmo ponteiro.
+	]]
+	if targeting.Placement then return end
+
 	local screenPosition = PointerUtil.getScreenPosition()
 
 	-- No celular, antes do primeiro toque, nao existe "onde o dedo esta": a mira
@@ -1502,6 +1510,10 @@ function RoundCardShopController:_confirmTarget(screenPosition : Vector2)
 	local targeting = self.Targeting
 	if not targeting then return end
 
+	-- Quem confirma o destino do Zippers e o proprio fantasma, pelo `OnConfirm` do
+	-- `_beginMovePlacement`. Este clique e o mesmo, e valeria duas vezes.
+	if targeting.Placement then return end
+
 	if targeting.Stage == USE.Unit then
 		local placement = self.Controllers.UnitPlacementController
 		if not placement then return end
@@ -1514,58 +1526,109 @@ function RoundCardShopController:_confirmTarget(screenPosition : Vector2)
 			return
 		end
 
-		--[[
-			O Zippers passa para o segundo passo. A altura da torre acima do chao dela e
-			medida **agora**, com ela ainda no lugar velho: o destino e um ponto do chao,
-			e sem essa folga a torre afundaria nele.
-		]]
+		-- A torre escolhida: o segundo passo do Zippers e o posicionamento inteiro,
+		-- e nao um anel no chao. Ver `_beginMovePlacement`.
 		targeting.UnitId = unitId
-		targeting.HeightOffset = self:_heightAboveGround(unitModel)
 		targeting.Stage = USE.Move
 
 		self:_hoverUnit(nil)
 		self:_clearPreview()
 
-		targeting.Ring = self:_buildRing(RoundCardConfig.GetRadius(targeting.CardId), TARGETING.Colors.Move)
+		self:_beginMovePlacement(unitModel, unitId)
 		return
 	end
 
 	local ground = self:_groundAt(screenPosition)
 	if not ground then return end
 
-	if targeting.Use == USE.Move then
-		self:_sendUse(targeting.Uid, {
-			UnitId = targeting.UnitId,
-			Position = ground + Vector3.new(0, targeting.HeightOffset or 0, 0),
-		})
-		return
-	end
-
 	self:_sendUse(targeting.Uid, { Position = ground })
 end
 
 --[=[
-	Quanto o pivo de um modelo esta acima do chao debaixo dele.
+	O segundo passo do Zippers: escolher para onde a torre vai.
 
-	E o que o Zippers precisa levar junto: o servidor guarda o CFrame da unidade, e
-	nao "o ponto do chao onde ela esta". Sem chao embaixo (a torre esta numa ponte
-	sobre o vazio) a folga e zero, e o servidor recusa o destino se ele nao servir.
+	Ele **e** o posicionamento de uma unidade, e nao uma mira parecida com ele. Quem
+	desenha e quem decide se o lugar serve e o `UnitPlacementController:visualize`,
+	o mesmo que larga uma torre nova -- o jogador ve o modelo da propria torre em
+	meio-tom, verde onde ela pode ficar e vermelho onde nao pode, com o anel do
+	alcance dela e o caminho pintado, e no celular o mesmo painel de confirmar.
+
+	Reaproveitar aquilo, em vez de repetir as conferencias aqui, e o ponto: o
+	destino do Zippers passa pelas mesmas regras de um posicionamento novo (fora do
+	caminho, sem obstaculo, longe das outras torres, sem ninguem em cima), e uma
+	segunda copia dessas regras divergiria da primeira no dia em que uma delas
+	mudasse -- que e o mesmo motivo de o `PlacementUtil` existir entre o cliente e o
+	servidor.
+
+	**A propria torre sai das contas** (`IgnoreModel`): ela continua de pe no lugar
+	velho durante a escolha, e sem isso ela obstruiria o proprio destino. E o que o
+	`ignoreEntry` do `UnitService:isSpotFree` ja faz do lado do servidor.
+
+	**O giro vale**, como em qualquer posicionamento: o R gira o fantasma e o angulo
+	viaja junto com o destino. O fantasma comeca no giro que a torre ja tem, entao
+	quem so quer muda-la de lugar nao precisa fazer nada -- e quem quer virar a torre
+	para o outro lado do caminho consegue, sem vender e recomprar.
 ]=]
-function RoundCardShopController:_heightAboveGround(unitModel : Model) : number
-	local pivot = unitModel:GetPivot().Position
+function RoundCardShopController:_beginMovePlacement(unitModel : Model, unitId : string)
+	local targeting = self.Targeting
+	if not targeting then return end
 
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { unitModel, Player.Character }
+	local placement = self.Controllers.UnitPlacementController
+	if not placement then return end
 
-	local hit = workspace:Raycast(pivot, Vector3.new(0, -1000, 0), params)
+	local uid = targeting.Uid
+	local unitName = unitModel.Name
+	local pivot = unitModel:GetPivot()
+	local _, yaw = pivot:ToEulerAnglesYXZ()
 
-	return if hit then pivot.Y - hit.Position.Y else 0
+	placement:visualize(unitName, {
+		IgnoreModel = unitModel,
+		Range = placement:getUnitRange(unitName, unitModel:GetAttribute("Upgrades") or 0, pivot.Position, unitId),
+		Rotation = math.deg(yaw),
+		ConfirmText = "MOVE",
+
+		--[[
+			Vai o CFrame que o fantasma validou, aberto em ponto e angulo.
+
+			O ponto e o do CFrame, e nao o chao debaixo do cursor: aquele ja e a altura
+			em que a unidade fica apoiada, medida da mesma forma que o `PlaceUnit` mede
+			para uma torre nova. O angulo e so o Y, em radianos, porque e o unico que o
+			fantasma gira -- mandar o CFrame inteiro daria ao cliente doze numeros para
+			mentir onde bastam um.
+		]]
+		OnConfirm = function(cf : CFrame)
+			local _, spin = cf:ToEulerAnglesYXZ()
+
+			self:_sendUse(uid, { UnitId = unitId, Position = cf.Position, Rotation = spin })
+		end,
+
+		OnCancel = function()
+			self:_cancelTargeting()
+		end,
+	})
+
+	--[[
+		O passo so vira "posicionamento" se o fantasma de fato subiu.
+
+		`visualize` desiste em silencio em dois casos -- ja existe um fantasma no ar,
+		ou o modelo nao esta em `Assets.Units` --, e marcar o passo antes de saber
+		disso deixaria a carta num limbo: nada desenhado na tela, o clique sem dono
+		(o `_confirmTarget` ja teria saido pela porta do `Placement`) e so o Esc
+		como saida. Sem fantasma, a mira e desfeita e a carta volta inteira para a
+		mao -- ela so e gasta quando o servidor confirma.
+	]]
+	targeting.Placement = placement.isPlacing == true
+
+	if not targeting.Placement then
+		self:_cancelTargeting()
+	end
 end
 
 --- Recolhe o que a mira desenhou e devolve o clique ao posicionamento.
 function RoundCardShopController:_stopTargeting()
 	if not self.Targeting then return end
+
+	local hadPlacement = self.Targeting.Placement == true
 
 	self.Targeting = nil
 
@@ -1580,6 +1643,16 @@ function RoundCardShopController:_stopTargeting()
 
 	local placement = self.Controllers.UnitPlacementController
 	if not placement then return end
+
+	--[[
+		O fantasma do Zippers cai junto com a mira, seja qual for a saida: o destino
+		confirmado, o Esc, a carta clicada de novo ou a carta que o servidor tirou da
+		mao. `unequip` numa mao vazia nao faz nada, mas o teste evita derrubar um
+		fantasma que nao e nosso.
+	]]
+	if hadPlacement then
+		placement:unequip()
+	end
 
 	--[=[
 		A tranca do clique cai no **quadro seguinte**, e nao agora.

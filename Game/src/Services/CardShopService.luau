@@ -235,7 +235,7 @@ CardShopService.Effects = {
 			return "faltou a unidade ou o destino"
 		end
 
-		local entry, reason = unitService:MoveUnit(target.UnitId, target.Position)
+		local entry, reason = unitService:MoveUnit(target.UnitId, target.Position, target.Rotation)
 		if not entry then
 			return string.format("mudanca recusada (%s)", tostring(reason))
 		end
@@ -265,15 +265,23 @@ CardShopService.Effects = {
 		return string.format("partida a %sx por %ss", tostring(scale), tostring(duration))
 	end,
 
-	WeatherReport = function(self, player : Player, params)
+	--[[
+		A carta pula o clima **desta** wave, e nao adia o clima inteiro: uma nevasca
+		de tres waves comprada na primeira volta na segunda. Ver
+		`WeatherRoundService:SkipCurrentWave`.
+
+		Sem `Params`: nao ha mais numero de waves para ajustar, e a unica wave que a
+		carta conhece e a que esta no ar.
+	]]
+	WeatherReport = function(self, player : Player)
 		local weatherRound = self.Services.WeatherRoundService
 		if not weatherRound then return "sem WeatherRoundService" end
 
-		local waves = params.Waves or 1
-		local hadWeather = weatherRound:Suppress(waves)
+		if not weatherRound:SkipCurrentWave() then
+			return "nao havia clima no ar"
+		end
 
-		return string.format("ceu limpo por %d wave(s)%s", waves,
-			hadWeather and "" or " (nao havia clima no ar)")
+		return "ceu limpo nesta wave"
 	end,
 }
 
@@ -363,6 +371,25 @@ function CardShopService:_checkTarget(card, target : any)
 		end
 
 		checked.Position = position
+	end
+
+	--[[
+		O giro que o jogador escolheu no fantasma, em radianos, so no eixo Y -- as
+		torres ficam de pe, e o posicionamento nunca ofereceu outro eixo.
+
+		Ele e **opcional**: um cliente que nao mande nada continua valendo, e a torre
+		fica com o giro que ja tinha. O que nao vale e mandar lixo, e por isso o
+		numero passa pelos mesmos tres testes da posicao -- ser numero, nao ser NaN e
+		nao ser infinito -- antes de ser dobrado para uma volta.
+	]]
+	if use == RoundCardConfig.Use.Move and target.Rotation ~= nil then
+		local rotation = target.Rotation
+
+		if typeof(rotation) ~= "number" or rotation ~= rotation or math.abs(rotation) == math.huge then
+			return nil, "giro invalido"
+		end
+
+		checked.Rotation = rotation % (2 * math.pi)
 	end
 
 	return checked

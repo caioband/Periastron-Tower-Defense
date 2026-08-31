@@ -337,6 +337,11 @@ end
 	um motivo, e quem chamou nao gasta a carta -- errar o lugar nao pode custar a
 	compra.
 
+	`rotation` e o giro em radianos no eixo Y, opcional; sem ele a torre fica com o
+	que ja tinha. Ele entra na conferencia junto com o ponto, e nao depois: a caixa
+	que o `isSpotFree` testa e a do modelo **girado**, que e a mesma que o fantasma
+	do cliente pintou de verde.
+
 	Na tela a unidade e tirada e reposta (`RemoveUnit` + `ReplicateUnit`) em vez de
 	deslizar ate o destino. O `unitId` continua o mesmo, entao o card, a prioridade e
 	o placar de dano dela sobrevivem a viagem; o que se perde e so a animacao de
@@ -346,7 +351,7 @@ end
 	O alvo do momento e derrubado junto: mirar do lugar velho depois de ter mudado
 	de lugar faria a torre atirar em quem ela ja nao alcanca.
 ]=]
-function UnitService:MoveUnit(unitId : any, position : any)
+function UnitService:MoveUnit(unitId : any, position : any, rotation : number?)
 	local entry = self.UnitsById[unitId]
 	if not entry then
 		return nil, "unidade nao existe"
@@ -365,12 +370,19 @@ function UnitService:MoveUnit(unitId : any, position : any)
 	end
 
 	--[[
-		A rotacao e a que a unidade ja tinha: o jogador escolheu um lugar, e nao uma
-		direcao. O que ele mandou e so o ponto -- ja com a altura que o modelo tem
-		acima do chao dali, medida no cliente pelo mesmo raycast que o posicionamento
-		usa.
+		O giro vem do fantasma, como num posicionamento novo: quem move uma torre
+		escolhe um lugar **e** uma direcao, e o R do teclado gira o fantasma do
+		Zippers pelo mesmo caminho que gira o de uma torre que acabou de ser comprada.
+
+		Sem giro no pedido a torre fica com o que ja tinha. Isso nao e so
+		retrocompatibilidade: e o que mantem honesto o caso em que o cliente nao teve
+		fantasma nenhum para girar.
+
+		A altura ja veio no `position`, medida no cliente pelo mesmo CFrame que o
+		`PlaceUnit` valida.
 	]]
-	local cf = CFrame.new(position) * (entry.cf - entry.cf.Position)
+	local spin = if rotation then CFrame.Angles(0, rotation, 0) else (entry.cf - entry.cf.Position)
+	local cf = CFrame.new(position) * spin
 
 	if not self:isSpotFree(cf, entry.unitName, "Zippers", entry) then
 		return nil, "destino ocupado"

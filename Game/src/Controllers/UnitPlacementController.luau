@@ -494,8 +494,11 @@ end
 --[=[
 	Monta o painel e devolve a ScreenGui junto do botao de confirmar, que o loop de
 	posicionamento apaga e acende conforme o lugar aceita a unidade ou nao.
+
+	`confirmText` existe para o Zippers: la o botao nao esta colocando nada, e
+	"PLACE" num movimento diria ao jogador que ele vai gastar uma unidade nova.
 ]=]
-local function createTouchControls(onRotate : () -> (), onConfirm : () -> (), onCancel : () -> ())
+local function createTouchControls(onRotate : () -> (), onConfirm : () -> (), onCancel : () -> (), confirmText : string?)
 	local screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "UnitPlacementTouch"
 	screenGui.ResetOnSpawn = false
@@ -551,7 +554,7 @@ local function createTouchControls(onRotate : () -> (), onConfirm : () -> (), on
 	rotateButton.Parent = container
 	rotateButton.Activated:Connect(onRotate)
 
-	local confirmButton = createTouchButton("PLACE", TOUCH_CONFIRM_COLOR, 2)
+	local confirmButton = createTouchButton(confirmText or "PLACE", TOUCH_CONFIRM_COLOR, 2)
 	confirmButton.Parent = container
 	confirmButton.Activated:Connect(onConfirm)
 
@@ -981,11 +984,36 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 	self.Controllers.MusicController:PlaySFX("UnitPlace")
 end
 
-function UnitPlacementController:visualize(unitName : string)
+--[=[
+	O fantasma que segue o ponteiro: o modelo da unidade em meio-tom, verde onde ela
+	pode ficar e vermelho onde nao pode, com o anel de alcance e o caminho pintado.
+
+	`options` deixa o mesmo fantasma servir a quem nao esta colocando uma unidade
+	nova. Ele existe para o Zippers, a carta que **muda uma torre de lugar**: o
+	destino dela passa exatamente pelas mesmas conferencias de um posicionamento
+	novo, e reescrever essas conferencias na carta era garantir que as duas
+	respostas divergissem na primeira vez que uma delas mudasse.
+
+	| campo | o que faz |
+	| --- | --- |
+	| `IgnoreModel` | a torre que esta sendo movida: ela sai do raycast, da obstrucao e da distancia minima, senao o destino seria recusado por ela mesma |
+	| `Range` | alcance do anel; sem isto e o da tabela, sem upgrade nem carta |
+	| `Rotation` | giro inicial do fantasma, em graus |
+	| `ConfirmText` | rotulo do botao de confirmar no toque; sem isto, `PLACE` |
+	| `OnConfirm(cf)` | roda no lugar do `PlaceUnit`, com o fantasma ja recolhido |
+	| `OnCancel()` | roda no lugar do desequipar da hotbar de unidades |
+
+	Sem `options` nada disto muda: e o posicionamento de sempre, com a carta de
+	unidade equipada.
+]=]
+function UnitPlacementController:visualize(unitName : string, options : { [string] : any }?)
 	if self.isPlacing then
 		placementPrint(unitName, "nao pode posicionar: ja existe um fantasma ativo")
 		return
 	end
+
+	options = options or {}
+	local ignoreModel = options.IgnoreModel
 	local unitModel = Units:FindFirstChild(unitName)
 	if not unitModel then
 		placementPrint(unitName, "nao pode posicionar: modelo nao existe em Assets.Units")
@@ -996,7 +1024,13 @@ function UnitPlacementController:visualize(unitName : string)
 	local maid = Maid.new()
 	self._maid = maid
 	local ghost = unitModel:Clone()
-	local currentRotation = 0
+
+	--[[
+		O Zippers entra com o giro que a torre ja tem: quem so quer muda-la de lugar
+		nao deve precisar reencontrar a direcao dela no R, e um fantasma comecando no
+		zero viraria toda torre movida para o mesmo lado.
+	]]
+	local currentRotation = options.Rotation or 0
 	local currentColor = VALID_COLOR
 	local canPlace = false
 	-- Guardado so para o log do Studio dizer o motivo do bloqueio.
@@ -1096,7 +1130,7 @@ function UnitPlacementController:visualize(unitName : string)
 	ghost.Parent = workspace
 
 	local unitStats = SharedConfig.UnitStats[unitName]
-	local unitRange = unitStats and unitStats.Range or 10
+	local unitRange = options.Range or (unitStats and unitStats.Range) or 10
 	local ghostBoundsCF, ghostBoundsSize = unitModel:GetBoundingBox()
 	local unitSizeX = ghostBoundsSize.X
 	--[[
@@ -1189,6 +1223,16 @@ function UnitPlacementController:visualize(unitName : string)
 		if character then
 			table.insert(filterList, character)
 		end
+
+		--[[
+			A torre que esta sendo movida sai da mira junto com o fantasma. Ela ainda
+			esta de pe no lugar velho, e sem isto o raycast pararia nela -- o jogador
+			nao conseguiria apontar para o chao debaixo da propria torre, e o teste de
+			obstrucao a acusaria de obstruir a si mesma.
+		]]
+		if ignoreModel and ignoreModel.Parent then
+			table.insert(filterList, ignoreModel)
+		end
 		raycastParams.FilterDescendantsInstances = filterList
 
 		-- No mouse a mira e onde o cursor esta agora; no toque e onde o dedo encostou
@@ -1277,6 +1321,10 @@ function UnitPlacementController:visualize(unitName : string)
 
 				if not onGrid and not isObstructed then
 					for placedUnit, _ in pairs(self.createdClasses) do
+						-- O mesmo `ignoreEntry` do `UnitService:isSpotFree` la no servidor:
+						-- uma torre nunca esta perto demais de si mesma.
+						if placedUnit == ignoreModel then continue end
+
 						local placedPos = placedUnit:GetPivot().Position
 						local otherTemplate = Units:FindFirstChild(placedUnit.Name)
 						local otherSizeX = otherTemplate and select(2, otherTemplate:GetBoundingBox()).X or unitSizeX
@@ -1361,7 +1409,18 @@ function UnitPlacementController:visualize(unitName : string)
 		]]
 		placementPrint(unitName, "fantasma enviado ao servidor em", formatVector(targetCF.Position),
 			"| apoiado em", describeSurface(groundInstance))
-		Framework:Fire("PlaceUnit", unitName, targetCF)
+
+		--[[
+			O CFrame e congelado **antes** da limpeza, e o aviso sai **depois** dela.
+
+			Quem recebe o `OnConfirm` costuma desmontar a propria mira no mesmo passo
+			(o Zippers manda a carta e fecha o alvo, e o fechamento chama o `unequip`
+			daqui). Avisando antes, isso cairia no meio deste corpo -- o maid seria
+			destruido duas vezes e o `ghost` ja teria sumido quando a limpeza chegasse
+			nele.
+		]]
+		local placedCF = targetCF
+		local onConfirm = options.OnConfirm
 
 		-- A devolucao da aparencia do caminho fica a cargo do maid, logo
 		-- abaixo: um dono so para os dois caminhos de saida.
@@ -1371,6 +1430,13 @@ function UnitPlacementController:visualize(unitName : string)
 		maid:Destroy()
 		ghost:Destroy()
 
+		if onConfirm then
+			onConfirm(placedCF)
+			return
+		end
+
+		Framework:Fire("PlaceUnit", unitName, placedCF)
+
 		self.Controllers.CardController:setUnequipState()
 	end
 
@@ -1379,6 +1445,16 @@ function UnitPlacementController:visualize(unitName : string)
 		carta fica atras do fantasma e do painel, entao o painel tem a propria saida.
 	]]
 	local function cancelPlacement()
+		--[[
+			Quem entrou por `options` tem a propria saida: a carta continua na mao do
+			jogador e quem a solta e o `RoundCardShopController`. Mexer na hotbar de
+			unidades aqui desequiparia uma carta de unidade que nem esta equipada.
+		]]
+		if options.OnCancel then
+			options.OnCancel()
+			return
+		end
+
 		self.Controllers.CardController:setUnequipState()
 		self:unequip()
 	end
@@ -1402,7 +1478,8 @@ function UnitPlacementController:visualize(unitName : string)
 			touchTarget = screenPosition
 		end))
 
-		local touchControls, confirmButton = createTouchControls(rotateGhost, confirmPlacement, cancelPlacement)
+		local touchControls, confirmButton = createTouchControls(rotateGhost, confirmPlacement, cancelPlacement,
+			options.ConfirmText)
 		touchConfirmButton = confirmButton
 		maid:GiveTask(function()
 			touchConfirmButton = nil
