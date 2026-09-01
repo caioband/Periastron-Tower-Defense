@@ -1,12 +1,15 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
 local Configs = Shared:WaitForChild("Config")
+local ServerConfigs = ServerScriptService:WaitForChild("Config")
 
 local SharedConfig = require(Configs.SharedConfig)
+local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
 local Signal = require(Packages.Signal)
@@ -59,6 +62,40 @@ function ShopService:_addShards(Player : Player, amount : number)
 end
 
 --[[ EXTERNAL ]]
+
+--[=[
+	As chances que a loja publica, por caixa: `{ [Id do item] = { [raridade] = % } }`.
+
+	Sai daqui e nao de um config compartilhado porque as odds sao **do servidor**
+	(`ServerScriptService.Config.Crate`) -- o cliente recebe o resultado da conta,
+	e nao a tabela que a produz. O que ele recebe ja e a chance real, com a evolucao
+	da caixa dentro; ver `Crate.GetDisplayOdds`.
+
+	Item que nao entrega caixa nenhuma fica de fora do mapa, e nao com um mapa vazio:
+	quem le sabe distinguir "esta caixa nao tem chance nenhuma" (impossivel) de "este
+	item nao e uma caixa".
+]=]
+function ShopService:GetCrateOdds() : { [string]: { [string]: number } }
+	if self.CrateOdds then
+		return self.CrateOdds
+	end
+
+	local odds = {}
+
+	for _, item in ShopConfig.getItems() do
+		if item.Crate then
+			local itemOdds = ServerConfig.Crate.GetDisplayOdds(item.Crate)
+			if itemOdds then
+				odds[item.Id] = itemOdds
+			end
+		end
+	end
+
+	-- Nada aqui muda em tempo de execucao: e config vezes config, e a mesma resposta
+	-- vale para todo mundo pelo resto do servidor.
+	self.CrateOdds = odds
+	return odds
+end
 
 --[=[
 	Shards the player holds, straight from the loaded profile.
@@ -136,6 +173,16 @@ function ShopService:construct()
 
 		Framework:Fire("ShopPurchaseResult", Player, itemId, success, reason)
 	end)
+
+	--[[
+		O cliente pede as chances quando liga a loja, em vez de o servidor mandar no
+		join: a `ShopUI` e `ResetOnSpawn`, entao o painel e reconstruido a cada
+		respawn, e um envio unico no join se perderia na primeira morte. O pedido
+		tambem cobre o jogador que entrou antes de o service subir.
+	]]
+	Framework:Listen("RequestCrateOdds", function(Player : Player)
+		Framework:Fire("CrateOdds", Player, self:GetCrateOdds())
+	end)
 end
 
 function ShopService:start()
@@ -151,6 +198,7 @@ function ShopService:init()
 	-- would only create the event when it first fires it -- and Warp complains that it
 	-- "is taking too long to retrieve". Declared here like the other server-only events.
 	Framework:Listen("ShopPurchaseResult", function() end)
+	Framework:Listen("CrateOdds", function() end)
 end
 
 return ShopService

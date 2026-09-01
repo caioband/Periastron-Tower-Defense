@@ -77,4 +77,71 @@ module.UPGRADES = {
 ]]
 module.CHAIN_UPGRADES = true
 
+--[=[
+	A chance de cada raridade de unit sair de uma caixa daquele tier, **ja com a
+	evolucao dentro** -- e o numero que a loja mostra.
+
+	As `POOLS` la em cima sao a chance depois de a caixa parar de evoluir, e nao a
+	chance de comprar aquela caixa e receber aquela raridade. Uma Crate Of Beginnings
+	evolui para Crate Of Nature em 25% das aberturas (e dali pode continuar), entao o
+	pool da comum vale so em 75% delas. A diferenca nao e detalhe: a lendaria sai a
+	0,25% pelo pool e a **1,29%** de verdade, cinco vezes mais.
+
+	Mostrar o pool cru seria a loja prometer um numero que o jogo nao entrega, e por
+	isso a conta e feita aqui e nao na tela: **a chance publicada e a chance real**.
+
+	Como a conta anda: cada degrau da corrente leva `1 - chance` da probabilidade que
+	sobrou para o tier atual e passa o resto adiante, ate um tier sem evolucao. Com
+	`CHAIN_UPGRADES` desligado a corrente para no primeiro degrau, e a funcao segue
+	valendo -- ela le a mesma bandeira que o sorteio le.
+
+	Devolve um mapa `{ [raridade] = porcentagem }` somando 100, ou nil para um tier
+	que nao existe. Raridade com chance zero (a Cosmic, hoje) sai de fora: linha de
+	"0%" na loja e ruido.
+]=]
+function module.GetDisplayOdds(crateRarity : string) : { [string]: number }?
+	local pool = module.POOLS[crateRarity]
+	if not pool then
+		return nil
+	end
+
+	-- Quanto de cada tier a caixa comprada vira, depois de a evolucao rolar.
+	local tiers = {}
+	local current = crateRarity
+	local remaining = 1
+
+	while true do
+		local upgrade = module.UPGRADES[current]
+		if not upgrade or not module.POOLS[upgrade.To] then
+			tiers[current] = (tiers[current] or 0) + remaining
+			break
+		end
+
+		local chance = math.clamp((upgrade.Chance or 0) / 100, 0, 1)
+		tiers[current] = (tiers[current] or 0) + remaining * (1 - chance)
+		remaining *= chance
+		current = upgrade.To
+
+		if not module.CHAIN_UPGRADES then
+			tiers[current] = (tiers[current] or 0) + remaining
+			break
+		end
+	end
+
+	local odds = {}
+	for tier, share in tiers do
+		for rarity, chance in module.POOLS[tier] do
+			odds[rarity] = (odds[rarity] or 0) + share * chance
+		end
+	end
+
+	for rarity, chance in odds do
+		if chance <= 0 then
+			odds[rarity] = nil
+		end
+	end
+
+	return odds
+end
+
 return module

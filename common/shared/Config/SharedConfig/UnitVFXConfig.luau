@@ -19,6 +19,7 @@ local UnitVFXConfig = {
 	},
 	["Slasher"] = { PLACEMENT_EFFECT },
 	["Sword"] = { PLACEMENT_EFFECT },
+	["Berserker"] = { PLACEMENT_EFFECT },
 	["Slingshot"] = { PLACEMENT_EFFECT },
 	["Archer"] = { PLACEMENT_EFFECT },
 	["Subspace Tripminer"] = { PLACEMENT_EFFECT },

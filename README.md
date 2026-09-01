@@ -1152,6 +1152,96 @@ o pendente com `RequestServerRestart`, igual ao clima.
 > publicar uma atualização. Por isso existe o `restartwarning` do Cmdr, que entra
 > pelo mesmo `ServerRestartService:Schedule` sem nada ser realmente agendado.
 
+## Unidades
+
+### O golpe em quatro tempos (Berserker)
+
+O ataque de uma unidade é sempre um pedido só do servidor: ele marca o
+`lastAttack`, espera o windup (`HitTime` do passo, em `UnitAttackConfig`) e cobra
+os `Hits` do `UnitStats`, um a cada `HitInterval`. É espaçamento **regular** — o
+Azure bate quatro vezes de 0,25 em 0,25s —, e o combo do Berserker não cabe nele:
+os quatro golpes dele saem em 0,4333s, 1,2667s, 2,3833s e 2,5667s da animação
+`Attack`, ou seja 0,83s, depois 1,12s, depois 0,18s. Os dois últimos quase se
+encostam — é o par rápido que fecha o combo.
+
+Para isso o passo aceita `HitTimes`, uma lista de instantes no lugar do
+`HitTime`:
+
+```lua
+["Berserker"] = {
+    AttackSequence = {
+        { Animation = "Attack", HitTimes = { 0.4333, 1.2667, 2.3833, 2.5667 }, Duration = 2.9 },
+    },
+},
+```
+
+Com a lista no passo, é ela quem manda: o número de acertos é o tamanho dela e os
+intervalos são as diferenças entre os instantes — o `HitTime` e o `HitInterval`
+daquela unidade ficam de fora da conta. O `Hits` do `UnitStats` continua tendo que
+bater com `#HitTimes`, porque é dele que sai o DPS que o card mostra.
+
+**Os números são os marcadores `Hit` da animação, copiados na mão.** É a mesma
+regra do `HitTime` do Archer e pelo mesmo motivo: quem cobra o dano é o servidor,
+que não tem `AnimationTrack` nenhuma para escutar. Mexeu o marcador no Moon
+Animator, mexe aqui junto — inclusive o `Duration`, que é a duração do arquivo.
+
+**O cooldown conta a animação inteira.** O `Cooldown` do `UnitStats` sempre foi do
+início de um golpe ao início do seguinte, então "3 segundos parado depois de
+terminar a animação" é a soma dos dois: `2.9 + 3 = 5.9`. Não existe campo de
+recuperação separado — a janela de 5,9s é a mesma que o servidor manda no
+`swingWindow`, e é ela que faz o cliente **não** espremer a animação (2,9s cabem
+folgados em 5,9s), que é o que deixa os 3s de recuperação visíveis na tela.
+
+O `Duration` existe para o caso contrário. Se uma carta de `AttackSpeed` apertar o
+ciclo abaixo dos 2,9s da animação, o cliente encolhe o gesto para ele caber
+(`Unit:playAttackVisual`) e o servidor encolhe os instantes pelo mesmo fator
+(`UnitService:executeAttack`) — sem isso o fim do combo sairia depois de o golpe
+seguinte já ter começado, com o boneco no meio de outra animação.
+
+> Por isso o Berserker é a única unidade corpo a corpo sem `CooldownMultiplier` no
+> `UnitUpgradeConfig`: a recuperação é a identidade dela, e upgrade nela compra
+> dano, não cadência. Os 10% por nível que o Sword e o Slasher têm comeriam os 3s
+> parados até 0,58s no nível máximo.
+
+### A área que enfraquece a cada golpe: `HitFalloff`
+
+Cada um dos quatro golpes do Berserker é uma **área de raio 3**, e cada um bate
+menos que o anterior:
+
+```lua
+AOE = { Radius = 3 },
+HitFalloff = 0.1,
+```
+
+O `AOE` já existia (é o do Rocket). O campo novo é o `HitFalloff`, e ele é **a
+perda de um golpe para o seguinte** — não a perda contra o dano cheio:
+
+| Golpe | Fração do cheio | Dano (base 35) |
+| --- | --- | --- |
+| 1º (0,4333s) | 100% | 35 |
+| 2º (1,2667s) | 90% | 32 |
+| 3º (2,3833s) | 81% | 28 |
+| 4º (2,5667s) | 72,9% | 26 |
+
+É o que impede que quatro áreas seguidas sejam simplesmente quatro vezes o golpe:
+o combo vale **3,44 golpes cheios**, e não 4.
+
+A queda é **por golpe, e não por alvo** — é a diferença entre ela e o
+`Projectile.PierceFalloff` da flecha do Archer, que desconta a cada corpo furado
+dentro de um tiro só. Aqui todo mundo que estiver na área do segundo golpe leva os
+mesmos 32; o que muda de um golpe para o outro é quanto aquele golpe vale.
+
+É **composta**, como a da flecha e pelo mesmo motivo: o terceiro golpe tira 90% do
+segundo, e não 80% do cheio, então ela nunca chega a zero — descontar 10 pontos
+percentuais de cada vez faria o 11º golpe não machucar e o 12º curar. O
+arredondamento acontece uma vez só, na hora de cobrar, e não a cada degrau: em cada
+um ele acumularia o erro do arredondamento ao longo do combo. O piso é 1, como no
+resto do arquivo.
+
+O campo é genérico: vale para qualquer unidade de vários `Hits`, com os golpes
+espaçados por `HitInterval` ou por `HitTimes`. Sem o campo, todos os golpes do
+ciclo valem igual — que é como o Azure continua batendo.
+
 ## Cartas de round
 
 De X em X waves a loja da beirada oferece três cartas sorteadas. O catálogo inteiro

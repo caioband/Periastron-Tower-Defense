@@ -321,6 +321,160 @@ O deck vale na partida: o Game monta a hotbar e as contagens de carta a partir d
 lobby](../Game/README.md#a-hotbar-é-o-deck-montado-no-lobby). Quem nunca montou o seu
 joga com um deck automático (`DeckConfig.autoDeck`), que não é gravado.
 
+## As caixas têm nome próprio
+
+Três das quatro caixas foram renomeadas, e o nome novo vale em todo lugar:
+
+| Tier | Era | É |
+| --- | --- | --- |
+| `Common` | Common Crate | **Crate Of Beginnings** |
+| `Rare` | Rare Crate | **Crate Of Nature** |
+| `Epic` | Epic Crate | **Fragmented Crate** |
+| `Legendary` | Legendary Crate | Legendary Crate |
+
+**A chave da tabela é o tier, e o nome é da caixa** — os dois deixaram de se
+parecer, e é de propósito. `CrateConfig.CRATES` continua indexado por
+`Common`/`Rare`/`Epic`/`Legendary`, que é o que liga a caixa ao `RarityConfig`, ao
+pool de drop e ao `Inventory.Crates` do perfil; mexer nisso pediria migração de
+perfil. O que mudou é o `DisplayName` (o que o jogador lê) e o campo novo `Key`.
+
+`Key` é o nome de código da caixa, e ele é **o mesmo em três lugares**: o modelo em
+`Assets.CratesModel` que o unboxing gera, o container dela na `ShopUI` e o `Id` do
+item no `ShopConfig`. Era só o nome do modelo (`Model`) e virou um campo próprio
+quando a loja ganhou um container por caixa — são três coisas que precisam casar, e
+um nome só garante que casem. `CrateConfig.getModelName` continua existindo e
+devolve o `Key`, então o `UnboxingController` não mudou.
+
+O ícone da backpack também sai do `CrateConfig` (`Image`), como sempre saiu: o
+`CrateController` escreve ele no `crateimg` de cada `cratetemplate`. Trocar a arte
+de uma caixa é uma linha lá.
+
+## Loja: um container por caixa
+
+A `ShopUI` mudou de dono do desenho. O painel agora é
+`ShopUI.Frame.ImageLabel` (era `ShopUI.ImageLabel`), e dentro dele a
+`ScrollingFrame` traz **um container autorado por caixa**, com o nome do `Key`:
+`CrateOfBeginnings`, `CrateOfNature`, `FragmentedCrate`.
+
+Antes existia um `ShopItemWrapper` autorado que o `ShopController` clonava uma vez
+por item. Não serve mais: cada caixa tem ilustração, moldura e cor de linha
+próprias, e clonar um template só daria três caixas com a cara da primeira. O
+controller passou a **achar** o container pelo nome e escrever nele só o que muda:
+
+```
+CrateOfBeginnings          <- item.Container, que é o Key da caixa
+├── BoxArt
+│   └── TextLabel          <- o DisplayName, em maiúsculas
+├── Frame
+│   ├── Rarity             <- TEMPLATE daquela caixa (clonado, uma vez por raridade)
+│   │   └── RarityTextPercentage
+│   └── UIListLayout
+└── Buy
+    └── TextLabel          <- o Price pelo ShopConfig.PRICE_FORMAT: `100 Shards`
+```
+
+**A linha de raridade é um template por caixa, e não um template global.** A
+`Rarity` autorada dentro de cada container é a arte *daquela* caixa — por isso há
+uma em cada uma, e por isso elas são imagens diferentes. O bind tira a autorada da
+tela (guardando um clone) e devolve uma linha por raridade que a caixa pode dropar,
+ordenadas da mais comum em cima para a mais rara embaixo — a ordem é a do
+`RarityConfig`, e não a da chance: na caixa lendária a Epic e a Legendary empatam em
+40%, e ordenar por número poria as duas na frente da Rare.
+
+**Caixa sem container não aparece**, com um aviso uma vez só. É o caso da Legendary
+Crate hoje: ela continua no `ShopConfig`, no inventário, no drop e no unboxing, e o
+dia em que um container `LegendaryCrate` for autorado ela volta à loja sem ninguém
+mexer em código. O contrário também vale: container que não é de nenhum item fica
+escondido, e não destruído — ele é trabalho de designer, e a loja não é dona dele.
+
+### As chances são as de verdade, e vêm do servidor
+
+As odds continuam sendo **só do servidor** (`ServerScriptService.Config.Crate`): o
+cliente pede com `RequestCrateOdds` e recebe `CrateOdds`, um mapa
+`{ [Id do item] = { [raridade] = % } }` já calculado. O que atravessa a rede é o
+resultado da conta, e não a tabela que a produz.
+
+E o número publicado é a chance **real**, com a evolução da caixa dentro
+(`Crate.GetDisplayOdds`). As `POOLS` são a chance depois de a caixa parar de
+evoluir, e não a chance de comprar aquela caixa e receber aquela raridade: uma
+Crate Of Beginnings vira Crate Of Nature em 25% das aberturas (e dali pode
+continuar), então o pool da comum só vale em 75% delas. A diferença não é detalhe:
+
+| Caixa | Common | Rare | Epic | Legendary |
+| --- | ---: | ---: | ---: | ---: |
+| Crate Of Beginnings | 69,56% | 21,36% | 7,79% | **1,29%** (0,25% no pool cru) |
+| Crate Of Nature | 38,25% | 40,45% | 16,89% | 4,41% |
+| Fragmented Crate | — | 43% | 44,6% | 12,4% |
+| Legendary Crate | — | 20% | 40% | 40% |
+
+A lendária sai **cinco vezes** mais da caixa mais barata do que o pool cru sugere.
+Mostrar o pool seria a loja prometer um número que o jogo não entrega, e por isso a
+conta mora no config do servidor e não na tela.
+
+Enquanto as odds não chegam, o container fica **sem linha nenhuma** — e não com o
+número autorado. Placeholder de designer na tela do jogador é pior do que meio
+segundo de espaço vazio.
+
+**O contorno de cada linha é a cor da raridade dela.** O `UIStroke` autorado é o da
+*caixa* (preto na Crate Of Nature, verde na Fragmented Crate) e não diz nada sobre a
+raridade — as quatro linhas de uma caixa sairiam iguais. No render ele passa a ser a
+cor do tier no `RarityConfig`, a mesma que pinta o carretel do unboxing e o nome da
+carta no deck, então a linha se lê antes de o jogador chegar no texto:
+
+| | Common | Rare | Epic | Legendary |
+| --- | --- | --- | --- | --- |
+| Contorno | azul `29,33,250` | verde `31,230,74` | magenta `227,19,255` | âmbar `255,191,51` |
+
+Por cima vem um gradiente vertical de brilho. A divisão de trabalho é o que importa
+ali: **o `Color` do `UIStroke` carrega a cor e o `UIGradient` carrega só a luz**, em
+cinza (branco em cima, 0.45 embaixo). Como o gradiente multiplica a cor do contorno,
+trocar uma raridade de cor continua sendo uma linha no `RarityConfig` e não quatro no
+controller. É vertical porque a linha é um retângulo largo e baixo — na horizontal o
+gradiente acenderia uma ponta do texto e apagaria a outra.
+
+Quando o template já traz um `UIGradient` autorado (o da Crate Of Beginnings traz), é
+ele que é reescrito em vez de um segundo ser criado ao lado: dois `UIGradient` no
+mesmo `UIStroke` é a Roblox escolhendo um deles por ordem de árvore.
+
+### O som da compra
+
+`SoundService.BuySFX` toca no **resultado** que o servidor manda, e não no clique: o
+preço e a carteira são conferidos lá, e um clique sem shards não comprou nada.
+
+Ele mora **solto na raiz do `SoundService`**, e não dentro do Package
+`SharedSounds` — é um efeito só do Lobby, e não vale uma mudança de package que as
+duas places carregam. Para ele ser achado, o `MusicController._find` ganhou a raiz
+como segundo lugar de busca: primeiro a pasta (`SharedSounds.SFX`), depois um
+`FindFirstChild` **direto** na raiz. Direto e não recursivo de propósito — recursivo
+ele reencontraria o que já está dentro do Package, e um nome repetido nas duas pontas
+passaria a depender da ordem da árvore.
+
+Isso não abre exceção à regra de que nada lê o `SoundService` direto: quem lê a raiz
+continua sendo só o `MusicController`, e quem toca continua pedindo pelo nome
+(`Sound:PlaySFX("BuySFX")`).
+
+### O que saiu junto
+
+A animação de item (`ShopItemContainerShow`) saiu com o template. Ela movia
+`Position.X.Scale`, e os containers de hoje estão sob um `UIListLayout`, que é quem
+manda na posição deles — a faixa não teria efeito nenhum. A `OpenShop` do painel
+continua, e o controller **cria o `UIScale`** que ela precisa quando o painel não
+traz um autorado (o novo não traz), senão a loja apareceria só por fade, sem
+crescer.
+
+**O X mora no `Frame` de fora, e não no painel** — por isso ele é procurado a partir
+do wrapper e em profundidade. Buscar só dentro do `ImageLabel` deixaria o botão mudo;
+buscar na ScreenGui inteira alcançaria o `Close` do painel antigo, que é irmão dele e
+continua na árvore. Fechar na mão não briga com a proximidade: o `_updateProximity`
+só age na **travessia**, então o painel não volta no tick seguinte só porque o jogador
+continua parado ali — ele volta quando o jogador sair do raio e entrar de novo.
+
+O contador de shards continua **opcional**: o painel novo ainda não tem um, e a loja
+não depende dele. Ele é procurado dentro do painel primeiro e só depois na ScreenGui
+inteira — o painel antigo (`ShopUI.ImageLabel`, escondido) ainda tem um
+`CurrentShards` e vem antes na árvore, então sem essa ordem um contador novo autorado
+no painel de hoje perderia para o velho.
+
 ## Achado
 
 `Shared.Classes.Unit` chama `Framework:Get("ProjectileController")` e

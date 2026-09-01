@@ -20,35 +20,54 @@ module.RARITIES = {
 	"Legendary",
 }
 
--- Model is the name of the model inside ReplicatedStorage.Shared.Assets.CratesModel
--- that the unboxing spawns for that rarity.
+--[=[
+	A caixa de cada tier.
+
+	| Campo | O que e |
+	| --- | --- |
+	| `DisplayName` | o nome que o jogador le, com espacos |
+	| `Key` | o nome de codigo da caixa, sem espacos (ver abaixo) |
+	| `Image` | o icone dela na backpack e na loja |
+	| `Order` | a ordem em que ela aparece nas listas |
+
+	**`Key` e o nome da caixa em todo lugar que nao e texto de tela.** Ele e ao
+	mesmo tempo o modelo em `Assets.CratesModel` que o unboxing gera, o container
+	da caixa na `ShopUI` e o `Id` do item da loja no `ShopConfig`. Era so o nome do
+	modelo (`Model`), e virou um campo so quando a loja ganhou um container por
+	caixa: sao tres lugares que tem que casar, e um nome so garante que casem.
+
+	Repare que **a chave da tabela e o tier, e o `Key` e a caixa**, e os dois nao se
+	parecem mais: a caixa do tier `Common` se chama `CrateOfBeginnings`. A chave e o
+	que liga a caixa ao `RarityConfig` e ao pool de drop, e nao pode mudar sem
+	migrar perfil; o `Key` e so nome, e muda quando a arte mudar.
+]=]
 module.CRATES = {
 	["Common"] = {
-		DisplayName = "Common Crate",
+		DisplayName = "Crate Of Beginnings",
 		Order = 1,
-		Image = "rbxassetid://135726334725408",
-		Model = "CommonCrate",
+		Image = "rbxassetid://79442157203436",
+		Key = "CrateOfBeginnings",
 	},
 
 	["Rare"] = {
-		DisplayName = "Rare Crate",
+		DisplayName = "Crate Of Nature",
 		Order = 2,
-		Image = "rbxassetid://125866367274436",
-		Model = "RareCrate",
+		Image = "rbxassetid://100869885751562",
+		Key = "CrateOfNature",
 	},
 
 	["Epic"] = {
-		DisplayName = "Epic Crate",
+		DisplayName = "Fragmented Crate",
 		Order = 3,
-		Image = "rbxassetid://135666773191804",
-		Model = "EpicCrate",
+		Image = "rbxassetid://130450778663107",
+		Key = "FragmentedCrate",
 	},
 
 	["Legendary"] = {
 		DisplayName = "Legendary Crate",
 		Order = 4,
 		Image = "rbxassetid://96648127627723",
-		Model = "LegendaryCrate",
+		Key = "LegendaryCrate",
 	},
 }
 
@@ -83,16 +102,26 @@ function module.resolveRarity(rarity: string?): string?
 end
 
 --[=[
-	Name of the model in Assets.CratesModel for a rarity, or nil when the rarity
-	does not exist.
+	O nome de codigo da caixa daquele tier, ou nil quando o tier nao existe.
+
+	E o mesmo nome em tres lugares (ver o comentario de `CRATES`): o modelo em
+	`Assets.CratesModel`, o container na `ShopUI` e o `Id` do item da loja.
 ]=]
-function module.getModelName(rarity: string?): string?
+function module.getKey(rarity: string?): string?
 	local resolvedRarity = module.resolveRarity(rarity)
 	if not resolvedRarity then
 		return nil
 	end
 
-	return module.CRATES[resolvedRarity].Model
+	return module.CRATES[resolvedRarity].Key
+end
+
+--[=[
+	Name of the model in Assets.CratesModel for a rarity, or nil when the rarity
+	does not exist. It is the crate's `Key` -- the model is named after the crate.
+]=]
+function module.getModelName(rarity: string?): string?
+	return module.getKey(rarity)
 end
 
 --[=[

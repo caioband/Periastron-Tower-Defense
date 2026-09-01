@@ -21,6 +21,7 @@
 	Hoje é o caso do `Subspace Tripminer` e do `Archer` — e como a arte autorada é a
 	do Slasher, os dois aparecem com a carta dele até o id chegar. É aqui que se
 	conserta, uma linha por unidade.
+
 ]]
 
 local CardConfig = {}
@@ -30,6 +31,8 @@ CardConfig.Images = {
 	Rocket = "rbxassetid://109642138105636",
 	Entrepreneur = "rbxassetid://130898800672794",
 	Sword = "rbxassetid://78316687499130",
+
+	Berserker = "rbxassetid://98237843021684",
 	Azure = "rbxassetid://117289931783490",
 	Slingshot = "rbxassetid://101061040163272",
 	Archer = "rbxassetid://95837523891408",
@@ -65,11 +68,18 @@ end
 
 	Faltam Azure, Slingshot, Subspace Tripminer e Archer. É aqui que se conserta,
 	uma linha por unidade.
+
+	O **Berserker** já tem a carta dele em `Images`, mas ainda não o retrato: o id
+	aqui é o do Slasher, provisório, e é uma linha para trocar quando a arte do
+	quadradinho existir.
 ]]
 CardConfig.Icons = {
 	Slasher = "rbxassetid://77799937837921",
 	Entrepreneur = "rbxassetid://97283177894419",
 	Sword = "rbxassetid://77707891613366",
+
+	-- Provisório: é o retrato do Slasher, e não o dele. Ver a nota acima.
+	Berserker = "rbxassetid://77799937837921",
 	Rocket = "rbxassetid://119165882760846",
 }
 

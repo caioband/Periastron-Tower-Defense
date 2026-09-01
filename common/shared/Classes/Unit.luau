@@ -28,7 +28,31 @@ function Unit:loadAnimations()
 
 	for _, animation : Animation in self.model:GetChildren() do
 		if not animation:IsA("Animation") then continue end
-		self.loadedAnimations[animation.Name] = animator:LoadAnimation(animation)
+
+		local track = animator:LoadAnimation(animation)
+
+		--[=[
+			A `Idle` desce para `Movement`, qualquer que seja a prioridade com que ela
+			foi exportada.
+
+			Ela e a **pose de base**: toca em laco a partida inteira e tudo o mais e um
+			gesto por cima dela. Duas tracks na mesma prioridade nao se substituem --
+			elas se misturam por peso --, entao uma unidade com a `Idle` e a `Attack`
+			as duas em `Action` bate com meio golpe e meia pose parada. O Berserker e o
+			Archer sao exportados assim; o Sword e o Subspace Tripminer, que ja vem com
+			a `Idle` em `Movement`, sao o comportamento certo que os outros copiam
+			daqui.
+
+			A regra e so rebaixar a `Idle`, e nao promover o golpe: assim a prioridade
+			que quem animou escreveu em cada gesto continua valendo entre eles (a
+			`MoneyWave` do Entrepreneur, o `Slash2` do Slasher), e nao ha um segundo
+			lugar onde a arte da unidade e decidida.
+		]=]
+		if animation.Name == "Idle" then
+			track.Priority = Enum.AnimationPriority.Movement
+		end
+
+		self.loadedAnimations[animation.Name] = track
 	end
 end
 
@@ -142,6 +166,10 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?, swingWindow
 
 	local animName = step and step.Animation or "Attack"
 	local hitTime = step and step.HitTime or 0
+
+	-- O golpe que acerta varias vezes dentro da mesma animacao, cada acerto no seu
+	-- instante. Ver o `HitTimes` no `UnitAttackConfig`.
+	local hitTimes = step and step.HitTimes
 
 	local track = self.loadedAnimations[animName]
 	if track and sequence then
@@ -288,7 +316,23 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?, swingWindow
 		end
 	end
 
-	if hitTime > 0 then
+	if hitTimes then
+		--[[
+			Um `fireHit` por instante da lista, e nao o `scheduleHits`: os acertos
+			deste golpe tem tempos proprios, e nao o espacamento regular do
+			`HitInterval`. Quem conta e a lista, e nao o `stats.Hits` -- os dois tem
+			que continuar iguais, mas quem manda aqui e a coreografia da animacao.
+
+			Os instantes sao divididos pelo `fit` pelo mesmo motivo que a track e
+			tocada multiplicada por ele: com a animacao espremida para caber na janela
+			do golpe, o marcador `Hit` chega antes, e o acerto tem que chegar junto. O
+			servidor divide pelo mesmo fator (`UnitService:executeAttack`), a partir do
+			`Duration` do config -- que e a copia do `track.Length` lido aqui.
+		]]
+		for _, at in ipairs(hitTimes) do
+			GameClock.Delay(at / fit, fireHit)
+		end
+	elseif hitTime > 0 then
 		GameClock.Delay(hitTime, scheduleHits)
 	elseif track then
 		local fired = false

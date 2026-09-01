@@ -147,14 +147,34 @@ function MusicController:GetSFXFolder(): Instance?
 	return self:_getFolder(SFX_FOLDER)
 end
 
+--[[
+	Acha o Sound pelo nome dentro da pasta e, se não estiver lá, **solto na raiz do
+	SoundService**.
+
+	A raiz é o segundo lugar de propósito. O `SharedSounds` é um Package, então
+	acrescentar um som lá dentro é uma mudança de package que as duas places
+	carregam — e um efeito que só uma place usa (o `BuySFX`, da loja do Lobby) não
+	precisa disso. O som fica solto ao lado do Package, e continua sendo achado por
+	nome como qualquer outro.
+
+	A busca na raiz é **direta**, e não recursiva: recursiva ela reencontraria o que
+	já está dentro do `SharedSounds`, e um nome repetido nas duas pontas passaria a
+	depender da ordem da árvore.
+
+	Isto não abre exceção à regra de que nada lê o `SoundService` direto: quem lê a
+	raiz continua sendo só este controller, e quem toca continua pedindo pelo nome.
+]]
 function MusicController:_find(folder: Instance?, name: string): Sound?
-	if not folder then
-		return nil
+	if folder then
+		local sound = folder:FindFirstChild(name, true)
+		if sound and sound:IsA("Sound") then
+			return sound
+		end
 	end
 
-	local sound = folder:FindFirstChild(name, true)
-	if sound and sound:IsA("Sound") then
-		return sound
+	local loose = SoundService:FindFirstChild(name)
+	if loose and loose:IsA("Sound") then
+		return loose
 	end
 
 	return nil
@@ -723,7 +743,7 @@ function MusicController:PlaySFX(name: string, options: SFXOptions?): Sound?
 
 	local template = self:GetSFX(name)
 	if not template then
-		warn(`[MusicController]: SFX "{name}" não existe em {SHARED_SOUNDS}.{SFX_FOLDER}.`)
+		warn(`[MusicController]: SFX "{name}" não existe em {SHARED_SOUNDS}.{SFX_FOLDER} nem solto na raiz do SoundService.`)
 		return nil
 	end
 

@@ -16,6 +16,7 @@ local SharedConfig = require(Configs.SharedConfig)
 local UIUtil = require(Util.UIUtil)
 
 local ShopConfig = SharedConfig.ShopConfig
+local RarityConfig = SharedConfig.RarityConfig
 
 -- Cascade lives only in the place (see Lobby/README.md), so it is reached by name
 -- instead of through the Rojo tree.
@@ -27,37 +28,96 @@ local Framework = Me.new()
 --[[ CONSTANTS ]]
 local SHOP_UI_NAME = "ShopUI"
 
+--[[
+	O caminho do painel: `ShopUI.Frame.ImageLabel`.
+
+	O `Frame` de fora carrega o `UIAspectRatioConstraint`, e o `ImageLabel` de dentro
+	e a moldura desenhada -- e nele que a `OpenShop` escreve. Os dois nascem
+	`Visible = false` no StarterGui, entao o bind acende os dois e quem manda em ver
+	ou nao ver a loja passa a ser o `Enabled` da ScreenGui.
+]]
+local WRAPPER_NAME = "Frame"
 local PANEL_NAME = "ImageLabel"
 local LIST_NAME = "ScrollingFrame"
-local TEMPLATE_NAME = "ShopItemWrapper"
-local CONTAINER_NAME = "ShopItemContainer"
+
+-- Dentro do container de cada caixa. `BoxArt` carrega a ilustracao e, dentro dela,
+-- o nome; `Frame` carrega a lista de raridades; `Buy` e o botao com o preco.
+local BOX_ART_NAME = "BoxArt"
+local ODDS_FRAME_NAME = "Frame"
+local RARITY_TEMPLATE_NAME = "Rarity"
+local RARITY_TEXT_NAME = "RarityTextPercentage"
+local BUY_BUTTON_NAME = "Buy"
+
+local RARITY_ROW_PREFIX = "Rarity_"
+
+-- O X mora no `Frame` de fora, e nao no painel. O contador de shards ainda nao
+-- existe no painel novo -- a loja nao depende de nenhum dos dois para funcionar,
+-- porque ela abre e fecha por proximidade.
 local SHARDS_LABEL_NAME = "CurrentShards"
 local CLOSE_BUTTON_NAME = "Close"
-
-local ITEM_IMAGE_NAME = "ItemImg"
-local ITEM_NAME_NAME = "ItemName"
-local PRICE_NAME = "Price"
-local CONFIRM_NAME = "Confirm"
 
 local HUD_UI_NAME = "HUD"
 local HUD_FRAME_NAME = "HUDFrame"
 local HUD_BUTTON_NAME = "Shop"
 
+-- Quantas vezes as chances sao pedidas ao servidor antes de desistir, e de quanto
+-- em quanto tempo. Ver o `_requestOdds`.
+local ODDS_REQUEST_ATTEMPTS = 5
+local ODDS_REQUEST_INTERVAL = 2
+
+--[[
+	O som da compra. Toca no **resultado** do servidor, e nao no clique: o preco e a
+	carteira sao conferidos la, e um clique sem shards nao comprou nada.
+
+	Ele mora solto na raiz do `SoundService`, e nao dentro do Package `SharedSounds`
+	-- e um efeito so do Lobby, e nao vale uma mudanca de package nas duas places. O
+	`MusicController` acha os dois pelo nome; ver o `_find` de la.
+]]
+local BUY_SOUND_NAME = "BuySFX"
+
+--[[
+	O contorno de cada linha de raridade.
+
+	A cor e a do tier no `RarityConfig` -- a mesma que pinta o carretel do unboxing e
+	o nome da carta no deck --, e o gradiente e um brilho por cima dela: o `Color` do
+	`UIStroke` carrega a cor e o gradiente carrega so a luz, em cinza, para a hora de
+	trocar uma cor de raridade ser uma linha no `RarityConfig` e nao quatro aqui.
+
+	Vertical (`Rotation = 90`) porque a linha e um retangulo largo e baixo: um
+	gradiente horizontal acenderia uma ponta do texto e apagaria a outra.
+]]
+local STROKE_GRADIENT_ROTATION = 90
+local STROKE_SHEEN_TOP = 1
+local STROKE_SHEEN_BOTTOM = 0.45
+
 --[=[
-	Owns StarterGui.ShopUI: renders one row per ShopConfig item and plays the two
-	Cascade animations -- OpenShop on the panel, ShopItemContainerShow across every
-	rendered wrapper as a single staggered batch.
+	Dono da `StarterGui.ShopUI`: acha o container de cada caixa, escreve nele o que
+	muda e toca a `OpenShop` no painel.
 
-	The GUI ships with one ShopItemWrapper authored by hand. That one is taken as
-	the template and removed, so every row on screen comes from the config.
+	**Ele nao cria container nenhum.** Cada caixa tem o container dela autorado na
+	`ScrollingFrame`, com ilustracao, moldura e cor proprias, e o codigo so acha pelo
+	nome (o `Key` da caixa, ver `CrateConfig`) e preenche tres coisas: o nome na
+	`BoxArt`, o preco no `Buy` e a lista de raridades no `Frame`. Antes existia um
+	`ShopItemWrapper` autorado que ele clonava por item -- nao serve mais, porque
+	clonar um template so daria tres caixas com a cara da primeira.
 
-	Walking within ShopConfig.OPEN_RADIUS of the shop part opens it, and walking
-	away closes it. Open/Close/Toggle are public, so anything else (a HUD button,
-	a Cmdr command) can drive the same panel.
+	Dentro de cada container, a linha de raridade **e um template por caixa**: a
+	`Rarity` autorada e a arte daquela caixa, e ela e clonada uma vez por raridade
+	que a caixa pode dropar, da mais comum (em cima) para a mais rara (embaixo).
+
+	As **chances** nao estao em config compartilhado: elas sao do servidor, e chegam
+	pelo `CrateOdds` depois de um `RequestCrateOdds`. Ate elas chegarem o container
+	fica sem linha nenhuma, e nao com o numero autorado -- placeholder de designer na
+	tela do jogador e pior do que espaco vazio por meio segundo.
+
+	Andar a menos de `ShopConfig.OPEN_RADIUS` da parte da loja abre, e sair fecha.
+	`Open`/`Close`/`Toggle` sao publicos, entao qualquer outra coisa (o botao da HUD,
+	um comando do Cmdr) move o mesmo painel.
 ]=]
 local ShopController = {
 	Controllers = {
 		DataController = {},
+		MusicController = {},
 	},
 
 	Signals = {
@@ -77,97 +137,271 @@ local ShopController = {
 
 --[[ INTERNAL ]]
 
-function ShopController:_fillWrapper(wrapper : Frame, item)
-	local container = wrapper:FindFirstChild(CONTAINER_NAME)
-	if not container then
-		warn(`[ShopController]: template is missing {CONTAINER_NAME}.`)
+--[=[
+	Uma porcentagem como a arte escreve: `40%`, `7.79%`, `1.29%`.
+
+	Duas casas e o suficiente para a menor chance da tabela (a lendaria na caixa mais
+	barata, 1,29%) nao virar "1%", e o zero a direita cai fora para o caso redondo
+	nao virar "40.00%" ao lado de um "7.79%".
+]=]
+local function formatPercent(chance : number) : string
+	local rounded = math.floor(chance * 100 + 0.5) / 100
+
+	-- Chance que existe mas nao cabe em duas casas vira `<0.01%`, e nao `0%`: a
+	-- linha esta ali porque a raridade pode sair, e escrever zero seria mentir.
+	-- Nenhum pool de hoje chega perto disso (a menor e 1,29%), mas quem mexer nos
+	-- numeros nao vai descobrir esta regra pelo bug.
+	if rounded <= 0 then
+		return "<0.01%"
+	end
+
+	local text = string.format("%.2f", rounded)
+
+	text = string.gsub(text, "%.?0+$", "")
+
+	return text .. "%"
+end
+
+--[=[
+	Pinta o contorno de uma linha com a cor da raridade dela, com um brilho de cima
+	para baixo.
+
+	O `UIStroke` autorado e o da caixa (preto na Crate Of Nature, verde na Fragmented
+	Crate), e ele nao diz nada sobre a raridade da linha -- as quatro linhas de uma
+	caixa sairiam iguais. Aqui ele passa a ser a cor do tier, e a linha se le sozinha
+	antes de o jogador chegar no texto.
+
+	O gradiente e reaproveitado quando ja existe um autorado (o template da Crate Of
+	Beginnings tem um) em vez de um segundo ser criado ao lado: dois `UIGradient` no
+	mesmo `UIStroke` e a Roblox escolhendo um deles por ordem de arvore.
+]=]
+local function styleRarityStroke(label : TextLabel, rarity : string)
+	local stroke = label:FindFirstChildWhichIsA("UIStroke")
+	local color = RarityConfig.getColor(rarity)
+
+	if not stroke or not color then
 		return
 	end
 
-	wrapper.Name = item.Id
-	wrapper.LayoutOrder = item.Order
-	wrapper:SetAttribute("ShopItemId", item.Id)
+	stroke.Color = color
 
-	local itemImage = container:FindFirstChild(ITEM_IMAGE_NAME)
-	if itemImage and itemImage:IsA("ImageLabel") and item.Image ~= "" then
-		itemImage.Image = item.Image
+	local gradient = stroke:FindFirstChildWhichIsA("UIGradient")
+	if not gradient then
+		gradient = Instance.new("UIGradient")
+		gradient.Parent = stroke
 	end
 
-	local itemName = itemImage and itemImage:FindFirstChild(ITEM_NAME_NAME)
-	if itemName and itemName:IsA("TextLabel") then
-		itemName.Text = item.DisplayName
+	gradient.Rotation = STROKE_GRADIENT_ROTATION
+	gradient.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.new(STROKE_SHEEN_TOP, STROKE_SHEEN_TOP, STROKE_SHEEN_TOP)),
+		ColorSequenceKeypoint.new(1, Color3.new(STROKE_SHEEN_BOTTOM, STROKE_SHEEN_BOTTOM, STROKE_SHEEN_BOTTOM)),
+	})
+end
+
+--[=[
+	Escreve as linhas de raridade de um container, da mais comum para a mais rara.
+
+	A `Rarity` autorada dentro do container e o template daquela caixa: ela sai da
+	tela no bind e volta clonada, uma vez por raridade com chance maior que zero. A
+	ordem e a do `RarityConfig`, e nao a da chance -- na caixa lendaria a Epic e a
+	Legendary empatam em 40%, e ordenar por numero poria as duas na frente da Rare.
+
+	Sem odds (elas ainda nao chegaram do servidor) o container fica vazio de
+	proposito. Ver o comentario da classe.
+]=]
+function ShopController:_renderOdds(entry)
+	local template = entry.RarityTemplate
+	local frame = entry.OddsFrame
+	if not template or not frame or not frame.Parent then
+		return
 	end
 
-	local price = container:FindFirstChild(PRICE_NAME)
-	if price and price:IsA("TextLabel") then
-		price.Text = UIUtil.formatCommas(item.Price)
+	for _, row in entry.Rows do
+		row:Destroy()
 	end
 
-	local confirm = container:FindFirstChild(CONFIRM_NAME)
-	if confirm and confirm:IsA("GuiButton") then
-		local label = confirm:FindFirstChildWhichIsA("TextLabel")
-		if label then
-			label.Text = item.ButtonText
+	entry.Rows = {}
+
+	local odds = self.CrateOdds and self.CrateOdds[entry.Item.Id]
+	if not odds then
+		return
+	end
+
+	for _, rarity in RarityConfig.ORDER do
+		local chance = odds[rarity]
+		if not chance or chance <= 0 then
+			continue
 		end
 
-		self.ItemMaid:GiveTask(confirm.Activated:Connect(function()
-			self:_requestPurchase(item)
-		end))
+		local row = template:Clone()
+		row.Name = RARITY_ROW_PREFIX .. rarity
+		row.LayoutOrder = RarityConfig.getOrder(rarity) or 0
+
+		local label = row:FindFirstChild(RARITY_TEXT_NAME, true)
+		if label and label:IsA("TextLabel") then
+			local tier = RarityConfig.TIERS[rarity]
+			local name = (tier and tier.DisplayName) or rarity
+
+			label.Text = string.format("%s: %s", string.upper(name), formatPercent(chance))
+			styleRarityStroke(label, rarity)
+		end
+
+		row.Visible = true
+		row.Parent = frame
+
+		table.insert(entry.Rows, row)
 	end
 end
 
 --[=[
-	Rebuilds every row from the config. Safe to call again: the old wrappers are
-	pulled out of Cascade before being destroyed, so no track keeps writing to a
-	frame that is already gone.
+	Liga um container autorado ao item da loja que ele representa.
+
+	Devolve nil quando o container nao tem a estrutura que a arte promete -- e um
+	container quebrado some da loja em vez de aparecer sem preco.
+]=]
+function ShopController:_bindContainer(container : Instance, item)
+	local boxArt = container:FindFirstChild(BOX_ART_NAME)
+	local oddsFrame = container:FindFirstChild(ODDS_FRAME_NAME)
+	local buy = container:FindFirstChild(BUY_BUTTON_NAME)
+
+	if not oddsFrame or not buy then
+		warn(`[ShopController]: container '{container.Name}' has no {ODDS_FRAME_NAME}/{BUY_BUTTON_NAME}.`)
+		return nil
+	end
+
+	container.LayoutOrder = item.Order
+	container:SetAttribute("ShopItemId", item.Id)
+	container.Visible = true
+
+	-- O nome mora dentro da ilustracao, e nao ao lado dela.
+	local nameLabel = boxArt and boxArt:FindFirstChildWhichIsA("TextLabel")
+	if nameLabel then
+		nameLabel.Text = string.upper(item.DisplayName)
+	end
+
+	local priceLabel = buy:FindFirstChildWhichIsA("TextLabel")
+	if priceLabel then
+		priceLabel.Text = string.format(ShopConfig.PRICE_FORMAT, UIUtil.formatCommas(item.Price))
+	end
+
+	if buy:IsA("GuiButton") then
+		self.ItemMaid:GiveTask(buy.Activated:Connect(function()
+			self:_requestPurchase(item)
+		end))
+	end
+
+	--[[
+		A linha autorada vira template e sai da tela.
+
+		Ela e clonada antes de ser destruida porque a arte dela e a **daquela caixa**:
+		nao ha um template unico de linha em lugar nenhum, e o que separa a linha da
+		Crate Of Nature da linha da Fragmented Crate e exatamente o que o designer
+		autorou aqui dentro.
+	]]
+	local authored = oddsFrame:FindFirstChild(RARITY_TEMPLATE_NAME)
+	local template = nil
+
+	if authored then
+		template = authored:Clone()
+		authored:Destroy()
+	else
+		warn(`[ShopController]: container '{container.Name}' has no {RARITY_TEMPLATE_NAME} to clone.`)
+	end
+
+	local entry = {
+		Item = item,
+		Container = container,
+		OddsFrame = oddsFrame,
+		RarityTemplate = template,
+		Rows = {},
+	}
+
+	self:_renderOdds(entry)
+
+	return entry
+end
+
+--[=[
+	Preenche a loja inteira a partir do config.
+
+	Container sem item na tabela fica escondido, e item sem container autorado sai
+	da loja com um aviso -- e o caso da lendaria hoje (ver `ShopConfig.ITEMS`). Os
+	dois sao avisados uma vez so por nome: um container que falta e um erro de
+	autoria, e repetir por respawn so enche o output.
 ]=]
 function ShopController:_render()
-	if not self.Template or not self.List then
+	if not self.List then
 		return
 	end
 
 	self.ItemMaid:DoCleaning()
+	self.Entries = {}
 
-	if #self.Wrappers > 0 then
-		AnimationService.ClearInstanceBatch(self.Wrappers)
+	local claimed = {}
 
-		for _, wrapper in self.Wrappers do
-			wrapper:Destroy()
+	for _, item in ShopConfig.getItems() do
+		local container = self.List:FindFirstChild(item.Container)
+
+		if not container or not container:IsA("GuiObject") then
+			if not self.WarnedMissing[item.Container] then
+				self.WarnedMissing[item.Container] = true
+				warn(`[ShopController]: no container '{item.Container}' in {SHOP_UI_NAME}.{WRAPPER_NAME}.{PANEL_NAME}.{LIST_NAME}, skipping '{item.Id}'.`)
+			end
+
+			continue
+		end
+
+		claimed[container] = true
+
+		local entry = self:_bindContainer(container, item)
+		if entry then
+			table.insert(self.Entries, entry)
 		end
 	end
 
-	self.Wrappers = {}
-
-	for _, item in ShopConfig.getItems() do
-		local wrapper = self.Template:Clone()
-
-		-- Hidden until the batch starts: the first frame Cascade writes is what puts
-		-- the container off screen, and until then it would sit where it was authored.
-		wrapper.Visible = false
-		self:_fillWrapper(wrapper, item)
-		wrapper.Parent = self.List
-
-		table.insert(self.Wrappers, wrapper)
+	-- Container que nao e de nenhum item da tabela: escondido, e nao destruido. Ele
+	-- e trabalho de designer, e a loja nao e dona dele.
+	for _, child in self.List:GetChildren() do
+		if child:IsA("GuiObject") and not claimed[child] then
+			child.Visible = false
+		end
 	end
 end
 
 --[=[
-	Plays ShopItemContainerShow on every rendered wrapper as one batched track,
-	ITEM_STAGGER apart. Cascade clamps a wrapper that has not reached its turn to the
-	first keyframe, so the whole list starts off screen and slides in one by one.
+	Pede as chances ao servidor, e insiste ate elas chegarem.
+
+	A insistencia existe porque o **identificador do evento nasce no servidor** (ver
+	a nota sobre eventos no README da raiz): o cliente pode ligar a loja antes de o
+	`ShopService` ter registrado o `Listen` do `RequestCrateOdds`, e um pedido feito
+	nessa janela se perde. Sem repetir, a loja ficaria sem linha de raridade pelo
+	resto da sessao por causa de meio segundo de ordem de boot.
+
+	O laco para no primeiro `CrateOdds` que chegar e tem teto de tentativas: se o
+	servidor nao responde depois disso, ele nao vai responder, e ficar pedindo para
+	sempre so esconderia o problema.
 ]=]
-function ShopController:_playItemAnimations()
-	if #self.Wrappers == 0 then
+function ShopController:_requestOdds()
+	if self.CrateOdds or self.OddsRequested then
 		return
 	end
 
-	for _, wrapper in self.Wrappers do
-		wrapper.Visible = true
-	end
+	self.OddsRequested = true
 
-	AnimationService.PlayBatch(self.Wrappers, ShopConfig.ITEM_ANIMATION, {
-		Stagger = ShopConfig.ITEM_STAGGER,
-	})
+	task.spawn(function()
+		for _ = 1, ODDS_REQUEST_ATTEMPTS do
+			if self.CrateOdds then
+				return
+			end
+
+			Framework:Fire("RequestCrateOdds")
+			task.wait(ODDS_REQUEST_INTERVAL)
+		end
+
+		if not self.CrateOdds then
+			warn("[ShopController]: no CrateOdds from the server -- the crates show no rarity rows.")
+		end
+	end)
 end
 
 --[=[
@@ -323,12 +557,12 @@ end
 	for every fresh copy the engine parents into PlayerGui.
 ]=]
 function ShopController:_bindUI(screenGui : ScreenGui)
-	local panel = screenGui:WaitForChild(PANEL_NAME, 10)
+	local wrapper = screenGui:WaitForChild(WRAPPER_NAME, 10)
+	local panel = wrapper and wrapper:WaitForChild(PANEL_NAME, 10)
 	local list = panel and panel:WaitForChild(LIST_NAME, 10)
-	local template = list and list:WaitForChild(TEMPLATE_NAME, 10)
 
-	if not panel or not list or not template then
-		warn(`[ShopController]: could not find {SHOP_UI_NAME}.{PANEL_NAME}.{LIST_NAME}.{TEMPLATE_NAME}.`)
+	if not wrapper or not panel or not list then
+		warn(`[ShopController]: could not find {SHOP_UI_NAME}.{WRAPPER_NAME}.{PANEL_NAME}.{LIST_NAME}.`)
 		return
 	end
 
@@ -338,10 +572,37 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 	self.ScreenGui = screenGui
 	self.Panel = panel
 	self.List = list
-	self.ShardsLabel = panel:FindFirstChild(SHARDS_LABEL_NAME)
 
 	--[[
-		O X do painel.
+		O painel e a moldura de fora nascem `Visible = false` no StarterGui. Quem
+		manda em ver ou nao ver a loja e o `Enabled` da ScreenGui, entao os dois sobem
+		acesos e ficam assim -- a `OpenShop` cuida da entrada pela escala e pela
+		transparencia.
+	]]
+	wrapper.Visible = true
+	panel.Visible = true
+
+	--[[
+		O contador de shards e opcional: o painel novo ainda nao traz um, e a loja
+		abre e fecha por proximidade sem precisar dele.
+
+		A busca comeca **dentro do painel** e so depois cai para a ScreenGui inteira.
+		A ordem importa porque o painel antigo (`ShopUI.ImageLabel`, escondido) ainda
+		tem um `CurrentShards`, e ele vem antes na arvore: procurando direto na
+		ScreenGui, um contador novo autorado no painel de hoje perderia para o velho e
+		nunca seria escrito.
+	]]
+	self.ShardsLabel = panel:FindFirstChild(SHARDS_LABEL_NAME, true)
+		or screenGui:FindFirstChild(SHARDS_LABEL_NAME, true)
+
+	--[[
+		O X da loja.
+
+		Procurado a partir do `Frame` de fora e **em profundidade**: hoje ele e filho
+		direto dele, pendurado no canto de cima, e nao do painel desenhado. Buscar so
+		no painel deixaria o botao mudo. A busca comeca no wrapper e nao na ScreenGui
+		para nao alcancar o `Close` do painel antigo (`ShopUI.ImageLabel`), que e irmao
+		dele e continua na arvore.
 
 		Fechar na mão não desliga a proximidade: o `_updateProximity` só age na
 		**travessia**, então o painel não é reaberto no tick seguinte só porque o
@@ -351,19 +612,28 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 		Vai no `UIMaid`, junto com o resto do bind: a `ShopUI` é `ResetOnSpawn`, e a
 		cópia nova traz um botão novo.
 	]]
-	local closeButton = panel:FindFirstChild(CLOSE_BUTTON_NAME)
+	local closeButton = wrapper:FindFirstChild(CLOSE_BUTTON_NAME, true)
 
 	if closeButton and closeButton:IsA("GuiButton") then
 		self.UIMaid:GiveTask(closeButton.Activated:Connect(function()
 			self:Close()
 		end))
 	else
-		warn(`[ShopController]: could not find {SHOP_UI_NAME}.{PANEL_NAME}.{CLOSE_BUTTON_NAME}.`)
+		warn(`[ShopController]: no {CLOSE_BUTTON_NAME} under {SHOP_UI_NAME}.{WRAPPER_NAME} -- the shop only closes by walking away.`)
 	end
 
-	-- The authored row is the template, not a row: it never shows up on screen.
-	self.Template = template:Clone()
-	template:Destroy()
+	--[[
+		A `OpenShop` escreve em `UIScale/Scale` e em `ImageTransparency`. O painel novo
+		nao traz um `UIScale` autorado, e sem ele a primeira faixa nao teria onde
+		escrever -- a loja apareceria por fade, sem crescer. Criar aqui e inofensivo
+		para um painel que ja tenha o seu: o `FindFirstChildWhichIsA` acha o autorado
+		primeiro.
+	]]
+	if not panel:FindFirstChildWhichIsA("UIScale") then
+		local scale = Instance.new("UIScale")
+		scale.Name = "PanelScale"
+		scale.Parent = panel
+	end
 
 	self.PanelTrack = AnimationService.CreateTrack(panel, ShopConfig.OPEN_ANIMATION)
 
@@ -380,7 +650,7 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 		end)
 	end
 
-	self.Wrappers = {}
+	self.Entries = {}
 	self.IsOpenState = false
 	self.OpenToken += 1
 	screenGui.Enabled = false
@@ -391,6 +661,7 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 
 	self:_render()
 	self:_updateShards()
+	self:_requestOdds()
 end
 
 --[=[
@@ -449,23 +720,9 @@ function ShopController:Open()
 
 	self.IsOpenState = true
 	self.OpenToken += 1
-	local token = self.OpenToken
-
-	-- Reopening: the rows are still parked where the last batch left them.
-	for _, wrapper in self.Wrappers do
-		wrapper.Visible = false
-	end
 
 	self.ScreenGui.Enabled = true
 	self:_playPanel(false)
-
-	task.delay(ShopConfig.ITEM_ANIMATION_DELAY, function()
-		if self.OpenToken ~= token then
-			return
-		end
-
-		self:_playItemAnimations()
-	end)
 
 	self.Signals.OpenChanged:Fire(true)
 end
@@ -534,20 +791,49 @@ function ShopController:Toggle()
 end
 
 --[=[
-	Rebuilds the rows from the config. Only needed when the config changes at runtime.
+	Reescreve os containers a partir do config. So faz falta quando o config muda em
+	tempo de execucao.
+
+	Nao pede as odds de novo: elas sao config vezes config no servidor e nao mudam
+	durante a sessao.
 ]=]
 function ShopController:Refresh()
 	self:_render()
 end
 
 function ShopController:construct()
+	--[[
+		As odds sao ouvidas antes de a UI ser observada de proposito: a resposta pode
+		chegar antes de o primeiro bind terminar, e o `_renderOdds` de cada entry
+		desenha do zero -- chegar cedo demais so significa que a loja ja abre com as
+		linhas prontas.
+	]]
+	Framework:Listen("CrateOdds", function(odds)
+		if typeof(odds) ~= "table" then
+			return
+		end
+
+		self.CrateOdds = odds
+
+		for _, entry in self.Entries do
+			self:_renderOdds(entry)
+		end
+	end)
+
+	Framework:Listen("ShopPurchaseResult", function(itemId : string, success : boolean, reason : string?)
+		if success then
+			local music = self.Controllers.MusicController
+			if music then
+				music:PlaySFX(BUY_SOUND_NAME)
+			end
+		end
+
+		self.Signals.PurchaseResult:Fire(itemId, success, reason)
+	end)
+
 	self:_observeUI()
 	self:_watchShards()
 	self:_watchProximity()
-
-	Framework:Listen("ShopPurchaseResult", function(itemId : string, success : boolean, reason : string?)
-		self.Signals.PurchaseResult:Fire(itemId, success, reason)
-	end)
 end
 
 function ShopController:start()
@@ -568,10 +854,17 @@ function ShopController:init()
 	self.Maid:GiveTask(self.ItemMaid)
 	self.Maid:GiveTask(self.HudMaid)
 
-	self.Wrappers = {}
+	-- Uma entrada por caixa desenhada: o item, o container dela e as linhas de
+	-- raridade que estao na tela agora.
+	self.Entries = {}
 	self.IsOpenState = false
 
-	-- Marker parts in the map, by name, and the names already warned about.
+	-- As chances por item, vindas do servidor -- nil enquanto a resposta nao chega.
+	self.CrateOdds = nil
+	self.OddsRequested = false
+
+	-- Marker parts in the map, by name, and the names already warned about. O mesmo
+	-- mapa guarda o container que faltou, pela mesma razao: avisar uma vez.
 	self.MapParts = {}
 	self.WarnedMissing = {}
 

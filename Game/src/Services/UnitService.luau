@@ -1459,11 +1459,13 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 	local attackConfig = SharedConfig.UnitAttackConfig and SharedConfig.UnitAttackConfig[unitName]
 	local sequence = attackConfig and attackConfig.AttackSequence
 	local stepIndex = 1
+	local step = nil
 	local windup = 0
 	if sequence and #sequence > 0 then
 		stepIndex = ((entry.attackStep or 0) % #sequence) + 1
 		entry.attackStep = stepIndex
-		windup = sequence[stepIndex].HitTime or 0
+		step = sequence[stepIndex]
+		windup = step.HitTime or 0
 	end
 
 	--[[
@@ -1478,6 +1480,60 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 	]]
 	local swingWindow = self:getCooldown(entry, GameClock.Now(), weather)
 
+	--[=[
+		O golpe que acerta varias vezes dentro da mesma animacao, cada acerto no seu
+		instante (`HitTimes`, no `UnitAttackConfig`) em vez de espacado por
+		`HitInterval`. Quem tem isso hoje e o Berserker, e o combo dele nao cabe no
+		intervalo regular: 0,83s do primeiro acerto para o segundo e 1,30s do segundo
+		para o terceiro.
+
+		Com a lista no passo, e ela quem manda no numero de acertos -- o `Hits` do
+		`UnitStats` continua existindo para o DPS do card, e os dois tem que
+		continuar iguais (ver o comentario de la).
+
+		O `squeeze` e o mesmo encolhimento que o cliente faz na animacao quando ela
+		nao cabe na janela do golpe (`Unit:playAttackVisual`): as duas pontas dividem
+		pelo mesmo fator, entao o acerto continua caindo no frame do marcador mesmo
+		com uma carta de `AttackSpeed` apertando o ciclo. Sem ele, o ultimo acerto do
+		Berserker (2,5667s) sairia depois de o golpe seguinte ja ter comecado assim
+		que a janela descesse dos 2,9s da animacao. No caso normal -- janela maior que
+		a animacao -- o fator e 1 e os instantes sao os da tabela.
+	]=]
+	local schedule = nil
+	if step and step.HitTimes and #step.HitTimes > 0 then
+		local duration = step.Duration or 0
+		local squeeze = (swingWindow > 0 and duration > swingWindow) and (duration / swingWindow) or 1
+
+		schedule = table.create(#step.HitTimes)
+		for index, at in ipairs(step.HitTimes) do
+			schedule[index] = at / squeeze
+		end
+
+		totalHits = #schedule
+		windup = schedule[1]
+	end
+
+	--[=[
+		Quanto cada golpe do MESMO ataque vale, em fracao do dano cheio.
+
+		A queda e por **golpe**, e nao por alvo: a do `PierceFalloff` desconta a cada
+		corpo que a flecha fura dentro de um tiro so, esta desconta a cada batida do
+		combo, e quem esta na area do golpe 2 leva o mesmo que quem esta na area do
+		golpe 1. As duas se compoem sem conflito -- a queda do combo entra como base
+		da queda da linha --, so que nenhuma unidade de hoje declara as duas.
+
+		O `HitFalloff` do `UnitStats` e a perda de um golpe para o **seguinte**, e nao
+		a perda contra o dano cheio: com 0.1, o combo vale 100%, 90%, 81%, 72,9%...
+		Composta pelo mesmo motivo da flecha -- assim ela nunca chega a zero, enquanto
+		descontar 10 pontos percentuais de cada vez faria o 11o golpe nao machucar e o
+		12o curar o inimigo.
+
+		O dano so e arredondado la embaixo, na hora de cobrar, e nao a cada degrau da
+		queda: arredondar em cada um acumularia o erro do arredondamento ao longo do
+		combo. O piso de 1 e o mesmo do resto do arquivo -- acertou, tirou vida.
+	]=]
+	local hitFalloff = math.clamp(unitStats.HitFalloff or 0, 0, 1)
+
 	for _, plr in ipairs(Players:GetPlayers()) do
 		Framework:Fire("UnitSwing", plr, unitId, unitName, initialMobId, stepIndex, swingWindow)
 	end
@@ -1488,6 +1544,13 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 		end
 
 		for i = 1, totalHits do
+			-- O dano deste golpe: o congelado la em cima, menos o que os golpes
+			-- anteriores do mesmo ataque ja tiraram (ver o `hitFalloff`).
+			local hitDamage = damage
+			if hitFalloff > 0 and i > 1 then
+				hitDamage = math.max(1, math.floor(damage * (1 - hitFalloff) ^ (i - 1) + 0.5))
+			end
+
 			local resolvedMobId = initialMobId
 			-- O alvo morreu entre dois golpes do mesmo ataque: o substituto sai pela
 			-- mesma prioridade, senao o golpe 2 iria para o mais perto enquanto o
@@ -1503,12 +1566,12 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 				local aoeCenter = predictedPos or unitPosition
 				local mobsInRadius = self.Services.MobService:GetMobsInRadius(aoeCenter, aoe.Radius)
 				for _, targetId in ipairs(mobsInRadius) do
-					self:creditDamage(entry, targetId, damage, auraBonus)
-					table.insert(hits, { mobId = targetId, damage = damage })
+					self:creditDamage(entry, targetId, hitDamage, auraBonus)
+					table.insert(hits, { mobId = targetId, damage = hitDamage })
 				end
 				if #hits == 0 and resolvedMobId then
-					self:creditDamage(entry, resolvedMobId, damage, auraBonus)
-					table.insert(hits, { mobId = resolvedMobId, damage = damage })
+					self:creditDamage(entry, resolvedMobId, hitDamage, auraBonus)
+					table.insert(hits, { mobId = resolvedMobId, damage = hitDamage })
 				end
 			elseif pierce and resolvedMobId then
 				--[[
@@ -1542,9 +1605,9 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 				local falloff = math.clamp(pierce.PierceFalloff or 0, 0, 1)
 
 				for index, targetId in ipairs(along) do
-					local scaled = damage
+					local scaled = hitDamage
 					if falloff > 0 and index > 1 then
-						scaled = math.max(1, math.floor(damage * (1 - falloff) ^ (index - 1) + 0.5))
+						scaled = math.max(1, math.floor(hitDamage * (1 - falloff) ^ (index - 1) + 0.5))
 					end
 
 					self:creditDamage(entry, targetId, scaled, auraBonus)
@@ -1555,8 +1618,8 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 				-- durante o windup): ele levou o tiro do mesmo jeito, senao o golpe
 				-- inteiro se perderia por causa de uma curva.
 				if #hits == 0 then
-					self:creditDamage(entry, resolvedMobId, damage, auraBonus)
-					table.insert(hits, { mobId = resolvedMobId, damage = damage })
+					self:creditDamage(entry, resolvedMobId, hitDamage, auraBonus)
+					table.insert(hits, { mobId = resolvedMobId, damage = hitDamage })
 				end
 			elseif cleave and resolvedMobId and predictedPos then
 				--[[
@@ -1579,11 +1642,11 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 				for index, targetId in ipairs(line) do
 					if index > limit then break end
 
-					local scaled = damage
+					local scaled = hitDamage
 					if falloff > 0 and index > 1 then
 						-- O mesmo arredondamento e o mesmo piso de 1 da flecha: acertou,
 						-- tirou vida, e o fim da fila nao vira um "0" flutuando na tela.
-						scaled = math.max(1, math.floor(damage * (1 - falloff) ^ (index - 1) + 0.5))
+						scaled = math.max(1, math.floor(hitDamage * (1 - falloff) ^ (index - 1) + 0.5))
 					end
 
 					self:creditDamage(entry, targetId, scaled, auraBonus)
@@ -1593,12 +1656,12 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 				-- O alvo saiu da linha entre a mira e o golpe: ele leva assim mesmo, senao
 				-- uma curva no caminho anularia o ataque inteiro.
 				if #hits == 0 then
-					self:creditDamage(entry, resolvedMobId, damage, auraBonus)
-					table.insert(hits, { mobId = resolvedMobId, damage = damage })
+					self:creditDamage(entry, resolvedMobId, hitDamage, auraBonus)
+					table.insert(hits, { mobId = resolvedMobId, damage = hitDamage })
 				end
 			elseif resolvedMobId then
-				self:creditDamage(entry, resolvedMobId, damage, auraBonus)
-				table.insert(hits, { mobId = resolvedMobId, damage = damage })
+				self:creditDamage(entry, resolvedMobId, hitDamage, auraBonus)
+				table.insert(hits, { mobId = resolvedMobId, damage = hitDamage })
 			end
 
 			local visualMobId = resolvedMobId or initialMobId
@@ -1609,7 +1672,9 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 			end
 
 			if i < totalHits then
-				GameClock.Wait(unitStats.HitInterval)
+				-- Com `HitTimes`, o intervalo e a distancia entre dois instantes da
+				-- lista; sem ela, o `HitInterval` regular do `UnitStats`.
+				GameClock.Wait(schedule and (schedule[i + 1] - schedule[i]) or unitStats.HitInterval)
 			end
 		end
 	end)

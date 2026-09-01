@@ -53,6 +53,14 @@
 	dano ter entrado. As cartas de round Chill Out e Fire Hazard multiplicam
 	exatamente estes numeros.
 
+	`HitFalloff` e a mesma ideia da queda da flecha, so que entre os **golpes** de um
+	ataque so, e nao entre os alvos de um golpe: ele e a perda de um golpe para o
+	**seguinte**, e nao contra o dano cheio. Com 0.1, o combo vale 100%, 90%, 81% e
+	72,9%. Vale para qualquer unidade de varios `Hits` (hoje so o Berserker
+	declara), e independe de como os golpes sao espacados -- `HitInterval` ou
+	`HitTimes`. Composto e com piso de 1, como o `PierceFalloff`; sem o campo, todos
+	os golpes do ciclo valem igual.
+
 	`PierceFalloff` e o que impede que atravessar seja de graca. Ele e **composto**:
 	com 0.1, o segundo inimigo leva 90% do primeiro, o terceiro 90% do segundo. Nunca
 	chega a zero de proposito -- uma flecha que furou dez corpos ainda machuca um
@@ -109,6 +117,72 @@ local UnitStats = {
 		RangeStats = {
 			Increment = 1,
 			Max = 15,
+		},
+	},
+
+	--[=[
+		O combo em quatro tempos: o unico golpe da tabela cujos acertos nao sao
+		espacados por `HitInterval`.
+
+		Os quatro acertos saem nos marcadores `Hit` da animacao `Attack` (0,4333s,
+		1,2667s, 2,3833s e 2,5667s), que estao escritos no `UnitAttackConfig` como
+		`HitTimes` -- os intervalos entre eles sao desiguais de proposito (0,83s,
+		1,12s e 0,18s), e e a coreografia da animacao que manda: os dois ultimos quase
+		se encostam, e sao o par rapido que fecha o combo. **O `Hits = 4` daqui tem
+		que continuar batendo com o tamanho daquela lista**: quem cobra o dano conta
+		pela lista, mas o DPS do card sai deste numero.
+
+		**`Cooldown = 5.9` e a animacao mais a recuperacao**: 2,9s de gesto e 3s
+		parado depois dele. O cooldown desta tabela sempre contou do inicio de um
+		golpe ao inicio do seguinte, entao "3 segundos depois de terminar a
+		animacao" e a soma dos dois -- nao ha um campo de recuperacao separado, e a
+		janela de 5,9s e a mesma que o `swingWindow` manda para o cliente encaixar a
+		animacao. Mexeu a animacao, o 2,9 muda aqui e o `Duration` muda la.
+
+		**Cada acerto e uma area de raio 3, e cada um bate menos que o anterior**
+		(`HitFalloff = 0.1`): 35, 32, 28 e 26 de dano. A queda e por golpe e nao por
+		alvo -- quem esta na area do segundo golpe leva os mesmos 32 que todo mundo
+		que estiver la --, e e o que impede que quatro areas seguidas sejam
+		simplesmente quatro vezes o golpe: o combo vale 3,44 golpes cheios, e nao 4.
+
+		O raio 3 e maior que o do Rocket (2), e de proposito: o Rocket explode a 12
+		de alcance e este precisa de um inimigo a 6 para bater. A area e o que o
+		alcance curto compra.
+
+		Os quatro acertos somam 121 de dano por ciclo, ou 20,5 de DPS -- **5,1 por
+		100 de caixa contra um alvo so**, que e de longe o pior da tabela e esta
+		certo: e a mesma casa do Rocket (4,4), a outra lendaria de area, e pela mesma
+		razao. A regra 1 la de cima mede alvo unico e nao mede area, entao ela cobra
+		das duas o preco de uma coisa que elas nao vendem. O numero que vale para
+		esta unidade e o de grupo: tres inimigos dentro do raio sao 15,4 por 100, na
+		linha do teto de 15 -- ela paga o custo cheio quando acerta a roda inteira, e
+		e ruim contra um alvo sozinho.
+
+		O que ela vende nao e o DPS medio: sao 121 de dano em area concentrados em
+		2,9s e uma janela de 3s em que ela nao faz nada, entao ela limpa o que estiver
+		junto e deixa passar a fila que vier atras. E a lendaria de alcance curto ao
+		lado do Azure -- os dois so machucam quem chega perto --, e o que os separa e
+		o ritmo e o alvo: o Azure bate de pouco em pouco num inimigo, este limpa a
+		roda toda de uma vez e para.
+	]=]
+	["Berserker"] = {
+		Rarity = "Legendary",
+		Class = "Melee",
+		Cost = 400,
+		Damage = 35,
+		Range = 6,
+		Cooldown = 5.9,
+		AttackType = "MultiShot",
+
+		-- Sem uso nesta unidade: os intervalos saem das diferencas do `HitTimes`
+		-- (ver `UnitAttackConfig`). Fica em 0 para a linha nao mentir.
+		HitInterval = 0,
+		Hits = 4,
+		AOE = { Radius = 3 },
+		HitFalloff = 0.1,
+		RangeStats = {
+			Increment = 1,
+			Max = 10,
 		},
 	},
 

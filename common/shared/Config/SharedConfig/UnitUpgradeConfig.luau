@@ -35,6 +35,20 @@ UnitUpgradeConfig.Units = {
 		CooldownMultiplier = 0.9,
 	},
 	--[[
+		Sem `CooldownMultiplier`, ao contrario do Sword e do Slasher: os 3s parados
+		depois do combo sao a identidade do Berserker, e upgrade nele compra dano, e
+		nao cadencia. Ver o comentario dele no `UnitStats`.
+
+		A escada de preco e a do Rocket, e nao a do Azure: as duas sao lendarias, mas
+		esta comeca em 400 de caixa e sobe so em dano, entao o upgrade dela tem que
+		custar como o da outra lendaria cara.
+	]]
+	["Berserker"] = {
+		BaseCost = 150,
+		CostMultiplier = 1.7,
+		DamageMultiplier = 1.25,
+	},
+	--[[
 		O dano do Slasher vai de **5 (base) a 9 (nivel maximo)**, e o multiplicador e
 		a raiz `MaxUpgrades`-esima de 9/5 -- escrito como conta, e nao como 1.12475,
 		para o topo cair exatamente em 9 e continuar caindo se o teto de upgrades
