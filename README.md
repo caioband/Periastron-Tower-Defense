@@ -294,8 +294,8 @@ São **três** moedas e duas delas são a mesma conta em lugares diferentes:
 
 | Comando | Mexe em | Onde vive |
 |---|---|---|
-| `cash` (`money`, `coins`) | `Stats.Cash` do perfil | salvo; é o do lobby, dos summons |
-| `shards` (`shard`) | `Stats.Shards` do perfil | salvo; a moeda premium da loja |
+| `cash` (`money`, `coins`) | `Stats.Cash` do perfil | salvo; é o do lobby, dos summons e das caixas baratas |
+| `shards` (`shard`) | `Stats.Shards` do perfil | salvo; a moeda premium, das caixas caras |
 | `roundcash` (`sessioncash`) | `MobService.SessionCash` | só enquanto o round dura |
 
 A ação é `set`, `add` ou `remove`, e o tab completa — `s`, `a` e `r` já resolvem.

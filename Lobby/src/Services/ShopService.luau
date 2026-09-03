@@ -19,10 +19,11 @@ local ShopConfig = SharedConfig.ShopConfig
 local Framework = Me.new()
 
 --[=[
-	Sells what ShopConfig lists, for Shards.
+	Sells what ShopConfig lists.
 
-	The client only sends an item id -- the price, what the item grants and whether
-	the player can afford it are all decided here, against the profile.
+	The client only sends an item id -- the price, **which currency it is priced in**,
+	what the item grants and whether the player can afford it are all decided here,
+	against the profile.
 ]=]
 local ShopService = {
 	Services = {
@@ -31,7 +32,8 @@ local ShopService = {
 	},
 
 	Signals = {
-		-- (Player, item : ShopConfig.ShopItem, remainingShards : number)
+		-- (Player, item : ShopConfig.ShopItem, remaining : number) -- remaining is the
+		-- balance of item.Currency after the charge, and not always Shards.
 		ItemPurchased = Signal.new(),
 	},
 }
@@ -52,10 +54,17 @@ function ShopService:_grantItem(Player : Player, item) : boolean
 	return false
 end
 
-function ShopService:_addShards(Player : Player, amount : number)
+--[=[
+	Devolve o que foi cobrado, na moeda em que foi cobrado.
+
+	`currency` e sempre uma chave de `ShopConfig.CURRENCIES` -- o `resolveItem` ja
+	troca uma moeda desconhecida pelo padrao antes de o item chegar aqui, entao o
+	refund nao tem como criar um campo que o perfil nao tem.
+]=]
+function ShopService:_refund(Player : Player, currency : string, amount : number)
 	self.Services.DataService:Update(Player, "Stats", function(stats)
 		stats = stats or {}
-		stats.Shards = (stats.Shards or 0) + amount
+		stats[currency] = (stats[currency] or 0) + amount
 
 		return stats
 	end)
@@ -98,27 +107,32 @@ function ShopService:GetCrateOdds() : { [string]: { [string]: number } }
 end
 
 --[=[
-	Shards the player holds, straight from the loaded profile.
-	Returns nil when the profile is not loaded yet.
+	Quanto o jogador tem de uma moeda, direto do perfil carregado. `currency` e uma
+	chave de `ShopConfig.CURRENCIES`; sem ela, a moeda padrao da loja.
+
+	Devolve nil quando o perfil ainda nao carregou -- que e diferente de zero.
 ]=]
-function ShopService:PeekShards(Player : Player) : number?
+function ShopService:PeekBalance(Player : Player, currency : string?) : number?
 	local profiles = self.Services.DataService.Profiles
 	local profile = profiles and profiles[Player]
 	if not profile then
 		return nil
 	end
 
+	local stat = (currency and ShopConfig.CURRENCIES[currency]) or ShopConfig.DEFAULT_CURRENCY
 	local stats = profile.Profile.Data.Stats
-	return stats and stats.Shards or 0
+
+	return (stats and stats[stat]) or 0
 end
 
 --[=[
-	Buys one shop item for the player: charges the Shards and grants the reward.
+	Buys one shop item for the player: charges the item's currency and grants the
+	reward.
 
 	Returns true on success, or false plus a reason ("UnknownItem", "NotLoaded",
-	"NotEnoughShards", "GrantFailed"). The check and the charge happen inside a single
-	:Update callback, which does not yield -- two clicks landing back to back cannot
-	both spend the same Shards.
+	"NotEnoughCurrency", "GrantFailed"). The check and the charge happen inside a
+	single :Update callback, which does not yield -- two clicks landing back to back
+	cannot both spend the same balance.
 ]=]
 function ShopService:Purchase(Player : Player, itemId : string?) : (boolean, string?)
 	local item = ShopConfig.getItem(itemId)
@@ -135,31 +149,35 @@ function ShopService:Purchase(Player : Player, itemId : string?) : (boolean, str
 		return false, "NotLoaded"
 	end
 
+	-- Ja e a chave de `Data.Stats`: uma caixa em Coins cobra de `Cash`, que e como o
+	-- perfil chama a moeda que a tela chama de Coins.
+	local currency = item.Currency
+
 	local charged = false
 	local remaining = 0
 
 	DataService:Update(Player, "Stats", function(stats)
 		stats = stats or {}
 
-		local owned = stats.Shards or 0
+		local owned = stats[currency] or 0
 		if owned < item.Price then
 			return stats
 		end
 
 		remaining = owned - item.Price
-		stats.Shards = remaining
+		stats[currency] = remaining
 		charged = true
 
 		return stats
 	end)
 
 	if not charged then
-		return false, "NotEnoughShards"
+		return false, "NotEnoughCurrency"
 	end
 
 	if not self:_grantItem(Player, item) then
-		-- The grant is what failed, so hand the Shards back instead of eating them.
-		self:_addShards(Player, item.Price)
+		-- The grant is what failed, so hand the money back instead of eating it.
+		self:_refund(Player, currency, item.Price)
 		return false, "GrantFailed"
 	end
 

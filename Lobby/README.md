@@ -370,7 +370,9 @@ CrateOfBeginnings          <- item.Container, que é o Key da caixa
 │   │   └── RarityTextPercentage
 │   └── UIListLayout
 └── Buy
-    └── TextLabel          <- o Price pelo ShopConfig.PRICE_FORMAT: `100`
+    ├── TextLabel          <- o Price pelo ShopConfig.PRICE_FORMAT: `50`
+    │   └── UIStroke       <- a cor da moeda daquela caixa
+    └── ImageLabel         <- o ícone da moeda daquela caixa
 ```
 
 **A linha de raridade é um template por caixa, e não um template global.** A
@@ -386,6 +388,46 @@ Crate hoje: ela continua no `ShopConfig`, no inventário, no drop e no unboxing,
 dia em que um container `LegendaryCrate` for autorado ela volta à loja sem ninguém
 mexer em código. O contrário também vale: container que não é de nenhum item fica
 escondido, e não destruído — ele é trabalho de designer, e a loja não é dona dele.
+
+### A loja cobra em duas moedas
+
+As caixas deixaram de custar todas em shards:
+
+| Caixa | Custa | Chave em `Data.Stats` |
+| --- | ---: | --- |
+| Crate Of Beginnings | 50 Coins | `Cash` |
+| Crate Of Nature | 200 Coins | `Cash` |
+| Fragmented Crate | 4 Shards | `Shards` |
+| Legendary Crate | 1.800 Shards | `Shards` |
+
+**A chave é o nome no perfil, e não o nome na tela.** O jogador lê "Coins" e o perfil
+guarda `Cash` desde sempre (ver o `LeaderstatsService`) — por isso `ShopConfig.ITEMS`
+escreve `Currency = "Cash"` e não `"Coins"`. Escrever a palavra da tela criaria um
+`Stats.Coins` fantasma no dia em que o servidor cobrasse por ela. Moeda que
+`ShopConfig.CURRENCIES` não conhece cai no padrão (`Shards`) com um aviso, e não vira
+`stats[nil]` no servidor: um erro de digitação ali entregaria a caixa de graça.
+
+**O servidor cobra da moeda do item, e devolve na mesma.** O `ShopService` lê
+`item.Currency` e desconta dessa chave dentro do mesmo `:Update` que confere o saldo —
+dois cliques seguidos não gastam o mesmo dinheiro duas vezes —, e um grant que falha
+devolve exatamente o que tirou. A recusa por saldo passou a se chamar
+`NotEnoughCurrency` (era `NotEnoughShards`), que é o mesmo vocabulário do
+`SummoningService`.
+
+**Na tela, quem traduz a moeda em cor e ícone é o `ShopController`**, na tabela
+`CURRENCY_STYLE`:
+
+| Moeda | Contorno do preço | Ícone |
+| --- | --- | --- |
+| Shards | azul `69,92,241` | `rbxassetid://84637851192567` |
+| Coins (`Cash`) | âmbar `211,170,88` | `rbxassetid://94514377432201` |
+
+Isso mora no controller e não no config porque é desenho: o config diz **de onde
+cobrar** e a tela diz **com que cara**. E precisa existir porque os três containers
+foram autorados quando a loja tinha uma moeda só — os três nascem com o azul e o
+ícone da Shard, e sem o `styleBuyButton` a Crate Of Beginnings mostraria um preço em
+Coins ao lado do ícone errado. Mudar um preço de moeda continua sendo uma linha no
+`ShopConfig`, e nenhum toque em container.
 
 ### As chances são as de verdade, e vêm do servidor
 
@@ -439,7 +481,7 @@ mesmo `UIStroke` é a Roblox escolhendo um deles por ordem de árvore.
 ### O som da compra
 
 `SoundService.BuySFX` toca no **resultado** que o servidor manda, e não no clique: o
-preço e a carteira são conferidos lá, e um clique sem shards não comprou nada.
+preço, a moeda e a carteira são conferidos lá, e um clique sem saldo não comprou nada.
 
 Ele mora **solto na raiz do `SoundService`**, e não dentro do Package
 `SharedSounds` — é um efeito só do Lobby, e não vale uma mudança de package que as

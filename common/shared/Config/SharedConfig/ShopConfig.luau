@@ -74,11 +74,11 @@ module.TELEPORT_HEIGHT_OFFSET = 3
 --[[ ITEMS ]]
 
 --[[
-	O preco no label do botao `Buy`: `100`, `1,800`.
+	O preco no label do botao `Buy`: `50`, `1,800`.
 
-	So o numero. A moeda nao vem escrita: o label do botao ja esta autorado com o
-	icone da Shard ao lado, e repetir a palavra so roubava largura do numero, que e
-	a unica parte que muda de caixa para caixa.
+	So o numero. A moeda nao vem escrita: o botao carrega o icone dela ao lado (ver
+	`CURRENCIES`), e repetir a palavra so roubava largura do numero, que e a unica
+	parte que muda de caixa para caixa.
 
 	O numero entra pelo `UIUtil.formatCommas`, entao a lendaria le `1,800` e nao
 	`1800`.
@@ -87,11 +87,34 @@ module.PRICE_FORMAT = "%s"
 
 module.DEFAULT_BUTTON_TEXT = "BUY"
 
+--[[ CURRENCIES ]]
+
+--[=[
+	As moedas que a loja aceita, pela chave que elas tem em `Data.Stats`.
+
+	**O nome da chave e o nome no perfil, e nao o nome na tela**: o jogador le
+	"Coins" e o perfil guarda `Cash` desde sempre (ver o `LeaderstatsService`).
+	Escrever aqui a palavra da tela criaria um `Stats.Coins` fantasma no dia em que
+	o servidor cobrasse por ela.
+
+	Quem pinta o botao com a cor e o icone de cada moeda e o `ShopController` -- isto
+	aqui e so o que o servidor precisa saber para cobrar.
+]=]
+module.CURRENCIES = {
+	Shards = "Shards",
+	Cash = "Cash",
+}
+
+-- Item sem `Currency` cobra em Shards, que era a unica moeda da loja antes de a
+-- caixa comum e a de natureza passarem a custar Coins.
+module.DEFAULT_CURRENCY = "Shards"
+
 --[=[
 	Fields per item:
 		Id            unique, what the client sends to the server on purchase
 		Order         top to bottom inside the scrolling frame
-		Price         in Shards (the premium currency, Data.Template.Stats.Shards)
+		Price         how much of Currency the purchase costs
+		Currency      optional: a key of CURRENCIES, defaults to DEFAULT_CURRENCY
 		Crate         optional: fills DisplayName/Image/Container from CrateConfig
 		              and marks the item as granting that crate
 		Amount        how many the purchase grants (defaults to 1)
@@ -101,32 +124,40 @@ module.DEFAULT_BUTTON_TEXT = "BUY"
 ]=]
 
 --[[
-	Preços em shards, calibrados contra o que uma partida rende (60 no Médio, 180 no
-	Nightmare): a crate comum sai a cada duas partidas no Médio e a lendária a cada
-	dez no Nightmare. Antes o Médio rendia 30 e a lendária custava 1500 — cinquenta
-	partidas —, então a loja ficava fora de alcance e o banner era a única rota real
-	para unidades novas.
+	**A loja cobra em duas moedas, e nao mais so em shards.**
+
+	As duas primeiras caixas passaram a custar Coins (`Stats.Cash`), que e o que o
+	jogador acumula jogando, e as duas de baixo continuam em Shards. E o degrau que
+	faltava: com tudo em shards, a caixa comum concorria com a lendária pela mesma
+	carteira, e quem quisesse a lendária nao tinha razao nenhuma para comprar as
+	outras.
+
+	A lendária continua nos 1800 shards calibrados contra o que uma partida rende
+	(60 no Médio, 180 no Nightmare) — dez partidas no Nightmare.
 ]]
 module.ITEMS = {
 	{
 		Id = "CrateOfBeginnings",
 		Order = 1,
 		Crate = "Common",
-		Price = 100,
+		Price = 50,
+		Currency = "Cash",
 	},
 
 	{
 		Id = "CrateOfNature",
 		Order = 2,
 		Crate = "Rare",
-		Price = 300,
+		Price = 200,
+		Currency = "Cash",
 	},
 
 	{
 		Id = "FragmentedCrate",
 		Order = 3,
 		Crate = "Epic",
-		Price = 800,
+		Price = 4,
+		Currency = "Shards",
 	},
 
 	--[[
@@ -143,6 +174,7 @@ module.ITEMS = {
 		Order = 4,
 		Crate = "Legendary",
 		Price = 1800,
+		Currency = "Shards",
 	},
 }
 
@@ -150,6 +182,7 @@ export type ShopItem = {
 	Id: string,
 	Order: number,
 	Price: number,
+	Currency: string,
 	Amount: number,
 	DisplayName: string,
 	Image: string,
@@ -157,6 +190,27 @@ export type ShopItem = {
 	Crate: string?,
 	Container: string,
 }
+
+--[=[
+	A moeda que o item cobra, ja como chave de `Data.Stats`.
+
+	Uma moeda que a tabela nao conhece cai no padrao com um aviso, em vez de virar
+	`stats[nil]` no servidor: um erro de digitacao aqui cobraria de um campo que o
+	perfil nao tem, e a caixa sairia de graca.
+]=]
+local function resolveCurrency(item): string
+	local currency = item.Currency
+	if currency == nil then
+		return module.DEFAULT_CURRENCY
+	end
+
+	if not module.CURRENCIES[currency] then
+		warn(`[ShopConfig]: item '{item.Id}' prices in unknown currency '{currency}', falling back to {module.DEFAULT_CURRENCY}.`)
+		return module.DEFAULT_CURRENCY
+	end
+
+	return module.CURRENCIES[currency]
+end
 
 --[=[
 	Resolves one raw entry into the row the UI renders. Returns nil (and warns)
@@ -189,6 +243,7 @@ local function resolveItem(item): ShopItem?
 		Id = item.Id,
 		Order = item.Order or 0,
 		Price = item.Price or 0,
+		Currency = resolveCurrency(item),
 		Amount = item.Amount or 1,
 		DisplayName = displayName or item.Id,
 		Image = image or "",

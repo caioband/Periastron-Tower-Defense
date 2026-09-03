@@ -91,15 +91,49 @@ local STROKE_SHEEN_TOP = 1
 local STROKE_SHEEN_BOTTOM = 0.45
 
 --[=[
+	A cara do botao `Buy` por moeda: a cor do contorno do preco, o icone ao lado dele
+	e o tamanho desse icone.
+
+	Fica aqui e nao no `ShopConfig` porque e desenho: o config diz de qual chave de
+	`Data.Stats` a caixa cobra (e o servidor cobra dali), e quem traduz isso em cor e
+	imagem e a tela. Os containers sao autorados um por caixa, entao sem isto a
+	Crate Of Beginnings continuaria com o icone da Shard ao lado de um preco em
+	Coins -- a arte foi desenhada quando a loja tinha uma moeda so.
+
+	`IconScale` vai no `UIScale` autorado dentro do `ImageLabel`. As duas artes nao
+	pesam o mesmo na mesma caixa: a moeda de Coins e mais cheia que a Shard, e sai
+	grande demais no tamanho que a Shard pede. E escrito nas **duas** moedas, e nao
+	so na que encolhe, porque o `UIScale` e do container e nao da moeda -- um preco
+	que voltasse para Shards ficaria com o icone encolhido do dono anterior.
+
+	A chave e a mesma de `ShopConfig.CURRENCIES`. Moeda sem entrada aqui deixa o
+	botao como o designer autorou, que e melhor do que apagar o icone dele.
+]=]
+local CURRENCY_STYLE = {
+	Shards = {
+		StrokeColor = Color3.fromRGB(69, 92, 241),
+		Icon = "rbxassetid://84637851192567",
+		IconScale = 1,
+	},
+
+	Cash = {
+		StrokeColor = Color3.fromRGB(211, 170, 88),
+		Icon = "rbxassetid://94514377432201",
+		IconScale = 0.8,
+	},
+}
+
+--[=[
 	Dono da `StarterGui.ShopUI`: acha o container de cada caixa, escreve nele o que
 	muda e toca a `OpenShop` no painel.
 
 	**Ele nao cria container nenhum.** Cada caixa tem o container dela autorado na
 	`ScrollingFrame`, com ilustracao, moldura e cor proprias, e o codigo so acha pelo
 	nome (o `Key` da caixa, ver `CrateConfig`) e preenche tres coisas: o nome na
-	`BoxArt`, o preco no `Buy` e a lista de raridades no `Frame`. Antes existia um
-	`ShopItemWrapper` autorado que ele clonava por item -- nao serve mais, porque
-	clonar um template so daria tres caixas com a cara da primeira.
+	`BoxArt`, o preco no `Buy` (com a cor e o icone da moeda dele) e a lista de
+	raridades no `Frame`. Antes existia um `ShopItemWrapper` autorado que ele clonava
+	por item -- nao serve mais, porque clonar um template so daria tres caixas com a
+	cara da primeira.
 
 	Dentro de cada container, a linha de raridade **e um template por caixa**: a
 	`Rarity` autorada e a arte daquela caixa, e ela e clonada uma vez por raridade
@@ -129,7 +163,7 @@ local ShopController = {
 		PurchaseRequested = Signal.new(),
 
 		-- (itemId : string, success : boolean, reason : string?) -- what ShopService
-		-- decided. reason is one of UnknownItem, NotLoaded, NotEnoughShards,
+		-- decided. reason is one of UnknownItem, NotLoaded, NotEnoughCurrency,
 		-- GrantFailed.
 		PurchaseResult = Signal.new(),
 	},
@@ -160,6 +194,43 @@ local function formatPercent(chance : number) : string
 	text = string.gsub(text, "%.?0+$", "")
 
 	return text .. "%"
+end
+
+--[=[
+	Veste o botao `Buy` com a moeda que aquela caixa cobra: o contorno do preco e o
+	icone ao lado dele.
+
+	As tres caixas foram autoradas quando a loja so cobrava em Shards, entao as tres
+	nascem com o icone e o azul da Shard. Escrever os dois aqui e o que faz uma caixa
+	em Coins se ler como Coins sem o designer precisar tocar em container nenhum
+	quando um preco mudar de moeda.
+]=]
+local function styleBuyButton(buy : Instance, currency : string)
+	local style = CURRENCY_STYLE[currency]
+	if not style then
+		return
+	end
+
+	local priceLabel = buy:FindFirstChildWhichIsA("TextLabel")
+	local stroke = priceLabel and priceLabel:FindFirstChildWhichIsA("UIStroke")
+
+	if stroke then
+		stroke.Color = style.StrokeColor
+	end
+
+	local icon = buy:FindFirstChildWhichIsA("ImageLabel")
+	if not icon then
+		return
+	end
+
+	icon.Image = style.Icon
+
+	-- O `UIScale` e autorado dentro do icone. Sem ele so o tamanho do designer vale,
+	-- que e o que ja acontecia antes de as moedas se separarem.
+	local scale = icon:FindFirstChildWhichIsA("UIScale")
+	if scale and style.IconScale then
+		scale.Scale = style.IconScale
+	end
 end
 
 --[=[
@@ -283,6 +354,8 @@ function ShopController:_bindContainer(container : Instance, item)
 	if priceLabel then
 		priceLabel.Text = string.format(ShopConfig.PRICE_FORMAT, UIUtil.formatCommas(item.Price))
 	end
+
+	styleBuyButton(buy, item.Currency)
 
 	if buy:IsA("GuiButton") then
 		self.ItemMaid:GiveTask(buy.Activated:Connect(function()
