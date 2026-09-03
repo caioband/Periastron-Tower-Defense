@@ -74,17 +74,16 @@ module.TELEPORT_HEIGHT_OFFSET = 3
 --[[ ITEMS ]]
 
 --[[
-	O preco no label do botao `Buy`: `100 Shards`, `1,800 Shards`.
+	O preco no label do botao `Buy`: `100`, `1,800`.
 
-	A moeda vem escrita por extenso, e nao como o `$` que o label esta autorado com:
-	o que se paga aqui e Shard, a moeda que so cai para quem termina a partida, e
-	confundi-la com a caixa da partida (que e o que um `$` sugere) e o tipo de erro
-	que o jogador so descobre depois de clicar.
+	So o numero. A moeda nao vem escrita: o label do botao ja esta autorado com o
+	icone da Shard ao lado, e repetir a palavra so roubava largura do numero, que e
+	a unica parte que muda de caixa para caixa.
 
-	O numero entra pelo `UIUtil.formatCommas`, entao a lendaria le `1,800 Shards` e
-	nao `1800 Shards`.
+	O numero entra pelo `UIUtil.formatCommas`, entao a lendaria le `1,800` e nao
+	`1800`.
 ]]
-module.PRICE_FORMAT = "%s Shards"
+module.PRICE_FORMAT = "%s"
 
 module.DEFAULT_BUTTON_TEXT = "BUY"
 

@@ -370,7 +370,7 @@ CrateOfBeginnings          <- item.Container, que é o Key da caixa
 │   │   └── RarityTextPercentage
 │   └── UIListLayout
 └── Buy
-    └── TextLabel          <- o Price pelo ShopConfig.PRICE_FORMAT: `100 Shards`
+    └── TextLabel          <- o Price pelo ShopConfig.PRICE_FORMAT: `100`
 ```
 
 **A linha de raridade é um template por caixa, e não um template global.** A
