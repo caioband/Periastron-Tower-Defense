@@ -186,7 +186,7 @@ do deck. Não existe estado vermelho de desequipar no botão.
 
 Três tetos, todos checados no cliente (para o aviso sair na hora) e de novo no
 servidor (que é quem decide): as cópias que o jogador tem daquela unidade, o
-`CardLimit` do perfil e os seis slots do `EquippedCards` (`DeckConfig.MAX_SLOTS`).
+`CardLimit` do perfil e os slots **destravados** do `EquippedCards` (ver abaixo).
 Recusa acende o `ErrorLabel` por alguns segundos — sem slot livre usa o texto
 autorado, os outros dois casos têm texto próprio.
 
@@ -194,6 +194,52 @@ autorado, os outros dois casos têm texto próprio.
 (`CardLimit`, começa em `DeckConfig.DEFAULT_CARD_LIMIT`) porque é para crescer com o
 jogador; `DeckService:SetLimit` é o caminho para subir o teto, e ele limpa o deck em
 seguida para um teto menor não deixar carta sobrando.
+
+### Os três últimos slots abrem por nível
+
+O jogador começa com **três** slots e ganha os outros jogando:
+
+| Slot | Abre no nível |
+|---:|---:|
+| 1, 2, 3 | de partida |
+| 4 | 5 |
+| 5 | 15 |
+| 6 | 25 |
+
+A régua é o `DeckConfig.SLOT_UNLOCK_LEVELS`, e é a única coisa a mexer para repensar
+o ritmo — o texto do cadeado, o teto de equipar e a limpeza do deck saem todos dela.
+
+**O nível não é guardado em lugar nenhum**: ele é derivado do `Stats.XP` pelo
+`LevelConfig:Resolve`, como na barra do HUD. Por isso servidor e cliente chegam ao
+mesmo número de slots sem trocar nada — `DeckConfig.unlockedFor(perfil)` é a mesma
+conta dos dois lados. O cliente calcula junto só para desenhar o cadeado e recusar o
+clique antes da resposta; quem decide continua sendo o `DeckService`.
+
+Na tela, cada `CardWrapper` tem um `LockedFrame` que cobre o slot travado — os três
+últimos já vêm com ele visível no StarterGui, que é o estado de quem está no nível 1.
+O `LockText` é escrito no render (`Unlocked at Level 5`) a partir do config, e não do
+texto autorado: mudar a régua não pede tocar na GUI.
+
+O slot travado **mantém a `EmptyCard` acesa por baixo da capa**: ele é um slot vazio
+que ainda não abriu, e sem ela o cadeado ficaria num buraco no meio da fileira em vez
+de sobre a moldura de um slot. A `Card` é a única que some. A ordem de desenho já vem
+pronta da GUI (`ZIndexBehavior.Sibling`, e o `LockedFrame` vem depois da `EmptyCard`
+na árvore e ainda com `ZIndex` maior), então a capa cobre a carta apagada e não o
+contrário.
+
+O painel redesenha quando `Stats` muda, e não só quando o deck muda: sem isso um
+level-up só apareceria da próxima vez que o jogador mexesse numa carta.
+
+**Carta que estava num slot travado sai do deck.** O `sanitize` corta pelo teto de
+slots como já cortava pelo `CardLimit`, e isso vale principalmente para o perfil que
+já existia quando os seis slots eram livres: as cartas voltam para o inventário (o
+`Units` não é tocado) e o jogador as reequipa quando o slot abrir. O deck **não é
+reempacotado** — quem estava no slot 3 continua no 3, porque o slot é fixo e mover
+cartas que o jogador pôs onde quis seria pior do que deixar o slot vazio.
+
+O `autoDeck` (para quem nunca montou o seu) e a hotbar da partida saem do mesmo
+`DeckConfig.resolve`, que tira o nível do próprio perfil — então nenhum dos dois
+entrega uma unidade que o deck não poderia ter.
 
 ### A carta que voa
 
@@ -301,8 +347,10 @@ de um `task.delay`. Só na **abertura**: redesenhar com o painel aberto põe as 
 prontas no lugar.
 
 **Os seis slots** (`CardUI.EquippedCards`) mostram a `Card` quando ocupados e a
-`EmptyCard` quando livres. A `EmptyCard` copia a `Rotation` da `Card` do mesmo slot no
-bind, então a inclinação que o designer escolher (-4 ou 4) vale para as duas.
+`EmptyCard` quando livres — inclusive sob o `LockedFrame`, quando o nível ainda não
+abriu o slot. A
+`EmptyCard` copia a `Rotation` da `Card` do mesmo slot no bind, então a inclinação que
+o designer escolher (-4 ou 4) vale para as duas.
 
 **O painel de detalhe** (`SelectionPanel.Container`) só fica visível com uma carta
 selecionada — clicar em qualquer carta seleciona (e equipa/desequipa junto). Os
@@ -312,8 +360,8 @@ para Farm), `X.XX COOLDOWN`, `X RANGE`, mais o `ClassIcon` do `ClassConfig`. O
 contorno do nome leva a cor da raridade.
 
 `DeckConfig.sanitize` limpa a lista toda vez que alguém a lê: unidade que sumiu do
-`UnitStats`, cópia além do que o jogador tem, unidade além do sexto slot e carta além
-do `CardLimit` não entram. É o que impede um perfil velho de ficar com uma carta
+`UnitStats`, cópia além do que o jogador tem, unidade em slot que o nível ainda não
+abriu e carta além do `CardLimit` não entram. É o que impede um perfil velho de ficar com uma carta
 fantasma equipada para sempre.
 
 O deck vale na partida: o Game monta a hotbar e as contagens de carta a partir de
@@ -400,7 +448,14 @@ As caixas deixaram de custar todas em shards:
 | Crate Of Beginnings | 50 Coins | `Cash` |
 | Crate Of Nature | 200 Coins | `Cash` |
 | Fragmented Crate | 4 Shards | `Shards` |
-| Legendary Crate | 1.800 Shards | `Shards` |
+| Legendary Crate | 1.800 Shards — fora de escala, ver abaixo | `Shards` |
+
+Os preços são contra o que uma run **completa** paga (`WinCash`/`WinShards` em
+`Config.Difficulty`): 100 coins e 1 shard no Fácil, 900 coins e 5 shards no Nightmare.
+A Crate Of Beginnings sai a cada meia run no Fácil, a Fragmented Crate a cada run no
+Nightmare. **A lendária não**: os 1.800 shards dela são de quando uma run pagava 60
+shards no Médio, e hoje seriam 360 partidas. Ela não tem container autorado, então o
+número não chega a ninguém — mas precisa ser repreçado antes de ela voltar à loja.
 
 **A chave é o nome no perfil, e não o nome na tela.** O jogador lê "Coins" e o perfil
 guarda `Cash` desde sempre (ver o `LeaderstatsService`) — por isso `ShopConfig.ITEMS`

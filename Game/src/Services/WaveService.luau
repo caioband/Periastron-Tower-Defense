@@ -33,9 +33,11 @@ local SELECTION_TIME = 15
 -- contador cheio aparecer na tela antes dela sair.
 local PLAY_AGAIN_DELAY = 1.5
 local MAX_WAVES = DataConfig.MAX_WAVES
-local BASE_WINNING_CASH = DataConfig.BASE_WINNING_CASH
-local BASE_WINNING_SHARDS = DataConfig.BASE_WINNING_SHARDS
 local BASE_WINNING_XP = DataConfig.BASE_WINNING_XP
+
+-- Coins e shards de fim de partida sao o numero cheio de cada preset
+-- (`WinCash`/`WinShards`), e nao uma base multiplicada -- so o XP continua assim.
+local DifficultyConfig = ServerConfig.Difficulty
 
 local PortalConfig = SharedConfig.PortalConfig
 
@@ -219,21 +221,44 @@ function WaveService:getMaxWaves(preset)
 	return (preset and preset.MaxWaves) or MAX_WAVES
 end
 
-function WaveService:computeReward(preset)
+--[=[
+	O premio de uma partida, pela fracao de waves sobrevividas.
+
+	`lost` e o que separa a base ter caido de o jogador ter chegado ao fim:
+
+	* **Derrota** (`true`): shard nenhum, e os coins saem multiplicados pelo
+	  `LOSS_CASH_MULTIPLIER`. Perder na ultima wave nao pode pagar quase o mesmo que
+	  vencer -- a run inteira e o produto, e nao o tempo em pe.
+	* **Vitoria ou saida** (`false`/`nil`): a conta cheia. O `GrantLeaveReward` chama
+	  sem o argumento de proposito: quem sai no meio de um round que ainda esta
+	  rodando nao perdeu, a partida dele so nao terminou.
+]=]
+function WaveService:computeReward(preset, lost : boolean?)
+	-- Sem preset (uma saida antes de a votacao terminar) o premio e o do padrao, que
+	-- e o mesmo que os multiplicadores `or 1` davam quando a base era a do Medio.
+	preset = preset or DifficultyConfig.Get(nil)
+
 	local maxWaves = self:getMaxWaves(preset)
 	local wavesSurvived = math.clamp(self.WaveCount or 0, 0, maxWaves)
 	local progress = maxWaves > 0 and (wavesSurvived / maxWaves) or 0
 
-	local coins = BASE_WINNING_CASH * progress * (preset and preset.WinCashMultiplier or 1)
-	local xp = BASE_WINNING_XP * progress * (preset and preset.WinXpMultiplier or 1)
+	-- O premio da run completa e o do preset; quem sai antes leva a fracao de waves.
+	local coins = (preset.WinCash or 0) * progress
+	local xp = BASE_WINNING_XP * progress * (preset.WinXpMultiplier or 1)
 
 	local shards = 0
 	local threshold = DataConfig.SHARD_WAVE_THRESHOLD or 0
 	if threshold < 1 and progress > threshold then
 		local normalized = (progress - threshold) / (1 - threshold)
-		shards = BASE_WINNING_SHARDS
-			* (normalized ^ (DataConfig.SHARD_CURVE or 1))
-			* (preset and preset.WinShardMultiplier or 1)
+		shards = (preset.WinShards or 0) * (normalized ^ (DataConfig.SHARD_CURVE or 1))
+	end
+
+	if lost then
+		coins *= (DataConfig.LOSS_CASH_MULTIPLIER or 1)
+
+		-- Zerado depois da curva, e nao pulando a conta: a derrota nao muda **quando**
+		-- os shards comecariam a cair, ela tira todos eles.
+		shards = 0
 	end
 
 	return {
@@ -318,7 +343,10 @@ end
 function WaveService:onRoundEnded(won : boolean)
 	local preset = self.Difficulty or self.Services.DifficultyService:GetSelected()
 	local maxWaves = self:getMaxWaves(preset)
-	local rewards = self:computeReward(preset)
+
+	-- Aqui a partida acabou, entao "nao venceu" quer dizer derrota -- e nao "ainda
+	-- esta rodando", que e o caso do `GrantLeaveReward`.
+	local rewards = self:computeReward(preset, not won)
 	local dataService = self.Services.DataService
 
 	local mobService = self.Services.MobService

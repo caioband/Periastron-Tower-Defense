@@ -32,7 +32,7 @@ CardConfig.Images = {
 	Entrepreneur = "rbxassetid://130898800672794",
 	Sword = "rbxassetid://78316687499130",
 
-	Berserker = "rbxassetid://98237843021684",
+	Berserker = "rbxassetid://100567564561177",
 	Azure = "rbxassetid://117289931783490",
 	Slingshot = "rbxassetid://101061040163272",
 	Archer = "rbxassetid://95837523891408",

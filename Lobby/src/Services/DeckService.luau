@@ -24,9 +24,14 @@ local Framework = Me.new()
 
 	O cliente só manda um nome de unidade e diz "equipa uma" ou "tira uma"; quem
 	decide se a carta pode entrar — se a unidade existe, se sobrou cópia no
-	inventário, se ainda há slot livre, se o `CardLimit` deixa — é aqui, contra o
-	perfil. O `DeckController` desenha a partir da replica, então o que ele mostra é
-	sempre o que este service gravou.
+	inventário, se ainda há slot **destravado** livre, se o `CardLimit` deixa — é
+	aqui, contra o perfil. O `DeckController` desenha a partir da replica, então o
+	que ele mostra é sempre o que este service gravou.
+
+	Os três slots de cima são de todo mundo; o quarto, o quinto e o sexto abrem por
+	nível (`DeckConfig.SLOT_UNLOCK_LEVELS`). O nível sai do `Stats.XP` do próprio
+	perfil, então não há nada a receber do cliente: ele calcula o mesmo número com o
+	mesmo config só para desenhar antes da resposta.
 
 	A leitura, a decisão e a escrita acontecem dentro de um `:Update` só, que não
 	cede a thread: dois cliques colados não passam do limite.
@@ -78,7 +83,7 @@ function DeckService:_write(Player : Player, unitName : string?, decide) : (bool
 	local reason : string? = nil
 
 	DataService:Update(Player, "EquippedUnits", function(current)
-		local deck = DeckConfig.sanitize(current, data.Units, data.CardLimit)
+		local deck = DeckConfig.sanitize(current, data.Units, data.CardLimit, DeckConfig.unlockedFor(data))
 
 		-- Mesmo recusando, o que a limpeza tirou vale a escrita: é a chance de o
 		-- perfil velho se acertar com o UnitStats de hoje (e de virar slots, se ele
@@ -117,15 +122,26 @@ function DeckService:GetEquipped(Player : Player) : DeckConfig.Deck?
 		return nil
 	end
 
-	return DeckConfig.sanitize(data.EquippedUnits, data.Units, data.CardLimit)
+	return DeckConfig.sanitize(data.EquippedUnits, data.Units, data.CardLimit, DeckConfig.unlockedFor(data))
+end
+
+--[=[
+	Quantos slots o jogador tem hoje, dos `DeckConfig.MAX_SLOTS`. Zero quando o
+	perfil ainda não carregou -- que é diferente dos três de partida.
+]=]
+function DeckService:GetUnlockedSlots(Player : Player) : number
+	local data = self:_getData(Player)
+
+	return if data then DeckConfig.unlockedFor(data) else 0
 end
 
 --[=[
 	Põe **uma** carta da unidade no deck.
 
 	Recusa com "NoCopies" (todas as que ele tem já estão equipadas), "LimitReached"
-	(o `CardLimit` estourou) ou "NoSlot" (o deck já tem `MAX_SLOTS` unidades
-	diferentes e esta seria mais uma).
+	(o `CardLimit` estourou) ou "NoSlot" (não sobrou slot destravado, seja porque o
+	jogador já tem uma unidade diferente em cada um ou porque os que faltam ainda
+	pedem nível).
 ]=]
 function DeckService:Equip(Player : Player, unitName : string?) : (boolean, string?)
 	return self:_write(Player, unitName, function(deck, data)
@@ -142,9 +158,10 @@ function DeckService:Equip(Player : Player, unitName : string?) : (boolean, stri
 			return "LimitReached"
 		end
 
-		-- Falha só quando a unidade é nova no deck e não há slot livre: cópia de quem
-		-- já está lá vai para o slot dele.
-		if not DeckConfig.addCard(deck, unitName) then
+		-- Falha só quando a unidade é nova no deck e não há slot destravado livre:
+		-- cópia de quem já está lá vai para o slot dele, travado ou não -- e o slot
+		-- dela nunca é travado, porque o `sanitize` acima já tirou de lá.
+		if not DeckConfig.addCard(deck, unitName, DeckConfig.unlockedFor(data)) then
 			return "NoSlot"
 		end
 
@@ -186,7 +203,7 @@ function DeckService:SetLimit(Player : Player, limit : number) : boolean
 	end)
 
 	DataService:Update(Player, "EquippedUnits", function(current)
-		return DeckConfig.sanitize(current, data.Units, resolved)
+		return DeckConfig.sanitize(current, data.Units, resolved, DeckConfig.unlockedFor(data))
 	end)
 
 	self.Signals.DeckChanged:Fire(Player, self:GetEquipped(Player))

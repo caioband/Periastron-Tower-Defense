@@ -132,8 +132,15 @@ module.DEFAULT_CURRENCY = "Shards"
 	carteira, e quem quisesse a lendária nao tinha razao nenhuma para comprar as
 	outras.
 
-	A lendária continua nos 1800 shards calibrados contra o que uma partida rende
-	(60 no Médio, 180 no Nightmare) — dez partidas no Nightmare.
+	Os precos sao contra o que uma run **completa** paga hoje (ver `WinCash` e
+	`WinShards` em `Config.Difficulty`): 100 coins e 1 shard no Facil, 900 coins e 5
+	shards no Nightmare. Nessa escala, a Crate Of Beginnings sai a cada meia run no
+	Facil e a Fragmented Crate a cada run no Nightmare.
+
+	**A lendária esta fora de escala.** Os 1800 shards dela sao de quando uma run
+	pagava 60 shards no Médio; com 5 no Nightmare, sao 360 partidas. Ela nao aparece
+	na loja hoje (nao ha container `LegendaryCrate` autorado), entao o numero nao
+	chega a nenhum jogador -- mas ele precisa ser repreçado antes de ela voltar.
 ]]
 module.ITEMS = {
 	{

@@ -42,6 +42,8 @@ local LIMIT_NAME = "CardsLimit"
 local WRAPPER_NAME = "CardWrapper"
 local CARD_NAME = "Card"
 local EMPTY_CARD_NAME = "EmptyCard"
+local LOCKED_FRAME_NAME = "LockedFrame"
+local LOCK_TEXT_NAME = "LockText"
 local UNIT_NAME_NAME = "UnitName"
 local COUNT_NAME = "Count"
 local BUTTON_NAME = "Button"
@@ -53,6 +55,13 @@ local COOLDOWN_NAME = "AttackSpeed"
 local RANGE_NAME = "Range"
 
 local WAIT_TIMEOUT = 10
+
+--[[
+	O texto do slot travado. O `%d` e o nivel que ele pede
+	(`DeckConfig.SLOT_UNLOCK_LEVELS`); a frase e a que o designer deixou autorada no
+	`LockText`, com o `X` no lugar do numero.
+]]
+local LOCK_TEXT_FORMAT = "Unlocked at Level %d"
 
 local OPEN_INFO = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
@@ -318,11 +327,32 @@ function DeckController:_getLimit() : number
 	return DeckConfig.resolveLimit(data and data.CardLimit)
 end
 
+--[=[
+	Quantos slots o jogador tem hoje.
+
+	Sai do `Stats.XP` da replica pelo mesmo `DeckConfig` que o servidor usa, entao os
+	dois chegam ao mesmo numero sem trocar nada -- o cliente conta junto so para
+	desenhar o cadeado e recusar o clique antes da resposta. Quem decide continua
+	sendo o `DeckService`.
+
+	Tres enquanto a replica nao chegou, que e o que todo jogador tem.
+]=]
+function DeckController:_getUnlocked() : number
+	local replica = self.Replica
+	local data = replica and replica.Data
+
+	if not data then
+		return DeckConfig.unlockedSlots(1)
+	end
+
+	return DeckConfig.unlockedFor(data)
+end
+
 function DeckController:_getEquipped() : DeckConfig.Deck
 	local replica = self.Replica
 	local raw = replica and replica.Data and replica.Data.EquippedUnits
 
-	return DeckConfig.sanitize(raw, self:_getUnits(), self:_getLimit())
+	return DeckConfig.sanitize(raw, self:_getUnits(), self:_getLimit(), self:_getUnlocked())
 end
 
 --[=[
@@ -671,7 +701,7 @@ end
 ]=]
 function DeckController:_project(action : string, unitName : string)
 	if action == "Equip" then
-		DeckConfig.addCard(self.Projected, unitName)
+		DeckConfig.addCard(self.Projected, unitName, self:_getUnlocked())
 	else
 		DeckConfig.removeCard(self.Projected, unitName)
 	end
@@ -768,13 +798,14 @@ function DeckController:_requestEquip(unitName : string)
 
 	-- Cópia de quem já está no deck vai para o slot dele; unidade nova, para o
 	-- primeiro livre — que não é necessariamente o próximo da fila, já que um slot
-	-- no meio pode ter esvaziado.
+	-- no meio pode ter esvaziado, e nunca é um que o nível ainda não abriu.
 	local slotIndex = DeckConfig.slotIndexOf(projected, unitName)
-		or DeckConfig.firstFreeSlot(projected)
+		or DeckConfig.firstFreeSlot(projected, self:_getUnlocked())
 
 	local slot = slotIndex and self.Slots[slotIndex]
 	if not slot then
-		-- Não sobrou slot: o deck já tem uma unidade diferente em cada um.
+		-- Não sobrou slot destravado: ou o deck já tem uma unidade diferente em cada
+		-- um, ou os que faltam ainda pedem nível.
 		self:_showError()
 		return
 	end
@@ -1127,11 +1158,17 @@ end
 	O slot que tem carta voando **para cá** fica com o número de antes, e continua
 	mostrando o `EmptyCard` se ele estava vazio — é isso que segura o pouso. Os
 	outros cinco mudam na hora.
+
+	Cada slot mostra **uma** de três coisas: a carta, a carta apagada (livre) ou a
+	capa de travado, com o nível que ele pede. O deck que chega aqui já veio limpo
+	pelo `sanitize`, então um slot travado nunca tem ocupante — a checagem do nível é
+	sobre o que desenhar, e não sobre o que existe.
 ]=]
 function DeckController:_renderSlots()
 	self.SlotMaid:DoCleaning()
 
 	local deck = self:_landedDeck()
+	local unlocked = self:_getUnlocked()
 
 	for index, slot in self.Slots do
 		-- O slot é fixo: o que manda é a posição no deck, não a ordem de quem entrou.
@@ -1139,6 +1176,35 @@ function DeckController:_renderSlots()
 
 		if typeof(occupant) ~= "table" then
 			occupant = nil
+		end
+
+		local locked = index > unlocked
+
+		if slot.Locked then
+			slot.Locked.Visible = locked
+		end
+
+		if locked then
+			-- O nível vem do config, e não do texto autorado: mudar a régua de
+			-- desbloqueio é uma linha no `DeckConfig` e nada aqui.
+			if slot.LockText then
+				slot.LockText.Text = string.format(LOCK_TEXT_FORMAT, DeckConfig.slotUnlockLevel(index))
+			end
+
+			--[[
+				A carta apagada fica **por baixo** da capa: o slot travado é um slot vazio
+				que ainda não abriu, e sem ela o cadeado ficaria num buraco no meio da
+				fileira em vez de sobre a moldura de um slot.
+
+				A ordem na tela é a da árvore (`ZIndexBehavior.Sibling`), e o
+				`LockedFrame` vem depois da `EmptyCard` e ainda por cima com `ZIndex`
+				maior — a capa cobre a carta apagada, e não o contrário.
+			]]
+			slot.Card.Visible = false
+			slot.Empty.Visible = true
+			slot.Card:SetAttribute("Unit", nil)
+
+			continue
 		end
 
 		-- Slot ocupado mostra a carta, slot livre mostra a carta apagada. Os dois
@@ -1527,6 +1593,15 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 			continue
 		end
 
+		-- A capa do slot travado. Opcional de proposito: sem ela o slot travado so
+		-- deixa de aceitar carta, em vez de o painel inteiro parar de desenhar.
+		local lockedFrame = wrapper:FindFirstChild(LOCKED_FRAME_NAME)
+		local lockText = lockedFrame and lockedFrame:FindFirstChild(LOCK_TEXT_NAME, true)
+
+		if not lockedFrame then
+			warn(`[DeckController]: {WRAPPER_NAME} sem {LOCKED_FRAME_NAME} -- o slot travado nao mostra cadeado.`)
+		end
+
 		-- A carta vazia é a mesma carta, apagada: ela segue a inclinação que o
 		-- designer deu à carta cheia do slot (-4 ou 4), senão o slot livre entorta
 		-- para o lado errado.
@@ -1541,6 +1616,8 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 			Wrapper = wrapper,
 			Card = card,
 			Empty = emptyCard,
+			Locked = lockedFrame,
+			LockText = if lockText and lockText:IsA("TextLabel") then lockText else nil,
 			CardIntro = captureIntro(card),
 			EmptyIntro = captureIntro(emptyCard),
 		})
@@ -1663,7 +1740,15 @@ function DeckController:_watchData()
 		local connection = replica:OnChange(function(_action, path)
 			local key = path[1]
 
-			if key ~= nil and key ~= "Units" and key ~= "EquippedUnits" and key ~= "CardLimit" then
+			-- `Stats` entra na lista por causa do XP: os slots 4, 5 e 6 abrem por
+			-- nivel, e sem isto um level-up so apareceria no painel na proxima vez que
+			-- o jogador mexesse no deck.
+			if key ~= nil
+				and key ~= "Units"
+				and key ~= "EquippedUnits"
+				and key ~= "CardLimit"
+				and key ~= "Stats"
+			then
 				return
 			end
 

@@ -874,13 +874,55 @@ Com o preset padrão (Medium, 20 waves):
 
 | Saiu na wave | Coins | Shards | XP |
 |---|---|---|---|
-| 1 | 50 | 0 | 10 |
-| 10 | 500 | 0 | 100 |
-| 15 | 750 | 15 | 150 |
-| 20 | 1000 | 60 | 200 |
+| 1 | 11 | 0 | 10 |
+| 10 | 113 | 0 | 100 |
+| 15 | 169 | 1 | 150 |
+| 20 | 225 | 2 | 200 |
 
 Shards só entram depois do `SHARD_WAVE_THRESHOLD` (metade da partida) e daí
 seguem a curva — a moeda cara continua concentrada em quem chega perto do fim.
+
+**Perder não paga shard nenhum**, e paga um quinto dos coins
+(`Data.LOSS_CASH_MULTIPLIER`). A run inteira é o produto, não o tempo em pé: sem
+isso, cair na última wave do Nightmare rendia praticamente o mesmo que terminá-la.
+
+| Medium, 20 waves | Coins | Shards |
+|---|---:|---:|
+| Venceu | 225 | 2 |
+| Perdeu na wave 20 | 45 | 0 |
+| Perdeu na wave 10 | 23 | 0 |
+
+O corte é no `computeReward`, por um `lost` que o `onRoundEnded` passa como `not
+won`. Os shards são zerados **depois** da curva, e não pulando a conta: a derrota não
+muda *quando* eles começariam a cair, ela tira todos eles.
+
+**Sair no meio não é perder.** O `GrantLeaveReward` chama o `computeReward` sem esse
+argumento de propósito — quem sai de um round que ainda está rodando não foi
+derrotado, a partida dele só não terminou. Isso deixa uma porta aberta que vale ter em
+mente: no Medium, cair na wave 19 paga 43 coins e 0 shards, e *fechar o jogo* na wave
+19 paga 214 coins e 2 shards. Se isso virar problema, a correção é uma linha —
+`computeReward(preset, true)` no `GrantLeaveReward` —, com o custo de uma queda de
+conexão passar a valer o mesmo que uma derrota.
+
+**O prêmio de uma run completa é o número cheio do preset**, e não uma base vezes um
+multiplicador: `WinCash` e `WinShards` em `Config.Difficulty` dizem quanto cada
+dificuldade paga, e é só isso que precisa mudar para repreçar uma delas.
+
+| Dificuldade | Waves | Coins | Shards |
+|---|---:|---:|---:|
+| Easy | 15 | 100 | 1 |
+| Medium | 20 | 225 | 2 |
+| Hard | 25 | 450 | 3 |
+| Impossible | 30 | 685 | 4 |
+| Nightmare | 35 | 900 | 5 |
+
+Era `Data.BASE_WINNING_CASH` (1000) e `BASE_WINNING_SHARDS` (60) vezes um
+multiplicador por dificuldade, e o número que interessa — quanto o Nightmare paga —
+só aparecia depois da conta; o preset do topo precisava de um comentário explicando
+que `7.5` queria dizer 450 shards. Os dois campos saíram do `Config.Data`. **O XP
+continua sendo base vezes multiplicador** (`BASE_WINNING_XP` vezes
+`WinXpMultiplier`), porque ali a base é a mesma para todo mundo e o multiplicador é a
+coisa que se quer ler.
 
 ### Por que o gancho fica no `DataService`
 

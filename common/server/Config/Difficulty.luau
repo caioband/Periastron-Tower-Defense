@@ -29,6 +29,21 @@
 	`BaseHealth` dividido por `MobDamage` e quantos vazamentos o jogador aguenta:
 	12 no Facil, 7 no Medio, 5 no Dificil, 4 no Impossivel e 3 no Nightmare.
 
+	`WinCash` e `WinShards` sao o premio de **uma run completa**, ja em moeda e nao
+	em multiplicador -- quanto o Nightmare paga se le direto na tabela, sem precisar
+	multiplicar por uma base em outro arquivo. Quem sai antes do fim leva a parte
+	proporcional (ver `WaveService.computeReward`): coins sao lineares na fracao de
+	waves, e shards so entram depois da metade da run e dai por uma curva, entao a
+	moeda cara fica com quem chega perto do fim. O XP e o unico que continua sendo
+	base vezes multiplicador (`Data.BASE_WINNING_XP` vezes `WinXpMultiplier`).
+
+		| Dificuldade | Coins | Shards |
+		| Easy        |   100 |      1 |
+		| Medium      |   225 |      2 |
+		| Hard        |   450 |      3 |
+		| Impossible  |   685 |      4 |
+		| Nightmare   |   900 |      5 |
+
 	`WeatherChance` e a chance, por wave, de sair um aviso de clima — o clima em si
 	cai tres waves depois (ver `WeatherConfig.Round`). O dado so e jogado quando nao
 	houver nenhum clima agendado nem no ar, entao o numero nao e "quantas waves tem
@@ -61,8 +76,8 @@ Difficulty.Presets = {
 		AmountMultiplier = 0.7,
 		BossAmountMultiplier = 1,
 		RewardMultiplier = 1.35,
-		WinCashMultiplier = 0.5,
-		WinShardMultiplier = 0.5,
+		WinCash = 100,
+		WinShards = 1,
 		WinXpMultiplier = 0.75,
 		SpawnDelayMultiplier = 1.25,
 		StartingCash = 750,
@@ -83,8 +98,8 @@ Difficulty.Presets = {
 		AmountMultiplier = 1.5,
 		BossAmountMultiplier = 1,
 		RewardMultiplier = 1.1,
-		WinCashMultiplier = 1,
-		WinShardMultiplier = 1,
+		WinCash = 225,
+		WinShards = 2,
 		WinXpMultiplier = 1,
 		SpawnDelayMultiplier = 1.1,
 		StartingCash = 500,
@@ -105,8 +120,8 @@ Difficulty.Presets = {
 		AmountMultiplier = 2,
 		BossAmountMultiplier = 2,
 		RewardMultiplier = 1,
-		WinCashMultiplier = 1.75,
-		WinShardMultiplier = 2,
+		WinCash = 450,
+		WinShards = 3,
 		WinXpMultiplier = 1.4,
 		SpawnDelayMultiplier = 1,
 		StartingCash = 400,
@@ -127,8 +142,8 @@ Difficulty.Presets = {
 		AmountMultiplier = 3.25,
 		BossAmountMultiplier = 5,
 		RewardMultiplier = 0.85,
-		WinCashMultiplier = 2.75,
-		WinShardMultiplier = 2.5,
+		WinCash = 685,
+		WinShards = 4,
 		WinXpMultiplier = 1.8,
 		SpawnDelayMultiplier = 0.9,
 		StartingCash = 350,
@@ -149,12 +164,8 @@ Difficulty.Presets = {
 		AmountMultiplier = 5.25,
 		BossAmountMultiplier = 9,
 		RewardMultiplier = 0.7,
-		WinCashMultiplier = 4,
-		--[[
-			450 shards na run completa: o premio sai de
-			`Data.BASE_WINNING_SHARDS` (60) vezes este numero, entao 7.5.
-		]]
-		WinShardMultiplier = 7.5,
+		WinCash = 900,
+		WinShards = 5,
 		WinXpMultiplier = 2.5,
 		SpawnDelayMultiplier = 0.8,
 		StartingCash = 300,

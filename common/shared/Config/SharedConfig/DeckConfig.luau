@@ -23,6 +23,7 @@
 
 local UnitStats = require(script.Parent.UnitStats)
 local RarityConfig = require(script.Parent.RarityConfig)
+local LevelConfig = require(script.Parent.LevelConfig)
 
 local DeckConfig = {}
 
@@ -32,6 +33,24 @@ export type Deck = { Slot | false }
 -- Quantos `CardWrapper` o `StarterGui.HUD.CardUI.EquippedCards` tem. É o teto de
 -- unidades **diferentes** no deck, não de cartas.
 DeckConfig.MAX_SLOTS = 6
+
+--[=[
+	O nível que cada slot pede, do primeiro ao sexto.
+
+	O jogador começa com três e ganha os outros ao subir de nível: o quarto no 5, o
+	quinto no 15 e o sexto no 25. Um slot travado não guarda carta e nem aparece como
+	livre — quem desenha é o `LockedFrame` de cada `CardWrapper`.
+
+	**A lista tem que ser crescente.** Os slots destravam em ordem, e o
+	`unlockedSlots` conta o prefixo destravado em vez de varrer a lista inteira: é o
+	que deixa o resto do arquivo trabalhar com "quantos slots este jogador tem" em
+	vez de perguntar slot por slot.
+
+	Nada aqui é sigiloso — o servidor decide o mesmo com o mesmo config (ver o
+	`DeckService`), então o cliente calcular junto é só o desenho chegar antes da
+	resposta.
+]=]
+DeckConfig.SLOT_UNLOCK_LEVELS = { 1, 1, 1, 5, 15, 25 }
 
 -- Quantas cartas no total o jogador começa podendo equipar. Fica no perfil
 -- (`CardLimit`), então subir o teto de um jogador é escrever nele -- este número
@@ -43,6 +62,64 @@ DeckConfig.DEFAULT_CARD_LIMIT = 15
 ]=]
 function DeckConfig.empty() : Deck
 	return table.create(DeckConfig.MAX_SLOTS, false)
+end
+
+--[=[
+	O nível que o slot pede. Slot fora da lista vale como sempre destravado: o
+	`MAX_SLOTS` e a `SLOT_UNLOCK_LEVELS` podem sair de sincronia numa edição, e um
+	slot a mais destravado é melhor do que um slot a mais que ninguém alcança.
+]=]
+function DeckConfig.slotUnlockLevel(index : number?) : number
+	local level = typeof(index) == "number" and DeckConfig.SLOT_UNLOCK_LEVELS[index]
+
+	return typeof(level) == "number" and level or 1
+end
+
+--[=[
+	Se este slot está liberado para um jogador neste nível.
+]=]
+function DeckConfig.isSlotUnlocked(index : number?, level : number?) : boolean
+	local resolved = typeof(level) == "number" and level or 1
+
+	return resolved >= DeckConfig.slotUnlockLevel(index)
+end
+
+--[=[
+	Quantos slots o jogador tem neste nível: sempre os três primeiros, e os outros
+	conforme ele sobe.
+]=]
+function DeckConfig.unlockedSlots(level : number?) : number
+	local count = 0
+
+	for index = 1, DeckConfig.MAX_SLOTS do
+		if not DeckConfig.isSlotUnlocked(index, level) then
+			break
+		end
+
+		count += 1
+	end
+
+	return count
+end
+
+--[=[
+	O nível de um perfil, derivado do `Stats.XP` como em todo lugar -- o nível não é
+	guardado (ver `LevelConfig`), então não existe perfil com nível e XP fora de
+	sincronia.
+]=]
+function DeckConfig.levelOf(profile : any) : number
+	local stats = typeof(profile) == "table" and profile.Stats
+	local xp = typeof(stats) == "table" and stats.XP or 0
+
+	return LevelConfig:Resolve(xp).Level
+end
+
+--[=[
+	Quantos slots este perfil tem. É o atalho que servidor e cliente usam: os dois
+	saem do mesmo `Stats.XP` e chegam ao mesmo número, sem combinar nada.
+]=]
+function DeckConfig.unlockedFor(profile : any) : number
+	return DeckConfig.unlockedSlots(DeckConfig.levelOf(profile))
 end
 
 --[=[
@@ -83,14 +160,19 @@ function DeckConfig.slotIndexOf(deck : Deck?, unitName : string?) : number?
 end
 
 --[=[
-	O primeiro slot livre, ou `nil` se o deck já tiver uma unidade em cada um.
+	O primeiro slot livre **entre os destravados**, ou `nil` se não houver.
+
+	`unlocked` é quantos slots o jogador tem (ver `unlockedFor`); sem ele, todos --
+	é o que mantém honesto quem só quer perguntar do deck e não do dono dele.
 ]=]
-function DeckConfig.firstFreeSlot(deck : Deck?) : number?
+function DeckConfig.firstFreeSlot(deck : Deck?, unlocked : number?) : number?
 	if typeof(deck) ~= "table" then
 		return nil
 	end
 
-	for index = 1, DeckConfig.MAX_SLOTS do
+	local last = math.clamp(unlocked or DeckConfig.MAX_SLOTS, 0, DeckConfig.MAX_SLOTS)
+
+	for index = 1, last do
 		if typeof(deck[index]) ~= "table" then
 			return index
 		end
@@ -175,9 +257,11 @@ end
 	Põe **uma** carta da unidade no deck: no slot dela se ela já tiver um, senão no
 	primeiro livre. Devolve `false` quando não há slot livre.
 
-	Não checa posse nem `CardLimit` — quem chama é que sabe desses dois.
+	Não checa posse nem `CardLimit` — quem chama é que sabe desses dois. `unlocked`
+	é passado adiante para o `firstFreeSlot`: uma unidade nova não entra num slot que
+	o jogador ainda não tem.
 ]=]
-function DeckConfig.addCard(deck : Deck, unitName : string) : boolean
+function DeckConfig.addCard(deck : Deck, unitName : string, unlocked : number?) : boolean
 	local index = DeckConfig.slotIndexOf(deck, unitName)
 
 	if index then
@@ -187,7 +271,7 @@ function DeckConfig.addCard(deck : Deck, unitName : string) : boolean
 		return true
 	end
 
-	local free = DeckConfig.firstFreeSlot(deck)
+	local free = DeckConfig.firstFreeSlot(deck, unlocked)
 	if not free then
 		return false
 	end
@@ -253,10 +337,17 @@ end
 	`owned` é o `Units` do perfil (`{[nome] = quantidade}`); `nil` não filtra por
 	posse. `limit` cai no padrão quando não vem.
 
+	`unlocked` é quantos slots o jogador tem hoje (ver `unlockedFor`): o que estiver
+	num slot travado **sai do deck**, e não muda de slot. Isso vale sobretudo para o
+	perfil que já existia quando os slots ainda eram seis livres — as cartas voltam
+	para o inventário (o `Units` não é tocado aqui) e o jogador as reequipa quando o
+	slot abrir. Mudar de slot seria pior: o slot é fixo, e reempacotar o deck moveria
+	cartas que o jogador pôs onde quis.
+
 	**Cada slot é limpo no lugar**: um slot que perde tudo vira `false` e os outros
 	ficam onde estão.
 ]=]
-function DeckConfig.sanitize(equipped : any, owned : { [string]: number }?, limit : number?) : Deck
+function DeckConfig.sanitize(equipped : any, owned : { [string]: number }?, limit : number?, unlocked : number?) : Deck
 	local deck = DeckConfig.empty()
 
 	if typeof(equipped) ~= "table" then
@@ -269,10 +360,11 @@ function DeckConfig.sanitize(equipped : any, owned : { [string]: number }?, limi
 	end
 
 	local maxCards = DeckConfig.resolveLimit(limit)
+	local lastSlot = math.clamp(unlocked or DeckConfig.MAX_SLOTS, 0, DeckConfig.MAX_SLOTS)
 	local seen = {}
 	local total = 0
 
-	for index = 1, DeckConfig.MAX_SLOTS do
+	for index = 1, lastSlot do
 		local slot = equipped[index]
 		if typeof(slot) ~= "table" then
 			continue
@@ -312,7 +404,8 @@ end
 	carta nenhuma — e ficaria travado, porque o deck é o que decide o que ele pode
 	colocar no mapa.
 
-	Pega as unidades mais raras primeiro (até encher os slots) e distribui as cartas
+	Pega as unidades mais raras primeiro (até encher os slots **destravados**) e
+	distribui as cartas
 	em rodízio entre elas, respeitando o que ele tem de cada uma e o `limit`. O
 	rodízio é para o deck automático não ser três cópias de uma só quando o jogador
 	tem variedade.
@@ -320,7 +413,7 @@ end
 	É **determinístico**: cliente e servidor chegam ao mesmo deck a partir do mesmo
 	perfil, sem precisar combinar nada.
 ]=]
-function DeckConfig.autoDeck(owned : { [string]: number }?, limit : number?) : Deck
+function DeckConfig.autoDeck(owned : { [string]: number }?, limit : number?, unlocked : number?) : Deck
 	local deck = DeckConfig.empty()
 
 	if typeof(owned) ~= "table" then
@@ -348,9 +441,10 @@ function DeckConfig.autoDeck(owned : { [string]: number }?, limit : number?) : D
 	end)
 
 	local maxCards = DeckConfig.resolveLimit(limit)
+	local slots = math.clamp(unlocked or DeckConfig.MAX_SLOTS, 0, DeckConfig.MAX_SLOTS)
 	local chosen = {}
 
-	for index = 1, math.min(#names, DeckConfig.MAX_SLOTS) do
+	for index = 1, math.min(#names, slots) do
 		table.insert(chosen, { Unit = names[index], Amount = 0 })
 	end
 
@@ -390,19 +484,24 @@ end
 	colocar no mapa, e é chamado dos dois lados — servidor e cliente — para os dois
 	chegarem à mesma hotbar.
 ]=]
-function DeckConfig.resolve(profile : { EquippedUnits : any, Units : any, CardLimit : number? }?) : Deck
+function DeckConfig.resolve(profile : { EquippedUnits : any, Units : any, CardLimit : number?, Stats : any }?) : Deck
 	if typeof(profile) ~= "table" then
 		return DeckConfig.empty()
 	end
 
 	local owned = profile.Units
-	local deck = DeckConfig.sanitize(profile.EquippedUnits, owned, profile.CardLimit)
+
+	-- Quantos slots este perfil tem sai do proprio perfil, e nao de quem chamou: e o
+	-- que faz a hotbar da partida, o deck do lobby e a checagem do servidor
+	-- concordarem sem ninguem passar o nivel adiante.
+	local unlocked = DeckConfig.unlockedFor(profile)
+	local deck = DeckConfig.sanitize(profile.EquippedUnits, owned, profile.CardLimit, unlocked)
 
 	if DeckConfig.total(deck) > 0 then
 		return deck
 	end
 
-	return DeckConfig.autoDeck(owned, profile.CardLimit)
+	return DeckConfig.autoDeck(owned, profile.CardLimit, unlocked)
 end
 
 --[=[

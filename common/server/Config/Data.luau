@@ -8,7 +8,16 @@ local CrateConfig = require(SharedConfig:WaitForChild("CrateConfig"))
 local DeckConfig = require(SharedConfig:WaitForChild("DeckConfig"))
 
 return {
-	PROFILE_KEY = "profi555",
+	--[[
+		O nome do ProfileStore. **Trocar isto zera todo mundo**: os perfis antigos
+		continuam no DataStore com a chave velha, e ninguem mais os le -- todo jogador
+		entra com o `Template` daqui de baixo.
+
+		As duas places leem esta mesma linha (o `DataService` do Lobby e o da Game),
+		entao elas nunca podem apontar para stores diferentes: seria o mesmo jogador
+		com dois perfis, um em cada place.
+	]]
+	PROFILE_KEY = "DEV_ENV_KEY_1",
 	Template = {
 		Stats = {
 			Wins = 0,
@@ -53,11 +62,15 @@ return {
 	STARTING_CASH = 500,
 
 	--[[
-		Recompensa de fim de partida. Os tres sao escalados pela fracao de waves
-		sobrevividas e pelos multiplicadores da dificuldade.
+		XP de uma run cheia, escalado pela fracao de waves sobrevividas e pelo
+		`WinXpMultiplier` da dificuldade.
+
+		**Coins e shards nao passam mais por aqui.** Eles eram uma base vezes um
+		multiplicador por dificuldade, e o valor que interessa -- quanto o Nightmare
+		paga -- so aparecia depois da conta. Hoje cada preset traz o numero cheio em
+		`Difficulty.Presets[...].WinCash` e `.WinShards`, e mudar quanto uma
+		dificuldade paga e trocar esse numero.
 	]]
-	BASE_WINNING_CASH = 1000,
-	BASE_WINNING_SHARDS = 60,
 	BASE_WINNING_XP = 200,
 
 	-- Shards so comecam a cair depois desta fracao da run, e dai crescem por uma
@@ -66,6 +79,17 @@ return {
 	-- a 80% da run rende ~36% do total.
 	SHARD_WAVE_THRESHOLD = 0.5,
 	SHARD_CURVE = 2,
+
+	--[[
+		Quanto dos coins uma **derrota** paga: um quinto do que as mesmas waves
+		pagariam numa vitoria.
+
+		Perder nao rende shard nenhum, por mais longe que o jogador tenha chegado --
+		isso nao e um numero, e uma regra, e mora no `computeReward`. Os coins ficam
+		porque a partida perdida ainda foi tempo jogado; so nao pode competir com
+		terminar a run.
+	]]
+	LOSS_CASH_MULTIPLIER = 0.2,
 
 	-- Fallback: o numero de waves de verdade vem do `MaxWaves` da dificuldade
 	-- (Config/Difficulty.luau). Isto so vale se um preset nao definir o campo, e
