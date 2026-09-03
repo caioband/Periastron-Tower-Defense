@@ -189,7 +189,12 @@ Duas conveniências: Folder solta dentro do `Lighting` é adotada como preset na
 entrada do servidor (é como a Main Game guarda `FoggyLightning` e
 `BlizzardLightning` — não precisa mover nada na place), e o que sobrar vira o
 preset `Default`, para a primeira troca já ter de onde sair. Filho do `Lighting`
-com o atributo `LightingKeep = true` sobrevive ao clear.
+com o atributo `LightingKeep = true` sobrevive ao clear — e as **duas** pontas o
+respeitam: o `LightingService` pula esses filhos na varredura, e o
+`LightingController` os deixa fora do estado que ele lê para a transição. Sem a
+segunda metade, um efeito que não é de preset nenhum (o `UIBlur` que a loja acende
+atrás do painel) viraria efeito *de saída* na próxima troca de preset, e um fantasma
+dele apareceria por cima do que o painel está usando.
 
 #### Comandos (Cmdr, nas duas places)
 
@@ -1009,12 +1014,12 @@ não, de propósito.
 
 ### Quem some da tela, e quando
 
-Três situações pedem a tela para si: o painel de mapas, que quer o lobby só para
-ele; a contagem regressiva do portal, que deixa em pé só o botão de sair; e a
-cutscene, que quer a tela limpa. Não são um interruptor global — os dois se
-sobrepõem (o painel pode estar aberto quando a cena começa) e cada um sai na sua
-hora — então quem cuida disso é o `InterfaceController`
-(`common/client/Controllers`), com **pedidos com nome**:
+Quatro situações pedem a tela para si: o painel de mapas, que quer o lobby só para
+ele; a loja, que borra o fundo e fica sozinha na frente; a contagem regressiva do
+portal, que deixa em pé só o botão de sair; e a cutscene, que quer a tela limpa. Não
+são um interruptor global — eles se sobrepõem (o painel pode estar aberto quando a
+cena começa) e cada um sai na sua hora — então quem cuida disso é o
+`InterfaceController` (`common/client/Controllers`), com **pedidos com nome**:
 
 ```lua
 InterfaceController:Hide("ChooseMaps", { Except = { "ChooseMaps" } })

@@ -1,3 +1,4 @@
+local ContentProvider = game:GetService("ContentProvider")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
@@ -147,19 +148,97 @@ function MusicController:GetSFXFolder(): Instance?
 	return self:_getFolder(SFX_FOLDER)
 end
 
+--[=[
+	Baixa os SFX agora, para o primeiro `PlaySFX` deles não esperar o áudio.
+
+	`Sound:Play()` num asset que ainda não chegou não falha: ele **espera**, e sai
+	quando o download termina. Num efeito de fundo isso passa despercebido, mas num
+	som que confirma uma ação (a compra da loja) o atraso é a resposta inteira —
+	o jogador clica, a caixa entra no inventário e o som chega depois.
+
+	Não devolve nada e não trava quem chamou: roda numa thread própria, porque
+	`PreloadAsync` cede. Um nome que não existe avisa e os outros seguem — o preload
+	é uma otimização, e falhar nele não pode impedir o som de tocar mais tarde.
+]=]
+function MusicController:PreloadSFX(names: { string })
+	task.spawn(function()
+		local sounds = {}
+
+		for _, name in names do
+			local sound = self:GetSFX(name)
+
+			if sound then
+				table.insert(sounds, sound)
+			else
+				warn(`[MusicController]: SFX "{name}" não existe, então não dá pra pré-carregar.`)
+			end
+		end
+
+		if #sounds == 0 then
+			return
+		end
+
+		local ok, err = pcall(function()
+			ContentProvider:PreloadAsync(sounds)
+		end)
+
+		if not ok then
+			warn(`[MusicController]: falha ao pré-carregar SFX: {err}`)
+			return
+		end
+
+		for _, sound in sounds do
+			if not sound.IsLoaded then
+				warn(`[MusicController]: {sound.Name} ({sound.SoundId}) não carregou; o primeiro toque dele pode sair atrasado.`)
+			end
+		end
+	end)
+end
+
 --[[
-	Acha o Sound pelo nome dentro da pasta e, se não estiver lá, **solto na raiz do
+	O que está na raiz do SoundService, **fora do Package**: um Sound solto ou um
+	Sound dentro de uma pasta solta.
+
+	A pasta existe porque um som de uma place só às vezes tem variante: o `BuySFX`
+	da loja do Lobby virou uma pasta com `Coins` e `Shards`, um para cada moeda que
+	a caixa pode custar. Uma pasta é o lugar natural disso, e sem estes dois níveis
+	de busca ela deixaria o efeito mudo — `BuySFX` passaria a achar uma `Folder`,
+	que não é um `Sound`.
+
+	**O `SharedSounds` fica de fora da varredura, e é aí que ela para de ser
+	recursiva.** Entrar nele reencontraria o que a busca na pasta já cobre, e um
+	nome repetido nas duas pontas passaria a depender da ordem da árvore. Entre os
+	soltos vale a mesma regra que vale dentro do Package: o nome tem que ser único.
+]]
+function MusicController:_findLoose(name: string): Sound?
+	local direct = SoundService:FindFirstChild(name)
+	if direct and direct:IsA("Sound") then
+		return direct
+	end
+
+	for _, child in SoundService:GetChildren() do
+		if child.Name == SHARED_SOUNDS or not child:IsA("Folder") then
+			continue
+		end
+
+		local sound = child:FindFirstChild(name)
+		if sound and sound:IsA("Sound") then
+			return sound
+		end
+	end
+
+	return nil
+end
+
+--[[
+	Acha o Sound pelo nome dentro da pasta e, se não estiver lá, **na raiz do
 	SoundService**.
 
 	A raiz é o segundo lugar de propósito. O `SharedSounds` é um Package, então
 	acrescentar um som lá dentro é uma mudança de package que as duas places
 	carregam — e um efeito que só uma place usa (o `BuySFX`, da loja do Lobby) não
 	precisa disso. O som fica solto ao lado do Package, e continua sendo achado por
-	nome como qualquer outro.
-
-	A busca na raiz é **direta**, e não recursiva: recursiva ela reencontraria o que
-	já está dentro do `SharedSounds`, e um nome repetido nas duas pontas passaria a
-	depender da ordem da árvore.
+	nome como qualquer outro; ver o `_findLoose`.
 
 	Isto não abre exceção à regra de que nada lê o `SoundService` direto: quem lê a
 	raiz continua sendo só este controller, e quem toca continua pedindo pelo nome.
@@ -172,12 +251,7 @@ function MusicController:_find(folder: Instance?, name: string): Sound?
 		end
 	end
 
-	local loose = SoundService:FindFirstChild(name)
-	if loose and loose:IsA("Sound") then
-		return loose
-	end
-
-	return nil
+	return self:_findLoose(name)
 end
 
 -- Busca recursiva: a faixa pode estar numa subpasta de Musics.

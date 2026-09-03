@@ -370,9 +370,11 @@ CrateOfBeginnings          <- item.Container, que é o Key da caixa
 │   │   └── RarityTextPercentage
 │   └── UIListLayout
 └── Buy
+    ├── UIScale            <- o hover e o aperto do botão
     ├── TextLabel          <- o Price pelo ShopConfig.PRICE_FORMAT: `50`
     │   └── UIStroke       <- a cor da moeda daquela caixa
     └── ImageLabel         <- o ícone da moeda daquela caixa
+        └── UIScale        <- o tamanho do ícone, que muda com a moeda
 ```
 
 **A linha de raridade é um template por caixa, e não um template global.** A
@@ -478,22 +480,143 @@ Quando o template já traz um `UIGradient` autorado (o da Crate Of Beginnings tr
 ele que é reescrito em vez de um segundo ser criado ao lado: dois `UIGradient` no
 mesmo `UIStroke` é a Roblox escolhendo um deles por ordem de árvore.
 
-### O som da compra
+### Abrir a loja limpa a tela e borra o fundo
 
-`SoundService.BuySFX` toca no **resultado** que o servidor manda, e não no clique: o
+Enquanto a loja está aberta ela é a única coisa na frente: o HUD, o botão do portal e
+o que mais a lobby tiver saem, e o fundo entra em `BlurSize` 24. Fechar desfaz os dois.
+
+**Quem esconde é o `InterfaceController`**, com um pedido com nome — não é
+`Enabled = false` na mão em cada GUI:
+
+```lua
+InterfaceController:Hide("Shop", { Except = { "ShopUI" } })
+InterfaceController:Show("Shop")
+```
+
+É o mesmo mecanismo do painel de mapas e da cutscene (ver [Quem some da tela, e
+quando](../README.md#quem-some-da-tela-e-quando)), e é o que faz os pedidos se
+sobreporem sem brigar: cada GUI volta ao que o **dono dela** queria quando o último
+pedido sai, e não a um valor que a loja tenha chutado. `ScreenGui` marcada com
+`IgnoreInterfaceHide` continua de pé — é o flash do portal.
+
+A própria `ShopUI` liga pelo `InterfaceController:SetEnabled`, e não no `Enabled`
+direto. O aviso de `Enabled` chega no fim do quadro, e a loja acende no **mesmo**
+instante em que o pedido varre as GUIs: escrevendo direto, o pedido ainda leria o
+`false` de antes como "o que o dono queria" e apagaria o painel de volta no mesmo
+quadro. Todo o liga/desliga da loja passa por um único `_setShopEnabled` por isso.
+
+A tela é devolvida no **começo** do fechamento, e não no fim: o resto da UI e o fundo
+voltam atrás do painel, em vez de aparecerem de uma vez depois que ele sai. E o
+`_bindUI` devolve também — a `ShopUI` é `ResetOnSpawn`, então morrer com a loja aberta
+traz uma cópia nova e zera o estado; sem isso o pedido ficaria de pé com a loja
+fechada, e o jogador renasceria sem HUD e com o fundo borrado.
+
+**O blur é o `Lighting.UIBlur`**, o mesmo que o `UILibraryController` já usa nos
+painéis dele — dois `BlurEffect` somariam, e o fundo sairia com o dobro do borrão com
+os dois abertos. Quem chegar primeiro cria; quem chegar depois acha pelo nome.
+
+Ele nasce com `LightingKeep = true`. Sem essa marca ele é um filho do `Lighting` que
+não pertence a preset nenhum: o `LightingService` o varreria na troca de preset, e o
+`LightingController` o trataria como efeito de saída — um fantasma dele por cima do
+borrão que a loja está usando. O `LightingController` passou a pular esses filhos na
+leitura do estado, que é a metade do contrato que faltava (o servidor já pulava).
+
+O tempo do tween sai da própria `OpenShop` (`track.Duration`, 0,25s hoje), então o
+borrão entra e sai junto com o painel mesmo que a animação seja re-cronometrada. Um
+tween por vez, num maid próprio: fechar no meio da abertura cancela a subida e desce
+de onde ela chegou, em vez de duas animações escreverem no mesmo `Size`.
+
+### O botão de compra responde ao ponteiro e ao dedo
+
+O `Buy` cresce para `1.05` com o ponteiro em cima e afunda para `0.93` enquanto está
+apertado, no `UIScale` autorado dentro dele. O tempo e a curva são os mesmos dos
+botões da HUD (`HUDButtonController`): entrada circular, volta num `Back` que passa um
+pouco do ponto — é o que faz o botão parecer que tem peso em vez de só mudar de
+tamanho. O aperto é mais suave que o `0.9` da HUD porque lá o botão é um ícone
+quadrado e pequeno, e aqui é uma barra larga: o mesmo fator moveria as duas bordas
+muito mais longe, e a barra pareceria saltar em vez de afundar.
+
+**O alvo sai do estado inteiro, e não do evento que acabou de chegar** — apertado
+vence pousado, que vence parado. Sem isso, soltar o clique com o mouse ainda em cima
+devolveria o botão ao tamanho normal em vez do de hover, e a saída seguinte do mouse
+não teria nada para desfazer.
+
+O aperto e o soltar são `InputBegan`/`InputEnded` filtrando `MouseButton1` **e**
+`Touch`, e não `MouseButton1Down`/`Up`: o mesmo par cobre o clique e o toque, e nenhum
+dos dois consome o input, então o `Activated` que faz a compra continua saindo. Duas
+coisas que o par sozinho não cobre:
+
+- **Soltar fora do botão.** Arrastar para fora e soltar lá não dispara o `InputEnded`
+  dele, e a escala ficaria presa no apertado — por isso o `MouseLeave` também desfaz o
+  aperto. É o mesmo cuidado que o `HUDButtonController` toma.
+- **Toque não tem hover.** A Roblox manda `MouseEnter` no toque como se fosse mouse,
+  então soltar o dedo devolveria o botão ao tamanho de hover por um quadro antes de o
+  `MouseLeave` chegar. Um toque que termina limpa os dois estados de uma vez.
+
+Tudo vai no `ItemMaid`, junto do resto do bind do container: um `_render` novo
+desconecta os eventos e cancela o tween que estiver no meio, e a escala volta a `1` no
+bind seguinte — um painel que fechou com o mouse em cima não reabre com o botão
+grande.
+
+### O som da compra é um por moeda
+
+`SoundService.BuySFX` virou uma **pasta**, com um som para cada moeda:
+
+```
+SoundService
+├── SharedSounds        <- o Package, que as duas places carregam
+└── BuySFX              <- solto ao lado dele, só do Lobby
+    ├── Coins
+    └── Shards
+```
+
+Qualquer um dos dois toca no **resultado** que o servidor manda, e não no clique: o
 preço, a moeda e a carteira são conferidos lá, e um clique sem saldo não comprou nada.
+Qual dos dois toca sai do `ShopConfig` (`BUY_SOUNDS`, no `ShopController`), e não da
+rede: o resultado carrega o id do item, e o preço daquele id é público — mandar a
+moeda junto só daria ao cliente uma segunda versão de uma coisa que ele já sabe. A
+chave é a moeda do perfil e o valor é o nome do `Sound`, que é o nome da tela: a pasta
+traz `Coins`, e não `Cash`.
 
-Ele mora **solto na raiz do `SoundService`**, e não dentro do Package
+**Toda compra toca do começo.** As duas moedas dividem uma `Key` (`ShopBuy`), e o
+`PlaySFX` para e destrói o que estiver tocando nela antes de soltar o clone novo:
+comprar de novo no meio do som corta e recomeça, em vez de somar uma segunda cópia por
+cima da primeira. Sem `Key` os clones se empilhariam, e a terceira compra seguida sairia
+como um borrão em vez de três confirmações.
+
+**Isso não é debounce.** Nada é engolido: toda resposta do servidor tem o seu som, e o
+corte é a favor do jogador — o que ele ouve é sempre a compra que ele acabou de fazer.
+Sem fade, o clone toca no mesmo quadro em que a resposta chega. E o som é a **primeira**
+coisa que acontece com ela: o sinal `PurchaseResult` sai depois, porque quem escuta pode
+fazer qualquer coisa e nada disso pode entrar na frente do som.
+
+O que ainda podia atrasar era o **download do áudio no primeiro clique**:
+`Sound:Play()` num asset que não chegou não falha, ele espera — e num som que confirma
+uma ação essa espera é a resposta inteira. Por isso o `ShopController` chama
+`MusicController:PreloadSFX` no `construct`, com os dois nomes de `BUY_SOUNDS`. O
+preload roda em thread própria (o `PreloadAsync` cede) e falhar nele não impede o som
+de tocar mais tarde — é otimização, não pré-requisito.
+
+O que sobra de atraso é o caminho de rede, e ele é de propósito: o preço e a carteira
+são conferidos no servidor, então tocar no clique seria tocar antes de saber se a
+compra aconteceu.
+
+Eles moram **soltos na raiz do `SoundService`**, e não dentro do Package
 `SharedSounds` — é um efeito só do Lobby, e não vale uma mudança de package que as
-duas places carregam. Para ele ser achado, o `MusicController._find` ganhou a raiz
-como segundo lugar de busca: primeiro a pasta (`SharedSounds.SFX`), depois um
-`FindFirstChild` **direto** na raiz. Direto e não recursivo de propósito — recursivo
-ele reencontraria o que já está dentro do Package, e um nome repetido nas duas pontas
-passaria a depender da ordem da árvore.
+duas places carregam. Para eles serem achados, o `MusicController` lê a raiz em **dois
+níveis** (`_findLoose`): um `Sound` solto, ou um `Sound` dentro de uma pasta solta.
+Antes era só o primeiro nível, e uma pasta chamada `BuySFX` deixaria o efeito mudo —
+`PlaySFX("BuySFX")` acharia uma `Folder`, que não é um `Sound`.
+
+**A varredura pula o `SharedSounds`**, e é aí que ela para de ser recursiva: entrar no
+Package reencontraria o que a busca na pasta (`SharedSounds.SFX`, que vem primeiro) já
+cobre, e um nome repetido nas duas pontas passaria a depender da ordem da árvore.
+Entre os soltos vale a mesma regra que já vale dentro do Package: o nome tem que ser
+único.
 
 Isso não abre exceção à regra de que nada lê o `SoundService` direto: quem lê a raiz
 continua sendo só o `MusicController`, e quem toca continua pedindo pelo nome
-(`Sound:PlaySFX("BuySFX")`).
+(`Sound:PlaySFX("Coins")`).
 
 ### O que saiu junto
 

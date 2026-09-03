@@ -82,6 +82,19 @@ function LightingController:_readLive()
 	-- Os mapas do jogo trazem dois filhos chamados `Atmosphere`, e as duas pontas
 	-- da transição têm que concordar em qual delas estão falando.
 	for _, child in Lighting:GetChildren() do
+		--[[
+			O que está marcado com o `KeepAttribute` não é de preset nenhum: é de outro
+			sistema, que manda no efeito sozinho — hoje o `UIBlur` que a loja e o
+			`UILibraryController` acendem atrás dos painéis.
+
+			Ficar de fora do estado é o que impede a troca de preset de tratá-lo como
+			efeito **de saída**: ele não está no preset novo, então o `_fadeOut` criaria
+			um fantasma com o tamanho dele e o levaria até zero — um segundo blur por
+			cima do que o painel está usando. O `LightingService` já pula esses filhos na
+			varredura dele pela mesma razão.
+		]]
+		if child:GetAttribute(Config.KeepAttribute) == true then continue end
+
 		if state.Children[child.Name] then continue end
 
 		state.Children[child.Name] = {

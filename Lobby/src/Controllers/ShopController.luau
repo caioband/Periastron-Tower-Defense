@@ -1,6 +1,8 @@
+local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -17,6 +19,7 @@ local UIUtil = require(Util.UIUtil)
 
 local ShopConfig = SharedConfig.ShopConfig
 local RarityConfig = SharedConfig.RarityConfig
+local LightingConfig = SharedConfig.LightingConfig
 
 -- Cascade lives only in the place (see Lobby/README.md), so it is reached by name
 -- instead of through the Rojo tree.
@@ -65,15 +68,90 @@ local HUD_BUTTON_NAME = "Shop"
 local ODDS_REQUEST_ATTEMPTS = 5
 local ODDS_REQUEST_INTERVAL = 2
 
---[[
-	O som da compra. Toca no **resultado** do servidor, e nao no clique: o preco e a
-	carteira sao conferidos la, e um clique sem shards nao comprou nada.
+--[=[
+	O nome do pedido ao `InterfaceController`: enquanto a loja esta aberta, a tela e
+	so dela.
 
-	Ele mora solto na raiz do `SoundService`, e nao dentro do Package `SharedSounds`
-	-- e um efeito so do Lobby, e nao vale uma mudanca de package nas duas places. O
-	`MusicController` acha os dois pelo nome; ver o `_find` de la.
-]]
-local BUY_SOUND_NAME = "BuySFX"
+	Pedido com nome, e nao um interruptor global: a cutscene e o painel de mapas
+	pedem a mesma coisa, e uma GUI so volta quando o **ultimo** pedido sai. Quem
+	esconde nunca escreve no `Enabled` dos outros -- o controller guarda o que o dono
+	de cada GUI queria e devolve exatamente aquilo.
+]=]
+local HIDE_REASON = "Shop"
+
+--[=[
+	O blur do fundo enquanto a loja esta aberta.
+
+	Reaproveita o `UIBlur` que o `UILibraryController` ja usa nos paineis dele, em vez
+	de pendurar um segundo `BlurEffect` no Lighting: dois blurs somam, e o fundo
+	sairia com o dobro do borrao quando os dois estivessem abertos.
+
+	Ele nasce com o `LightingKeep` do `LightingConfig`. Sem essa marca ele e um filho
+	do Lighting que nao pertence a preset nenhum: o `LightingService` o varreria na
+	troca de preset, e o `LightingController` o trataria como efeito de saida. A marca
+	e exatamente para isto -- ver o comentario do `KeepAttribute` la.
+
+	O tempo sai da propria `OpenShop` (`track.Duration`), entao o borrao entra e sai
+	junto com o painel mesmo que o designer re-cronometre a animacao.
+]=]
+local BLUR_NAME = "UIBlur"
+local BLUR_SIZE = 24
+local BLUR_FALLBACK_TIME = 0.25
+local BLUR_EASING_STYLE = Enum.EasingStyle.Quad
+local BLUR_EASING_DIRECTION = Enum.EasingDirection.Out
+
+--[=[
+	O som da compra, um por moeda. Toca no **resultado** do servidor, e nao no
+	clique: o preco e a carteira sao conferidos la, e um clique sem saldo nao comprou
+	nada.
+
+	Os dois moram em `SoundService.BuySFX`, uma pasta solta ao lado do Package
+	`SharedSounds` -- e um efeito so do Lobby, e nao vale uma mudanca de package nas
+	duas places. O `MusicController` acha som solto e som em pasta solta pelo nome;
+	ver o `_findLoose` de la.
+
+	A chave e a moeda do perfil (`ShopConfig.CURRENCIES`) e o valor e o nome do
+	`Sound`, que e o nome da tela: a pasta traz `Coins`, e nao `Cash`.
+
+	**Toda compra toca do comeco.** As duas dividem uma `Key`, e o `PlaySFX` para e
+	destroi o que estiver tocando nela antes de soltar o clone novo -- comprar de novo
+	no meio do som corta e recomeca, em vez de somar uma segunda copia por cima da
+	primeira. Sem `Key` os clones se empilhariam, e a terceira compra seguida sairia
+	como um borrao em vez de tres confirmacoes.
+
+	Isso **nao e debounce**: nada e engolido, e toda resposta do servidor tem o seu
+	som. O corte e a favor do jogador -- o som que ele ouve e sempre o da compra que
+	ele acabou de fazer.
+
+	Sem fade, o clone toca no mesmo quadro em que a resposta chega. O que ainda podia
+	atrasar era o download do audio no primeiro toque, e por isso os dois sao
+	pre-carregados no `construct`.
+]=]
+local BUY_SOUND_KEY = "ShopBuy"
+
+local BUY_SOUNDS = {
+	Shards = "Shards",
+	Cash = "Coins",
+}
+
+--[=[
+	O feedback do botao `Buy`: ele cresce com o ponteiro em cima e afunda enquanto
+	esta apertado, no `UIScale` autorado dentro do proprio botao.
+
+	O tempo e a curva sao os mesmos dos botoes da HUD (ver o `HUDButtonController`):
+	a entrada e circular, e a volta e um `Back` que passa um pouco do ponto e volta
+	-- e o que faz o botao parecer que tem peso em vez de so mudar de tamanho.
+
+	O aperto e mais suave que o `0.9` da HUD de proposito. La o botao e um icone
+	quadrado e pequeno, e aqui ele e uma barra larga: o mesmo fator moveria as duas
+	bordas muito mais longe, e a barra pareceria saltar em vez de afundar.
+]=]
+local BUY_HOVER_SCALE = 1.05
+local BUY_PRESS_SCALE = 0.93
+
+local BUY_HOVER_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Circular, Enum.EasingDirection.Out)
+local BUY_PRESS_INFO = TweenInfo.new(0.08, Enum.EasingStyle.Circular, Enum.EasingDirection.Out)
+local BUY_RELEASE_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
 --[[
 	O contorno de cada linha de raridade.
@@ -151,6 +229,7 @@ local CURRENCY_STYLE = {
 local ShopController = {
 	Controllers = {
 		DataController = {},
+		InterfaceController = {},
 		MusicController = {},
 	},
 
@@ -270,6 +349,41 @@ local function styleRarityStroke(label : TextLabel, rarity : string)
 end
 
 --[=[
+	Leva o `UIScale` para o tamanho que o estado do botao pede, cancelando o tween
+	anterior.
+
+	O alvo sai do estado inteiro, e nao do evento que acabou de chegar: apertado
+	vence pousado, que vence parado. Sem isso, soltar o clique com o mouse ainda em
+	cima devolveria o botao ao tamanho normal em vez do tamanho de hover, e a
+	proxima saida do mouse nao teria nada para desfazer.
+
+	`Tween:Cancel()` para o tween sem devolver a propriedade -- a escala fica onde
+	chegou e o tween novo parte dali, que e o que faz duas animacoes emendarem em vez
+	de saltarem.
+]=]
+local function applyButtonScale(maid, scale : UIScale, state)
+	maid:DoCleaning()
+
+	local target, info
+
+	if state.Pressed then
+		target, info = BUY_PRESS_SCALE, BUY_PRESS_INFO
+	elseif state.Hovered then
+		target, info = BUY_HOVER_SCALE, BUY_HOVER_INFO
+	else
+		target, info = 1, BUY_RELEASE_INFO
+	end
+
+	local tween = TweenService:Create(scale, info, { Scale = target })
+
+	maid:GiveTask(function()
+		tween:Cancel()
+	end)
+
+	tween:Play()
+end
+
+--[=[
 	Escreve as linhas de raridade de um container, da mais comum para a mais rara.
 
 	A `Rarity` autorada dentro do container e o template daquela caixa: ela sai da
@@ -325,6 +439,81 @@ function ShopController:_renderOdds(entry)
 end
 
 --[=[
+	Liga o crescer e o afundar do botao `Buy` de um container.
+
+	O aperto e o soltar sao `InputBegan`/`InputEnded`, e nao `MouseButton1Down/Up`,
+	porque a loja e jogada no celular tambem: filtrando `MouseButton1` **e** `Touch`,
+	o mesmo par de eventos cobre o clique e o toque. Nenhum dos dois consome o
+	input, entao o `Activated` que faz a compra continua saindo normalmente.
+
+	Duas coisas que o par de eventos sozinho nao cobre:
+
+	* **Soltar fora do botao.** Arrastar para fora e soltar la nao dispara o
+	  `InputEnded` daqui, e a escala ficaria presa no apertado para sempre -- por
+	  isso o `MouseLeave` tambem desfaz o aperto.
+	* **Toque nao tem hover.** A Roblox manda `MouseEnter` no toque como se fosse um
+	  mouse, entao soltar o dedo devolveria o botao ao tamanho de hover por um quadro
+	  antes do `MouseLeave` chegar. Um toque que termina limpa os dois estados de uma
+	  vez.
+
+	Vai no `ItemMaid`, junto do resto do bind do container: um `_render` novo
+	desconecta tudo e cancela o tween que estiver no meio.
+]=]
+function ShopController:_bindBuyFeedback(button : GuiButton)
+	local scale = button:FindFirstChildWhichIsA("UIScale")
+	if not scale then
+		return
+	end
+
+	local state = { Hovered = false, Pressed = false }
+
+	local tweenMaid = Maid.new()
+	self.ItemMaid:GiveTask(tweenMaid)
+
+	local function refresh()
+		applyButtonScale(tweenMaid, scale, state)
+	end
+
+	self.ItemMaid:GiveTask(button.MouseEnter:Connect(function()
+		state.Hovered = true
+		refresh()
+	end))
+
+	self.ItemMaid:GiveTask(button.MouseLeave:Connect(function()
+		state.Hovered = false
+		state.Pressed = false
+		refresh()
+	end))
+
+	self.ItemMaid:GiveTask(button.InputBegan:Connect(function(input : InputObject)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+
+		state.Pressed = true
+		refresh()
+	end))
+
+	self.ItemMaid:GiveTask(button.InputEnded:Connect(function(input : InputObject)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+
+		state.Pressed = false
+
+		if input.UserInputType == Enum.UserInputType.Touch then
+			state.Hovered = false
+		end
+
+		refresh()
+	end))
+
+	-- A escala autorada e a de parado. Um container que ficou grande porque o painel
+	-- fechou com o mouse em cima dele volta ao normal no bind seguinte.
+	scale.Scale = 1
+end
+
+--[=[
 	Liga um container autorado ao item da loja que ele representa.
 
 	Devolve nil quando o container nao tem a estrutura que a arte promete -- e um
@@ -361,6 +550,8 @@ function ShopController:_bindContainer(container : Instance, item)
 		self.ItemMaid:GiveTask(buy.Activated:Connect(function()
 			self:_requestPurchase(item)
 		end))
+
+		self:_bindBuyFeedback(buy)
 	end
 
 	--[[
@@ -475,6 +666,103 @@ function ShopController:_requestOdds()
 			warn("[ShopController]: no CrateOdds from the server -- the crates show no rarity rows.")
 		end
 	end)
+end
+
+--[=[
+	Liga e desliga a `ShopUI`.
+
+	Sempre pelo `InterfaceController` quando ele existe: e ele quem guarda o que o
+	dono de cada GUI queria, e escrever no `Enabled` direto no meio de um pedido
+	(o dele, ou o da cutscene) faria o valor certo ser lido tarde demais. Ver o
+	comentario do `SetEnabled` la.
+]=]
+function ShopController:_setShopEnabled(enabled : boolean)
+	local screenGui = self.ScreenGui
+	if not screenGui or not screenGui.Parent then
+		return
+	end
+
+	local interface = self.Controllers.InterfaceController
+
+	if interface then
+		interface:SetEnabled(screenGui, enabled)
+	else
+		screenGui.Enabled = enabled
+	end
+end
+
+--[=[
+	O `BlurEffect` do fundo, criado na primeira vez que a loja abre.
+
+	Procurado pelo nome antes de ser criado: o `UILibraryController` cria o mesmo
+	`UIBlur` para os paineis dele, e quem chegar primeiro ganha. A marca do
+	`LightingKeep` e (re)escrita sempre, porque a instancia pode ter vindo de la sem
+	ela.
+]=]
+function ShopController:_getBlur() : BlurEffect
+	local blur = Lighting:FindFirstChild(BLUR_NAME)
+
+	if not blur or not blur:IsA("BlurEffect") then
+		blur = Instance.new("BlurEffect")
+		blur.Name = BLUR_NAME
+		blur.Size = 0
+		blur.Parent = Lighting
+	end
+
+	blur:SetAttribute(LightingConfig.KeepAttribute, true)
+
+	return blur
+end
+
+--[=[
+	Leva o borrao a `BLUR_SIZE` na abertura e de volta a zero no fechamento.
+
+	Um tween por vez, no `BlurMaid`: fechar no meio da abertura cancela a subida e
+	desce a partir de onde ela chegou, em vez de as duas escreverem no mesmo `Size` ao
+	mesmo tempo.
+
+	`Tween:Cancel()` nao devolve a propriedade -- e o que faz as duas emendarem.
+]=]
+function ShopController:_playBlur(open : boolean)
+	-- Fechar sem nunca ter aberto nao cria efeito nenhum: o `_releaseScreen` roda no
+	-- bind de toda copia da `ShopUI`, e um `BlurEffect` por jogador que nunca chegou
+	-- perto da loja e lixo no Lighting.
+	if not open and not Lighting:FindFirstChild(BLUR_NAME) then
+		return
+	end
+
+	local blur = self:_getBlur()
+
+	self.BlurMaid:DoCleaning()
+
+	local duration = (self.PanelTrack and self.PanelTrack.Duration) or BLUR_FALLBACK_TIME
+	local info = TweenInfo.new(duration, BLUR_EASING_STYLE, BLUR_EASING_DIRECTION)
+	local tween = TweenService:Create(blur, info, { Size = if open then BLUR_SIZE else 0 })
+
+	self.BlurMaid:GiveTask(function()
+		tween:Cancel()
+	end)
+
+	tween:Play()
+end
+
+--[=[
+	Devolve a tela: o resto da UI volta e o borrao sai.
+
+	Chamado no `Close` e tambem no bind de uma copia nova da `ShopUI` -- morrer com a
+	loja aberta traz uma `ScreenGui` nova e zera o `IsOpenState`, e sem isto o pedido
+	de esconder ficaria de pe com a loja fechada, deixando o jogador sem HUD.
+
+	`Show` e `_playBlur(false)` sao idempotentes, entao chamar com a loja ja fechada
+	nao faz nada.
+]=]
+function ShopController:_releaseScreen()
+	local interface = self.Controllers.InterfaceController
+	if interface then
+		interface:Show(HIDE_REASON)
+	end
+
+	self:_playBlur(false)
 end
 
 --[=[
@@ -714,7 +1002,7 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 		local connection = self.PanelTrack.Completed:Connect(function()
 			-- Only the closing pass ends with the panel hidden.
 			if not self.IsOpenState and screenGui.Parent then
-				screenGui.Enabled = false
+				self:_setShopEnabled(false)
 			end
 		end)
 
@@ -726,7 +1014,16 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 	self.Entries = {}
 	self.IsOpenState = false
 	self.OpenToken += 1
-	screenGui.Enabled = false
+
+	--[[
+		A copia nova nasce apagada, e o que a copia velha tinha pedido e devolvido.
+
+		A `ShopUI` e `ResetOnSpawn`: morrer com a loja aberta traz uma `ScreenGui` nova
+		e zera o `IsOpenState` aqui. Sem devolver a tela, o pedido de esconder ficaria
+		de pe com a loja fechada -- o jogador renasceria sem HUD e com o fundo borrado.
+	]]
+	self:_setShopEnabled(false)
+	self:_releaseScreen()
 
 	-- A fresh copy means a respawn: the player may well still be standing next to
 	-- the part, and the next check has to open the new panel.
@@ -794,8 +1091,28 @@ function ShopController:Open()
 	self.IsOpenState = true
 	self.OpenToken += 1
 
-	self.ScreenGui.Enabled = true
+	--[[
+		A loja e a unica coisa na tela enquanto esta aberta: o HUD, o portal e o que
+		mais a lobby tiver saem, e voltam ao que o dono deles queria no fechamento.
+
+		O `Except` e a propria `ShopUI`, senao o pedido esconderia o painel que ele
+		esta abrindo.
+	]]
+	local interface = self.Controllers.InterfaceController
+	if interface then
+		interface:Hide(HIDE_REASON, { Except = { SHOP_UI_NAME } })
+	end
+
+	--[[
+		Pelo `_setShopEnabled`, e nao no `Enabled` direto: o aviso de `Enabled` chega
+		no fim do quadro, e a loja acende no **mesmo** instante em que o pedido varre
+		as GUIs. Escrevendo direto, o pedido ainda leria o `false` de antes como o que
+		o dono queria e apagaria o painel de volta no mesmo quadro.
+	]]
+	self:_setShopEnabled(true)
+
 	self:_playPanel(false)
+	self:_playBlur(true)
 
 	self.Signals.OpenChanged:Fire(true)
 end
@@ -808,11 +1125,15 @@ function ShopController:Close()
 	self.IsOpenState = false
 	self.OpenToken += 1
 
+	-- Devolvida no comeco do fechamento, e nao no fim dele: o resto da UI e o fundo
+	-- voltam **atras** do painel, em vez de aparecerem de uma vez depois que ele sai.
+	self:_releaseScreen()
+
 	if self.PanelTrack then
 		-- The panel hides when the reversed animation completes, in _bindUI.
 		self:_playPanel(true)
 	else
-		self.ScreenGui.Enabled = false
+		self:_setShopEnabled(false)
 	end
 
 	self.Signals.OpenChanged:Fire(false)
@@ -895,14 +1216,44 @@ function ShopController:construct()
 
 	Framework:Listen("ShopPurchaseResult", function(itemId : string, success : boolean, reason : string?)
 		if success then
+			--[[
+				Qual dos dois sons toca sai do config, e nao do servidor: o resultado
+				carrega o id do item, e o preco daquele id e publico. Mandar a moeda pela
+				rede so daria ao cliente uma segunda versao de uma coisa que ele ja sabe.
+
+				E a primeira coisa que acontece com a resposta: o `PurchaseResult` sai
+				depois, porque quem escuta o sinal pode fazer qualquer coisa, e nada disso
+				pode entrar na frente do som.
+			]]
+			local item = ShopConfig.getItem(itemId)
+			local sound = item and BUY_SOUNDS[item.Currency]
+
 			local music = self.Controllers.MusicController
-			if music then
-				music:PlaySFX(BUY_SOUND_NAME)
+			if music and sound then
+				music:PlaySFX(sound, { Key = BUY_SOUND_KEY })
 			end
 		end
 
 		self.Signals.PurchaseResult:Fire(itemId, success, reason)
 	end)
+
+	--[[
+		Os dois sons da compra baixam agora, e nao no primeiro clique.
+
+		`Sound:Play()` num asset que ainda nao chegou espera o download -- e num som
+		que confirma uma acao essa espera e a resposta inteira. O preload roda em
+		thread propria dentro do `PreloadSFX`, entao ele nao segura o boot do
+		controller.
+	]]
+	local music = self.Controllers.MusicController
+	if music then
+		local names = {}
+		for _, name in BUY_SOUNDS do
+			table.insert(names, name)
+		end
+
+		music:PreloadSFX(names)
+	end
 
 	self:_observeUI()
 	self:_watchShards()
@@ -923,9 +1274,14 @@ function ShopController:init()
 	self.ItemMaid = Maid.new()
 	self.HudMaid = Maid.new()
 
+	-- O tween do borrao vive fora do bind da UI: ele e do Lighting, e nao da
+	-- `ScreenGui` que a engine refaz a cada respawn.
+	self.BlurMaid = Maid.new()
+
 	self.Maid:GiveTask(self.UIMaid)
 	self.Maid:GiveTask(self.ItemMaid)
 	self.Maid:GiveTask(self.HudMaid)
+	self.Maid:GiveTask(self.BlurMaid)
 
 	-- Uma entrada por caixa desenhada: o item, o container dela e as linhas de
 	-- raridade que estao na tela agora.
