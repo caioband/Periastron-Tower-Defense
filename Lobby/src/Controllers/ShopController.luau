@@ -225,6 +225,10 @@ local CURRENCY_STYLE = {
 	Andar a menos de `ShopConfig.OPEN_RADIUS` da parte da loja abre, e sair fecha.
 	`Open`/`Close`/`Toggle` sao publicos, entao qualquer outra coisa (o botao da HUD,
 	um comando do Cmdr) move o mesmo painel.
+
+	Quem reage ao jogador **chegando** e o `ShopKeeperController`, num raio maior em
+	volta do mesmo ponto. Ele escuta o `PurchaseResult` daqui para saber se despede o
+	jogador bem ou mal, e este controller nao sabe que ele existe.
 ]=]
 local ShopController = {
 	Controllers = {
@@ -898,7 +902,13 @@ local function getPivot(part : Instance?) : CFrame?
 	return nil
 end
 
-function ShopController:_getReferencePosition() : Vector3?
+--[=[
+	Onde a loja fica, para quem precisa medir contra o mesmo centro que a proximidade
+	mede. Publico por causa do `ShopKeeperController`: o vendedor levanta num raio
+	maior em volta **deste** ponto, e nao do corpo dele, para que os dois raios sejam
+	concentricos -- chegar ao balcao nunca pode acontecer sem ele ter levantado antes.
+]=]
+function ShopController:GetReferencePosition() : Vector3?
 	local pivot = getPivot(self:_getMapPart(ShopConfig.REFERENCE_PART_NAME))
 	return pivot and pivot.Position or nil
 end
@@ -911,7 +921,7 @@ end
 function ShopController:_updateProximity()
 	local character = Players.LocalPlayer.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
-	local position = root and self:_getReferencePosition()
+	local position = root and self:GetReferencePosition()
 
 	local inRange = false
 	if position and root then
@@ -1199,9 +1209,15 @@ function ShopController:TeleportToShop() : boolean
 	-- Without this the player keeps whatever momentum they had and slides off.
 	root.AssemblyLinearVelocity = Vector3.zero
 
-	-- The landing is inside OPEN_RADIUS, so proximity would open the panel on its
-	-- own -- except for a player who was already in range and had closed it by hand.
-	-- Opening here makes the button behave the same either way.
+	--[[
+		O pouso fica **fora** do `OPEN_RADIUS`, que hoje e o balcao (5 studs) e nao o
+		patio inteiro. Entao o botao abre a loja na mao, e nao pela proximidade.
+
+		Marcar a entrada junto e o que fecha o ciclo: sem isso a travessia de saida
+		nunca aconteceria (o jogador ja estava "fora"), e a loja aberta pelo botao
+		ficaria pendurada na tela por mais longe que ele andasse.
+	]]
+	self.InRange = true
 	self:Open()
 
 	return true

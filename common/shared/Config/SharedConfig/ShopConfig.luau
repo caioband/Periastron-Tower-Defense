@@ -53,11 +53,20 @@ module.REFERENCE_PART_NAME = "ShopPartReference"
 --[[
 	Studs from the part, measured against the HumanoidRootPart.
 
-	Não pode cair abaixo de ~15: o `ShopPartTeleport` fica a 14.5 studs daqui, e o
-	botão da HUD conta com o pouso dele estar **dentro** deste raio para a loja abrir
-	sozinha. Abaixo disso o botão levaria o jogador até a loja e nada aconteceria.
+	Cinco studs e o balcao: a loja abre quando o jogador chega **na** vendedora, e
+	nao quando ele passa perto dela. Este raio ja foi 20, que pegava meio patio --
+	quem so atravessava a praca abria e fechava a loja sem ter pedido nada.
+
+	O raio largo nao sumiu, ele mudou de dono: quem responde a 20 studs agora e o
+	vendedor (`KEEPER_APPROACH_RADIUS`), que levanta ao ver o jogador chegando. Sao
+	dois momentos de proposito -- ele te ve de longe, a loja abre no balcao.
+
+	**O `ShopPartTeleport` fica a 14.85 studs daqui, portanto fora deste raio.** O
+	botao da HUD nao depende mais da proximidade para abrir: ele abre a loja na mao e
+	marca a entrada, para que andar embora feche do mesmo jeito. Ver
+	`ShopController:TeleportToShop`.
 ]]
-module.OPEN_RADIUS = 20
+module.OPEN_RADIUS = 5
 
 -- How often the distance is checked. The radius is wide enough that a fifth of a
 -- second is imperceptible and cheaper than measuring every frame.
@@ -73,6 +82,67 @@ module.TELEPORT_PART_NAME = "ShopPartTeleport"
 -- Studs above the top of the marker, so the character lands standing on it instead
 -- of half sunk into it.
 module.TELEPORT_HEIGHT_OFFSET = 3
+
+--[[ SHOPKEEPER ]]
+
+--[=[
+	O vendedor da loja, procurado sob Workspace.<REFERENCE_PARENT_NAME> pelo nome,
+	do mesmo jeito que os marcadores.
+
+	Ele nao tem `Humanoid`: as animacoes tocam pelo `Animator` do
+	`AnimationController` dele. Quem toca e o **cliente**, e nao o servidor -- assim
+	o vendedor reage a quem chegou, e nao a "alguem chegou". Dois jogadores no lobby
+	veem o vendedor atendendo cada um deles, o que e o que a cena quer dizer.
+]=]
+module.KEEPER_MODEL_NAME = "Entrepreneur"
+
+--[=[
+	Studs do `REFERENCE_PART_NAME` -- o mesmo centro que a loja usa, e nao o corpo do
+	vendedor -- em que ele larga o descanso e levanta para atender.
+
+	Tem de ser **maior** que o `OPEN_RADIUS`, e por uma margem que de tempo de ver a
+	animacao: o jogador cruza estes 20 studs andando, o `GetUp` roda no caminho, e
+	quando ele chega no balcao o vendedor ja esta de pe. Igualar os dois faria o
+	vendedor levantar junto com a loja abrindo, que e tarde demais para ser um gesto.
+]=]
+module.KEEPER_APPROACH_RADIUS = 20
+
+--[=[
+	As animacoes do vendedor, pelo nome do `Animation` filho do modelo.
+
+	Cada uma e um momento da visita, e nao um passo de codigo: `IDLE` e o que ele faz
+	sozinho o dia todo, `GET_UP` e o levantar, `ATTEND` e o esperar no balcao, e as
+	duas despedidas dependem de o jogador ter levado alguma coisa.
+
+	**A despedida azeda nao e um erro.** Sair sem comprar toca `FAREWELL_EMPTY`
+	(`ByeByeEvil`); sair depois de uma compra toca `FAREWELL_SOLD`. E a unica coisa
+	que a loja lembra da visita, e ela e zerada quando o jogador entra no raio.
+]=]
+module.KEEPER_IDLE_ANIMATION = "Idle"
+module.KEEPER_GET_UP_ANIMATION = "GetUp"
+module.KEEPER_ATTEND_ANIMATION = "IdleBench"
+module.KEEPER_FAREWELL_SOLD_ANIMATION = "ByeBye"
+module.KEEPER_FAREWELL_EMPTY_ANIMATION = "ByeByeEvil"
+
+-- Crossfade entre uma animacao e a seguinte. Curto porque as transicoes dele sao
+-- gestos (levantar, acenar) e nao poses: meio segundo de mistura borraria o comeco
+-- do aceno com o fim do idle.
+module.KEEPER_FADE_TIME = 0.2
+
+--[=[
+	Teto de quanto um gesto pode levar antes de o vendedor cair na pose seguinte de
+	qualquer jeito.
+
+	E rede de seguranca, e nao ritmo: quem manda no fim do `GetUp` e do aceno e o
+	`Stopped` do proprio track. So que um `Animation` cujo asset nao carrega **nunca
+	toca**, e entao esse `Stopped` nunca chega -- sem este teto o vendedor ficaria
+	congelado no meio do gesto para sempre, porque a recuperacao automatica so cuida
+	das duas poses de descanso.
+
+	Dez segundos e folgado de proposito: ele nao pode cortar um gesto real, e um
+	vendedor travado por dez segundos ainda volta ao normal sozinho.
+]=]
+module.KEEPER_GESTURE_TIMEOUT = 10
 
 --[[ ITEMS ]]
 

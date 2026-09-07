@@ -828,6 +828,71 @@ inteira — o painel antigo (`ShopUI.ImageLabel`, escondido) ainda tem um
 `CurrentShards` e vem antes na árvore, então sem essa ordem um contador novo autorado
 no painel de hoje perderia para o velho.
 
+### Os marcadores da loja moram dentro do modelo dela
+
+`ShopPartReference` e `ShopPartTeleport` não são filhos soltos de `Workspace.Map` —
+eles estão agrupados em `Map.Shop`, junto do resto da loja. O `_getMapPart` procura
+**em profundidade** por isso: por um tempo ele olhou só os filhos diretos do mapa,
+não achava nenhum dos dois, e o sintoma era o botão da HUD não teleportar ninguém e
+a proximidade nunca abrir o painel. O nome de cada marcador é único no mapa, então
+descer a árvore acha o mesmo part onde quer que o artista o agrupe.
+
+### A loja abre no balcão, e o vendedor responde de longe
+
+São dois raios concêntricos em volta do `ShopPartReference`, e eles dizem coisas
+diferentes:
+
+| Raio | Config | O que acontece |
+| --- | --- | --- |
+| 20 studs | `KEEPER_APPROACH_RADIUS` | O vendedor levanta (`GetUp`) e vai esperar no balcão (`IdleBench`) |
+| 5 studs | `OPEN_RADIUS` | A loja abre |
+
+O `OPEN_RADIUS` já foi 20, o que pegava meio pátio: quem só atravessava a praça
+abria e fechava a loja sem ter pedido nada. O raio largo não sumiu, ele mudou de
+dono. A ordem é o ponto — o jogador cruza os 20 studs andando, o `GetUp` roda no
+caminho, e quando ele chega no balcão o vendedor **já está de pé**. Igualar os dois
+faria o vendedor levantar junto com a loja abrindo, que é tarde demais para ser um
+gesto.
+
+Os dois raios são medidos contra o **mesmo ponto** de propósito, e não contra o corpo
+do vendedor: assim não existe chegar ao balcão sem ter cruzado o raio de fora antes.
+Por isso o `GetReferencePosition` do `ShopController` é público.
+
+### O vendedor lembra se você comprou
+
+O `ShopKeeperController` é uma máquina de quatro estados: `Idle` sozinho, `GetUp` ao
+ver o jogador chegando, `IdleBench` no balcão, e uma despedida ao ver ele ir embora.
+A despedida tem duas versões — sair com uma compra toca `ByeBye`, sair de mãos vazias
+toca **`ByeByeEvil`**. É a única coisa que ele guarda da visita, e ela é zerada toda
+vez que o jogador cruza o raio para dentro: quem comprou na visita passada e voltou
+só para olhar leva o aceno azedo igual.
+
+Ele sabe da compra pelo `Signals.PurchaseResult` do `ShopController`, e a conversa é
+de mão única — a loja não sabe que o vendedor existe.
+
+**As animações tocam no cliente**, e é isso que faz a cena funcionar com mais de um
+jogador na lobby: o modelo é do servidor e está ancorado, então cada cliente anima a
+própria cópia. Cada jogador vê o vendedor atendendo **a ele**, em vez de ver o
+vendedor levantar porque um estranho do outro lado da praça passou perto. Ele não tem
+`Humanoid` — quem carrega os tracks é o `Animator` do `AnimationController` autorado
+no modelo, e o track anterior é parado na mão, porque sem `Humanoid` não há ninguém
+resolvendo prioridade e dois tracks somariam as duas poses num vendedor torto.
+
+Dois gestos que não podem travar a cena têm rede embaixo: um `Animation` cujo asset
+não carrega nunca toca, e o `Stopped` dele nunca chega, então o
+`KEEPER_GESTURE_TIMEOUT` derruba o vendedor na pose seguinte de qualquer jeito. E as
+duas poses de descanso são reconferidas a cada tick, porque um modelo que ainda não
+carregou no boot faria a primeira tentativa cair no vazio.
+
+### O botão da HUD abre a loja na mão
+
+O `ShopPartTeleport` fica a 14.85 studs do `ShopPartReference` — dentro do raio do
+vendedor, **fora** do raio da loja. Então o `TeleportToShop` não conta com a
+proximidade: ele abre o painel na mão e marca a entrada no raio junto. A marcação é o
+que fecha o ciclo — sem ela a travessia de saída nunca aconteceria (o jogador já
+estava "fora"), e a loja aberta pelo botão ficaria pendurada na tela por mais longe
+que ele andasse.
+
 ## Achado
 
 `Shared.Classes.Unit` chama `Framework:Get("ProjectileController")` e
