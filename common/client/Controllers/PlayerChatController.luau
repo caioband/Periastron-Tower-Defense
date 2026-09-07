@@ -17,6 +17,8 @@ local Promise = require(Packages.Promise)
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
 
+local GamepassConfig = SharedConfig.GamepassConfig
+
 local Framework = Me.new()
 
 local ExampleController = {
@@ -27,6 +29,21 @@ local ExampleController = {
 }
 
 local TWEEN_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+--[[
+	O rotulo de gamepass antes do nome de quem falou: `[VIP] Fulano: oi`.
+
+	**Por que o atributo e nao o perfil.** O rotulo precisa aparecer na mensagem dos
+	**outros**, e a replica do perfil so chega ao dono dela -- este cliente nao tem
+	como ler o `Gamepasses` de mais ninguem. O `MonetizationService` publica um
+	atributo por pass com `ChatTag` no `Player`, e atributo replica para a sala
+	inteira; continua sendo o servidor quem escreve, e aqui so se le.
+
+	**Por que no cliente.** O `OnIncomingMessage` do `TextChatService` e client-side
+	por natureza -- ele so decora o que ja chegou. Nada aqui decide quem e VIP; a
+	pergunta a Roblox foi feita no servidor uma vez, e isto e a tinta.
+]]
+local TAG_FORMAT = "[%s] "
 
 function ExampleController:construct()
 	self._maid = Maid.new()
@@ -47,6 +64,8 @@ function ExampleController:start()
 		Framework:Fire("TypingStatusChanged", chatInputBar.IsFocused)
 	end))
 
+	self:_bindChatTags()
+
 	Framework:Listen("TypingStatusBroadcast", function(player, isTyping)
 		if isTyping then
 			self._activeTypers[player.Name] = "Running"
@@ -54,6 +73,56 @@ function ExampleController:start()
 		else
 			self._activeTypers[player.Name] = nil
 		end
+	end)
+end
+
+--[=[
+	Poe o rotulo de gamepass na frente do nome de quem falou.
+
+	So mensagem de jogador e decorada: `TextSource` nulo e o sistema falando (entrou,
+	saiu, um comando), e o `[VIP]` ali seria o servidor parecendo ter comprado a pass.
+
+	Devolver `nil` deixa a mensagem exatamente como ela chegou, que e o que acontece
+	com quem nao tem pass nenhuma com rotulo. O `PrefixText` autorado ja traz o nome
+	do jogador -- o rotulo entra **antes** dele, e nao no lugar.
+]=]
+function ExampleController:_bindChatTags()
+	TextChatService.OnIncomingMessage = function(message : TextChatMessage)
+		local source = message.TextSource
+		if not source then
+			return nil
+		end
+
+		local player = Players:GetPlayerByUserId(source.UserId)
+		if not player then
+			return nil
+		end
+
+		--[[
+			O que o servidor publicou: um atributo por pass com `ChatTag`. Le-se a lista
+			do config em vez de procurar `Pass_VIP` na mao, para uma pass nova com rotulo
+			nao precisar de linha nenhuma aqui.
+		]]
+		local owned = {}
+		for key, pass in GamepassConfig.PASSES do
+			if pass.ChatTag then
+				owned[key] = player:GetAttribute(GamepassConfig.attributeName(key)) == true
+			end
+		end
+
+		local tag = GamepassConfig.chatTagOf(owned)
+		if not tag then
+			return nil
+		end
+
+		local properties = Instance.new("TextChatMessageProperties")
+		properties.PrefixText = string.format(TAG_FORMAT, tag) .. message.PrefixText
+
+		return properties
+	end
+
+	self._maid:GiveTask(function()
+		TextChatService.OnIncomingMessage = nil
 	end)
 end
 

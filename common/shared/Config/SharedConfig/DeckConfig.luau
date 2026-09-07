@@ -24,6 +24,7 @@
 local UnitStats = require(script.Parent.UnitStats)
 local RarityConfig = require(script.Parent.RarityConfig)
 local LevelConfig = require(script.Parent.LevelConfig)
+local GamepassConfig = require(script.Parent.GamepassConfig)
 
 local DeckConfig = {}
 
@@ -130,7 +131,8 @@ function DeckConfig.exists(unitName : string?) : boolean
 end
 
 --[=[
-	O limite de cartas de um perfil, com o padrão para quem não tem a chave ainda.
+	O limite de cartas guardado num perfil, com o padrão para quem não tem a chave
+	ainda. É o número **do perfil**, sem gamepass — ver `limitFor`.
 ]=]
 function DeckConfig.resolveLimit(limit : number?) : number
 	if typeof(limit) ~= "number" or limit < 0 then
@@ -138,6 +140,26 @@ function DeckConfig.resolveLimit(limit : number?) : number
 	end
 
 	return math.floor(limit)
+end
+
+--[=[
+	Quantas cartas este perfil pode equipar de verdade: o `CardLimit` dele mais o que
+	as gamepasses dão.
+
+	É o atalho que servidor e cliente usam, do mesmo jeito que o `unlockedFor` é para
+	os slots: os dois saem do mesmo perfil e chegam ao mesmo número, sem combinar
+	nada.
+
+	**A pass soma aqui e não no `CardLimit`.** Escrever os +5 no perfil seria crédito,
+	e crédito não volta: quem pedisse reembolso da pass ficaria com o teto alto para
+	sempre, e um segundo login somaria outros cinco. Somando na leitura, o teto cai
+	junto com a pass — e o `SetLimit`, que é o teto que o jogo dá, continua sendo a
+	única coisa gravada.
+]=]
+function DeckConfig.limitFor(profile : any) : number
+	local stored = typeof(profile) == "table" and profile.CardLimit or nil
+
+	return DeckConfig.resolveLimit(stored) + GamepassConfig.cardBonus(profile)
 end
 
 --[=[
@@ -484,7 +506,7 @@ end
 	colocar no mapa, e é chamado dos dois lados — servidor e cliente — para os dois
 	chegarem à mesma hotbar.
 ]=]
-function DeckConfig.resolve(profile : { EquippedUnits : any, Units : any, CardLimit : number?, Stats : any }?) : Deck
+function DeckConfig.resolve(profile : { EquippedUnits : any, Units : any, CardLimit : number?, Stats : any, Gamepasses : any }?) : Deck
 	if typeof(profile) ~= "table" then
 		return DeckConfig.empty()
 	end
@@ -495,13 +517,14 @@ function DeckConfig.resolve(profile : { EquippedUnits : any, Units : any, CardLi
 	-- que faz a hotbar da partida, o deck do lobby e a checagem do servidor
 	-- concordarem sem ninguem passar o nivel adiante.
 	local unlocked = DeckConfig.unlockedFor(profile)
-	local deck = DeckConfig.sanitize(profile.EquippedUnits, owned, profile.CardLimit, unlocked)
+	local limit = DeckConfig.limitFor(profile)
+	local deck = DeckConfig.sanitize(profile.EquippedUnits, owned, limit, unlocked)
 
 	if DeckConfig.total(deck) > 0 then
 		return deck
 	end
 
-	return DeckConfig.autoDeck(owned, profile.CardLimit, unlocked)
+	return DeckConfig.autoDeck(owned, limit, unlocked)
 end
 
 --[=[

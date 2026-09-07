@@ -17,6 +17,7 @@ local Signal = require(Packages.Signal)
 
 local CrateConfig = SharedConfig.CrateConfig
 local RarityConfig = SharedConfig.RarityConfig
+local GamepassConfig = SharedConfig.GamepassConfig
 
 local RANDOM = Random.new()
 
@@ -156,17 +157,42 @@ end
 
 --[=[
 	Rolls a unit rarity out of a crate's pool. Returns nil when the crate has no pool.
+
+	`profile` e o perfil de quem abriu, e ele so serve para a sorte: a gamepass
+	`+30% Luck` multiplica o peso das raridades de Epic para cima (ver
+	`GamepassConfig.LUCK_MIN_RARITY`). Sem perfil -- ou sem a pass -- o multiplicador
+	e 1 e a conta sai exatamente como saia antes.
+
+	**A sorte levanta as de cima e nao mexe nas de baixo**, e isso ja basta: o sorteio
+	normaliza pela soma dos pesos, entao subir Epic+ empurra Common e Rare para baixo
+	sozinho. Mexer nos dois lados seria dois numeros para manter em sincronia.
+
+	Ela tambem nao passa a chance publicada para tras: o `GetDisplayOdds` da loja
+	continua sendo o pool cru, que e o que o jogador **sem** pass recebe. Uma pass que
+	melhora o que ela promete nao torna o numero da loja mentira.
 ]=]
-function CrateService:_rollRarity(crateRarity : string) : string?
+function CrateService:_rollRarity(crateRarity : string, profile : any) : string?
 	local pool = ServerConfig.Crate.POOLS[crateRarity]
 	if not pool then
 		warn(string.format("[CrateService]: crate %q has no pool in ServerConfig.Crate.", tostring(crateRarity)))
 		return nil
 	end
 
+	local luck = GamepassConfig.luckMultiplier(profile)
+
+	local function weightOf(rarity : string) : number
+		local weight = pool[rarity] or 0
+
+		if GamepassConfig.isLuckyRarity(rarity) then
+			return weight * luck
+		end
+
+		return weight
+	end
+
 	local total = 0
 	for _, rarity in RarityConfig.ORDER do
-		total += pool[rarity] or 0
+		total += weightOf(rarity)
 	end
 
 	if total <= 0 then
@@ -177,7 +203,7 @@ function CrateService:_rollRarity(crateRarity : string) : string?
 	local cumulative = 0
 
 	for _, rarity in RarityConfig.ORDER do
-		cumulative += pool[rarity] or 0
+		cumulative += weightOf(rarity)
 		if roll < cumulative then
 			return rarity
 		end
@@ -250,8 +276,12 @@ export type UnboxingResult = {
 --[=[
 	Runs a crate opening end to end: upgrade chain, rarity out of the resulting pool,
 	then a unit of that rarity. Pure roll -- nothing is written or sent.
+
+	`profile` e de quem esta abrindo, e so a sorte o le (ver `_rollRarity`). Sem ele o
+	sorteio e o do jogador sem gamepass nenhuma -- e o que faz o `unbox` do Cmdr rolar
+	a caixa "de fabrica" quando ninguem passa um perfil.
 ]=]
-function CrateService:RollCrate(rarity : string) : UnboxingResult?
+function CrateService:RollCrate(rarity : string, profile : any) : UnboxingResult?
 	local resolvedRarity = CrateConfig.resolveRarity(rarity)
 	if not resolvedRarity then
 		warn(string.format("[CrateService]: %q is not a valid crate rarity.", tostring(rarity)))
@@ -260,7 +290,7 @@ function CrateService:RollCrate(rarity : string) : UnboxingResult?
 
 	local poolCrate, upgrades = self:_rollCrateUpgrade(resolvedRarity)
 
-	local rolledRarity = self:_rollRarity(poolCrate)
+	local rolledRarity = self:_rollRarity(poolCrate, profile)
 	if not rolledRarity then
 		return nil
 	end
@@ -275,6 +305,21 @@ function CrateService:RollCrate(rarity : string) : UnboxingResult?
 		Rarity = unitRarity or rolledRarity,
 		Unit = unit,
 	}
+end
+
+--[=[
+	O perfil aberto do jogador, ou nil enquanto ele nao carregou.
+
+	Quem le e a sorte do sorteio: sem perfil a caixa rola sem gamepass, que e o pior
+	caso para o jogador e o unico seguro para o jogo -- inventar uma pass que ele
+	talvez nao tenha e dar o beneficio de graca.
+]=]
+function CrateService:_profileOf(Player : Player) : any
+	local DataService = self.Services.DataService
+	local profiles = DataService and DataService.Profiles
+	local entry = profiles and profiles[Player]
+
+	return entry and entry.Profile.Data or nil
 end
 
 --[=[
@@ -301,7 +346,7 @@ end
 	point, used by the cmdr command. :OpenCrate is the one the player drives.
 ]=]
 function CrateService:PlayUnboxing(Player : Player, rarity : string) : UnboxingResult?
-	local result = self:RollCrate(rarity)
+	local result = self:RollCrate(rarity, self:_profileOf(Player))
 	if not result then
 		return nil
 	end
@@ -355,7 +400,7 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 
 	self.Signals.CrateAmountChanged:Fire(Player, resolvedRarity, remaining, -1)
 
-	local result = self:RollCrate(resolvedRarity)
+	local result = self:RollCrate(resolvedRarity, self:_profileOf(Player))
 	if not result then
 		-- The roll is what failed, so hand the crate back instead of eating it.
 		self:GiveCrates(Player, resolvedRarity, 1)

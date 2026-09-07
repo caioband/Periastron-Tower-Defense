@@ -139,6 +139,50 @@ Enquanto o painel está aberto o resto da UI do lobby sai da tela — ver
 [Quem some da tela, e quando](../README.md#quem-some-da-tela-e-quando) no README da
 raiz.
 
+### Os mapas abrem por vitórias
+
+Cada mapa pede um número de **Wins** para poder ser escolhido, e o `Locked` que cada
+template `Map` já traz autorado é quem diz isso. O `ChooseMapsController` liga o
+`Visible` dele, mata o botão por baixo (`Active` e `AutoButtonColor`) e escreve no
+`MaxPlrs` de dentro dele quantas vitórias ainda faltam:
+
+| # | Mapa | `WinsRequired` |
+| ---: | --- | ---: |
+| 1 | Farm | livre |
+| 2 | Dessert | 2 |
+| 3 | Snowy | 3 |
+| 4 | Snowy Castle | 4 |
+| 5 | Mountains | 5 |
+| 6 | Cave | 6 |
+| 7 | Volcano | 8 |
+
+**As três coisas mudam juntas, de propósito.** Deixar o botão vivo por baixo de um
+cadeado desenhado seria um mapa que parece trancado e abre no clique. `Active = false`
+já basta para o `Activated` não disparar; o `Select` confere de novo porque ele é API
+pública e pode ser chamado por nome de fora.
+
+O texto conta o que **falta**, e não o que o mapa pede: `"2 MORE WINS REQUIRED"` com
+zero vitórias, `"1 MORE WINS REQUIRED"` com uma. O total o jogador descobre sozinho; o
+que ele precisa saber é quanto falta.
+
+**A ordem da lista é o próprio `WinsRequired`.** O campo `Order` que existia no
+`MapConfig` saiu: a lista é crescente por exigência, e um campo separado seria a mesma
+regra escrita duas vezes esperando para se desencontrar. O `getOrderedMaps` ordena por
+vitórias e desempata pela chave (só para a ordem ser estável), e o `LayoutOrder` de
+cada card é a posição que ele voltou. Um mapa novo de 7 vitórias entra sozinho entre a
+Cave e o Volcano, sem renumerar nada.
+
+**O cadeado repinta sozinho.** As vitórias saem da réplica (`Stats.Wins`), com o mesmo
+formato do contador do HUD e do da loja: a escuta é o `OnChange` da chave `Stats`, então
+o jogador volta da partida com uma vitória a mais e o mapa destranca sem ele reabrir o
+painel. Sem réplica ainda, vale zero — errar para o outro lado abriria um mapa por um
+instante e o fecharia na cara dele quando o perfil chegasse.
+
+**E o cadeado não é só desenho.** Quem escolhe o mapa é o cliente, e um nome de mapa é
+o que qualquer cliente pode mandar: o `PortalService:CreateGroup` confere a mesma coisa
+com o mesmo config antes de abrir o grupo. É a divisão de sempre — daqui sai a escolha,
+e não a permissão —, e é a mesma que os slots de deck usam com o nível.
+
 ## Deck: inventário, cartas equipadas e detalhe
 
 `StarterGui.HUD.CardUI` é do `DeckController`, e o botão `HUDFrame.Deck` abre e

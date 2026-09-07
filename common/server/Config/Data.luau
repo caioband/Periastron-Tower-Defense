@@ -35,6 +35,21 @@ return {
 		},
 
 		PurchaseHistory = {},
+
+		--[[
+			As gamepasses que o jogador tem, `{ [chave] = true }` -- a chave do
+			`SharedConfig.GamepassConfig`, e nao o id numerico da Roblox.
+
+			**Nao e credito, e uma copia.** O `MonetizationService` reescreve a tabela
+			inteira a cada entrada, a partir do que a Roblox responde: uma pass
+			reembolsada some daqui no proximo login, e nenhum beneficio fica preso no
+			perfil. Ela existe so para o resto do jogo nao ter de perguntar a Roblox a
+			cada caixa aberta e a cada fim de round.
+
+			Perfil antigo ganha a chave pelo reconcile, entao nao precisa migracao.
+		]]
+		Gamepasses = {},
+
 		Index = {},
 		--[[
 			O que o jogador novo ja tem. So Common e Rare: antes ele comecava com

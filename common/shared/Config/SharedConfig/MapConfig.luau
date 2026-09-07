@@ -14,22 +14,27 @@
 	key -- which is not. `Image` is what the map template in `ChooseMaps` and the
 	portal billboard show.
 
-	`Order` is just the sort for the picker; renumber freely.
+	`WinsRequired` e quantas vitorias o jogador precisa ter para escolher o mapa, e
+	ele faz **duas** coisas: tranca o mapa e ordena a lista. Nao ha campo de ordem
+	separado de proposito -- a lista e crescente por exigencia, e um campo a parte
+	seria a mesma regra escrita duas vezes, esperando para se desencontrar. Mapa novo
+	com 7 vitorias entra sozinho entre a Cave e o Volcano, sem renumerar nada.
+
+	Zero (ou sem o campo) e um mapa livre: o Farm e o unico hoje, e e por onde todo
+	jogador novo comeca.
+
+	Nada aqui e sigiloso. O cliente le para desenhar o cadeado antes de perguntar
+	nada, e o `PortalService` confere a mesma coisa com o mesmo config quando o grupo
+	e aberto -- ver `isUnlocked`.
 ]]
 
 local module = {}
 
 module.MAPS = {
-	["Snowy"] = {
-		DisplayName = "Snowy",
-		Order = 1,
-		Image = "rbxassetid://110763146643497",
-	},
-
-	["SnowyCastle"] = {
-		DisplayName = "Snowy Castle",
-		Order = 2,
-		Image = "rbxassetid://82438762834917",
+	["Farm"] = {
+		DisplayName = "Farm",
+		WinsRequired = 0,
+		Image = "rbxassetid://91827512669644",
 	},
 
 	-- A pasta em `ServerStorage.Maps` se chama "Desert", com um S so, e a chave tem
@@ -37,8 +42,20 @@ module.MAPS = {
 	-- carregado. O `DisplayName` continua sendo coisa a parte.
 	["Desert"] = {
 		DisplayName = "Dessert",
-		Order = 3,
+		WinsRequired = 2,
 		Image = "rbxassetid://115008998327555",
+	},
+
+	["Snowy"] = {
+		DisplayName = "Snowy",
+		WinsRequired = 3,
+		Image = "rbxassetid://110763146643497",
+	},
+
+	["SnowyCastle"] = {
+		DisplayName = "Snowy Castle",
+		WinsRequired = 4,
+		Image = "rbxassetid://82438762834917",
 	},
 
 	-- A pasta em `ServerStorage.Maps` se chama "Mountain", no singular, e a chave
@@ -46,26 +63,20 @@ module.MAPS = {
 	-- nome que o jogador ve.
 	["Mountain"] = {
 		DisplayName = "Mountains",
-		Order = 4,
+		WinsRequired = 5,
 		Image = "rbxassetid://111816748733146",
-	},
-
-	["Volcano"] = {
-		DisplayName = "Volcano",
-		Order = 5,
-		Image = "rbxassetid://102911300807811",
 	},
 
 	["Cave"] = {
 		DisplayName = "Cave",
-		Order = 6,
+		WinsRequired = 6,
 		Image = "rbxassetid://90052719869168",
 	},
 
-	["Farm"] = {
-		DisplayName = "Farm",
-		Order = 7,
-		Image = "rbxassetid://91827512669644",
+	["Volcano"] = {
+		DisplayName = "Volcano",
+		WinsRequired = 8,
+		Image = "rbxassetid://102911300807811",
 	},
 }
 
@@ -117,7 +128,49 @@ function module.getImage(mapName : string?) : string
 end
 
 --[=[
-	Map names sorted by their configured Order, for UI iteration.
+	Quantas vitorias o mapa pede. Mapa que nao existe pede zero: quem chama ja tratou
+	o nome invalido, e devolver um numero alto aqui trancaria a lista por engano.
+]=]
+function module.getWinsRequired(mapName : string?) : number
+	local resolvedMap = module.resolveMap(mapName)
+	if not resolvedMap then
+		return 0
+	end
+
+	local required = module.MAPS[resolvedMap].WinsRequired
+
+	return typeof(required) == "number" and math.max(math.floor(required), 0) or 0
+end
+
+--[=[
+	Se este jogador ja pode escolher o mapa.
+
+	E a mesma conta nas duas pontas: o `ChooseMapsController` desenha o cadeado com
+	ela e o `PortalService` recusa o grupo com ela. Sem `wins` (perfil ainda
+	carregando) vale zero -- so o que e livre aparece livre, e nunca o contrario.
+]=]
+function module.isUnlocked(mapName : string?, wins : number?) : boolean
+	local owned = typeof(wins) == "number" and math.floor(wins) or 0
+
+	return owned >= module.getWinsRequired(mapName)
+end
+
+--[=[
+	Quantas vitorias ainda faltam para o mapa abrir, ou zero quando ele ja esta
+	aberto. E o numero que o texto do cadeado escreve.
+]=]
+function module.winsMissing(mapName : string?, wins : number?) : number
+	local owned = typeof(wins) == "number" and math.floor(wins) or 0
+
+	return math.max(module.getWinsRequired(mapName) - owned, 0)
+end
+
+--[=[
+	Map names for UI iteration, in the order the picker shows them: crescente por
+	`WinsRequired`, e alfabetica pela chave entre mapas que pedem o mesmo.
+
+	O desempate existe so para a ordem ser **estavel** -- duas telas montadas a partir
+	do mesmo config listam igual, e a lista nao muda de uma abertura para a outra.
 ]=]
 function module.getOrderedMaps() : { string }
 	local ordered = {}
@@ -126,7 +179,13 @@ function module.getOrderedMaps() : { string }
 	end
 
 	table.sort(ordered, function(a, b)
-		return (module.MAPS[a].Order or 0) < (module.MAPS[b].Order or 0)
+		local requiredA, requiredB = module.getWinsRequired(a), module.getWinsRequired(b)
+
+		if requiredA ~= requiredB then
+			return requiredA < requiredB
+		end
+
+		return a < b
 	end)
 
 	return ordered

@@ -154,7 +154,9 @@ function CardController:setUnequipState()
 end
 
 function CardController:construct()
-	for _, key in { "Units", "EquippedUnits", "CardLimit" } do
+	-- `Gamepasses` esta na lista porque a pass +5 Total Cards muda o teto do deck
+	-- (`DeckConfig.limitFor`), e comprar no meio da partida tem de aparecer.
+	for _, key in { "Units", "EquippedUnits", "CardLimit", "Gamepasses" } do
 		self.Controllers.DataController:OnConnectChange({ key }, function()
 			self:_render()
 		end)

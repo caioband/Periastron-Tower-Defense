@@ -12,6 +12,7 @@ local Me = require(Vendor.Me)
 local Signal = require(Packages.Signal)
 
 local DeckConfig = SharedConfig.DeckConfig
+local GamepassConfig = SharedConfig.GamepassConfig
 
 local Framework = Me.new()
 
@@ -83,7 +84,7 @@ function DeckService:_write(Player : Player, unitName : string?, decide) : (bool
 	local reason : string? = nil
 
 	DataService:Update(Player, "EquippedUnits", function(current)
-		local deck = DeckConfig.sanitize(current, data.Units, data.CardLimit, DeckConfig.unlockedFor(data))
+		local deck = DeckConfig.sanitize(current, data.Units, DeckConfig.limitFor(data), DeckConfig.unlockedFor(data))
 
 		-- Mesmo recusando, o que a limpeza tirou vale a escrita: é a chance de o
 		-- perfil velho se acertar com o UnitStats de hoje (e de virar slots, se ele
@@ -105,12 +106,12 @@ end
 --[[ EXTERNAL ]]
 
 --[=[
-	Quantas cartas cabem no deck deste jogador.
+	Quantas cartas cabem no deck deste jogador, gamepass incluida (`limitFor`).
 ]=]
 function DeckService:GetLimit(Player : Player) : number
 	local data = self:_getData(Player)
 
-	return DeckConfig.resolveLimit(data and data.CardLimit)
+	return DeckConfig.limitFor(data)
 end
 
 --[=[
@@ -122,7 +123,7 @@ function DeckService:GetEquipped(Player : Player) : DeckConfig.Deck?
 		return nil
 	end
 
-	return DeckConfig.sanitize(data.EquippedUnits, data.Units, data.CardLimit, DeckConfig.unlockedFor(data))
+	return DeckConfig.sanitize(data.EquippedUnits, data.Units, DeckConfig.limitFor(data), DeckConfig.unlockedFor(data))
 end
 
 --[=[
@@ -154,7 +155,7 @@ function DeckService:Equip(Player : Player, unitName : string?) : (boolean, stri
 			return "NoCopies"
 		end
 
-		if DeckConfig.total(deck) >= DeckConfig.resolveLimit(data.CardLimit) then
+		if DeckConfig.total(deck) >= DeckConfig.limitFor(data) then
 			return "LimitReached"
 		end
 
@@ -196,6 +197,14 @@ function DeckService:SetLimit(Player : Player, limit : number) : boolean
 		return false
 	end
 
+	--[[
+		O que e gravado e o teto **do jogo**, sem gamepass: a pass soma na leitura
+		(`limitFor`), e escreve-la aqui a transformaria em credito -- um reembolso
+		deixaria os +5 no perfil para sempre.
+
+		A limpeza logo abaixo, essa sim, usa o teto de verdade: cortar o deck pelo
+		numero sem a pass tiraria cartas que o jogador tem direito de manter.
+	]]
 	local resolved = DeckConfig.resolveLimit(limit)
 
 	DataService:Update(Player, "CardLimit", function()
@@ -203,7 +212,9 @@ function DeckService:SetLimit(Player : Player, limit : number) : boolean
 	end)
 
 	DataService:Update(Player, "EquippedUnits", function(current)
-		return DeckConfig.sanitize(current, data.Units, resolved, DeckConfig.unlockedFor(data))
+		local limitWithPasses = resolved + GamepassConfig.cardBonus(data)
+
+		return DeckConfig.sanitize(current, data.Units, limitWithPasses, DeckConfig.unlockedFor(data))
 	end)
 
 	self.Signals.DeckChanged:Fire(Player, self:GetEquipped(Player))

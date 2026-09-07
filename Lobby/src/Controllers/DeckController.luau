@@ -320,11 +320,16 @@ function DeckController:_getUnits() : { [string]: number }
 	return replica and replica.Data and replica.Data.Units or {}
 end
 
+--[=[
+	Quantas cartas cabem no deck. Sai do mesmo `limitFor` que o `DeckService` usa,
+	entao a gamepass +5 conta aqui sem o cliente perguntar nada -- e os dois lados
+	chegam ao mesmo numero a partir da mesma replica.
+]=]
 function DeckController:_getLimit() : number
 	local replica = self.Replica
 	local data = replica and replica.Data
 
-	return DeckConfig.resolveLimit(data and data.CardLimit)
+	return DeckConfig.limitFor(data)
 end
 
 --[=[
@@ -1742,12 +1747,14 @@ function DeckController:_watchData()
 
 			-- `Stats` entra na lista por causa do XP: os slots 4, 5 e 6 abrem por
 			-- nivel, e sem isto um level-up so apareceria no painel na proxima vez que
-			-- o jogador mexesse no deck.
+			-- o jogador mexesse no deck. `Gamepasses` entra pelo mesmo motivo: a pass
+			-- +5 Total Cards muda o teto, e comprar no meio da sessao tem de aparecer.
 			if key ~= nil
 				and key ~= "Units"
 				and key ~= "EquippedUnits"
 				and key ~= "CardLimit"
 				and key ~= "Stats"
+				and key ~= "Gamepasses"
 			then
 				return
 			end

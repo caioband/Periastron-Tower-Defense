@@ -20,6 +20,7 @@ local Me = require(Vendor.Me)
 local Signal = require(Packages.Signal)
 
 local WaveConfig = ServerConfig.Wave
+local GamepassConfig = SharedConfig.GamepassConfig
 
 local Framework = Me.new()
 
@@ -269,6 +270,32 @@ function WaveService:computeReward(preset, lost : boolean?)
 end
 
 --[=[
+	A recompensa **deste** jogador: a base da partida, ja multiplicada pelas gamepasses
+	que o perfil dele declara (2x Coins, 1.5x Shards, o XP do VIP).
+
+	A base e uma so para a sala inteira -- ela sai das waves sobrevividas e da
+	dificuldade, que sao da partida e nao de ninguem. O que e de cada um e o
+	multiplicador, e por isso ele entra aqui e nao no `computeReward`: duas pessoas na
+	mesma run terminam com numeros diferentes sem que a run tenha duas contas.
+
+	Perfil que nao carregou multiplica por 1: recompensa cheia do jogo base, nunca
+	zero. E arredondado no fim, e nao antes -- multiplicar um numero ja arredondado
+	perde o meio ponto duas vezes.
+]=]
+function WaveService:rewardsFor(player : Player, rewards)
+	local dataService = self.Services.DataService
+	local profiles = dataService and dataService.Profiles
+	local entry = profiles and profiles[player]
+	local profile = entry and entry.Profile.Data or nil
+
+	return {
+		coins = math.floor(rewards.coins * GamepassConfig.coinMultiplier(profile) + 0.5),
+		shards = math.floor(rewards.shards * GamepassConfig.shardMultiplier(profile) + 0.5),
+		xp = math.floor(rewards.xp * GamepassConfig.xpMultiplier(profile) + 0.5),
+	}
+end
+
+--[=[
 	Credita a recompensa da partida no perfil do jogador, descontando o que ele ja
 	recebeu neste round.
 
@@ -331,7 +358,7 @@ function WaveService:GrantLeaveReward(player : Player)
 	if self.State ~= ROUND_STATE.Running then return end
 
 	local preset = self.Difficulty or self.Services.DifficultyService:GetSelected()
-	local rewards = self:computeReward(preset)
+	local rewards = self:rewardsFor(player, self:computeReward(preset))
 
 	if self:grantReward(player, rewards) then
 		print(string.format(
@@ -353,7 +380,11 @@ function WaveService:onRoundEnded(won : boolean)
 	local mvp = mobService and mobService:GetMVP() or nil
 
 	for _, player in Players:GetPlayers() do
-		self:grantReward(player, rewards)
+		-- Uma conta por jogador: a base e da partida, as gamepasses sao de cada um.
+		-- E este numero -- o que ele de fato recebeu -- que vai para a tela dele.
+		local playerRewards = self:rewardsFor(player, rewards)
+
+		self:grantReward(player, playerRewards)
 
 		if won then
 			--[[
@@ -377,7 +408,7 @@ function WaveService:onRoundEnded(won : boolean)
 
 		Framework:Fire("RoundReward", player, {
 			won = won,
-			rewards = rewards,
+			rewards = playerRewards,
 			wavesSurvived = math.clamp(self.WaveCount or 0, 0, maxWaves),
 			maxWaves = maxWaves,
 			mvp = mvp,

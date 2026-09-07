@@ -39,6 +39,21 @@ local ENTRY_NAME_PREFIX = "Map_"
 local CHECKMARK_NAME = "CheckMark"
 local ENTRY_SCALE_NAME = "SelectionScale"
 
+--[[
+	O cadeado do template: o `Frame` que cobre a carta e o rotulo de dentro dele que
+	diz quantas vitorias faltam.
+
+	O rotulo se chama `MaxPlrs` como o contador de jogadores do painel, e os dois nao
+	se confundem porque este e procurado **dentro do `Locked`** e o outro direto no
+	painel -- nenhuma das duas buscas e recursiva.
+]]
+local LOCKED_NAME = "Locked"
+local LOCKED_LABEL_NAME = "MaxPlrs"
+
+-- O texto do cadeado. O `%d` e quantas vitorias ainda faltam, e nao quantas o mapa
+-- pede: "faltam 2" e o que o jogador precisa saber, e o total ele descobre sozinho.
+local LOCKED_FORMAT = "%d MORE WINS REQUIRED"
+
 -- Same curves the crate panel uses, so both panels read as the same UI.
 local OPEN_INFO = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
@@ -67,6 +82,9 @@ local HIDE_REASON = "ChooseMaps"
 local ChooseMapsController = {
 	Controllers = {
 		InterfaceController = {},
+
+		-- De onde saem as vitorias que destrancam os mapas. Ver `_watchWins`.
+		DataController = {},
 	},
 
 	Signals = {
@@ -124,6 +142,27 @@ function ChooseMapsController:_findCheckMark(entry : Instance) : GuiObject?
 end
 
 --[=[
+	O cadeado da carta: o `Frame` autorado que a cobre, e o rotulo de dentro onde as
+	vitorias que faltam sao escritas.
+
+	Como o `CheckMark`, ele e arte do template e nao e construido aqui -- um template
+	sem ele continua funcionando, o mapa so nunca parece trancado. Nasce escondido:
+	quem o acende e o `_renderLocks`, ja sabendo quantas vitorias o jogador tem.
+]=]
+function ChooseMapsController:_findLock(entry : Instance) : (GuiObject?, TextLabel?)
+	local locked = entry:FindFirstChild(LOCKED_NAME, true)
+	if not locked or not locked:IsA("GuiObject") then
+		return nil, nil
+	end
+
+	locked.Visible = false
+
+	local label = locked:FindFirstChild(LOCKED_LABEL_NAME)
+
+	return locked, (label and label:IsA("TextLabel")) and label or nil
+end
+
+--[=[
 	Rebuilds one entry per configured map, using the first template inside Scroll as
 	the source. The extra copies the designer left in there are dropped: the list is
 	whatever MapConfig says it is.
@@ -138,12 +177,16 @@ function ChooseMapsController:_buildEntries(scroll : Instance, template : Instan
 	template.Visible = false
 	self.Entries = {}
 
-	for _, mapName in MapConfig.getOrderedMaps() do
+	for index, mapName in MapConfig.getOrderedMaps() do
 		local info = MapConfig.MAPS[mapName]
 
 		local entry = template:Clone()
 		entry.Name = ENTRY_NAME_PREFIX .. mapName
-		entry.LayoutOrder = info.Order or 0
+
+		-- A posicao na lista **e** a ordem: o `getOrderedMaps` ja devolve os mapas do
+		-- mais barato para o mais caro em vitorias, e nao ha um segundo numero no
+		-- config para desencontrar deste.
+		entry.LayoutOrder = index
 		entry.Visible = true
 
 		local icon = self:_findIcon(entry)
@@ -169,14 +212,116 @@ function ChooseMapsController:_buildEntries(scroll : Instance, template : Instan
 
 		entry.Parent = scroll
 
+		local locked, lockedLabel = self:_findLock(entry)
+
 		self.Entries[mapName] = {
 			Button = entry,
 			CheckMark = self:_findCheckMark(entry),
 			Scale = scale,
+			Locked = locked,
+			LockedLabel = lockedLabel,
+
+			--[[
+				O estado autorado do botao, lido e nao presumido: destrancar devolve o
+				que o template trazia, e nao um `true` escrito na mao aqui. E a mesma
+				razao do `wasAnchored` do gesto das cartas -- devolver um valor inventado
+				e mexer no que nao era nosso para mexer.
+			]]
+			WasActive = entry:IsA("GuiButton") and entry.Active,
+			WasAutoButtonColor = entry:IsA("GuiButton") and entry.AutoButtonColor,
 		}
 
 		self.UiMaid:GiveTask(entry)
 	end
+
+	self:_renderLocks()
+end
+
+--[=[
+	Quantas vitorias o jogador tem, ou zero enquanto a replica nao chegou.
+
+	Zero e o chute seguro: com ele so o que e livre aparece livre. Errar para o outro
+	lado abriria um mapa por um instante e o fecharia na cara do jogador quando o
+	perfil chegasse.
+]=]
+function ChooseMapsController:_getWins() : number
+	local replica = self.Replica
+	local stats = replica and replica.Data and replica.Data.Stats
+
+	return typeof(stats) == "table" and tonumber(stats.Wins) or 0
+end
+
+--[=[
+	Pinta o cadeado de cada carta a partir das vitorias de agora.
+
+	Tres coisas mudam juntas, e por isso moram na mesma funcao: o `Locked` aparece, o
+	botao para de responder e o rotulo diz quanto falta. Deixar o botao vivo por baixo
+	de um cadeado desenhado seria um mapa que parece trancado e abre no clique.
+
+	`Active = false` ja e o bastante para o `Activated` nao disparar -- o `Select`
+	confere de novo mesmo assim, porque ele tambem e chamado de fora.
+]=]
+function ChooseMapsController:_renderLocks()
+	local wins = self:_getWins()
+
+	for mapName, entry in self.Entries do
+		local unlocked = MapConfig.isUnlocked(mapName, wins)
+
+		if entry.Locked then
+			entry.Locked.Visible = not unlocked
+		end
+
+		if entry.LockedLabel and not unlocked then
+			entry.LockedLabel.Text = string.format(LOCKED_FORMAT, MapConfig.winsMissing(mapName, wins))
+		end
+
+		local button = entry.Button
+		if button:IsA("GuiButton") then
+			button.Active = unlocked and entry.WasActive
+			button.AutoButtonColor = unlocked and entry.WasAutoButtonColor
+		end
+	end
+
+	--[[
+		Uma vitoria nao tranca mapa nenhum -- o numero so sobe --, entao a selecao nunca
+		fica presa num mapa que fechou. A rede existe para o caso de o `WinsRequired`
+		subir num patch com o painel aberto: o `Confirm` some junto com a selecao, em vez
+		de mandar ao servidor um mapa que ele vai recusar.
+	]]
+	if self.Selected and not MapConfig.isUnlocked(self.Selected, wins) then
+		self.Selected = nil
+		self:_renderSelection()
+		self.Signals.SelectionChanged:Fire(nil)
+	end
+end
+
+--[=[
+	Segura a replica do jogador e repinta os cadeados a cada mudanca em `Stats`.
+
+	Mesmo formato do contador do HUD e do da loja: o `DataService` escreve a chave
+	`Stats` inteira, mas a escuta e o `OnChange` para que qualquer escrita mais funda
+	(`Stats.Wins`) tambem conte. O jogador volta da partida com uma vitoria a mais e o
+	mapa destranca sem ele reabrir o painel.
+]=]
+function ChooseMapsController:_watchWins()
+	task.spawn(function()
+		local replica = self.Controllers.DataController:GetReplica()
+		self.Replica = replica
+
+		self:_renderLocks()
+
+		local connection = replica:OnChange(function(_action, path)
+			if path[1] ~= nil and path[1] ~= "Stats" then
+				return
+			end
+
+			self:_renderLocks()
+		end)
+
+		self.Maid:GiveTask(function()
+			connection:Disconnect()
+		end)
+	end)
 end
 
 --[=[
@@ -421,10 +566,18 @@ end
 
 --[=[
 	Picks a map. Nothing is sent yet -- Confirm is what closes the deal.
+
+	Mapa trancado nao e escolhido: o botao dele ja esta morto (`_renderLocks`), e a
+	conferencia aqui e para quem chama de fora -- o `Select` e API publica, e o
+	`PortalController` pode pedir um mapa por nome.
 ]=]
 function ChooseMapsController:Select(mapName : string?)
 	local resolvedMap = MapConfig.resolveMap(mapName)
 	if resolvedMap == self.Selected then
+		return
+	end
+
+	if resolvedMap and not MapConfig.isUnlocked(resolvedMap, self:_getWins()) then
 		return
 	end
 
@@ -461,6 +614,7 @@ end
 
 function ChooseMapsController:construct()
 	self:_observeUI()
+	self:_watchWins()
 end
 
 function ChooseMapsController:start()

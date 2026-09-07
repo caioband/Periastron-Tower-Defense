@@ -1405,7 +1405,7 @@ e a lista de admins do Cmdr. Isso foi separado:
 | | Onde | Conteúdo |
 |---|---|---|
 | **Servidor** | `ServerScriptService.Config` ← `common/server/Config` | `Data` (PROFILE_KEY + template), `Wave`, `Summon`, `Difficulty`, `Cmdr` (ADMIN_USER_IDS, GROUP_ID, ALLOW_IN_STUDIO) |
-| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, DeckConfig, RoundCardConfig, CardModifier, `Mob`, `Cmdr` cosmético) |
+| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, DeckConfig, RoundCardConfig, CardModifier, `Mob`, `Cmdr` cosmético, `GamepassConfig`) |
 
 Convenção nos scripts de servidor:
 
@@ -1430,6 +1430,126 @@ Dois consumidores de cliente foram ajustados nessa mudança:
   desabilitado até o servidor responder ao evento `RequestCmdrAccess`. A
   autorização de verdade sempre foi (e continua sendo) o hook `BeforeRun` do
   `CmdrService`.
+
+## Gamepasses
+
+Cinco passes, e nenhuma delas é código espalhado: o catálogo inteiro é
+`SharedConfig.GamepassConfig`, e cada benefício é um número num campo.
+
+| Pass | Id | O que faz | Onde entra |
+| --- | ---: | --- | --- |
+| `CardSlots` | 1966789042 | +5 cartas no deck | `DeckConfig.limitFor` |
+| `Luck` | 1969136561 | +30% no peso de Epic+ no unboxing | `CrateService:_rollRarity` |
+| `Coins` | 1969568499 | 2x coins de fim de partida | `WaveService:rewardsFor` |
+| `Shards` | 1970648287 | 1,5x shards de fim de partida | `WaveService:rewardsFor` |
+| `VIP` | 1953119816 | 20% off nas caixas, 1,25x XP, tag no chat | `ShopConfig.priceFor`, `WaveService:rewardsFor`, `PlayerChatController` |
+
+### A pass é estado, e não crédito
+
+É a regra que decide todo o resto. Uma compra de developer product é um **evento**
+que precisa ser creditado uma vez só — é o que o `ProcessReceipt` e o
+`PurchaseHistory` fazem. Uma gamepass é um **estado**: o jogador tem ou não tem, hoje.
+
+Por isso **nada de gamepass é gravado como valor no perfil**. Os +5 cartas não vão
+para o `CardLimit`; eles somam na leitura (`DeckConfig.limitFor`). Escrever no perfil
+seria crédito, e crédito não volta: quem pedisse reembolso ficaria com o teto alto
+para sempre, e um segundo login somaria outros cinco.
+
+O que fica gravado é uma **cópia** do que a Roblox respondeu, em `Data.Gamepasses`:
+
+```lua
+Gamepasses = { VIP = true, Coins = true }
+```
+
+A chave é a do `GamepassConfig`, e **não** o id numérico — o id é da Roblox e muda
+quando uma pass é recriada; a chave é do jogo. Um id trocado é uma linha no config,
+e não uma migração de perfil.
+
+O `MonetizationService:RecalibratePasses` reescreve a tabela **inteira** a cada
+entrada, então uma pass reembolsada some sozinha no próximo login. A cópia existe só
+para o resto do jogo não perguntar à Roblox a cada caixa aberta e a cada fim de round.
+
+**Falha de API não apaga pass.** O `_ownsPass` devolve `nil` — e não `false` — quando
+a chamada estoura, e `nil` mantém o que o perfil já dizia. `false` é "ele não tem";
+uma queda da API não pode tirar do jogador o que ele comprou.
+
+**A pass vale na hora.** O `PromptGamePassPurchaseFinished` recalibra na compra: sem
+ele o jogador compraria o 2x Coins e só veria efeito no próximo login, o que parece a
+compra não ter funcionado.
+
+### Os números se multiplicam, e ninguém escreve `if`
+
+Cada benefício é um campo no catálogo, e as funções do `GamepassConfig` varrem as
+passes que o perfil tem: multiplicadores se multiplicam entre si, bônus se somam.
+Campo ausente é neutro. Hoje há uma pass por benefício, então toda conta é uma
+multiplicação só — mas uma segunda pass de coins amanhã entra **sem tocar em quem
+lê**, o que não aconteceria com um `if` por pass espalhado pelos services.
+
+### A sorte levanta as de cima e não mexe nas de baixo
+
+A `Luck` multiplica o peso de Epic, Legendary e Cosmic no pool da caixa (o piso é
+`GamepassConfig.LUCK_MIN_RARITY`) e deixa Common e Rare como estão. Como o sorteio
+normaliza pela soma dos pesos, subir as de cima já empurra as de baixo para baixo —
+mexer nos dois lados seria dois números para manter em sincronia. Medido em 300 mil
+aberturas por linha:
+
+| Caixa | Epic+ sem pass | Epic+ com a pass |
+| --- | ---: | ---: |
+| Crate Of Beginnings | 4,94% | 6,36% |
+| Crate Of Nature | 15,11% | 18,62% |
+| Fragmented Crate | 55,00% | 61,41% |
+| Legendary Crate | 80,02% | 83,85% |
+
+O ganho **relativo** encolhe conforme a caixa já é boa (+29% na comum, +5% na
+lendária), e isso é aritmética de peso normalizado, não um teto escrito em lugar
+nenhum: quando Epic+ já é 80% do bolo, não há muito para onde subir.
+
+As odds publicadas na loja **não mudam**: `Crate.GetDisplayOdds` continua sendo o pool
+cru, que é o que o jogador *sem* pass recebe. Uma pass que melhora o que ela promete
+não torna o número da loja mentira.
+
+### O preço na tela é o preço cobrado
+
+`ShopConfig.priceFor(item, profile)` é chamado dos dois lados — o `ShopService` para
+cobrar e o `ShopController` para escrever no botão. É a mesma conta, e não duas que
+alguém precisa lembrar de manter iguais.
+
+Ele arredonda **ao mais próximo**, com piso de 1. Não para cima: a Fragmented Crate
+custa 4 shards, e 20% dela é 0,8 — arredondando para cima o VIP pagaria os mesmos 4 e
+veria a pass não funcionar justamente na caixa do meio da loja.
+
+| Caixa | Normal | VIP |
+| --- | ---: | ---: |
+| Crate Of Beginnings | 50 coins | 40 |
+| Crate Of Nature | 200 coins | 160 |
+| Fragmented Crate | 4 shards | 3 |
+| Legendary Crate | 1800 shards | 1440 |
+
+### A recompensa é uma base da partida vezes um multiplicador de cada um
+
+`computeReward` continua sendo **uma** conta para a sala inteira: ela sai das waves
+sobrevividas e da dificuldade, que são da partida e não de ninguém. O que é de cada
+um é o multiplicador, e ele entra depois, no `rewardsFor` — duas pessoas na mesma run
+terminam com números diferentes sem que a run tenha duas contas.
+
+O `RoundReward` que vai para a tela leva o número **já multiplicado**: o jogador lê o
+que de fato entrou na carteira dele.
+
+### A tag do chat é atributo, e não perfil
+
+A réplica do perfil só chega ao dono dela, então ela não serve para o chat: o `[VIP]`
+tem de aparecer na mensagem **dos outros**, na tela de todo mundo. O
+`MonetizationService` publica um atributo `Pass_<chave>` no `Player` para cada pass
+com `ChatTag`, e atributo de `Player` replica para a sala inteira — continua sendo o
+servidor quem escreve.
+
+O `TextChatService.OnIncomingMessage` do `PlayerChatController` é quem põe a tinta.
+Ele é client-side por natureza (só decora o que já chegou) e não decide nada: a
+pergunta à Roblox foi feita no servidor, uma vez.
+
+**Ainda não há loja de gamepass.** Nada aqui abre um prompt de compra — as passes
+funcionam para quem já as tem, e o `PromptGamePassPurchaseFinished` cobre a compra
+feita por fora (página da experiência). A vitrine é trabalho à parte.
 
 ## Evento novo do servidor para o cliente precisa ser declarado
 

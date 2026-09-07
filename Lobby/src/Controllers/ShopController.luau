@@ -539,9 +539,14 @@ function ShopController:_bindContainer(container : Instance, item)
 		nameLabel.Text = string.upper(item.DisplayName)
 	end
 
+	--[[
+		O preco com o desconto do VIP, pela mesma `ShopConfig.priceFor` que o servidor
+		usa para cobrar: o numero no botao e o numero que sai da carteira porque e a
+		mesma conta, e nao porque alguem lembrou de mexer nos dois.
+	]]
 	local priceLabel = buy:FindFirstChildWhichIsA("TextLabel")
 	if priceLabel then
-		priceLabel.Text = string.format(ShopConfig.PRICE_FORMAT, UIUtil.formatCommas(item.Price))
+		priceLabel.Text = string.format(ShopConfig.PRICE_FORMAT, UIUtil.formatCommas(self:_priceOf(item)))
 	end
 
 	styleBuyButton(buy, item.Currency)
@@ -804,6 +809,16 @@ function ShopController:_updateShards()
 	label.Text = UIUtil.formatCommas(shards)
 end
 
+--[=[
+	O preco de um item para este jogador. A gamepass VIP tira 20%, e a conta e a mesma
+	do servidor -- o `ShopConfig.priceFor` le a chave `Gamepasses` da propria replica.
+]=]
+function ShopController:_priceOf(item) : number
+	local replica = self.Replica
+
+	return ShopConfig.priceFor(item, replica and replica.Data or nil)
+end
+
 function ShopController:_watchShards()
 	task.spawn(function()
 		local replica = self.Controllers.DataController:GetReplica()
@@ -814,7 +829,17 @@ function ShopController:_watchShards()
 		-- DataService writes the whole Stats key, but listen through OnChange so any
 		-- deeper write (Stats.Shards, ...) refreshes the counter too.
 		local connection = replica:OnChange(function(_action, path)
-			if path[1] ~= nil and path[1] ~= "Stats" then
+			local key = path[1]
+
+			-- `Gamepasses` entra porque o VIP muda o preco escrito no botao: comprar a
+			-- pass com a loja aberta tem de reprecar a tela, e nao esperar a proxima
+			-- abertura.
+			if key == "Gamepasses" then
+				self:_render()
+				return
+			end
+
+			if key ~= nil and key ~= "Stats" then
 				return
 			end
 

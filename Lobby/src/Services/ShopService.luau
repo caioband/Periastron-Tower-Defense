@@ -153,6 +153,15 @@ function ShopService:Purchase(Player : Player, itemId : string?) : (boolean, str
 	-- perfil chama a moeda que a tela chama de Coins.
 	local currency = item.Currency
 
+	--[[
+		O preco **deste** jogador, com o desconto do VIP ja dentro (`ShopConfig.priceFor`).
+
+		Lido aqui e nao dentro do `Update`: o preco sai de `Data.Gamepasses`, que o
+		`Update` de `Stats` nao entrega -- e a mesma conta que o cliente fez para
+		escrever o numero no botao, entao o que ele leu e o que ele paga.
+	]]
+	local price = ShopConfig.priceFor(item, profiles[Player].Profile.Data)
+
 	local charged = false
 	local remaining = 0
 
@@ -160,11 +169,11 @@ function ShopService:Purchase(Player : Player, itemId : string?) : (boolean, str
 		stats = stats or {}
 
 		local owned = stats[currency] or 0
-		if owned < item.Price then
+		if owned < price then
 			return stats
 		end
 
-		remaining = owned - item.Price
+		remaining = owned - price
 		stats[currency] = remaining
 		charged = true
 
@@ -177,7 +186,7 @@ function ShopService:Purchase(Player : Player, itemId : string?) : (boolean, str
 
 	if not self:_grantItem(Player, item) then
 		-- The grant is what failed, so hand the money back instead of eating it.
-		self:_refund(Player, currency, item.Price)
+		self:_refund(Player, currency, price)
 		return false, "GrantFailed"
 	end
 

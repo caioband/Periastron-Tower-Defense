@@ -42,7 +42,10 @@ local TIMER_NAME = "Timer"
 	asking the server first.
 ]=]
 local PortalService = {
-	Services = {},
+	Services = {
+		-- De onde saem as vitorias do perfil, que sao o que destranca um mapa.
+		DataService = {},
+	},
 
 	Signals = {
 		-- (portal : Model, members : { Player }, mapName : string)
@@ -361,6 +364,26 @@ function PortalService:GetPortalOf(player : Player)
 end
 
 --[=[
+	As vitorias do perfil aberto do jogador.
+
+	Perfil que ainda nao carregou (ou ja encerrou) vale zero, e nao "deixa passar": um
+	mapa a mais aberto por engano seria pior do que o jogador esperar o perfil chegar
+	-- e ate la a tela dele tambem esta mostrando tudo trancado, pela mesma conta.
+]=]
+function PortalService:_winsOf(player : Player) : number
+	local dataService = self.Services.DataService
+	local profiles = dataService and dataService.Profiles
+	local entry = profiles and profiles[player]
+	if not entry then
+		return 0
+	end
+
+	local stats = entry.Profile.Data.Stats
+
+	return typeof(stats) == "table" and math.floor(tonumber(stats.Wins) or 0) or 0
+end
+
+--[=[
 	Opens a group on a free portal. Returns true when the group was created.
 ]=]
 function PortalService:CreateGroup(player : Player, portalId : number, mapName : string, maxPlayers : number?) : boolean
@@ -376,6 +399,23 @@ function PortalService:CreateGroup(player : Player, portalId : number, mapName :
 	local resolvedMap = MapConfig.resolveMap(mapName)
 	if not resolvedMap then
 		warn(`[PortalService]: {player.Name} asked for map {tostring(mapName)}, which does not exist.`)
+		return false
+	end
+
+	--[[
+		O cadeado tambem vale aqui, e nao so na tela.
+
+		O `ChooseMapsController` ja nao deixa clicar num mapa trancado, mas quem escolhe
+		o mapa e o cliente -- ele manda um nome, e um nome e o que qualquer cliente pode
+		mandar. Sem esta linha, o mapa de 8 vitorias abriria para quem nunca ganhou uma.
+
+		E a mesma conta das duas pontas, com o mesmo config: nada aqui e sigiloso, e o
+		cliente calcular junto e so o desenho chegar antes da resposta.
+	]]
+	if not MapConfig.isUnlocked(resolvedMap, self:_winsOf(player)) then
+		warn(string.format(
+			"[PortalService]: %s asked for map %s, which needs %d wins.",
+			player.Name, resolvedMap, MapConfig.getWinsRequired(resolvedMap)))
 		return false
 	end
 

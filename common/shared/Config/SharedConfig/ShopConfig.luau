@@ -22,6 +22,7 @@
 ]]
 
 local CrateConfig = require(script.Parent.CrateConfig)
+local GamepassConfig = require(script.Parent.GamepassConfig)
 
 local module = {}
 
@@ -197,6 +198,29 @@ export type ShopItem = {
 	Crate: string?,
 	Container: string,
 }
+
+--[=[
+	O que este perfil paga por um item, com o desconto das gamepasses ja dentro.
+
+	**Arredonda ao mais proximo, com piso de 1.** Nao e para cima: a Fragmented Crate
+	custa 4 shards, e 20% dela e 0,8 -- arredondando para cima o VIP pagaria os mesmos
+	4 e veria a pass nao funcionar justamente na caixa do meio da loja. O piso existe
+	porque desconto que zera o preco da a caixa de graca.
+
+	Os dois lados chamam esta mesma funcao: o `ShopService` para cobrar e o
+	`ShopController` para escrever no botao. O preco na tela e o preco cobrado porque
+	e a mesma conta, e nao porque alguem lembrou de atualizar as duas.
+]=]
+function module.priceFor(item, profile) : number
+	local price = typeof(item) == "table" and item.Price or 0
+	local multiplier = GamepassConfig.cratePriceMultiplier(profile)
+
+	if multiplier >= 1 then
+		return price
+	end
+
+	return math.max(math.floor(price * multiplier + 0.5), 1)
+end
 
 --[=[
 	A moeda que o item cobra, ja como chave de `Data.Stats`.
