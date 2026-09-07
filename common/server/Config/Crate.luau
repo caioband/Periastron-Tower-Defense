@@ -8,10 +8,36 @@
 
 	O pool devolve só a RARIDADE. Qual unit sai é sorteado depois, entre as units
 	daquela raridade (`RarityConfig.getUnitsOfRarity`) — é de propósito: para incluir
-	uma unit nova no drop basta dar uma `Rarity` para ela no UnitStats.
+	uma unit nova no drop basta dar uma `Rarity` para ela no UnitStats. Para deixar
+	uma de fora sem apagá-la do jogo, veja `EXCLUDED_UNITS` logo abaixo.
 ]]
 
 local module = {}
+
+--[[
+	Units que existem no jogo mas **não saem de caixa nenhuma**.
+
+	Não é o mesmo que apagar a unit: quem já tem continua com ela, ela continua no
+	deck, no banner de invocação (`Summon`), nos stats e no balanceamento. O que ela
+	perde é só esta porta de entrada.
+
+	Mora aqui, e não em UnitStats, porque é uma regra de **drop** e não uma propriedade
+	da unit — a `Rarity` dela continua sendo Legendary, e é isso que a carta, a cor e o
+	preço leem. Uma unit exclusiva de evento ou de promoção entra nesta lista no dia em
+	que a promoção acabar, e sai dela sem tocar em mais nada.
+
+	As odds publicadas na loja não mudam: elas são **por raridade**, e tirar a Azure não
+	tira a chance de lendária — só faz o sorteio cair sempre nas outras duas (Berserker
+	e Rocket). A conta de `GetDisplayOdds` continua valendo palavra por palavra.
+
+	⚠️ Esvaziar uma raridade inteira aqui faz o sorteio **descer um degrau** e entregar
+	uma unit mais fraca no lugar, com um aviso no output — o mesmo caminho da Cosmic,
+	que não tem unit nenhuma. Deixe sempre uma unit sobrando por raridade que o pool
+	alcança.
+]]
+module.EXCLUDED_UNITS = {
+	["Azure"] = true,
+}
 
 --[[
 	Chance (em %) de cada raridade de unit, por crate aberta. Cada linha soma 100.

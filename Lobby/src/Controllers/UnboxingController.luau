@@ -77,10 +77,14 @@ local MIN_PLAYER_DISTANCE = 4
 -- Unboxings run side by side, so a new crate also has to keep its distance from the
 -- ones already playing. Measured against the billboard (5 studs wide), not the crate
 -- bounds -- two reels overlapping reads worse than two crates touching.
+--
+-- Vale contra as aberturas do lobby inteiro, e nao so contra as do jogador local:
+-- duas pessoas lado a lado abrindo ao mesmo tempo sao o caso comum de sobreposicao.
 local MIN_CRATE_SPACING = 6
 
 -- Past this many at once the ring sweep runs out of spots that respect the spacing
--- above, and crates would start landing on top of each other.
+-- above, and crates would start landing on top of each other. Conta as aberturas de
+-- todo mundo; a do proprio jogador passa por cima do teto (ver :Open).
 local MAX_ACTIVE_UNBOXINGS = 5
 
 local CRATE_CAN_COLLIDE = false
@@ -137,14 +141,19 @@ local RESULT_HOLD = 4
 local UnboxingController = {
 	Controllers = {},
 
+	--[[
+		Toda abertura do servidor toca em todas as telas, então os sinais são sobre a
+		caixa de qualquer um: `owner` é quem abriu, e é por ele que um ouvinte separa
+		a abertura do jogador local das que ele está só assistindo.
+	]]
 	Signals = {
-		-- (result : UnboxingResult, crate : Model)
+		-- (result : UnboxingResult, crate : Model, owner : Player)
 		UnboxingStarted = Signal.new(),
-		-- (result : UnboxingResult, from : string, to : string, crate : Model)
+		-- (result : UnboxingResult, from : string, to : string, crate : Model, owner : Player)
 		CrateUpgraded = Signal.new(),
-		-- (result : UnboxingResult, entry : GuiObject, crate : Model)
+		-- (result : UnboxingResult, entry : GuiObject, crate : Model, owner : Player)
 		UnboxingFinished = Signal.new(),
-		-- (result : UnboxingResult, unit : Model)
+		-- (result : UnboxingResult, unit : Model, owner : Player)
 		UnitRevealed = Signal.new(),
 	},
 }
@@ -200,8 +209,14 @@ local function buildCandidates(idealPosition : Vector3, forward : Vector3) : { V
 	return candidates
 end
 
-function UnboxingController:_getRoot() : BasePart?
-	local character = Players.LocalPlayer.Character
+--[=[
+	A raiz do personagem de quem abriu a caixa -- não a do jogador local.
+
+	É dela que sai a caixa e é na frente dela que ela pousa, em todas as telas: quem
+	assiste vê a caixa nascer no dono, e não nos próprios pés.
+]=]
+function UnboxingController:_getRoot(player : Player) : BasePart?
+	local character = player and player.Character
 	if not character then
 		return nil
 	end
@@ -337,7 +352,7 @@ end
 	`cframe` skips the placement search and drops it exactly there -- that is how a
 	crate evolves without moving.
 ]=]
-function UnboxingController:_spawnCrate(rarity : string, sessionMaid, cframe : CFrame?) : Model?
+function UnboxingController:_spawnCrate(session, rarity : string, cframe : CFrame?) : Model?
 	local modelName = CrateConfig.getModelName(rarity)
 	local template = modelName and self.CrateModels:FindFirstChild(modelName)
 	if not template or not template:IsA("Model") then
@@ -345,7 +360,7 @@ function UnboxingController:_spawnCrate(rarity : string, sessionMaid, cframe : C
 		return nil
 	end
 
-	local rootPart = if cframe then nil else self:_getRoot()
+	local rootPart = if cframe then nil else self:_getRoot(session.Owner)
 	if not cframe and not rootPart then
 		return nil
 	end
@@ -364,7 +379,7 @@ function UnboxingController:_spawnCrate(rarity : string, sessionMaid, cframe : C
 	crate:PivotTo(cframe or self:_resolvePlacement(rootPart :: BasePart, extents))
 
 	crate.Parent = self.CratesFolder
-	sessionMaid:GiveTask(crate)
+	session.Maid:GiveTask(crate)
 
 	return crate
 end
@@ -588,7 +603,7 @@ end
 	Evolves the crate: same spot, same billboard, heavier model.
 ]=]
 function UnboxingController:_swapCrate(session, crateRarity : string) : Model?
-	local crate = self:_spawnCrate(crateRarity, session.Maid, session.CFrame)
+	local crate = self:_spawnCrate(session, crateRarity, session.CFrame)
 	if not crate then
 		return nil
 	end
@@ -655,13 +670,37 @@ function UnboxingController:_revealUnit(session, unitName : string) : Model?
 	local facing = CFrame.lookAt(position, position + crateCFrame.RightVector)
 	unit:PivotTo(facing)
 
-	local humanoid = unit:FindFirstChildOfClass("Humanoid")
+	if session.Crate then
+		session.Crate:Destroy()
+		session.Crate = nil
+	end
+
+	unit.Parent = self.CratesFolder
+	session.Unit = unit
+	session.Maid:GiveTask(unit)
+
+	--[[
+		Os modelos das unidades sao rigs de Motor6D sem Humanoid nenhum -- quem toca
+		as faixas delas na partida e um `AnimationController`, criado na hora pela
+		classe `Unit`. Aqui e a mesma coisa: procurar um Humanoid so achava nada e
+		caia no `warn`, deixando a unidade parada no fim do unboxing.
+
+		A faixa so entra depois do `unit.Parent`: um Animator fora do DataModel nao e
+		avaliado, entao tocar antes de a unidade estar em cena nao mexia nada.
+	]]
 	local idle = unit:FindFirstChild(IDLE_ANIMATION_NAME)
 
-	if humanoid and idle and idle:IsA("Animation") then
-		-- Some units ship with an Animator already (Azure), most do not.
-		local animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator")
-		animator.Parent = humanoid
+	if idle and idle:IsA("Animation") then
+		local animationController = unit:FindFirstChildWhichIsA("AnimationController")
+			or unit:FindFirstChildWhichIsA("Humanoid")
+
+		if not animationController then
+			animationController = Instance.new("AnimationController")
+			animationController.Parent = unit
+		end
+
+		local animator = animationController:FindFirstChildWhichIsA("Animator") or Instance.new("Animator")
+		animator.Parent = animationController
 
 		local track = animator:LoadAnimation(idle)
 		track.Looped = true
@@ -671,17 +710,8 @@ function UnboxingController:_revealUnit(session, unitName : string) : Model?
 			track:Stop()
 		end)
 	else
-		warn(string.format("[UnboxingController]: %s has no Humanoid or %s animation.", unitName, IDLE_ANIMATION_NAME))
+		warn(string.format("[UnboxingController]: %s has no %s animation.", unitName, IDLE_ANIMATION_NAME))
 	end
-
-	if session.Crate then
-		session.Crate:Destroy()
-		session.Crate = nil
-	end
-
-	unit.Parent = self.CratesFolder
-	session.Unit = unit
-	session.Maid:GiveTask(unit)
 
 	-- A raridade sai do próprio catálogo da unidade, não do resultado do roll: é a
 	-- raridade dela que a aura e o display anunciam.
@@ -692,7 +722,12 @@ function UnboxingController:_revealUnit(session, unitName : string) : Model?
 	end
 
 	self:_attachUnitAura(unit, rarity)
-	self:_attachUnitDisplay(unit, unitName, rarity)
+
+	-- A aura e o giro sao a unidade aparecendo, e isso todo mundo ve. O nome e a
+	-- raridade dela sao o resultado, e o resultado e de quem abriu.
+	if session.IsOwner then
+		self:_attachUnitDisplay(unit, unitName, rarity)
+	end
 
 	local spin = 0
 	session.Maid:GiveTask(RunService.RenderStepped:Connect(function(deltaTime : number)
@@ -951,9 +986,12 @@ function UnboxingController:_spin(reel, sessionMaid, onFinished : (GuiObject) ->
 end
 
 --[=[
-	One unboxing = one session: its own maid, and the spot it took.
+	One unboxing = one session: its own maid, the spot it took, and quem abriu.
+
+	`IsOwner` e o que decide o que essa tela mostra: quem abriu ve o carretel e o nome
+	da unidade, quem esta assistindo ve so a caixa, o estouro e o premio.
 ]=]
-function UnboxingController:_openSession()
+function UnboxingController:_openSession(owner : Player)
 	self.SessionCount += 1
 
 	local session = {
@@ -961,6 +999,8 @@ function UnboxingController:_openSession()
 		Maid = Maid.new(),
 		Position = nil :: Vector3?,
 		Closed = false,
+		Owner = owner,
+		IsOwner = owner == Players.LocalPlayer,
 	}
 
 	table.insert(self.Sessions, session)
@@ -1022,7 +1062,7 @@ function UnboxingController:_playStage(session, result : UnboxingResult, stages,
 		end
 
 		if not stage.Face.Upgrade then
-			self.Signals.UnboxingFinished:Fire(result, entry, session.Crate)
+			self.Signals.UnboxingFinished:Fire(result, entry, session.Crate, session.Owner)
 
 			-- A beat on the landed reel, the crate cracks open, and the unit takes over.
 			task.delay(REVEAL_DELAY, function()
@@ -1037,7 +1077,7 @@ function UnboxingController:_playStage(session, result : UnboxingResult, stages,
 
 					local unit = result.Unit and self:_revealUnit(session, result.Unit)
 					if unit then
-						self.Signals.UnitRevealed:Fire(result, unit)
+						self.Signals.UnitRevealed:Fire(result, unit, session.Owner)
 					end
 
 					task.delay(RESULT_HOLD, function()
@@ -1059,28 +1099,40 @@ function UnboxingController:_playStage(session, result : UnboxingResult, stages,
 				return
 			end
 
-			self.Signals.CrateUpgraded:Fire(result, stage.Crate, stage.Face.Upgrade, session.Crate)
+			self.Signals.CrateUpgraded:Fire(result, stage.Crate, stage.Face.Upgrade, session.Crate, session.Owner)
 			self:_playStage(session, result, stages, index + 1)
 		end)
 	end)
 end
 
 --[=[
-	Spawns the crate in front of the local player and rolls the unboxing reel on top
-	of it, landing on `result.Rarity`.
+	Spawns the crate in front of `owner` and rolls the unboxing reel on top of it,
+	landing on `result.Rarity`.
 
 	`result` is what CrateService rolled: the odds live on the server, so this only
 	plays what it is told. Unboxings stack -- calling this again while others are
 	still rolling starts another one beside them, up to MAX_ACTIVE_UNBOXINGS.
 
+	`owner` e quem abriu a caixa, e o servidor manda a mesma abertura para todo mundo:
+	numa tela que nao e a dele, isso aqui roda igual, so sem o carretel e sem o nome da
+	unidade. Sem `owner` a abertura e do jogador local -- e como o console pede uma.
+
+	Cada cliente resolve o lugar da caixa por conta propria, a partir do personagem do
+	dono. O ponto pode sair um fio diferente de tela para tela (a posicao do personagem
+	de outro jogador chega interpolada), e isso e de proposito: o que a cena precisa
+	dizer e "a caixa e daquele jogador ali", e nao um centimetro exato.
+
 	Returns false when it could not start (bad result, no character, missing asset,
 	or too many already playing).
 ]=]
-function UnboxingController:Open(result : UnboxingResult) : boolean
+function UnboxingController:Open(result : UnboxingResult, owner : Player?) : boolean
 	if typeof(result) ~= "table" then
 		warn("[UnboxingController]: Open expects the result table rolled by CrateService.")
 		return false
 	end
+
+	owner = owner or Players.LocalPlayer
+	local isOwner = owner == Players.LocalPlayer
 
 	-- The crate the player opened. If it evolved, the reel lands on the upgrade card
 	-- and the crate is swapped mid-unboxing, one stage per step.
@@ -1096,18 +1148,25 @@ function UnboxingController:Open(result : UnboxingResult) : boolean
 		return false
 	end
 
-	if #self.Sessions >= MAX_ACTIVE_UNBOXINGS then
+	--[[
+		O teto vale para as caixas dos outros. A que o jogador local abriu e a que ele
+		pagou para ver, entao ela entra mesmo com o lobby cheio de abertura -- deixar de
+		fora justamente a dele seria o unico caso em que perder a cena importa.
+	]]
+	if not isOwner and #self.Sessions >= MAX_ACTIVE_UNBOXINGS then
 		return false
 	end
 
-	if not self:_getRoot() then
-		warn("[UnboxingController]: The character is not spawned yet.")
+	-- Personagem do dono, e nao o local: quem assiste pode ver a caixa de alguem que
+	-- ainda esta carregando na frente dele.
+	if not self:_getRoot(owner :: Player) then
+		warn(string.format("[UnboxingController]: %s has no character spawned yet.", (owner :: Player).Name))
 		return false
 	end
 
-	local session = self:_openSession()
+	local session = self:_openSession(owner :: Player)
 
-	local crate = self:_spawnCrate(crateRarity, session.Maid)
+	local crate = self:_spawnCrate(session, crateRarity)
 	if not crate then
 		self:_closeSession(session)
 		return false
@@ -1148,8 +1207,16 @@ function UnboxingController:Open(result : UnboxingResult) : boolean
 
 	table.insert(stages, { Crate = stageCrate, Face = { Rarity = winnerRarity } })
 
-	-- The reel is hidden while the crate grows in: the attachment offset scales with
-	-- the model, so an enabled billboard would climb up along with it.
+	--[[
+		The reel is hidden while the crate grows in: the attachment offset scales with
+		the model, so an enabled billboard would climb up along with it.
+
+		Numa tela que nao e a do dono ela nunca chega a ser ligada. O carretel continua
+		sendo montado e girado do mesmo jeito -- e o giro dele que marca o tempo de toda
+		a abertura, do estufao ao premio --, so que atras de um BillboardGui desligado,
+		que o Roblox nao desenha. Um caminho so para as duas telas, e as duas terminam
+		no mesmo instante.
+	]]
 	local billboard = attachment:FindFirstChildWhichIsA("BillboardGui")
 	if billboard then
 		billboard.Enabled = false
@@ -1161,13 +1228,13 @@ function UnboxingController:Open(result : UnboxingResult) : boolean
 
 	-- It leaves the player with the rotation it will land with -- only the position
 	-- travels, so it does not spin on the way in and fight the reel that follows.
-	local rootPart = self:_getRoot()
+	local rootPart = self:_getRoot(session.Owner)
 	if rootPart then
 		crate:PivotTo(session.CFrame.Rotation + rootPart.Position)
 		self:_tweenPivot(crate, SPAWN_TRAVEL_INFO, session.CFrame, session.Maid)
 	end
 
-	self.Signals.UnboxingStarted:Fire(result, crate)
+	self.Signals.UnboxingStarted:Fire(result, crate, session.Owner)
 
 	local grow = self:_tweenScale(crate, SPAWN_GROW_INFO, 1, session.Maid)
 	grow.Completed:Once(function(state : Enum.PlaybackState)
@@ -1179,7 +1246,7 @@ function UnboxingController:Open(result : UnboxingResult) : boolean
 		-- never leaves the crate a hair off the spot the rest of the flow uses.
 		crate:PivotTo(session.CFrame)
 
-		if billboard then
+		if billboard and session.IsOwner then
 			billboard.Enabled = true
 		end
 
@@ -1225,8 +1292,8 @@ function UnboxingController:construct()
 
 	-- The roll itself is server side (CrateService), so this is the only way an
 	-- unboxing legitimately starts.
-	Framework:Listen("PlayUnboxing", function(result : UnboxingResult)
-		self:Open(result)
+	Framework:Listen("PlayUnboxing", function(result : UnboxingResult, owner : Player)
+		self:Open(result, owner)
 	end)
 end
 

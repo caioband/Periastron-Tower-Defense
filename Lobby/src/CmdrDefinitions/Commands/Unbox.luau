@@ -1,13 +1,13 @@
 return {
 	Name = "unbox",
 	Aliases = { "openbox" },
-	Description = "Plays the unboxing animation of a crate rarity on a player's screen.",
+	Description = "Rolls a crate rarity for a player and plays the unboxing in front of them, for the whole server.",
 	Group = "Crates",
 	Args = {
 		{
 			Type = "players",
 			Name = "players",
-			Description = "The players who will see the unboxing.",
+			Description = "The players the crate is opened for. Everyone in the lobby sees it.",
 		},
 
 		{

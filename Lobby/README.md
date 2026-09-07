@@ -397,6 +397,70 @@ O ícone da backpack também sai do `CrateConfig` (`Image`), como sempre saiu: o
 `CrateController` escreve ele no `crateimg` de cada `cratetemplate`. Trocar a arte
 de uma caixa é uma linha lá.
 
+## O unboxing é do lobby inteiro
+
+Abrir uma caixa deixou de ser uma cena privada. O `CrateService` não manda mais o
+resultado só para quem abriu: ele **transmite a mesma abertura para todos os
+clientes**, com quem abriu junto no pacote (`_broadcastUnboxing`). Um `Fire` por
+jogador, que é como o resto do projeto transmite — o `Me` só sabe mandar para um
+cliente de cada vez.
+
+O `owner` é o que separa as duas telas, e é uma coisa só que muda:
+
+| | Quem abriu | Quem está assistindo |
+| --- | --- | --- |
+| Caixa voando, crescendo, chacoalhando e estourando | sim | sim |
+| VFX do estouro e aura da raridade | sim | sim |
+| Unidade girando com a idle | sim | sim |
+| **Carretel (a billboard da roleta)** | sim | **não** |
+| **Nome e raridade sobre a cabeça da unidade** | sim | **não** |
+
+O que quem assiste ganha é a cena — a caixa de alguém estourando do outro lado do
+lobby e a unidade aparecendo. O que ele não ganha é o **resultado escrito**: o
+carretel e o nome são a leitura do prêmio, e a leitura é de quem pagou pela caixa.
+
+**A caixa nasce no personagem do dono, e não nos pés de quem está olhando.** Todo
+`_getRoot` passou a receber o jogador, em vez de assumir o `LocalPlayer`. Cada
+cliente resolve o lugar dela por conta própria a partir dali, então o ponto pode sair
+um fio diferente de tela para tela (a posição do personagem de outro jogador chega
+interpolada). É de propósito: o que a cena precisa dizer é *de quem* é aquela caixa,
+não um centímetro exato.
+
+### O carretel continua girando mesmo desligado
+
+Numa tela que não é a do dono a `BillboardGui` nunca chega a ser ligada — mas o
+carretel continua sendo montado e girado igual, atrás dela.
+
+Isso não é desperdício por acaso: **é o giro do carretel que marca o tempo da
+abertura inteira**. É o `Completed` dele que solta o estufão, que solta o estouro,
+que solta a unidade, e é ele que encadeia um estágio de upgrade no outro. Um segundo
+caminho de tempo para quem assiste (um `task.delay` com a soma das durações) sairia
+do compasso do primeiro no dia em que alguém mexesse numa `TweenInfo`. Um caminho só,
+e as duas telas terminam no mesmo instante. O Roblox não desenha `BillboardGui`
+desligada, então o custo é o de instanciar as entradas.
+
+### O teto de aberturas simultâneas não vale para a sua
+
+`MAX_ACTIVE_UNBOXINGS` agora conta as caixas de todo mundo, e o espaçamento
+(`MIN_CRATE_SPACING`) também — duas pessoas lado a lado abrindo ao mesmo tempo é o
+caso comum de sobreposição, e antes nenhum cliente enxergava a caixa do outro para
+desviar dela.
+
+Só que **a abertura do próprio jogador passa por cima do teto**. Perder a cena de
+alguém do outro lado do lobby não custa nada; perder justamente a caixa que o jogador
+acabou de gastar é o único caso em que importa.
+
+### A idle da unidade revelada
+
+Os modelos em `Assets.Units` são rigs de `Motor6D` **sem `Humanoid` nenhum** — na
+partida quem toca as faixas deles é um `AnimationController` que a `Shared.Classes.Unit`
+cria na hora. O reveal do unboxing procurava um `Humanoid`, não achava em nenhuma das
+nove unidades e caía no `warn`, então a unidade aparecia congelada. Hoje ele cria o
+mesmo `AnimationController` (e aproveita um `Humanoid`, se algum modelo passar a ter).
+
+A faixa também só entra **depois** de a unidade ser parenteada no workspace: um
+`Animator` fora do DataModel não é avaliado, então tocar antes não mexia nada.
+
 ## Loja: um container por caixa
 
 A `ShopUI` mudou de dono do desenho. O painel agora é
@@ -509,6 +573,31 @@ continuar), então o pool da comum só vale em 75% delas. A diferença não é d
 A lendária sai **cinco vezes** mais da caixa mais barata do que o pool cru sugere.
 Mostrar o pool seria a loja prometer um número que o jogo não entrega, e por isso a
 conta mora no config do servidor e não na tela.
+
+### A Azure saiu do drop, mas não do jogo
+
+A **Azure não sai mais de caixa nenhuma**. Ela continua existindo por inteiro: quem já
+tem continua com ela, ela continua no deck, no banner de invocação (`Summon`), nos
+stats e no balanceamento. O que ela perdeu foi só essa porta de entrada.
+
+Quem manda nisso é `EXCLUDED_UNITS`, no `ServerScriptService.Config.Crate`, e o lugar
+é o ponto todo: **é uma regra de drop, e não uma propriedade da unit**. A `Rarity` dela
+no `UnitStats` continua sendo `Legendary` — é isso que a carta, a cor e o preço leem, e
+mexer lá para tirá-la da caixa quebraria as três coisas de uma vez. `getUnitsOfRarity`
+também continua devolvendo a lista honesta do tier; quem filtra é o sorteio.
+
+**As odds publicadas não mudaram, e isso é o esperado**: elas são por *raridade*. Tirar
+a Azure não tira chance de lendária — só faz o sorteio cair sempre nas outras duas.
+Numa simulação de 200 mil aberturas com o config de hoje:
+
+| Caixa | Lendárias | Azure | Como as lendárias se dividem |
+| --- | ---: | ---: | --- |
+| Crate Of Beginnings | 1,28% (publicado: 1,29%) | **0** | Berserker 0,65% / Rocket 0,63% |
+| Legendary Crate | 40,01% (publicado: 40%) | **0** | Berserker 19,88% / Rocket 20,12% |
+
+⚠️ Esvaziar uma raridade inteira pela lista faria o sorteio **descer um degrau** e
+entregar uma unit mais fraca no lugar, com um aviso no output — o mesmo caminho da
+Cosmic, que não tem unit nenhuma. A lendária ficou com duas, então há folga.
 
 Enquanto as odds não chegam, o container fica **sem linha nenhuma** — e não com o
 número autorado. Placeholder de designer na tela do jogador é pior do que meio

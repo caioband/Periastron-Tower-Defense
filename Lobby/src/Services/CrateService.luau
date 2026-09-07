@@ -187,20 +187,42 @@ function CrateService:_rollRarity(crateRarity : string) : string?
 end
 
 --[=[
-	Picks the unit the player actually gets, among the units of that rarity.
+	As units de um tier que uma caixa pode realmente entregar.
 
-	A tier with no unit tagged yet (Cosmic, as it stands) walks down to the closest
-	tier that has one, so a roll never comes back empty-handed.
+	`RarityConfig.getUnitsOfRarity` continua sendo a lista honesta do tier -- é ela que
+	a carta, o deck e o balanceamento leem. O drop é que é menor: `EXCLUDED_UNITS`
+	tira daqui quem existe no jogo mas não sai mais de caixa (ver ServerConfig.Crate).
+]=]
+local function unboxableUnitsOfRarity(rarity : string) : { string }
+	local excluded = ServerConfig.Crate.EXCLUDED_UNITS or {}
+	local units = {}
+
+	for _, unitName in RarityConfig.getUnitsOfRarity(rarity) do
+		if not excluded[unitName] then
+			table.insert(units, unitName)
+		end
+	end
+
+	return units
+end
+
+--[=[
+	Picks the unit the player actually gets, among the units of that rarity a crate
+	can still give.
+
+	A tier with nothing left to give -- porque nenhuma unit foi marcada com ele
+	(Cosmic, as it stands) ou porque as que havia estão fora do drop -- walks down to
+	the closest tier that has one, so a roll never comes back empty-handed.
 ]=]
 function CrateService:_rollUnit(rarity : string) : (string?, string?)
 	local currentRarity : string? = rarity
 
 	while currentRarity do
-		local units = RarityConfig.getUnitsOfRarity(currentRarity)
+		local units = unboxableUnitsOfRarity(currentRarity)
 		if #units > 0 then
 			if currentRarity ~= rarity then
 				warn(string.format(
-					"[CrateService]: no unit is tagged %q in UnitStats, dropping a %s one instead.",
+					"[CrateService]: no unit of rarity %q can drop from a crate, dropping a %s one instead.",
 					rarity,
 					currentRarity
 				))
@@ -212,7 +234,7 @@ function CrateService:_rollUnit(rarity : string) : (string?, string?)
 		currentRarity = RarityConfig.getLowerRarity(currentRarity)
 	end
 
-	warn("[CrateService]: no unit in UnitStats carries a valid Rarity.")
+	warn("[CrateService]: no unit is left in the crate pool at any rarity.")
 	return nil, nil
 end
 
@@ -256,8 +278,24 @@ function CrateService:RollCrate(rarity : string) : UnboxingResult?
 end
 
 --[=[
-	Rolls a crate and plays the unboxing on the player's client (crate model in front
-	of them + the reel above it landing on the rolled rarity).
+	Manda a abertura para o lobby inteiro, e não só para quem abriu.
+
+	`Owner` viaja junto porque é dele o personagem na frente do qual a caixa nasce, em
+	todas as telas -- e é o que separa quem abriu de quem está só assistindo: só a tela
+	do dono mostra o carretel e o nome da unidade, o resto vê a caixa e o prêmio.
+
+	Um `Fire` por jogador é como o resto do projeto transmite (`MobService`): o `Me`
+	só expõe o envio para um cliente de cada vez.
+]=]
+function CrateService:_broadcastUnboxing(Owner : Player, result : UnboxingResult)
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("PlayUnboxing", player, result, Owner)
+	end
+end
+
+--[=[
+	Rolls a crate and plays the unboxing on every client (crate model in front of
+	`Player` + the reel above it landing on the rolled rarity).
 
 	It does NOT spend the crate and does NOT give the unit -- it is the "show me" entry
 	point, used by the cmdr command. :OpenCrate is the one the player drives.
@@ -268,7 +306,7 @@ function CrateService:PlayUnboxing(Player : Player, rarity : string) : UnboxingR
 		return nil
 	end
 
-	Framework:Fire("PlayUnboxing", Player, result)
+	self:_broadcastUnboxing(Player, result)
 	return result
 end
 
@@ -332,7 +370,7 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 		end)
 	end
 
-	Framework:Fire("PlayUnboxing", Player, result)
+	self:_broadcastUnboxing(Player, result)
 	return result
 end
 
