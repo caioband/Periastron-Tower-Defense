@@ -44,7 +44,9 @@ module.OPEN_ANIMATION = "OpenShop"
 --[[ PROXIMITY ]]
 
 -- The shop opens when the player walks up to this part and closes when they leave.
--- It lives at Workspace.<REFERENCE_PARENT_NAME>.<REFERENCE_PART_NAME>.
+-- It lives somewhere under Workspace.<REFERENCE_PARENT_NAME>, at any depth: hoje os
+-- dois marcadores estao agrupados no modelo da loja, e o controller desce a arvore
+-- pelo nome em vez de exigir que eles fiquem soltos na raiz do mapa.
 module.REFERENCE_PARENT_NAME = "Map"
 module.REFERENCE_PART_NAME = "ShopPartReference"
 
@@ -63,9 +65,9 @@ module.PROXIMITY_INTERVAL = 0.2
 
 --[[ TELEPORT ]]
 
--- Where the HUD shop button drops the player: a marker part next to the shop, at
--- Workspace.<REFERENCE_PARENT_NAME>.<TELEPORT_PART_NAME>. It sits inside the open
--- radius above, so landing there opens the shop on its own.
+-- Where the HUD shop button drops the player: a marker part next to the shop,
+-- procurado sob Workspace.<REFERENCE_PARENT_NAME> do mesmo jeito que o de cima. It
+-- sits inside the open radius above, so landing there opens the shop on its own.
 module.TELEPORT_PART_NAME = "ShopPartTeleport"
 
 -- Studs above the top of the marker, so the character lands standing on it instead

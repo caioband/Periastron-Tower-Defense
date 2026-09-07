@@ -856,6 +856,12 @@ end
 	One of the shop's marker parts in the map, cached until it is taken out of the
 	world (a map swap reparents it, so the reference is re-resolved instead of held
 	forever). Warns once per marker so a missing one is visible without spamming.
+
+	**A busca e recursiva dentro do mapa, e nao so nos filhos diretos.** Os dois
+	marcadores vivem agrupados no modelo da loja (`Map.Shop`), e nao soltos em `Map`:
+	procurar so um nivel abaixo achava nada, o botao da HUD nao teleportava e a
+	proximidade nunca abria o painel. O nome de cada marcador e unico no mapa, entao
+	descer a arvore acha o mesmo part de sempre onde quer que o artista o agrupe.
 ]=]
 function ShopController:_getMapPart(partName : string) : Instance?
 	local cached = self.MapParts[partName]
@@ -863,12 +869,12 @@ function ShopController:_getMapPart(partName : string) : Instance?
 		return cached
 	end
 
-	local parent = workspace:FindFirstChild(ShopConfig.REFERENCE_PARENT_NAME)
-	local part = parent and parent:FindFirstChild(partName)
+	local map = workspace:FindFirstChild(ShopConfig.REFERENCE_PARENT_NAME)
+	local part = map and map:FindFirstChild(partName, true)
 
 	if not part and not self.WarnedMissing[partName] then
 		self.WarnedMissing[partName] = true
-		warn(`[ShopController]: no Workspace.{ShopConfig.REFERENCE_PARENT_NAME}.{partName}.`)
+		warn(`[ShopController]: no {partName} under Workspace.{ShopConfig.REFERENCE_PARENT_NAME}.`)
 	end
 
 	self.MapParts[partName] = part
