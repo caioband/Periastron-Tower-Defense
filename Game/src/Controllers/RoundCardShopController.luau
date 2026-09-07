@@ -81,7 +81,9 @@ local ANCHOR_TIMEOUT = 8
 		5. o clique na carta da hotbar pede o uso -- na hora, se a carta for
 		   instantanea, ou depois da **mira**, se ela pedir alvo. A carta some quando o
 		   `RoundCardUsed` confirma, que e tambem quando o personagem de quem usou faz
-		   o gesto dela, se ela tiver um `Visual` no config.
+		   o gesto dela, se ela tiver um `Visual` no config. O gesto e da **sala**: a
+		   animacao replica sozinha, e o som e as particulas chegam nas outras telas
+		   pelo `RoundCardVisual` (ver `_playRemoteUseVisual`).
 
 	## A mira
 
@@ -1035,9 +1037,10 @@ end
 	quem pendura deve o estouro **ou** a faxina -- e por isso a animacao que termina
 	sem passar pelo marcador leva o clone junto.
 
-	So quem usou a carta ve isto: o `RoundCardUsed` sai do servidor para ele. A
-	animacao em si replica sozinha (ela toca no proprio personagem), mas o som e as
-	particulas ficam no cliente de quem usou.
+	Isto e o gesto **de quem usou**, na tela dele: o `RoundCardUsed` sai do servidor
+	so para ele. Quem esta assistindo recebe `RoundCardVisual` e cai no
+	`_playRemoteUseVisual` logo abaixo, que e a metade que falta na tela dos outros --
+	a animacao e a trava ja chegam la sozinhas.
 ]=]
 function RoundCardShopController:_playUseVisual(cardId : any)
 	local definition = RoundCardConfig.Get(cardId)
@@ -1156,6 +1159,69 @@ function RoundCardShopController:_playUseVisual(cardId : any)
 		mata-lo no meio da propria faxina.
 	]=]
 	task.delay(ANCHOR_TIMEOUT, finish)
+end
+
+--[=[
+	O mesmo gesto, visto de fora: o som e as particulas da carta que **outro** jogador
+	usou, no personagem dele.
+
+	Duas metades chegam aqui sozinhas e nao sao refeitas. A **animacao** toca no
+	personagem de quem usou, e o `Animator` a replica para todo mundo -- carrega-la de
+	novo aqui poria duas tracks iguais no mesmo corpo. A **trava** e o mesmo caso: o
+	dono ancora a `HumanoidRootPart` que ele controla, e o personagem para de andar em
+	todas as telas por consequencia. O que nao atravessa e o som (que e local) e o VFX
+	(que e um clone feito no cliente), e e so isso que este caminho faz.
+
+	**O relogio aqui e o config, e nao o marcador.** O marcador de keyframe so chega
+	em quem carregou a track, e esta tela nao carregou nenhuma -- ela esta olhando uma
+	animacao replicada. `SoundDelay` e `EffectDelay` sao as copias dos instantes dos
+	dois marcadores, e o `CardShopService` as confere contra a animacao de verdade
+	quando sobe: e o mesmo numero que o servidor usa para cronometrar o congelamento,
+	entao as particulas caem no quadro em que os inimigos param, aqui como la.
+
+	O clone nasce agora e nao no estouro, pelo mesmo motivo do gesto do dono: pendurado
+	na raiz ele acompanha o jogador, e cria-lo no ultimo instante arriscaria o asset
+	chegar depois da hora.
+]=]
+function RoundCardShopController:_playRemoteUseVisual(cardId : any, user : Player?)
+	if not user or user == Player then return end
+
+	local definition = RoundCardConfig.Get(cardId)
+	local visual = definition and definition.Visual
+	if not visual then return end
+
+	local character = user.Character
+	local root = character and character:FindFirstChild(CHARACTER_ROOT)
+	if not root or not root:IsA("BasePart") then return end
+
+	--[[
+		O som e da **sala**, e nao do personagem: ele toca em `SoundService`, sem
+		posicao. A carta congela os inimigos de todo mundo, e um som que sumisse com a
+		distancia diria que o efeito e de la, e nao daqui.
+
+		Por isso ele nao depende do clone nem do personagem continuar de pe: quem usou
+		pode morrer no meio do gesto, e o congelamento acontece do mesmo jeito.
+	]]
+	if visual.Sound then
+		task.delay(visual.SoundDelay or visual.EffectDelay or 0, function()
+			local sound = SoundService:FindFirstChild(visual.Sound)
+			if sound and sound:IsA("Sound") then
+				sound:Play()
+			end
+		end)
+	end
+
+	local vfx = self.Controllers.VFXController
+	local clone = vfx and vfx:AttachAsset(visual.VFX, root)
+	if not clone then return end
+
+	task.delay(visual.EffectDelay or 0, function()
+		-- O personagem pode ter saido de cena no meio da espera, e o clone vai junto
+		-- com ele: nao ha onde estourar, e nao ha o que limpar.
+		if not clone.Parent then return end
+
+		vfx:EmitAttached(clone)
+	end)
 end
 
 --[[ A MIRA ]]
@@ -1855,6 +1921,14 @@ function RoundCardShopController:construct()
 		-- O gesto sai na confirmacao, e nao no clique: quem gasta a carta e o
 		-- servidor, e um uso recusado nao pode deixar o personagem posando.
 		self:_playUseVisual(payload.id)
+	end)
+
+	-- A mesma carta, usada por outra pessoa. O servidor so manda isto para quem **nao**
+	-- usou; quem usou ja esta no `RoundCardUsed` acima.
+	Framework:Listen("RoundCardVisual", function(payload)
+		if typeof(payload) ~= "table" then return end
+
+		self:_playRemoteUseVisual(payload.id, payload.user)
 	end)
 
 	--[[

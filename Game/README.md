@@ -1351,11 +1351,21 @@ hora, senão o jogador clicaria de novo achando que o primeiro clique não pegou
 
 **O número é uma cópia, e cópia envelhece.** Reanimar a carta no Moon Animator move o
 marcador e deixa o efeito entrando fora do gesto — sem erro no log, só torto na tela.
-Por isso o `CardShopService:_auditEffectDelays` baixa a `KeyframeSequence` de cada
-carta com `Visual` quando o servidor sobe, acha o marcador com parâmetro `"VFX"` e
-avisa se ele estiver a mais de 0,05 s do `EffectDelay`. É o mesmo remédio do audit dos
-nomes dos botões de dificuldade, pelo mesmo motivo: desencontro de config que não
-levanta exceção nenhuma.
+Por isso o `CardShopService:_auditVisualDelays` baixa a `KeyframeSequence` de cada
+carta com `Visual` quando o servidor sobe, acha os marcadores e avisa se algum estiver
+a mais de 0,05 s da cópia no config. É o mesmo remédio do audit dos nomes dos botões
+de dificuldade, pelo mesmo motivo: desencontro de config que não levanta exceção
+nenhuma.
+
+São **dois** números conferidos, e não um: `EffectDelay` contra o parâmetro `"VFX"` e
+`SoundDelay` contra o `"Sound"`. O segundo nasceu com a replicação do gesto (seção
+abaixo) e existe pelo mesmo motivo do primeiro — quem não está tocando a animação não
+recebe marcador nenhum. Hoje o Time Stop é a única carta com `Visual`, e os dois batem:
+
+| Campo | No config | Marcador na animação | Desvio |
+| --- | ---: | ---: | ---: |
+| `EffectDelay` | 0,917 s | `VFX` em 0,9167 s | 0,0003 s |
+| `SoundDelay` | 0,750 s | `Sound` em 0,7500 s | 0 s |
 
 Ele **só avisa**. Não corrige o número com o que baixou — cronometrar o efeito da sala
 por uma chamada web que pode falhar ou demorar seria pior que o desvio que ele pega —,
@@ -1364,6 +1374,44 @@ e falha de download passa calada.
 O sorteio é com peso e **sem reposição**: a carta que sai deixa a urna e os pesos das
 outras continuam valendo entre si, então uma carta rara não fica mais provável só
 porque a comum já saiu. Catálogo menor que três mostra o que tem, em vez de repetir.
+
+#### O gesto é da sala inteira
+
+A carta é comprada por uma pessoa, mas o Time Stop congela os inimigos de **todo
+mundo** — e até agora só o dono ouvia e via isso acontecer. O gesto passou a chegar em
+todas as telas, e a divisão de trabalho é o que interessa:
+
+| O quê | Como chega nas outras telas |
+| --- | --- |
+| A animação no personagem | **sozinha** — o `Animator` replica o que o dono toca no próprio corpo |
+| O jogador travado no lugar | **sozinha** — o dono ancora a raiz que ele controla, e o corpo para de andar em todas as telas |
+| O som (`TimeStopSFX`) | `RoundCardVisual` → `_playRemoteUseVisual` |
+| As partículas (`PlayerStopTime`) | `RoundCardVisual` → `_playRemoteUseVisual` |
+
+As duas primeiras já atravessavam, e **não são refeitas**: carregar a animação de novo
+no cliente de quem assiste poria duas tracks iguais no mesmo corpo. O que não atravessa
+é o som (que é local) e o VFX (que é um clone feito no cliente), e é só isso que o
+evento novo carrega.
+
+`RoundCardUsed` continua particular, e sai só para quem usou: ele mexe na **mão** dele
+(tira a carta do deck), o que não é da conta de mais ninguém. `RoundCardVisual` é o
+oposto — vai para todo mundo **menos** quem usou, que já recebeu o primeiro. Mandar os
+dois para a mesma pessoa faria o som tocar duas vezes.
+
+**Nas outras telas o relógio é o config, e não o marcador.** O marcador de keyframe só
+chega em quem carregou a track, e quem está assistindo está olhando uma animação
+replicada — ele não tem marcador nenhum para escutar. Daí o `SoundDelay` ao lado do
+`EffectDelay`: são as cópias dos instantes dos dois marcadores, auditadas na subida
+(tabela acima). Usar o mesmo número que o servidor usa para cronometrar o congelamento
+é o que faz as partículas caírem no quadro em que os inimigos param — na tela de quem
+assiste tanto quanto na de quem usou.
+
+Colapsar os dois num só não serviria: o `Sound` está 167 ms antes do `VFX`, e o som da
+sala sairia atrasado em relação ao gesto do dono.
+
+O caminho é **genérico, e não do Time Stop**: quem dispara é a existência de um
+`Visual` no config. Hoje o Time Stop é a única das 24 cartas que tem um, então é a
+única que replica gesto — uma carta nova com `Visual` já nasce replicada.
 
 #### Time Stop
 

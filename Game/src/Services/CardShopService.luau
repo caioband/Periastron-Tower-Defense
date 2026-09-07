@@ -17,7 +17,7 @@ local RoundCardConfig = SharedConfig.RoundCardConfig
 
 --[[
 	Quanto o `EffectDelay` pode se afastar do marcador da animacao antes de virar
-	aviso, em segundos. Ver `_auditEffectDelays`.
+	aviso, em segundos. Ver `_auditVisualDelays`.
 
 	Nao e zero porque o numero do config e escrito a mao, arredondado do que o Moon
 	Animator mostra: um milesimo de diferenca e transcricao, e nao desencontro.
@@ -594,6 +594,34 @@ function CardShopService:Use(player : Player, uid : any, target : any)
 		id = card.Id,
 	})
 
+	--[[
+		O gesto vai para a sala inteira, e nao so para quem pagou.
+
+		`RoundCardUsed` continua sendo particular porque ele mexe na **mao** de quem
+		usou (tira a carta do deck dele), e isso nao e da conta de mais ninguem. O que
+		e da conta de todo mundo e a cena: o Time Stop congela os inimigos da sala, e
+		ate agora so o dono ouvia e via isso acontecer.
+
+		Sai so para os outros: quem usou ja recebeu o `RoundCardUsed`, e e ele que
+		dispara o gesto completo na tela dele -- animacao, trava e o marcador da
+		propria animacao no comando. Mandar os dois para a mesma pessoa faria o som
+		tocar duas vezes.
+
+		A animacao em si nao viaja aqui: ela toca no personagem de quem usou, e o
+		`Animator` replica isso sozinho para todo mundo. O que falta nas outras telas,
+		e o que este evento leva, e o som e as particulas.
+	]]
+	if card.Visual then
+		for _, plr in Players:GetPlayers() do
+			if plr ~= player then
+				Framework:Fire("RoundCardVisual", plr, {
+					id = card.Id,
+					user = player,
+				})
+			end
+		end
+	end
+
 	local context = { Uid = uid, Card = card.Id, Target = checked }
 
 	local function run()
@@ -667,22 +695,39 @@ end
 --[[ CICLO DE VIDA ]]
 
 --[=[
-	Confere se o `EffectDelay` das cartas ainda bate com a animacao delas.
+	Confere se o `EffectDelay` e o `SoundDelay` das cartas ainda batem com a animacao
+	delas.
 
-	O numero no config e uma **copia** do instante do marcador `VFX`, e copia
-	envelhece: reanimar a carta no Moon Animator move o marcador e deixa o efeito
-	entrando fora do gesto -- sem erro nenhum no log, so torto na tela. E o mesmo tipo
-	de desencontro silencioso que os nomes dos botoes de dificuldade ja causaram, e a
-	resposta e a mesma: conferir na subida e avisar.
+	Os numeros no config sao **copias** dos instantes dos marcadores `VFX` e `Sound`,
+	e copia envelhece: reanimar a carta no Moon Animator move os marcadores e deixa o
+	efeito entrando fora do gesto -- sem erro nenhum no log, so torto na tela. E o
+	mesmo tipo de desencontro silencioso que os nomes dos botoes de dificuldade ja
+	causaram, e a resposta e a mesma: conferir na subida e avisar.
+
+	Os dois numeros valem para **quem nao esta tocando a animacao**: o `EffectDelay`
+	cronometra o efeito aqui no servidor, e os dois cronometram o som e as particulas
+	na tela de quem esta assistindo o gesto de outro jogador (o marcador so chega em
+	quem carregou a track). Um desvio aqui sai como o som da sala fora do gesto do
+	dono, e por isso os dois sao conferidos e nao so um.
 
 	**So avisa.** Ele nao corrige o numero com o que baixou: cronometrar o efeito da
 	sala por uma chamada web que pode falhar ou demorar seria pior do que o desvio
 	que ele pega. Falha de download tambem passa calada -- o jogo nao depende dela.
 ]=]
-function CardShopService:_auditEffectDelays()
+function CardShopService:_auditVisualDelays()
+	--[[
+		Cada linha e "o campo do config" contra "o parametro do marcador que ele
+		copia". Um `Visual` que declare so um dos dois e conferido so nele: o
+		`SoundDelay` nao e obrigatorio, uma carta que nao toca som nao precisa dele.
+	]]
+	local MIRRORED = {
+		{ Field = "EffectDelay", Parameter = RoundCardConfig.Markers.VFX, What = "aplica o efeito" },
+		{ Field = "SoundDelay", Parameter = RoundCardConfig.Markers.Sound, What = "toca o som" },
+	}
+
 	for _, card in RoundCardConfig.Cards do
 		local visual = card.Visual
-		if not visual or not visual.Animation or not visual.EffectDelay then continue end
+		if not visual or not visual.Animation then continue end
 
 		local ok, sequence = pcall(function()
 			return KeyframeSequenceProvider:GetKeyframeSequenceAsync(visual.Animation)
@@ -690,26 +735,31 @@ function CardShopService:_auditEffectDelays()
 
 		if not ok or not sequence then continue end
 
-		local markedAt = nil
-		for _, keyframe in sequence:GetKeyframes() do
-			for _, marker in keyframe:GetMarkers() do
-				if marker.Name == visual.Marker and marker.Value == RoundCardConfig.Markers.VFX then
-					markedAt = keyframe.Time
+		for _, mirrored in MIRRORED do
+			local copied = visual[mirrored.Field]
+			if not copied then continue end
+
+			local markedAt = nil
+			for _, keyframe in sequence:GetKeyframes() do
+				for _, marker in keyframe:GetMarkers() do
+					if marker.Name == visual.Marker and marker.Value == mirrored.Parameter then
+						markedAt = keyframe.Time
+					end
 				end
 			end
-		end
 
-		if not markedAt then
-			warn(string.format(
-				"[CardShopService]: a animacao de '%s' nao tem marcador '%s' com o parametro '%s'; o efeito vai entrar em %.3fs sem nada acontecendo na tela.",
-				card.Id, tostring(visual.Marker), RoundCardConfig.Markers.VFX, visual.EffectDelay))
-			continue
-		end
+			if not markedAt then
+				warn(string.format(
+					"[CardShopService]: a animacao de '%s' nao tem marcador '%s' com o parametro '%s'; o %s vai entrar em %.3fs sem nada acontecendo na tela.",
+					card.Id, tostring(visual.Marker), mirrored.Parameter, mirrored.Field, copied))
+				continue
+			end
 
-		if math.abs(markedAt - visual.EffectDelay) > EFFECT_DELAY_TOLERANCE then
-			warn(string.format(
-				"[CardShopService]: '%s' aplica o efeito em %.3fs, mas o marcador '%s' da animacao esta em %.3fs. Acerte o EffectDelay no RoundCardConfig.",
-				card.Id, visual.EffectDelay, RoundCardConfig.Markers.VFX, markedAt))
+			if math.abs(markedAt - copied) > EFFECT_DELAY_TOLERANCE then
+				warn(string.format(
+					"[CardShopService]: '%s' %s em %.3fs, mas o marcador '%s' da animacao esta em %.3fs. Acerte o %s no RoundCardConfig.",
+					card.Id, mirrored.What, copied, mirrored.Parameter, markedAt, mirrored.Field))
+			end
 		end
 	end
 end
@@ -718,7 +768,7 @@ function CardShopService:construct()
 	-- Num fio proprio: ele baixa as animacoes das cartas, e a loja nao tem por que
 	-- esperar isso para existir.
 	task.spawn(function()
-		self:_auditEffectDelays()
+		self:_auditVisualDelays()
 	end)
 
 	local waveService = self.Services.WaveService
@@ -781,11 +831,12 @@ end
 function CardShopService:init()
 	self.WarnedEffects = {}
 
-	-- So o servidor dispara estes tres; sem o Listen vazio o cliente ficaria dez
+	-- So o servidor dispara estes; sem o Listen vazio o cliente ficaria dez
 	-- segundos esperando o identificador aparecer (ver o README da raiz).
 	Framework:Listen("RoundCardState", function() end)
 	Framework:Listen("RoundCardBought", function() end)
 	Framework:Listen("RoundCardUsed", function() end)
+	Framework:Listen("RoundCardVisual", function() end)
 	Framework:Listen("RoundCardApplied", function() end)
 end
 

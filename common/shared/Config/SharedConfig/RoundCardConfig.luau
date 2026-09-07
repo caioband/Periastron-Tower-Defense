@@ -337,6 +337,7 @@ RoundCardConfig.DeckCardSize = UDim2.fromScale(0.128, 1.07)
 	| `Sound` | o `Sound` em `SoundService` que o marcador `"Sound"` toca |
 	| `VFX` | o asset em `Assets.VFX` que o marcador `"VFX"` estoura |
 	| `EffectDelay` | em que segundo da animação o **efeito** entra (o instante do marcador `"VFX"`) |
+	| `SoundDelay` | em que segundo da animação o **som** entra (o instante do marcador `"Sound"`) |
 
 	**Quem manda no tempo é a animação, e não um `task.delay`.** O mesmo marcador
 	dispara as duas coisas, e o que separa uma da outra é o **parâmetro** dele:
@@ -344,12 +345,18 @@ RoundCardConfig.DeckCardSize = UDim2.fromScale(0.128, 1.07)
 	Animator remarca os dois sem passar por aqui — e é para isso que o marcador é um
 	só com dois parâmetros, em vez de dois marcadores com nomes diferentes.
 
-	O `EffectDelay` é a exceção, e é uma exceção necessária: **o efeito é do
-	servidor**, e ele não escuta marcador de animação nenhum — a animação toca no
-	cliente. O número aqui é uma cópia do instante do marcador `"VFX"`, e é assim que
-	o congelamento cai junto com o estouro em vez de cair no clique. Cópia envelhece,
-	então o `CardShopService` confere as duas contra a animação de verdade quando
-	sobe e avisa se elas se afastarem.
+	`EffectDelay` e `SoundDelay` são as exceções, e são exceções necessárias: **eles
+	valem para quem não está tocando a animação**. O marcador só chega em quem
+	carregou a track — o servidor não escuta marcador nenhum, e o cliente que está
+	*assistindo* o gesto de outro jogador também não. Os dois números são cópias dos
+	instantes dos marcadores `"VFX"` e `"Sound"`, e é assim que o congelamento cai
+	junto com o estouro (no servidor) e que as partículas e o som saem no mesmo quadro
+	nas telas de todo mundo, em vez de saírem no clique.
+
+	Cópia envelhece, então o `CardShopService` confere os dois contra a animação de
+	verdade quando sobe e avisa se eles se afastarem — na tela de quem usou a carta
+	quem manda continua sendo o marcador, e um desvio aqui apareceria como o som da
+	sala saindo fora do gesto do dono.
 
 	Carta nova é uma entrada aqui **mais** uma função no `CardShopService.Effects`
 	com o nome que estiver em `Effect`. O sorteio só oferece o que tem efeito do
@@ -401,8 +408,10 @@ RoundCardConfig.Cards = {
 			Sound = "TimeStopSFX",
 			VFX = "PlayerStopTime",
 
-			-- O marcador `VFX` está em 0,917s da animação (que dura 1,317s).
+			-- Os marcadores estão em 0,917s (`VFX`) e 0,75s (`Sound`) da animação,
+			-- que dura 1,317s.
 			EffectDelay = 0.917,
+			SoundDelay = 0.75,
 		},
 	},
 
