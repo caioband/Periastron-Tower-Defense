@@ -33,6 +33,9 @@ local Framework = Me.new()
 		StarterGui.ResultScreen
 		├── BackgroundFrame         Frame preto de tela cheia (o escurecimento)
 		└── MainScreen              ImageLabel do painel
+		    ├── ViewportFrame       o MVP em 3D
+		    │   └── WorldModel      onde o clone do personagem entra
+		    ├── MVPText             TextLabel "MVP: <nome>"
 		    ├── RewardTitle         TextLabel "REWARDS" — entra em fade
 		    ├── RewardsContainer    Frame com ClipsDescendants e UIListLayout
 		    │   ├── ShardRewardWrapper.ShardAmount   desliza para dentro do quadro
@@ -87,6 +90,11 @@ local EXP_NAME = "ExpContainer"
 local EXP_TEXT_NAME = "ExpAmount"
 local BAR_NAME = "Bar"
 
+local VIEWPORT_NAME = "ViewportFrame"
+local WORLD_MODEL_NAME = "WorldModel"
+local MVP_TEXT_NAME = "MVPText"
+local MVP_MODEL_NAME = "MVPCharacter"
+
 local PLAY_AGAIN_NAME = "PlayAgain"
 local LOBBY_NAME = "Lobby"
 local BUTTON_TEXT_NAME = "TextLabel"
@@ -98,10 +106,18 @@ local REWARD_KEYS = {
 	CoinsRewardWrapper = "coins",
 }
 
+-- Enquadramento do MVP no ViewportFrame.
+local VIEWPORT_FOV = 30            -- FOV fechado: menos distorcao de lente no retrato
+local VIEWPORT_PADDING = 1.12      -- folga em volta do personagem
+local VIEWPORT_YAW = 15            -- graus de giro; 0 e de frente, positivo vira o ombro
+local VIEWPORT_HEIGHT_BIAS = 0     -- fracao da altura; sobe o alvo da camera e desce o corpo no quadro
+
 local LEAVING_TEXT = "LEAVING..."
 local LOBBY_TEXT = "BACK TO LOBBY"
 local PLAY_AGAIN_TEXT = "PLAY AGAIN (%d/%d)"
 local MAX_EXP_TEXT = "MAX"
+local MVP_TEXT = "MVP: %s"
+local MVP_EMPTY_TEXT = "MVP: —"
 
 -- Propriedades de transparencia por classe. So o que estiver aqui entra nos
 -- fades; UICorner e UIAspectRatioConstraint ficam de fora porque nao tem nada
@@ -442,6 +458,261 @@ function ResultController:playExpAnimation(container : Instance, label : TextLab
 	end
 end
 
+--[[ mvp ]]
+
+--[=[
+	Por que o personagem e copiado, e nao referenciado.
+
+	Um ViewportFrame renderiza so os proprios descendentes, e uma Instance tem um
+	Parent so: nao existe apontar para o personagem vivo daqui: so existe levar o
+	personagem de verdade para dentro do WorldModel, o que o tiraria do mundo (e,
+	sendo o personagem de outro jogador, ainda brigaria com a replicacao do
+	servidor, que o poe de volta). Entao a copia e obrigatoria.
+
+	O que da para evitar e o acoplamento, e e o que estas funcoes fazem: o clone
+	entra sem script, sem som, com a raiz ancorada e tocando o proprio idle. Depois
+	de montado ele nunca mais olha para o personagem original — nao ha nada
+	sincronizando quadro a quadro com o mundo.
+]=]
+function ResultController:getMVPCharacter(mvp) : Model?
+	if not mvp then return nil end
+
+	local userId = tonumber(mvp.userId)
+
+	for _, player in Players:GetPlayers() do
+		local matches = if userId then player.UserId == userId else player.Name == mvp.name
+		if matches then
+			return player.Character
+		end
+	end
+
+	return nil
+end
+
+-- O idle sai do `Animate` do proprio personagem: e ele que sabe se o rig e R6 ou
+-- R15, entao nenhum id de animacao precisa ficar escrito aqui.
+function ResultController:getIdleAnimationId(character : Model) : string?
+	local animate = character:FindFirstChild("Animate")
+	local idle = animate and animate:FindFirstChild("idle")
+	if not idle then return nil end
+
+	local animation = idle:FindFirstChild("Animation1") or idle:FindFirstChildWhichIsA("Animation")
+	if animation and animation:IsA("Animation") and animation.AnimationId ~= "" then
+		return animation.AnimationId
+	end
+
+	return nil
+end
+
+--[=[
+	Tira do clone tudo que so daria trabalho dentro de uma ScreenGui — script (que
+	rodaria de verdade, por estar na PlayerGui), som, efeito, nameplate. Sobra o
+	rig, e so a raiz fica ancorada: ancorar o resto travaria os Motor6D e a
+	animacao junto.
+]=]
+function ResultController:sanitizeMVPModel(model : Model)
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BaseScript")
+			or descendant:IsA("Sound")
+			or descendant:IsA("ParticleEmitter")
+			or descendant:IsA("Trail")
+			or descendant:IsA("Beam")
+			or descendant:IsA("Fire")
+			or descendant:IsA("Smoke")
+			or descendant:IsA("Sparkles")
+			or descendant:IsA("LayerCollector")
+			or descendant:IsA("Highlight")
+			or descendant:IsA("ForceField")
+		then
+			descendant:Destroy()
+		end
+	end
+
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		local any = humanoid :: any
+		pcall(function()
+			any.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+		end)
+		pcall(function()
+			any.EvaluateStateMachine = false
+		end)
+	end
+
+	local root = model:FindFirstChild("HumanoidRootPart")
+	if root and root:IsA("BasePart") then
+		root.Anchored = true
+	end
+end
+
+--[=[
+	Copia o personagem contornando o `Archivable`.
+
+	A engine marca o personagem do jogador com `Archivable = false` (o avatar nao
+	sai copiado por ai), e `Clone` devolve nil nesse caso — foi por isso que o
+	quadro nascia vazio. `Clone` tambem pula descendente marcado, entao a flag e
+	ligada no modelo e em quem estiver com ela desligada, e devolvida logo depois:
+	a janela e de uma linha e so existe neste cliente.
+]=]
+function ResultController:cloneCharacter(character : Model) : Model?
+	local restore = {}
+
+	if not character.Archivable then
+		character.Archivable = true
+		table.insert(restore, character)
+	end
+
+	for _, descendant in character:GetDescendants() do
+		if not descendant.Archivable then
+			descendant.Archivable = true
+			table.insert(restore, descendant)
+		end
+	end
+
+	local ok, clone = pcall(function()
+		return character:Clone()
+	end)
+
+	for _, instance in restore do
+		instance.Archivable = false
+	end
+
+	if not ok or not clone then
+		warn(`ResultController: nao consegui copiar o personagem do MVP — {tostring(clone)}`)
+		return nil
+	end
+
+	return clone
+end
+
+--[=[
+	Enquadra o personagem inteiro no quadro que a GUI tem. Recalculado depois que o
+	painel aparece porque `AbsoluteSize` so vale quando a GUI ja renderizou uma vez
+	— antes disso ele e zero e o aspecto sairia errado.
+]=]
+function ResultController:frameMVPCamera()
+	local viewport = self.mvpViewport
+	local model = self.mvpModel
+	local camera = self.mvpCamera
+
+	if not viewport or not camera or not model or not model.Parent then return end
+
+	local bounds, size = model:GetBoundingBox()
+
+	local absolute = viewport.AbsoluteSize
+	local aspect = if absolute.Y > 0 then absolute.X / absolute.Y else 1
+
+	local fit = math.max(size.Y, size.X / math.max(aspect, 0.01))
+	local distance = (fit * 0.5 * VIEWPORT_PADDING) / math.tan(math.rad(VIEWPORT_FOV * 0.5)) + size.Z * 0.5
+	local focus = bounds.Position + Vector3.new(0, size.Y * VIEWPORT_HEIGHT_BIAS, 0)
+
+	camera.FieldOfView = VIEWPORT_FOV
+	camera.CFrame = CFrame.lookAt(focus + Vector3.new(0, 0, distance), focus)
+end
+
+function ResultController:clearMVPModel()
+	if self.mvpStep then
+		self.mvpStep:Disconnect()
+		self.mvpStep = nil
+	end
+
+	if self.mvpModel then
+		self.mvpModel:Destroy()
+		self.mvpModel = nil
+	end
+end
+
+--[=[
+	Escreve o nome do MVP e monta o retrato dele. Devolve `true` quando o
+	ViewportFrame tem alguem para mostrar — sem personagem (MVP saiu no fim da
+	partida, ou esta respawnando) o quadro nao entra na revelacao, em vez de
+	aparecer vazio.
+]=]
+function ResultController:populateMVP(panel : Instance, info) : boolean
+	local mvp = info.mvp
+
+	local label = panel:FindFirstChild(MVP_TEXT_NAME)
+	if label and label:IsA("TextLabel") then
+		label.Text = if mvp and mvp.name then string.format(MVP_TEXT, mvp.name) else MVP_EMPTY_TEXT
+	end
+
+	self:clearMVPModel()
+
+	local viewport = panel:FindFirstChild(VIEWPORT_NAME)
+	if not viewport or not viewport:IsA("ViewportFrame") then return false end
+
+	self.mvpViewport = viewport
+
+	local world = viewport:FindFirstChildOfClass("WorldModel")
+	if not world then
+		world = Instance.new("WorldModel")
+		world.Name = WORLD_MODEL_NAME
+		world.Parent = viewport
+	end
+
+	local camera = viewport:FindFirstChildOfClass("Camera")
+	if not camera then
+		camera = Instance.new("Camera")
+		camera.Parent = viewport
+	end
+
+	viewport.CurrentCamera = camera
+	self.mvpCamera = camera
+
+	local character = self:getMVPCharacter(mvp)
+	if not character then return false end
+
+	local animationId = self:getIdleAnimationId(character)
+
+	local clone = self:cloneCharacter(character)
+	if not clone then return false end
+
+	clone.Name = MVP_MODEL_NAME
+	self:sanitizeMVPModel(clone)
+
+	-- Identidade encara -Z, entao 180 graus poe o personagem de frente para a
+	-- camera; o VIEWPORT_YAW e so o tempero do angulo.
+	clone:PivotTo(CFrame.Angles(0, math.rad(180 + VIEWPORT_YAW), 0))
+	clone.Parent = world
+
+	self.mvpModel = clone
+
+	local humanoid = clone:FindFirstChildOfClass("Humanoid")
+	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+
+	if animationId and animator then
+		local animation = Instance.new("Animation")
+		animation.AnimationId = animationId
+		animation.Parent = animator
+
+		local ok, track = pcall(function()
+			return animator:LoadAnimation(animation)
+		end)
+
+		if ok and track then
+			track.Looped = true
+			track:Play(0)
+
+			-- Animator fora do Workspace nao anda sozinho: quem o avanca e o
+			-- `StepAnimations`. O passo zero ja aplica a primeira pose do idle, entao
+			-- mesmo sem o loop o retrato fica numa pose de pe, e nao na pose congelada
+			-- do instante em que o round acabou.
+			pcall(function()
+				animator:StepAnimations(0)
+			end)
+
+			self.mvpStep = RunService.RenderStepped:Connect(function(delta)
+				if not clone.Parent then return end
+				animator:StepAnimations(delta)
+			end)
+		end
+	end
+
+	self:frameMVPCamera()
+
+	return true
+end
+
 --[[ botoes ]]
 
 function ResultController:findButton(name : string)
@@ -504,7 +775,7 @@ end
 	  2. BackgroundFrame  1 -> BACKDROP_TRANSPARENCY
 	  3. PANEL_DELAY de espera
 	  4. MainScreen       1 -> valor autoral
-	  5. RewardTitle entra em fade
+	  5. RewardTitle, MVPText e o ViewportFrame do MVP entram em fade juntos
 	  6. RewardsContainer liga e cada label desliza de dentro do wrapper, um a cada
 	     REWARD_STAGGER
 	  7. ExpContainer e ExpAmount ligam e a barra enche do XP de antes ate o de agora
@@ -547,6 +818,8 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 	local panelTarget = panelValues and { instance = panel, values = panelValues } or nil
 
 	local title = panel and panel:FindFirstChild(TITLE_NAME)
+	local mvpText = panel and panel:FindFirstChild(MVP_TEXT_NAME)
+	local viewport = panel and panel:FindFirstChild(VIEWPORT_NAME)
 	local rewards = panel and panel:FindFirstChild(REWARDS_NAME)
 	local exp = panel and panel:FindFirstChild(EXP_NAME)
 	local expText = panel and panel:FindFirstChild(EXP_TEXT_NAME)
@@ -566,6 +839,17 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 	end
 
 	local titleGroup = self:prepareGroup(title)
+	local mvpTextGroup = self:prepareGroup(mvpText)
+
+	-- O retrato e montado antes de a GUI ligar, para entrar junto com o fade e nao
+	-- pipocar depois. Sem MVP para mostrar, o quadro so fica fora da revelacao.
+	local viewportGroup = nil
+	if panel and self:populateMVP(panel, info) then
+		viewportGroup = self:prepareGroup(viewport)
+	elseif viewport and viewport:IsA("GuiObject") then
+		viewport.Visible = false
+	end
+
 	local expGroup = self:prepareGroup(exp)
 	local expTextGroup = self:prepareGroup(expText)
 	local playAgainGroup = self:prepareGroup(playAgain)
@@ -602,6 +886,12 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 
 		task.wait(ELEMENT_STAGGER)
 		self:revealGroup(titleGroup)
+		self:revealGroup(mvpTextGroup)
+		self:revealGroup(viewportGroup)
+
+		-- Agora a GUI ja renderizou: o AbsoluteSize do quadro vale, e o enquadramento
+		-- pode ser refeito com o aspecto de verdade.
+		self:frameMVPCamera()
 
 		task.wait(ELEMENT_TIME + REWARD_DELAY)
 
@@ -641,6 +931,7 @@ function ResultController:Show(info)
 
 	info = info or {}
 	self.leaving = false
+	self.showing = true
 
 	-- Nada de fantasma de posicionamento nem anel de selecao por cima da tela.
 	local placement = self.Controllers.UnitPlacementController
@@ -666,6 +957,7 @@ function ResultController:Hide()
 	end
 
 	self:cancelTweens()
+	self:clearMVPModel()
 
 	for _, connection in self.connections do
 		connection:Disconnect()
@@ -673,6 +965,7 @@ function ResultController:Hide()
 	table.clear(self.connections)
 
 	self.leaving = false
+	self.showing = false
 	self.playAgainState = nil
 
 	local screen = PlayerGui:FindFirstChild(SCREEN_NAME)
@@ -683,7 +976,33 @@ function ResultController:Hide()
 	self:setInterfaceEnabled(true)
 end
 
+--[=[
+	Toda copia nova da ScreenGui nasce desligada.
+
+	A ResultScreen tem `ResetOnSpawn`, entao a engine devolve a cada respawn uma
+	copia com o estado autorado -- e basta alguem deixar o `MainScreen.Visible`
+	ligado no Studio (para olhar a arte, por exemplo) para o painel aparecer por
+	cima da partida ate o fim do round. Desligar a copia na entrada tira a tela
+	dessa dependencia: quem a mostra e o `Show`, e mais ninguem.
+]=]
+function ResultController:watchScreen()
+	local function hide(child : Instance)
+		if self.showing then return end
+		if child:IsA("ScreenGui") and child.Name == SCREEN_NAME then
+			child.Enabled = false
+		end
+	end
+
+	PlayerGui.ChildAdded:Connect(hide)
+
+	for _, child in PlayerGui:GetChildren() do
+		hide(child)
+	end
+end
+
 function ResultController:construct()
+	self:watchScreen()
+
 	Framework:Listen("RoundReward", function(info)
 		self:Show(info)
 	end)

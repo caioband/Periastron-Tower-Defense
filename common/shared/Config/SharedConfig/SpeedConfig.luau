@@ -2,13 +2,18 @@
 	As velocidades do botao `Interface.Speed` da partida.
 
 	Uma escala por degrau, e a arte do botao que anuncia **a velocidade em que a
-	partida esta agora** -- nao a proxima. Clicar avança um degrau e volta ao 1x
-	depois do ultimo.
+	partida esta agora**. Clicar no botao abre um clone por degrau restante, cada um
+	com a arte do seu; escolher um pede aquele degrau (ver `SpeedController`).
 
 	Quem manda no valor em uso e o `SpeedService` (servidor); o `SpeedController`
 	so desenha o degrau que o servidor mandou. As duas pontas leem esta tabela,
 	entao velocidade nova e uma linha aqui -- o cliente ganha a arte e o servidor
 	ganha a escala pelo mesmo `Steps`.
+
+	`Gamepass` e opcional e vale a **chave** de `GamepassConfig.PASSES`, nao o id:
+	degrau com pass aparece trancado para quem nao a tem, e o clique vira o prompt
+	de compra em vez do pedido de velocidade. O id fica so no `GamepassConfig`, que
+	e onde ele ja morava.
 ]]
 
 local SpeedConfig = {}
@@ -17,7 +22,7 @@ local SpeedConfig = {}
 SpeedConfig.Steps = {
 	{ Scale = 1, Image = "rbxassetid://132899761008925" },
 	{ Scale = 1.5, Image = "rbxassetid://106089741438137" },
-	{ Scale = 2, Image = "rbxassetid://122729764545333" },
+	{ Scale = 2, Image = "rbxassetid://122729764545333", Gamepass = "Speed" },
 }
 
 SpeedConfig.DEFAULT_INDEX = 1
@@ -38,22 +43,20 @@ function SpeedConfig.GetImage(index : number?) : string
 end
 
 --[=[
+	A chave da gamepass que o degrau exige, ou nil quando ele e de todo mundo.
+]=]
+function SpeedConfig.GetGamepass(index : number?) : string?
+	local step = SpeedConfig.Steps[index or 0]
+
+	return step and step.Gamepass or nil
+end
+
+--[=[
 	Se o indice e um degrau de verdade. O servidor pergunta isto antes de aceitar
 	o que o cliente pediu: o pedido vem pela rede, entao pode vir qualquer coisa.
 ]=]
 function SpeedConfig.IsValid(index : any) : boolean
 	return typeof(index) == "number" and SpeedConfig.Steps[index] ~= nil
-end
-
---- O proximo degrau do ciclo, dando a volta no fim.
-function SpeedConfig.Next(index : number?) : number
-	if not SpeedConfig.IsValid(index) then
-		return SpeedConfig.DEFAULT_INDEX
-	end
-
-	local current : number = index :: number
-
-	return (current % #SpeedConfig.Steps) + 1
 end
 
 return SpeedConfig

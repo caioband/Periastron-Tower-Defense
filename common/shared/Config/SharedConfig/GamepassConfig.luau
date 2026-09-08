@@ -50,6 +50,11 @@ local module = {}
 	| `LuckMultiplier` | multiplica o peso das raridades boas no sorteio da caixa |
 	| `ChatTag` | o rotulo que aparece antes do nome no chat |
 
+	A `Speed` nao tem campo nenhum de beneficio: o que ela libera e um degrau do
+	`SpeedConfig`, e quem aponta para ela e o proprio degrau (`Gamepass = "Speed"`).
+	Uma pass que so destranca conteudo e assim -- id e nome aqui, a regra onde o
+	conteudo mora.
+
 	Campo ausente e "esta pass nao mexe nisso" -- as funcoes abaixo tratam a falta
 	como neutro (1 para multiplicador, 0 para bonus). Uma pass nova que so mexa em
 	uma coisa e uma linha com um campo.
@@ -77,6 +82,11 @@ module.PASSES = {
 		Id = 1970648287,
 		DisplayName = "1.5x Shards",
 		ShardMultiplier = 1.5,
+	},
+
+	Speed = {
+		Id = 1970667486,
+		DisplayName = "2x Speed",
 	},
 
 	VIP = {
