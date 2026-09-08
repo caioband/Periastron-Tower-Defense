@@ -26,6 +26,7 @@ local Framework = Me.new()
 local CrateService = {
 	Services = {
 		DataService = {},
+		IndexService = {},
 	},
 
 	Signals = {
@@ -413,6 +414,13 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 			units[result.Unit] = (units[result.Unit] or 0) + 1
 			return units
 		end)
+
+		-- Obter e o gatilho do Index: a unit entra no catalogo na primeira copia, e
+		-- fica la mesmo que ele venda todas depois.
+		local IndexService = self.Services.IndexService
+		if IndexService then
+			IndexService:UnlockUnit(Player, result.Unit)
+		end
 	end
 
 	self:_broadcastUnboxing(Player, result)

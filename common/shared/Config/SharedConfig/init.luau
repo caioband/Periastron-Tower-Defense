@@ -15,6 +15,7 @@ type Shared = {
 	Mob : typeof(require(script.Mob)),
 	TargetPriority : typeof(require(script.TargetPriority)),
 	LevelConfig : typeof(require(script.LevelConfig)),
+	IndexConfig : typeof(require(script.IndexConfig)),
 	Cmdr : typeof(require(script.Cmdr)),
 	SellValue : number,
 	SellRefundRatio : number,

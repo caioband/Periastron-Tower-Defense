@@ -6,6 +6,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SharedConfig = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("SharedConfig")
 local CrateConfig = require(SharedConfig:WaitForChild("CrateConfig"))
 local DeckConfig = require(SharedConfig:WaitForChild("DeckConfig"))
+local IndexConfig = require(SharedConfig:WaitForChild("IndexConfig"))
 
 return {
 	--[[
@@ -50,7 +51,14 @@ return {
 		]]
 		Gamepasses = {},
 
-		Index = {},
+		--[[
+			O que o jogador ja descobriu, por categoria (`{ [chave] = true }`).
+
+			Estrutura e regras em `SharedConfig.IndexConfig`; quem escreve e o
+			`IndexService`. Categoria nova la entra nos perfis antigos pelo reconcile,
+			entao nao precisa migracao -- foi por isso que a chave ja nasceu aqui.
+		]]
+		Index = IndexConfig.createEmpty(),
 		--[[
 			O que o jogador novo ja tem. So Common e Rare: antes ele comecava com
 			duas Rocket e duas Subspace Tripminer, ou seja, com o topo da tabela na

@@ -24,6 +24,7 @@ local Framework = Me.new()
 local SummoningService = {
 	Services = {
 		DataService = {},
+		IndexService = {},
 	}
 }
 
@@ -56,6 +57,11 @@ function SummoningService:summonUnit(Player : Player, bannerName : string)
 			units[rolledUnit.Name] = (units[rolledUnit.Name] or 0) + 1
 			return units
 		end)
+
+		-- Mesmo gatilho da caixa: obter a unit e o que a descobre no Index.
+		if self.Services.IndexService then
+			self.Services.IndexService:UnlockUnit(Player, rolledUnit.Name)
+		end
 
 		Framework:Fire("SummonResult", Player, {
 			Success = true,

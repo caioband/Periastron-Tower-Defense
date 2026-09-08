@@ -14,6 +14,12 @@
 	key -- which is not. `Image` is what the map template in `ChooseMaps` and the
 	portal billboard show.
 
+	`Music` e o nome da faixa em `SoundService.SharedSounds.Musics`, e so precisa
+	existir quando ela **nao** se chama igual a chave. O `MapService` manda este
+	nome para o `MusicController`, que procura o Sound por nome exato -- e era ai
+	que o `SnowyCastle` ficava mudo: a faixa dele se chama "Snowy Castle", com
+	espaco. Sem o campo, vale a chave.
+
 	`WinsRequired` e quantas vitorias o jogador precisa ter para escolher o mapa, e
 	ele faz **duas** coisas: tranca o mapa e ordena a lista. Nao ha campo de ordem
 	separado de proposito -- a lista e crescente por exigencia, e um campo a parte
@@ -54,6 +60,8 @@ module.MAPS = {
 
 	["SnowyCastle"] = {
 		DisplayName = "Snowy Castle",
+		-- A faixa no Package tem espaco no nome; a chave e a pasta do mapa, nao.
+		Music = "Snowy Castle",
 		WinsRequired = 4,
 		Image = "rbxassetid://82438762834917",
 	},
@@ -172,6 +180,25 @@ end
 	O desempate existe so para a ordem ser **estavel** -- duas telas montadas a partir
 	do mesmo config listam igual, e a lista nao muda de uma abertura para a outra.
 ]=]
+--[=[
+	A faixa do mapa em `SoundService.SharedSounds.Musics`.
+
+	Cai na propria chave quando o mapa nao declara `Music` -- que e o caso da
+	maioria, onde os dois nomes ja batem. Mapa desconhecido devolve nil, e o
+	`MusicController` nao tem o que tocar.
+]=]
+function module.getMusic(mapName : string?) : string?
+	local resolved = module.resolveMap(mapName)
+	if not resolved then
+		return nil
+	end
+
+	local entry = module.MAPS[resolved]
+	local track = entry and entry.Music
+
+	return typeof(track) == "string" and track or resolved
+end
+
 function module.getOrderedMaps() : { string }
 	local ordered = {}
 	for name in module.MAPS do

@@ -95,4 +95,55 @@ function CardConfig.GetIcon(unitName : string?) : string?
 	return CardConfig.Icons[unitName]
 end
 
+--[[
+	A arte da unidade no index, nos dois estados.
+
+	É a terceira arte da mesma pergunta que as outras duas deste módulo ("como esta
+	unidade aparece na tela?"), e a única que vem em par: `Unlocked` é a unidade
+	como ela é, `Locked` é a silhueta de quem ainda não a descobriu. Quem decide
+	qual das duas vale é o `Index` do perfil (`SharedConfig.IndexConfig`) — a arte
+	não sabe de nada, ela só tem as duas caras.
+
+	Quem lê hoje é o carretel do unboxing, que mostra o elenco do pool enquanto gira
+	e passa preta a unidade que o jogador ainda não viu. Uma tela de index propriamente
+	dita lê exatamente daqui também.
+
+	A chave é o nome de `UnitStats`, como nas outras tabelas — o par do **Rocketeer**
+	é da unidade `Rocket`, o do **Gladiator** é da `Sword`.
+
+	Unidade sem entrada aqui não recebe imagem nenhuma, e a carta do carretel fica
+	só com a moldura na cor da raridade. Hoje é o caso da `Azure`, que também não sai
+	de caixa (`ServerScriptService.Config.Crate.EXCLUDED_UNITS`) — quando ela ganhar
+	uma porta de entrada, é uma linha aqui.
+]]
+CardConfig.IndexImages = {
+	Archer = { Locked = "rbxassetid://121305756386879", Unlocked = "rbxassetid://126669235258665" },
+	Sword = { Locked = "rbxassetid://98510105775698", Unlocked = "rbxassetid://125051466447818" },
+	["Subspace Tripminer"] = { Locked = "rbxassetid://98826991396331", Unlocked = "rbxassetid://112061750256135" },
+	Slasher = { Locked = "rbxassetid://85390408287558", Unlocked = "rbxassetid://117122566419692" },
+	Slingshot = { Locked = "rbxassetid://115704584760654", Unlocked = "rbxassetid://92341340394555" },
+	Rocket = { Locked = "rbxassetid://115737289351232", Unlocked = "rbxassetid://138706217718590" },
+	Berserker = { Locked = "rbxassetid://113406675089719", Unlocked = "rbxassetid://136437855682464" },
+	Entrepreneur = { Locked = "rbxassetid://114643462066100", Unlocked = "rbxassetid://96216096014823" },
+}
+
+--[=[
+	A arte de index da unidade no estado pedido, ou `nil` quando ela nao tem par.
+
+	`discovered` e o que o `Index` do perfil responde: verdadeiro mostra a unidade,
+	falso mostra a silhueta.
+]=]
+function CardConfig.GetIndexImage(unitName : string?, discovered : boolean?) : string?
+	if not unitName then
+		return nil
+	end
+
+	local pair = CardConfig.IndexImages[unitName]
+	if not pair then
+		return nil
+	end
+
+	return if discovered then pair.Unlocked else pair.Locked
+end
+
 return CardConfig

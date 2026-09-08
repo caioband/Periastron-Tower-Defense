@@ -15,8 +15,10 @@ local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
 local Signal = require(Packages.Signal)
 
+local CardConfig = SharedConfig.CardConfig
 local CrateConfig = SharedConfig.CrateConfig
 local RarityConfig = SharedConfig.RarityConfig
+local IndexConfig = SharedConfig.IndexConfig
 
 local RANDOM = Random.new()
 
@@ -138,8 +140,15 @@ local IDLE_ANIMATION_NAME = "Idle"
 -- How long the revealed unit stays up before the whole session is cleaned up.
 local RESULT_HOLD = 4
 
+-- A unit de cada carta do carretel: uma imagem por cima da arte da carta, na
+-- versao liberada ou na silhueta, conforme o Index do jogador (`CardConfig`).
+local ENTRY_IMAGE_NAME = "UnitImage"
+
 local UnboxingController = {
-	Controllers = {},
+	Controllers = {
+		-- O Index do jogador (quais units ele ja descobriu) mora no perfil.
+		DataController = {},
+	},
 
 	--[[
 		Toda abertura do servidor toca em todas as telas, então os sinais são sobre a
@@ -756,16 +765,99 @@ function UnboxingController:_attachBillboard(crate : Model, sessionMaid) : Attac
 	return attachment
 end
 
+--[[ UNITS NO CARRETEL ]]
+
+--[=[
+	O que o jogador ja descobriu em `Index.Units`, direto da replica.
+
+	Perfil que ainda nao chegou vale como "nada descoberto" -- o mesmo acordo do
+	`IndexConfig`. Na pratica isso nao acontece na propria caixa (para abrir uma o
+	perfil ja carregou), mas o carretel de quem esta so assistindo passa por aqui
+	tambem.
+]=]
+function UnboxingController:_discoveredUnits() : { [string]: boolean }
+	local dataController = self.Controllers.DataController
+	if not dataController or not dataController.GetReplica then return {} end
+
+	local ok, replica = pcall(function()
+		return dataController:GetReplica()
+	end)
+
+	if not ok or not replica then return {} end
+
+	return IndexConfig.entriesOf(replica.Data, "Units")
+end
+
+--[=[
+	A unit da carta, por cima da arte dela.
+
+	Duas artes por unit no `CardConfig`: a liberada e a silhueta. Qual entra e o
+	Index do jogador que diz -- e como o par vem pronto do config, "trancada" aqui
+	nao passa de escolher o outro id.
+
+	Unit sem par no config nao ganha imagem: a carta fica so com a moldura na cor da
+	raridade, que e exatamente como o carretel era antes de existir arte de unit.
+]=]
+function UnboxingController:_createEntryImage(entry : GuiObject, unitName : string, discovered : boolean)
+	local image = CardConfig.GetIndexImage(unitName, discovered)
+	if not image then
+		return nil
+	end
+
+	local label = Instance.new("ImageLabel")
+	label.Name = ENTRY_IMAGE_NAME
+	label.AnchorPoint = Vector2.new(0.5, 0.5)
+	label.Position = UDim2.fromScale(0.5, 0.5)
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Image = image
+
+	-- A carta nao e quadrada e a arte da unit e: `Fit` deixa a proporcao dela em
+	-- paz, encaixando pelo lado que aperta primeiro em vez de esticar.
+	label.ScaleType = Enum.ScaleType.Fit
+
+	-- Pixel art: sem o `Pixelated` o filtro borra a arte ao escalar, e a carta do
+	-- carretel e pequena -- e o resto da UI do jogo ja usa este modo.
+	label.ResampleMode = Enum.ResamplerMode.Pixelated
+	label.ZIndex = entry.ZIndex + 1
+	label.Parent = entry
+
+	return label
+end
+
 --[=[
 	A face is what one reel entry shows: either a unit rarity, or the crate upgrading.
 
 	`Upgrade` carries the crate it becomes -- the same thing the server rolls -- so an
 	entry can be read back off the reel.
+
+	`Unit` e quem aparece em 3D na carta. No filler e uma unit qualquer da raridade
+	sorteada; na carta premiada e exatamente a que o servidor deu. Face de upgrade
+	nao tem unit -- ali a carta e a caixa evoluindo, e nao uma unit.
 ]=]
 export type ReelFace = {
 	Rarity : string?,
 	Upgrade : string?,
+	Unit : string?,
 }
+
+--[=[
+	Uma unit qualquer da raridade, para a carta de filler mostrar.
+
+	As units de cada tier saem do proprio `UnitStats` (`getUnitsOfRarity`), que e o
+	que o servidor tambem usa para sortear o premio -- entao o carretel mostra o
+	mesmo elenco de onde o resultado sai. Raridade sem unit nenhuma devolve nil, e a
+	carta fica so com a arte e a cor do tier.
+]=]
+local function rollFillerUnit(rarity : string) : string?
+	local units = RarityConfig.getUnitsOfRarity(rarity)
+
+	if not units or #units == 0 then
+		return nil
+	end
+
+	return units[RANDOM:NextInteger(1, #units)]
+end
 
 --[=[
 	Picks a face to show as filler, weighted by RarityConfig.ReelWeight and, for the
@@ -800,11 +892,12 @@ local function rollFillerFace(crateRarity : string) : ReelFace
 	for _, rarity in RarityConfig.ORDER do
 		cumulative += RarityConfig.TIERS[rarity].ReelWeight or 0
 		if roll < cumulative then
-			return { Rarity = rarity }
+			return { Rarity = rarity, Unit = rollFillerUnit(rarity) }
 		end
 	end
 
-	return { Rarity = RarityConfig.ORDER[1] }
+	local fallback = RarityConfig.ORDER[1]
+	return { Rarity = fallback, Unit = rollFillerUnit(fallback) }
 end
 
 --[=[
@@ -915,7 +1008,14 @@ function UnboxingController:_buildReel(session, crateRarity : string, winnerFace
 
 		entry:SetAttribute("Rarity", face.Rarity)
 		entry:SetAttribute("Upgrade", face.Upgrade)
+		entry:SetAttribute("Unit", face.Unit)
 		entry.Parent = scrollingFrame
+
+		-- So na tela de quem abriu: nas outras o billboard fica desligado o giro
+		-- inteiro, e o Roblox nao desenha nada dele.
+		if face.Unit and session.IsOwner then
+			self:_createEntryImage(entry, face.Unit, session.Discovered[face.Unit] == true)
+		end
 
 		entries[index] = entry
 	end
@@ -1001,7 +1101,20 @@ function UnboxingController:_openSession(owner : Player)
 		Closed = false,
 		Owner = owner,
 		IsOwner = owner == Players.LocalPlayer,
+
+		--[[
+			O Index do jogador local, lido uma vez: e ele que decide quais units
+			aparecem em silhueta. Uma leitura por sessao, e nao por carta -- a caixa
+			aberta agora nao muda o que ele ja descobriu no meio do giro (a unit
+			premiada e escrita no perfil pelo servidor, e o carretel dela ja esta
+			montado).
+		]]
+		Discovered = {},
 	}
+
+	if session.IsOwner then
+		session.Discovered = self:_discoveredUnits()
+	end
 
 	table.insert(self.Sessions, session)
 
@@ -1205,7 +1318,7 @@ function UnboxingController:Open(result : UnboxingResult, owner : Player?) : boo
 		stageCrate = resolvedUpgrade
 	end
 
-	table.insert(stages, { Crate = stageCrate, Face = { Rarity = winnerRarity } })
+	table.insert(stages, { Crate = stageCrate, Face = { Rarity = winnerRarity, Unit = result.Unit } })
 
 	--[[
 		The reel is hidden while the crate grows in: the attachment offset scales with

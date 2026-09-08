@@ -40,7 +40,9 @@ local WeatherConfig = SharedConfig.WeatherConfig
 
 local ExampleService = {
 	Services = {
-		LightingService = {}
+		LightingService = {},
+		DataService = {},
+		IndexService = {},
 	}
 }
 
@@ -322,8 +324,48 @@ end
 function ExampleService:construct()
 	Framework:Listen("RequestMapMusic", function(player : Player)
 	--	if not self.CurrentMapName then return end
-		Framework:Fire("PlayMapMusic", player, self.CurrentMapName)
+		-- O nome da faixa, e nao o do mapa: quem procura o Sound do outro lado
+		-- procura por nome exato, e nem toda faixa se chama como a pasta do mapa
+		-- (ver `MapConfig.getMusic`).
+		Framework:Fire("PlayMapMusic", player, MapConfig.getMusic(self.CurrentMapName))
 	end)
+
+	self:watchIndex()
+end
+
+--[=[
+	O mapa deste servidor entra no Index de quem esta jogando.
+
+	"Jogou pela primeira vez" e aqui: o servidor da partida e reservado e ja nasce
+	sabendo o mapa (`resolveStartingMap`), entao estar dentro dele **e** jogar --
+	nao ha o que esperar de round, e quem sai na primeira wave tambem jogou.
+
+	Preso no `PlayerDataLoaded` e nao no `PlayerAdded` porque o Index e escrita de
+	perfil: sem perfil aberto nao ha onde gravar. Os dois lados sao cobertos --
+	quem entra depois pelo sinal, quem ja estava dentro pela varredura.
+]=]
+function ExampleService:watchIndex()
+	local dataService = self.Services.DataService
+	local indexService = self.Services.IndexService
+
+	if not dataService or not indexService then
+		warn("[MapService]: sem DataService/IndexService; o mapa nao entra no Index.")
+		return
+	end
+
+	local function record(player : Player)
+		if not self.CurrentMapName then return end
+
+		indexService:UnlockMap(player, self.CurrentMapName)
+	end
+
+	dataService.Signals.PlayerDataLoaded:Connect(record)
+
+	for _, player in Players:GetPlayers() do
+		if dataService.Profiles and dataService.Profiles[player] then
+			record(player)
+		end
+	end
 end
 
 function ExampleService:start()
