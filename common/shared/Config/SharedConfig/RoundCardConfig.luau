@@ -1029,14 +1029,25 @@ end
 	Sorteia `count` cartas **sem repetir**, com peso.
 
 	`pool` é a lista de cartas candidatas (o service passa só as que têm efeito
-	registrado). O sorteio é sem reposição: a carta que sai é tirada da urna e os
-	pesos das outras continuam valendo entre si, então uma carta rara não fica
-	mais provável só porque a comum já saiu.
+	registrado, e no lobby só as que a loja pode vender). O sorteio é sem reposição:
+	a carta que sai é tirada da urna e os pesos das outras continuam valendo entre
+	si, então uma carta rara não fica mais provável só porque a comum já saiu.
 
 	Pool menor que `count` devolve a pool inteira embaralhada — três vagas com
 	duas cartas no catálogo é melhor mostrar duas do que repetir uma.
+
+	`rng` é um `Random` próprio, e é o que torna um sorteio **reproduzível**: a
+	vitrine da loja de cartas do lobby é a mesma para todo mundo durante quatro
+	horas, e ela é recalculada do zero em cada servidor a partir da hora (ver
+	`RoundCardShopConfig.stockFor`). Sem semente própria isso dependeria do
+	`math.random` global, que cada servidor gasta de um jeito diferente — dois
+	lobbies abertos ao mesmo tempo venderiam cartas diferentes, e um restart no meio
+	do bloco trocaria a vitrine antes da hora.
+
+	Sem `rng`, o sorteio é o de sempre (`math.random`): é o da oferta de round, que
+	é por jogador e por wave e não pode ser previsível.
 ]=]
-function RoundCardConfig.Draw(count : number, pool : { any }?) : { any }
+function RoundCardConfig.Draw(count : number, pool : { any }?, rng : Random?) : { any }
 	local candidates = {}
 	for _, card in (pool or RoundCardConfig.Cards) do
 		table.insert(candidates, card)
@@ -1054,7 +1065,7 @@ function RoundCardConfig.Draw(count : number, pool : { any }?) : { any }
 			break
 		end
 
-		local roll = math.random() * total
+		local roll = (rng and rng:NextNumber() or math.random()) * total
 		local cursor = 0
 
 		for index, card in candidates do

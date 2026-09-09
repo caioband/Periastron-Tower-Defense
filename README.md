@@ -1253,6 +1253,31 @@ De X em X waves a loja da beirada oferece três cartas sorteadas. O catálogo in
 mora em `RoundCardConfig.Cards`, e cada entrada diz três coisas que o resto do
 sistema lê: **como ela é usada**, **o que ela faz** e **qual é a arte dela**.
 
+**O sorteio não varre o catálogo, varre o que o jogador destravou.** As cartas são
+compradas na loja de cartas do lobby (ver [A loja de cartas do lobby](#a-loja-de-cartas-do-lobby)),
+e o que ele destravou mora em `Data.RoundCards`. Antes o `CardShopService._pool`
+oferecia as vinte e tantas cartas a todo mundo na primeira partida — e a loja do
+lobby não teria o que vender. Hoje são dois filtros em fila:
+
+| Filtro | Onde | Corta |
+| --- | --- | --- |
+| efeito registrado | `CardShopService:_pool` | carta cujo `Effect` não existe em `Effects` — para ninguém |
+| carta destravada | `CardShopService:_poolFor` | carta que **este** jogador não comprou no lobby |
+
+Jogador sem nenhuma carta destravada não recebe oferta, e a dele é apagada em vez de
+deixada como estava: sem isso ele ficaria com a oferta da wave de loja anterior na
+tela, e o `Token` novo faria cada clique nela ser recusado como "oferta vencida".
+Perfil que ainda não carregou conta como vazio — liberar tudo enquanto o dado não
+chegou daria uma oferta que o jogador não pagou.
+
+Perfil novo nasce com as três originais destravadas
+(`RoundCardShopConfig.STARTER_CARDS`: Time Stop, Time Acceleration, Weather Report).
+Sem elas a oferta de round simplesmente nunca abriria para quem acabou de chegar, e
+ele não teria como ligar isso a uma loja do lobby que ainda não visitou — é o mesmo
+motivo pelo qual o `Units` do template já entrega Slasher, Sword e Slingshot.
+Esvaziar a lista fecha a oferta para quem nunca comprou nada: é uma linha, e é uma
+decisão de design.
+
 ### O tipo de uso
 
 `Use` diz o que a carta pede entre o clique na hotbar e o efeito:
@@ -1396,6 +1421,285 @@ queimadura) são multiplicadores globais que o `MobService` já lê (`ApplySlow`
 unidade `Ice` nem `Fire`. As duas cartas passam a valer no dia em que existir uma,
 sem passar por aqui.
 
+## A loja de cartas do lobby
+
+`StarterGui.ShopUI.RCSS`, do `RoundCardShopController` (Lobby) e do
+`RoundCardShopService` (Lobby). Ela vende **acesso** às cartas de round: a compra
+escreve o `Id` em `Data.RoundCards` e é essa tabela que a oferta de round sorteia
+lá dentro. Comprar é destravar — usar continua sendo comprar de novo, na partida,
+com o caixa da partida.
+
+Ela abre por proximidade, igual à de caixas, pelos marcadores
+`ShopCardPartReference` e `ShopCardPartTeleport` (hoje dentro de
+`Map.Deco.Houses.CardShop`, achados em profundidade sob `Workspace.Map`). O raio é o
+mesmo balcão de 5 studs, e o pouso está a 18,8 studs dele — portanto **fora** do
+raio, exatamente como na loja de caixas: `TeleportToShop` abre o painel na mão e
+marca a entrada, para que andar embora feche do mesmo jeito.
+
+Quem chama o teleporte é o botão `CardShop` da HUD (`HUD.HUDFrame.Wrapper.CardShop`),
+irmão do `Shop` que faz o mesmo pela loja de caixas. O clique é a única coisa que o
+`RoundCardShopController` liga nele: **o crescer e o afundar do botão são do
+`HUDButtonController`**, que liga todo `GuiButton` debaixo do `HUDFrame` — botão novo
+na HUD entra na animação dos outros sem uma linha de código.
+
+### A vitrine é de cada jogador, e sai da hora
+
+Três cartas por bloco de quatro horas, **sorteadas por jogador**: dois amigos no mesmo
+lobby veem ofertas diferentes. E **nada disso é guardado** — o bloco vem de `os.time()`
+(`rotationIndex`) e as três cartas são recalculadas dele mais o `UserId`, com um
+`Random` semeado (`stockFor`). Foi para isso que o `RoundCardConfig.Draw` ganhou um
+terceiro parâmetro `rng`: sem semente própria o sorteio dependeria do `math.random`
+global, que cada servidor gasta de um jeito diferente, e a mesma pessoa veria cartas
+diferentes em cada lobby.
+
+O que é de todo mundo é o **relógio**. Os blocos caem em 00:00, 04:00, 08:00… UTC, e é
+por isso que o `ResetText` continua querendo dizer alguma coisa: as vitrines são
+pessoais, mas todas viram no mesmo instante. A contagem é escrita de segundo em segundo
+contra o `ResetsAt` que o **servidor** mandou — só ele concorda com o bloco em que a
+vitrine foi sorteada.
+
+**Isso só funciona porque a pool não muda.** O sorteio varre o catálogo inteiro,
+inclusive as cartas que o jogador já destravou — são elas que aparecem com o véu `SOLD`.
+Uma pool que encolhesse a cada compra faria a vitrine se remontar sozinha; é exatamente
+o que acontecia com o reroll, e é por isso que **ele** é gravado e ela não.
+
+As duas parcelas da semente (bloco e jogador) **têm de ter multiplicadores diferentes**
+(`ROTATION_SEED` e `PLAYER_SEED`). Com a mesma constante nas duas, bloco e jogador viram
+intercambiáveis dentro da soma e a vitrine de alguém hoje seria a de outro alguém
+amanhã. Foi um bug de verdade na primeira versão do reroll — ver abaixo.
+
+Consequências que valem lembrar:
+
+- um servidor que sobe no meio do bloco chega na mesma vitrine para cada jogador;
+- não há DataStore nenhum para uma coisa que a hora e o dono já respondem;
+- **mudar a ordem das entradas em `RoundCardConfig.Cards` muda a vitrine de todo
+  mundo.** Não é um problema, é só o que acontece quando o catálogo muda.
+
+O que o servidor guarda por bloco é só `{ Index, ResetsAt }` (`GetBlock`); as cartas
+saem do `GetStockFor`, por jogador.
+
+Quando o bloco vira, o servidor empurra a vitrine nova para quem está no lobby
+(`_watchRotation`, que dorme até o reset em vez de checar a cada segundo). O cliente
+também pede sozinho quando a contagem dele chega a zero, e as duas coisas juntas são
+de propósito: o empurrão cobre quem está com a loja aberta na hora da troca, e o
+pedido cobre a diferença de relógio entre as duas pontas.
+
+### O reroll troca as três cartas daquele jogador
+
+O dado (`RCSS.ImageLabel.RerollDice`) abre o developer product **3712166271**
+("Reroll Card Shop", 14 Robux). Quem compra troca as três cartas na hora.
+
+Como a vitrine já é de cada um, o reroll não precisa inventar nada — ele só muda a
+**origem** das três cartas: em vez de saírem do sorteio do bloco, passam a sair do que
+ficou gravado no perfil, até o bloco virar.
+
+A contagem do `ResetText` **não muda** com o reroll: ela é o relógio da rotação, e é
+exatamente quando a prateleira paga expira e o jogador volta ao sorteio do bloco novo.
+Um reroll compra cartas, não tempo.
+
+**A prateleira sorteada é gravada** em `Data.RoundCardRoll`:
+`{ Index, Rolls, Cards }` — o bloco, quantos rerolls foram comprados nele e os `Id`
+das cartas. O registro velho não precisa ser apagado: ele deixa de valer sozinho
+quando o número do bloco muda.
+
+Gravar foi uma correção, e vale saber de quê. A primeira versão não guardava as
+cartas: ela as recalculava de uma semente feita de (bloco, jogador, nº de rerolls),
+para a prateleira se reconstruir igual em qualquer servidor sem ocupar espaço no
+perfil. Só que o sorteio do reroll varre **só o que falta ao jogador destravar**, e
+essa pool encolhe quando ele compra — inclusive quando compra uma carta da própria
+prateleira rerolada. Recalculando, a vaga vendida se enchia com uma carta nova em vez
+de ficar `SOLD`:
+
+```
+prateleira paga : WindsStaff, NoPainNoGain, Trumpet
+comprou WindsStaff
+recalculada     : RobuxRoyaltyStaff, NoPainNoGain, Trumpet   <- vaga recarregada
+```
+
+Um reroll só dava acesso ao catálogo inteiro, uma compra de cada vez. (A vitrine
+normal não tem esse problema mesmo sendo calculada: ela sorteia do catálogo inteiro, que
+não muda quando o jogador compra.) **Uma prateleira é um resultado, e não uma fórmula** — a fórmula tinha um ingrediente que o próprio
+jogador mexe. Três strings no perfil são mais simples do que qualquer semente, e é por
+isso que o sorteio do reroll (`drawReroll`) usa `math.random` puro: o que ele devolve
+é gravado, então não precisa ser reproduzível, precisa ser imprevisível.
+
+**O reroll evita carta já vendida, em melhor esforço.** Um reroll pago que devolvesse
+três cartas que o jogador já tem seria Robux por nada
+(`RoundCardShopConfig.REROLL_EXCLUDES_UNLOCKED`). O `splitByUnlocked` parte o catálogo
+em duas pools disjuntas — o que falta e o que ele já tem — e o `drawReroll` enche as três
+vagas com a primeira, só completando com a segunda quando faltam menos de três cartas:
+
+| Cartas que ele já tem | Vitrine do reroll |
+| --- | --- |
+| 0 a 21 | 3 cartas, nenhuma `SOLD` |
+| 22 | 3 cartas, 1 `SOLD` |
+| 23 | 3 cartas, 2 `SOLD` |
+| 24 (tudo) | botão desligado; não chega a sortear |
+
+Completar em vez de encurtar é de propósito: três vagas com uma `SOLD` é uma vitrine, e
+duas cartas num painel de três é uma vitrine quebrada. E quando não falta **nada** o
+botão fica desligado — a hora de impedir uma compra inútil é antes do prompt, porque
+depois do recibo a Roblox já cobrou.
+
+O caminho da compra não passa por evento nenhum de "quero rerolar":
+
+1. o cliente clica e chama `MarketplaceService:PromptProductPurchase`;
+2. a Roblox cobra e manda o recibo para o servidor;
+3. o `ProcessReceipt` do `MonetizationService` acha o callback registrado pelo
+   `RoundCardShopService` e chama `Reroll(player)`;
+4. `Reroll` sobe o contador do bloco e manda a prateleira nova pelo `RoundCardStock`.
+
+Um pedido do cliente só poderia abrir o prompt (que ele já abre sozinho) ou creditar
+sem pagamento — e a única prova de que houve pagamento é o recibo. `Reroll` devolve
+`false` quando não deu para escrever no perfil, e aí o receipt volta como
+`NotProcessedYet`: a Roblox tenta de novo mais tarde em vez de dar por entregue uma
+compra que não aconteceu.
+
+No cliente, o redesenho compara `Index` **e** `Rolls`. Um reroll não muda o bloco, e
+comparando só o índice as cartas pagas chegariam sem serem desenhadas.
+
+**Perfil ainda carregando não é "não rerolou".** O cliente pede a vitrine quando a
+`ShopUI` monta, e isso acontece antes de o `StartSessionAsync` voltar. Enquanto o
+`GetStockFor` respondia o sorteio do bloco nessa janela, o reroll parecia não persistir:
+o cliente guardava a resposta errada, o retry dele encerrava (recebeu algo) e a
+prateleira paga só reaparecia no reroll seguinte — embora estivesse gravada no perfil o
+tempo todo. (Hoje o `GetStockFor` também precisa do perfil para a vitrine **normal**,
+já que ela depende do `UserId`, então a guarda vale para os dois caminhos.)
+
+Hoje `GetStockFor` devolve `nil` sem perfil e ninguém responde por adivinhação. Os dois
+lados da corrida estão cobertos: o `RequestRoundCardStock` passa pelo `DataService:Get`
+e responde **quando** o perfil chega, e o `PlayerDataLoaded` empurra a vitrine sozinho
+para cobrir o pedido que se perdeu inteiro (o cliente pode ligar a loja antes de o
+service registrar o `Listen`, e o retry dele tem teto). A loja abre vazia por um
+segundo em vez de abrir com a prateleira errada e ficar nela.
+
+Uma vitrine rerolada pode ter **menos de três cartas**, quando faltavam menos que isso
+para o jogador destravar — a global sempre tem três. O cliente desenha quantas vierem.
+
+### Dois consertos que o primeiro dev product do jogo exigiu
+
+O reroll é o **primeiro** developer product vendido no jogo, e o caminho dele estava
+quebrado em dois pontos que nunca tinham sido exercitados:
+
+- **`DataService:Save` não existia no Lobby.** O `ProcessReceipt` chama
+  `DataService:Save(player)` antes de devolver `PurchaseGranted`, e só a Game tinha o
+  método. Como o reroll é do Lobby, o `ProcessReceipt` erraria ali dentro: nenhuma
+  compra seria creditada, e a Roblox retentaria o recibo para sempre. O método foi
+  transplantado da Game (mesmo formato de `Profiles[Player]`).
+- **`RegisterProduct` dependia da ordem de boot.** Ele escrevia em `self.Callbacks`,
+  que o `construct` do `MonetizationService` criava com `= {}`. Os `start()` dos
+  services são `task.spawn`ados num laço sem ordem garantida, então um service que
+  registrasse um produto antes teria o callback apagado — ou erraria, com a tabela
+  ainda nil. Agora os dois lados usam `or {}`.
+
+Nenhum dos dois dava sintoma antes porque não havia produto para vender.
+
+### `SOLD` é o que este jogador já tem
+
+A vitrine é a mesma para todo mundo, então o que muda de jogador para jogador não é
+quais cartas aparecem, é quais delas ele já destravou: essas ficam com o véu
+`SoldFrame` aceso e o botão `Buy` inativo. O véu acompanha o `RoundCards` da
+**replica**, e não a resposta da compra — a mesma escrita que o servidor acabou de
+fazer já chega pelo perfil, e acender nos dois lugares daria duas fontes para o mesmo
+estado. Comprar com a loja aberta só acende o véu: a fileira não é redesenhada,
+senão as três cartas cairiam de novo na frente de quem acabou de clicar numa delas.
+
+Junto com o véu, **o título e a descrição da carta apagam**. O véu é um escurecido com
+`SOLD` escrito por cima, e o texto da carta atravessava os dois — a descrição encavalava
+no `SOLD` e o painel virava um borrão de letras. Uma carta já destravada não precisa se
+explicar: o que ela é o jogador já sabe, e o que importa ali é que ela não está à venda.
+
+É `Visible`, e não transparência: a revelação da carta (`UIUtil.applyFades`) escreve nas
+transparências dessas mesmas labels, e as duas brigariam pela mesma propriedade.
+`Visible` esconde por fora e deixa a animação rodar por baixo sem saber de nada.
+
+### Preço
+
+De 4 a 8 shards, **escritos carta a carta** em `RoundCardShopConfig.PRICES` — uma
+linha por carta do catálogo, agrupadas pelo que custam. Mexer no preço de uma carta é
+mexer no número dela ali, e mais nada.
+
+Os números de hoje seguem o que a carta custa em caixa dentro da partida (o `Price`
+dela no `RoundCardConfig`, de 150 a 500): o que é caro no round é caro para destravar.
+Isso é de onde a primeira versão da tabela saiu, e não uma regra que o código imponha
+— qualquer número pode ser mudado sozinho. A distribuição atual é um sino: uma carta
+em cada ponta (Zippers em 4, Celestial Staff em 8) e o miolo entre 5 e 7.
+
+`MIN_PRICE`/`MAX_PRICE` não decidem preço nenhum; eles **prendem** o que está escrito.
+Um `12` digitado por engano vira 8 e um `0` vira 4, então a loja nunca chega ao jogador
+fora da escala combinada.
+
+Carta que exista no `RoundCardConfig` e não tenha linha na tabela não quebra a loja:
+`priceOf` estica o custo de partida dela na faixa e devolve um número plausível. É uma
+rede, e não o caminho — carta nova merece uma linha decidida por quem está balanceando.
+
+O número vai para `Card.Buy.TextLabel` pelo mesmo `PRICE_FORMAT` da loja de caixas
+(só o número; o ícone da shard e a cor do contorno já estão autorados no botão,
+porque esta loja cobra numa moeda só).
+
+### As duas lojas dividem a `ShopUI`
+
+`ShopUI.Frame` é a loja de caixas e `ShopUI.RCSS` é a de cartas — irmãs na mesma
+`ScreenGui`. Por isso **nenhuma das duas manda no `Enabled` sozinha**: quem diz qual
+painel está na tela é o `Visible` do wrapper de cada uma, e o `_setShopEnabled` de
+cada controller pergunta ao outro (`IsOpen`) antes de apagar a ScreenGui das duas.
+
+Antes disso o `ShopController` acendia o wrapper dele uma vez no bind e nunca mais
+apagava — o que hoje poria as duas lojas na tela sempre que qualquer uma abrisse.
+Esse era o problema real; a pergunta ao vizinho é a rede de segurança em volta dele.
+
+Pela proximidade as duas não chegam a se cruzar: os balcões estão a **274 studs** um
+do outro e os raios são de 5, e enquanto uma loja está aberta o `Hide` esconde a HUD
+inteira — o botão que levaria ao outro balcão nem fica clicável. A guarda existe para
+quem abre um painel **sem** passar por um balcão, já que `Open` é público.
+
+### O que as duas lojas passaram a compartilhar
+
+A segunda loja não copiou a primeira; o que era comum saiu para `common/shared/Util`:
+
+| Módulo | O que é | Quem usa |
+| --- | --- | --- |
+| `ButtonUtil.bindFeedback` | o peso do botão de comprar (cresce no hover, afunda no aperto) | as duas lojas |
+| `MarkerUtil` | achar um marcador sob `Workspace.<mapa>` em profundidade, com cache e aviso único; ler o pivot e a meia altura dele | as duas lojas |
+| `LightingUtil.GetUIBlur` / `.TweenUIBlur` | o `UIBlur` **único** do Lighting, com a marca do `LightingKeep` | as duas lojas e o `UILibraryController` |
+| `UIUtil.captureFades` / `.applyFades` | ler as transparências autoradas de um clone e levá-las de 1 até lá | a loja de cartas do lobby e a de round (Game) |
+
+O `UIUtil` é o que atravessa as duas places: a carta que cai e se revela na loja do
+lobby é a mesma animação da carta da oferta de round, então a varredura de
+propriedades de transparência é uma só. O controller da Game guarda um embrulho de
+quatro linhas em cima dela, porque só ele precisa das duas curvas (a entrada chega
+desacelerando, a saída sai acelerando).
+
+Cada carta da vitrine é um clone do `CardWrapper` autorado, e é a `Card` **dentro**
+do wrapper que anima: o wrapper é quem ocupa a vaga no `UIListLayout`, então a carta
+se mexe à vontade sem o layout arrastá-la de volta a cada quadro. Os tempos são os do
+`RoundCardConfig.Animation`, os mesmos da oferta de round.
+
+### Eventos
+
+| Evento | Direção | Para quê |
+| --- | --- | --- |
+| `RequestRoundCardStock` | cliente → servidor | pede a vitrine (com reenvio, ver abaixo) |
+| `RoundCardStock` | servidor → cliente | `{ Index, ResetsAt, Cards = { { Id, Price } } }` |
+| `RequestBuyRoundCard` | cliente → servidor | `cardId` |
+| `RoundCardPurchaseResult` | servidor → cliente | `cardId, success, reason` |
+
+O reroll não tem evento próprio de propósito — ver o caminho da compra acima.
+
+`reason` é um de `NotLoaded`, `NotInStock`, `AlreadyOwned`, `NotEnoughCurrency`,
+`GrantFailed`. Nenhum deles é erro de programa: são as maneiras de o pedido estar
+velho ou repetido — o clique duplo, a vitrine que virou entre o desenho e o clique,
+o evento mandado à mão.
+
+A cobrança confere a vitrine **daquele jogador** na hora atual — `GetStockFor`, e não
+`GetStock`: quem rerolou está olhando para outra prateleira, e conferir contra a global
+recusaria justamente as cartas que ele pagou para ver. (E não o `priceOf` direto, senão
+o catálogo inteiro estaria à venda para quem mandasse o evento na mão), cobra dentro de
+um único `:Update` de `Stats` — que não cede o controle, então dois cliques não gastam
+o mesmo saldo — e confere a posse **de novo** dentro da escrita de `RoundCards`, para
+que dois cliques no mesmo quadro não paguem duas vezes pela mesma carta. O que falhar
+depois da cobrança é devolvido.
+
 ## Configuração: o que é replicado e o que não é
 
 Antes, `ReplicatedStorage.Shared.Config.Server` era replicado para todo cliente —
@@ -1405,7 +1709,7 @@ e a lista de admins do Cmdr. Isso foi separado:
 | | Onde | Conteúdo |
 |---|---|---|
 | **Servidor** | `ServerScriptService.Config` ← `common/server/Config` | `Data` (PROFILE_KEY + template), `Wave`, `Summon`, `Difficulty`, `Cmdr` (ADMIN_USER_IDS, GROUP_ID, ALLOW_IN_STUDIO) |
-| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, DeckConfig, RoundCardConfig, CardModifier, `Mob`, `Cmdr` cosmético, `GamepassConfig`) |
+| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, DeckConfig, RoundCardConfig, RoundCardShopConfig, CardModifier, `Mob`, `Cmdr` cosmético, `GamepassConfig`) |
 
 Convenção nos scripts de servidor:
 

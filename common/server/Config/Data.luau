@@ -7,6 +7,7 @@ local SharedConfig = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Conf
 local CrateConfig = require(SharedConfig:WaitForChild("CrateConfig"))
 local DeckConfig = require(SharedConfig:WaitForChild("DeckConfig"))
 local IndexConfig = require(SharedConfig:WaitForChild("IndexConfig"))
+local RoundCardShopConfig = require(SharedConfig:WaitForChild("RoundCardShopConfig"))
 
 return {
 	--[[
@@ -75,6 +76,39 @@ return {
 			equipadas são dois "Slasher" aqui. Ver `SharedConfig.DeckConfig`.
 		]]
 		EquippedUnits = {},
+
+		--[[
+			As cartas de round que o jogador destravou, `{ [Id] = true }` — o `Id` do
+			`SharedConfig.RoundCardConfig`.
+
+			**Não é inventário, é a pool dele.** Destravar não dá carta nenhuma na mão:
+			ele diz que aquela carta pode sair no sorteio da oferta de round, e cada uso
+			dentro da partida continua sendo comprado com o caixa da partida. Quem
+			escreve é o `RoundCardShopService` (Lobby), na compra na loja de cartas; quem
+			lê é o `_pool` do `CardShopService` (Game).
+
+			Nasce com as três originais (`RoundCardShopConfig.STARTER_CARDS`), senão a
+			oferta de round nunca abriria para quem acabou de chegar. Perfil antigo ganha
+			a chave pelo reconcile do DataService — e a ganha **vazia**, porque o
+			reconcile copia o template só onde ele falta e o kit de boas-vindas não é
+			retroativo.
+		]]
+		RoundCards = RoundCardShopConfig.createEmpty(),
+
+		--[[
+			O reroll pago da loja de cartas: `{ Index, Rolls, Cards }` — o bloco de quatro
+			horas, quantos rerolls foram comprados nele e **as cartas sorteadas**.
+
+			As cartas são gravadas, e não recalculadas: o sorteio do reroll varre só o
+			que falta ao jogador destravar, e essa lista encolhe quando ele compra. Uma
+			prateleira derivada dela se remontaria a cada compra — a vaga vendida se
+			encheria com uma carta nova em vez de ficar `SOLD`. Ver o comentário do
+			`RoundCardShopConfig.createEmptyRoll`.
+
+			Vale até a rotação virar. Nada apaga o registro velho — ele deixa de valer
+			sozinho quando o número do bloco muda.
+		]]
+		RoundCardRoll = RoundCardShopConfig.createEmptyRoll(),
 
 		-- Quantas cartas cabem no deck. Fica no perfil porque é para crescer com o
 		-- jogador; o `DeckConfig.DEFAULT_CARD_LIMIT` é só o valor de partida, e o

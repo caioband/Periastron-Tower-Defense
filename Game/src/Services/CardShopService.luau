@@ -14,6 +14,7 @@ local Me = require(Vendor.Me)
 local Framework = Me.new()
 
 local RoundCardConfig = SharedConfig.RoundCardConfig
+local RoundCardShopConfig = SharedConfig.RoundCardShopConfig
 
 --[[
 	Quanto o `EffectDelay` pode se afastar do marcador da animacao antes de virar
@@ -43,6 +44,12 @@ local EFFECT_DELAY_TOLERANCE = 0.05
 	dinheiro. Cada um sorteia o seu, compra o seu e usa o seu -- mas o **efeito** e
 	da sala: o Time Stop para os inimigos de todo mundo.
 
+	**E a pool tambem e por jogador.** O sorteio nao varre o catalogo: ele varre o que
+	aquele jogador destravou na loja de cartas do lobby (`Data.RoundCards`, ver o
+	`RoundCardShopService`). Antes ele varria o `RoundCardConfig.Cards` inteiro, ou
+	seja, todo mundo tinha as vinte e tantas cartas na primeira partida -- e a loja do
+	lobby nao teria o que vender.
+
 	**A oferta fecha na compra.** Uma compra por abertura: e por isso que o
 	`Offers[userId]` sai da tabela assim que a carta e paga, e nao so na tela do
 	comprador.
@@ -56,6 +63,10 @@ local CardShopService = {
 		WeatherRoundService = {},
 		UnitService = {},
 		CardModifierService = {},
+
+		-- Para ler o `RoundCards` do perfil: e ele que diz quais cartas este jogador pode
+		-- sortear. Ver o `_poolFor`.
+		DataService = {},
 	},
 
 	--[[
@@ -288,11 +299,13 @@ CardShopService.Effects = {
 --[[ INTERNAL ]]
 
 --[=[
-	As cartas que podem ser sorteadas: as do catalogo cujo `Effect` existe de fato.
+	As cartas que este servidor sabe executar: as do catalogo cujo `Effect` existe de
+	fato.
 
-	O aviso sai uma vez por carta quebrada, e nao a cada sorteio: config escrito a
-	mao erra nome, e uma carta que o jogador paga e nao faz nada e pior do que uma
-	carta que nunca aparece.
+	E o primeiro dos dois filtros do sorteio, e o unico que fala do **jogo**: uma carta
+	sem efeito registrado nao pode sair para ninguem. O aviso sai uma vez por carta
+	quebrada, e nao a cada sorteio: config escrito a mao erra nome, e uma carta que o
+	jogador paga e nao faz nada e pior do que uma carta que nunca aparece.
 ]=]
 function CardShopService:_pool()
 	local pool = {}
@@ -311,6 +324,39 @@ function CardShopService:_pool()
 	end
 
 	return pool
+end
+
+--[=[
+	As cartas que **este jogador** pode sortear: as de `_pool` que ele destravou na loja
+	de cartas do lobby.
+
+	O segundo filtro, e o unico que fala do **jogador**. O que ele destravou mora no
+	`RoundCards` do perfil e e escrito la, no Lobby, pelo `RoundCardShopService` -- aqui
+	so se le.
+
+	Perfil que ainda nao carregou vale como vazio, e nao como catalogo inteiro: liberar
+	tudo enquanto o dado nao chegou daria ao jogador uma oferta que ele nao pagou, e a
+	primeira wave de loja e cedo o bastante para a corrida acontecer de verdade.
+
+	Pool vazia nao e erro: e o jogador que gastou os shards em outra coisa e nao tem
+	carta nenhuma destravada. A oferta simplesmente nao abre para ele -- ver o `Open`.
+]=]
+function CardShopService:_poolFor(player : Player, pool : { any })
+	local dataService = self.Services.DataService
+	local profiles = dataService and dataService.Profiles
+	local entry = profiles and profiles[player]
+	local profile = entry and entry.Profile.Data or nil
+
+	local unlocked = RoundCardShopConfig.unlockedOf(profile)
+	local candidates = {}
+
+	for _, card in pool do
+		if unlocked[card.Id] then
+			table.insert(candidates, card)
+		end
+	end
+
+	return candidates
 end
 
 --[=[
@@ -438,9 +484,15 @@ end
 --[=[
 	Abre uma oferta para estes jogadores. Sem lista, para a sala inteira.
 
-	Cada um sorteia o seu, mas o `Token` e o mesmo da abertura: e ele que invalida
-	de uma vez as ofertas anteriores, inclusive as de quem nao comprou nada na
-	rodada passada.
+	Cada um sorteia o seu, da **pool dele** (as cartas que ele destravou no lobby), mas
+	o `Token` e o mesmo da abertura: e ele que invalida de uma vez as ofertas
+	anteriores, inclusive as de quem nao comprou nada na rodada passada.
+
+	Jogador sem carta destravada nao recebe oferta, e a dele e **apagada** em vez de
+	deixada como estava: sem isso ele ficaria com a oferta da wave de loja anterior na
+	tela, e o `Token` novo faria cada clique nela ser recusado como "oferta vencida".
+
+	Devolve true quando pelo menos um jogador recebeu oferta.
 ]=]
 function CardShopService:Open(players : { Player }?, waveNumber : number?)
 	local pool = self:_pool()
@@ -454,8 +506,19 @@ function CardShopService:Open(players : { Player }?, waveNumber : number?)
 
 	self.Token += 1
 
+	local opened = false
+
 	for _, player in (players or Players:GetPlayers()) do
-		local drawn = RoundCardConfig.Draw(RoundCardConfig.DrawCount, pool)
+		local candidates = self:_poolFor(player, pool)
+
+		if #candidates == 0 then
+			self.Offers[player.UserId] = nil
+			self:_sendState(player)
+
+			continue
+		end
+
+		local drawn = RoundCardConfig.Draw(RoundCardConfig.DrawCount, candidates)
 
 		local cards = {}
 		for _, card in drawn do
@@ -469,9 +532,10 @@ function CardShopService:Open(players : { Player }?, waveNumber : number?)
 		}
 
 		self:_sendState(player)
+		opened = true
 	end
 
-	return true
+	return opened
 end
 
 --[[ API ]]

@@ -15,6 +15,12 @@ local Framework = Me.new()
 	anterior de quem estava com a loja aberta perde a validade — o `Token` sobe, e
 	um clique atrasado na loja velha não compra nada da nova.
 
+	**Ele sorteia da pool de cada alvo**, e não do catálogo: as cartas que aquele
+	jogador destravou na loja de cartas do lobby. Quem não destravou nenhuma não
+	recebe oferta, e é por isso que o comando pode não abrir nada mesmo com alvos
+	válidos — para dar carta a alguém, o caminho é o perfil (`Data.RoundCards`), e não
+	este comando.
+
 	Só a Game tem loja: o `CardShopService` não existe no Lobby, e lá o
 	`Framework:Get` com yield esperaria para sempre.
 ]]
@@ -30,8 +36,14 @@ return function(_context, players : { Player }?)
 		return "Nobody matched."
 	end
 
+	--[[
+		`Open` só devolve true quando **alguém** recebeu oferta. Os dois motivos para não
+		receber são diferentes, e o de baixo é o comum: nenhum dos alvos destravou carta
+		nenhuma. O outro (catálogo sem efeito registrado) já sai como aviso no output do
+		servidor quando isso acontece.
+	]]
 	if not CardShopService:Open(targets) then
-		return "No round card has a registered effect; nothing to offer."
+		return "Nothing to offer: no target has any round card unlocked (see the lobby card shop)."
 	end
 
 	local names = {}

@@ -5,6 +5,7 @@
 	Ver `SharedConfig.LightingConfig` para o formato de um preset.
 ]]
 
+local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
@@ -151,6 +152,63 @@ end
 -- Curva de easing sem criar Tween: `GetValue` é a mesma conta que o TweenService faz.
 function LightingUtil.Ease(alpha: number): number
 	return TweenService:GetValue(math.clamp(alpha, 0, 1), Config.Transition.Style, Config.Transition.Direction)
+end
+
+--[[ O BORRÃO DOS PAINÉIS ]]
+
+--[=[
+	O nome do `BlurEffect` que os painéis de UI compartilham.
+
+	**Um só para todos**, e por isso ele é procurado antes de ser criado: o
+	`UILibraryController` pendura o mesmo borrão para os painéis dele e as duas lojas
+	do lobby o reaproveitam. Dois `BlurEffect` no Lighting somam, e o fundo sairia com
+	o dobro do borrão quando dois painéis estivessem abertos.
+]=]
+LightingUtil.UI_BLUR_NAME = "UIBlur"
+
+--[=[
+	O borrão dos painéis, criado na primeira vez que alguém pede.
+
+	Ele nasce (e renasce) com a marca do `KeepAttribute`: sem ela ele é um filho do
+	Lighting que não pertence a preset nenhum, e a troca de preset o varreria. A marca
+	é (re)escrita sempre, porque a instância pode ter vindo de outro sistema sem ela.
+]=]
+function LightingUtil.GetUIBlur(): BlurEffect
+	local blur = Lighting:FindFirstChild(LightingUtil.UI_BLUR_NAME)
+
+	if not blur or not blur:IsA("BlurEffect") then
+		blur = Instance.new("BlurEffect")
+		blur.Name = LightingUtil.UI_BLUR_NAME
+		blur.Size = 0
+		blur.Parent = Lighting
+	end
+
+	blur:SetAttribute(Config.KeepAttribute, true)
+
+	return blur
+end
+
+--[=[
+	Leva o borrão a `size` e devolve o tween, para quem chamou poder cancelá-lo.
+
+	Cancelar é o que faz dois pedidos emendarem: `Tween:Cancel()` não devolve a
+	propriedade, então fechar no meio da abertura desce a partir de onde a subida
+	chegou em vez de as duas escreverem no mesmo `Size` ao mesmo tempo. Guarde o
+	retorno num maid — um tween por painel de cada vez.
+
+	Zerar o borrão quando ele nem existe devolve nil sem criar nada: um painel que
+	fecha sem nunca ter aberto (o bind de uma `ScreenGui` nova roda o fechamento) não
+	precisa deixar um `BlurEffect` por jogador no Lighting.
+]=]
+function LightingUtil.TweenUIBlur(size: number, info: TweenInfo): Tween?
+	if size <= 0 and not Lighting:FindFirstChild(LightingUtil.UI_BLUR_NAME) then
+		return nil
+	end
+
+	local tween = TweenService:Create(LightingUtil.GetUIBlur(), info, { Size = size })
+	tween:Play()
+
+	return tween
 end
 
 return LightingUtil

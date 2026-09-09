@@ -44,7 +44,13 @@ local MonetizationService = {
 }
 
 function MonetizationService:construct()
-	self.Callbacks = {}
+	--[[
+		`or {}` e nao `= {}`: os `start()` dos services sao `task.spawn`ados num laco, sem
+		ordem garantida, entao um service que registre um produto no `start()` dele pode
+		chegar aqui antes. Zerar a tabela apagaria o callback dele -- e a compra ficaria
+		sem quem a credite, que e um sintoma que so aparece com Robux de verdade.
+	]]
+	self.Callbacks = self.Callbacks or {}
 
 	self:_watchPasses()
 
@@ -101,7 +107,16 @@ function MonetizationService:construct()
 	end
 end
 
+--[=[
+	Diz quem credita um developer product. O callback recebe `(player, receiptInfo)` e
+	devolve `false` quando **nao** deu para creditar -- ai o receipt volta como
+	`NotProcessedYet` e a Roblox tenta de novo mais tarde.
+
+	Pode ser chamado antes do `construct` daqui (ver o comentario la), entao a tabela e
+	criada por quem chegar primeiro.
+]=]
 function MonetizationService:RegisterProduct(productId, callback)
+	self.Callbacks = self.Callbacks or {}
 	self.Callbacks[tostring(productId)] = callback
 end
 

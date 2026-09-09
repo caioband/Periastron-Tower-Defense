@@ -18,6 +18,7 @@ local UIAssets = Assets:WaitForChild("UI")
 
 local SharedConfig = require(Configs.SharedConfig)
 local PointerUtil = require(Utils.PointerUtil)
+local UIUtil = require(Utils.UIUtil)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
@@ -140,101 +141,24 @@ local RoundCardShopController = {
 --[[ INTERNAL ]]
 
 --[=[
-	Que propriedades de transparencia cada peca tem.
+	As duas metades da revelacao de uma carta, do `UIUtil`: o `captureFades` le o que
+	o designer deixou no clone intocado e o `applyFades` leva tudo de transparente
+	ate lá.
 
-	`GuiObject.Transparency` fica de fora de proposito: e apelido de
-	`BackgroundTransparency`, e os dois tweens brigariam pela mesma propriedade.
+	Elas moram no `UIUtil` porque a **loja de cartas do lobby** desenha a mesma carta
+	pelo mesmo caminho (ver o `RoundCardShopController` do Lobby): uma segunda copia
+	aqui seria a mesma varredura de propriedades para manter em dois lugares.
+
+	Este embrulho e so a curva. A entrada chega desacelerando (`CardDirection`, que e
+	`Out`) e a saida sai acelerando (`In`): sem isso o sumico das cartas arrastaria no
+	comeco e pareceria travamento, e nao resposta ao clique.
 ]=]
-local function fadeProperties(object : Instance) : { string }?
-	if object:IsA("UIStroke") then
-		return { "Transparency" }
-	elseif object:IsA("ImageLabel") or object:IsA("ImageButton") then
-		return { "BackgroundTransparency", "ImageTransparency" }
-	elseif object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
-		return { "BackgroundTransparency", "TextTransparency", "TextStrokeTransparency" }
-	elseif object:IsA("GuiObject") then
-		return { "BackgroundTransparency" }
-	end
+local captureFades = UIUtil.captureFades
 
-	--[[
-		O `UIShadow` nao aparece na lista de classes acima porque nao e `GuiObject`
-		nem `UIStroke`; ele entra por aqui, e junto com ele qualquer componente de UI
-		novo que tenha um `Transparency` proprio.
-
-		So vale se o `Transparency` for **numero**: o do `UIGradient` e uma
-		`NumberSequence`, e tweenar aquilo como se fosse um numero derrubaria o
-		gradiente inteiro da carta.
-	]]
-	local ok, value = pcall(function()
-		return (object :: any).Transparency
-	end)
-
-	return if ok and typeof(value) == "number" then { "Transparency" } else nil
-end
-
---[=[
-	Todo par (peca, propriedade) com o valor que o designer deixou, varrendo os
-	**descendentes** de `root` -- o proprio `root` fica de fora porque quem cuida
-	dele e a primeira metade da animacao (a queda com a imagem aparecendo).
-]=]
-local function captureFades(root : Instance)
-	local fades = {}
-
-	for _, descendant in root:GetDescendants() do
-		local properties = fadeProperties(descendant)
-		if not properties then
-			continue
-		end
-
-		local values = {}
-		for _, property in properties do
-			values[property] = (descendant :: any)[property]
-		end
-
-		table.insert(fades, { Object = descendant, Values = values })
-	end
-
-	return fades
-end
-
---[=[
-	Escreve a transparencia de todos os descendentes de uma vez.
-
-	`direction` existe para a saida: a entrada chega desacelerando (`CardDirection`,
-	que e `Out`), e a saida sai acelerando (`In`). Sem isso o sumico das cartas
-	arrastaria no comeco e pareceria travamento, e nao resposta ao clique.
-]=]
 local function applyFades(fades, progress : number, time : number?, direction : Enum.EasingDirection?)
 	local info = time and TweenInfo.new(time, ANIM.CardEasing, direction or ANIM.CardDirection)
 
-	for _, fade in fades do
-		local object = fade.Object :: any
-		if not object.Parent then continue end
-
-		local goal = {}
-		for property, authored in fade.Values do
-			goal[property] = 1 + (authored - 1) * progress
-		end
-
-		if not info then
-			for property, value in goal do
-				object[property] = value
-			end
-			continue
-		end
-
-		-- Propriedade que o TweenService recusa salta direto, em vez de derrubar a
-		-- animacao das outras pecas junto.
-		local ok = pcall(function()
-			TweenService:Create(object, info, goal):Play()
-		end)
-
-		if not ok then
-			for property, value in goal do
-				object[property] = value
-			end
-		end
-	end
+	UIUtil.applyFades(fades, progress, info)
 end
 
 function RoundCardShopController:_playSound(name : string)

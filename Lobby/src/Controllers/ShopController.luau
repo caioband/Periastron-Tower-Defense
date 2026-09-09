@@ -1,8 +1,6 @@
-local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -15,11 +13,13 @@ local Me = require(Vendor.Me)
 local Signal = require(Packages.Signal)
 
 local SharedConfig = require(Configs.SharedConfig)
+local ButtonUtil = require(Util.ButtonUtil)
+local LightingUtil = require(Util.LightingUtil)
+local MarkerUtil = require(Util.MarkerUtil)
 local UIUtil = require(Util.UIUtil)
 
 local ShopConfig = SharedConfig.ShopConfig
 local RarityConfig = SharedConfig.RarityConfig
-local LightingConfig = SharedConfig.LightingConfig
 
 -- Cascade lives only in the place (see Lobby/README.md), so it is reached by name
 -- instead of through the Rojo tree.
@@ -31,14 +31,21 @@ local Framework = Me.new()
 --[[ CONSTANTS ]]
 local SHOP_UI_NAME = "ShopUI"
 
---[[
+--[=[
 	O caminho do painel: `ShopUI.Frame.ImageLabel`.
 
 	O `Frame` de fora carrega o `UIAspectRatioConstraint`, e o `ImageLabel` de dentro
-	e a moldura desenhada -- e nele que a `OpenShop` escreve. Os dois nascem
-	`Visible = false` no StarterGui, entao o bind acende os dois e quem manda em ver
-	ou nao ver a loja passa a ser o `Enabled` da ScreenGui.
-]]
+	e a moldura desenhada -- e nele que a `OpenShop` escreve.
+
+	**A `ShopUI` carrega duas lojas.** O `Frame` e esta, a de caixas, e o `RCSS` ao
+	lado dele e a de cartas (`RoundCardShopController`). Por isso o `Visible` do
+	wrapper e de quem abre, e nao ligado uma vez no bind: as duas dividem o `Enabled`
+	da ScreenGui, e um wrapper aceso para sempre poria as duas lojas na tela sempre
+	que qualquer uma abrisse.
+
+	O painel de dentro continua aceso desde o bind -- ele nunca aparece sozinho, e a
+	`OpenShop` cuida da entrada dele pela escala e pela transparencia.
+]=]
 local WRAPPER_NAME = "Frame"
 local PANEL_NAME = "ImageLabel"
 local LIST_NAME = "ScrollingFrame"
@@ -86,15 +93,12 @@ local HIDE_REASON = "Shop"
 	de pendurar um segundo `BlurEffect` no Lighting: dois blurs somam, e o fundo
 	sairia com o dobro do borrao quando os dois estivessem abertos.
 
-	Ele nasce com o `LightingKeep` do `LightingConfig`. Sem essa marca ele e um filho
-	do Lighting que nao pertence a preset nenhum: o `LightingService` o varreria na
-	troca de preset, e o `LightingController` o trataria como efeito de saida. A marca
-	e exatamente para isto -- ver o comentario do `KeepAttribute` la.
+	Ele nasce com o `LightingKeep` do `LightingConfig`, senao a troca de preset o
+	varreria -- quem cuida disso e o `LightingUtil.GetUIBlur`.
 
 	O tempo sai da propria `OpenShop` (`track.Duration`), entao o borrao entra e sai
 	junto com o painel mesmo que o designer re-cronometre a animacao.
 ]=]
-local BLUR_NAME = "UIBlur"
 local BLUR_SIZE = 24
 local BLUR_FALLBACK_TIME = 0.25
 local BLUR_EASING_STYLE = Enum.EasingStyle.Quad
@@ -133,25 +137,6 @@ local BUY_SOUNDS = {
 	Shards = "Shards",
 	Cash = "Coins",
 }
-
---[=[
-	O feedback do botao `Buy`: ele cresce com o ponteiro em cima e afunda enquanto
-	esta apertado, no `UIScale` autorado dentro do proprio botao.
-
-	O tempo e a curva sao os mesmos dos botoes da HUD (ver o `HUDButtonController`):
-	a entrada e circular, e a volta e um `Back` que passa um pouco do ponto e volta
-	-- e o que faz o botao parecer que tem peso em vez de so mudar de tamanho.
-
-	O aperto e mais suave que o `0.9` da HUD de proposito. La o botao e um icone
-	quadrado e pequeno, e aqui ele e uma barra larga: o mesmo fator moveria as duas
-	bordas muito mais longe, e a barra pareceria saltar em vez de afundar.
-]=]
-local BUY_HOVER_SCALE = 1.05
-local BUY_PRESS_SCALE = 0.93
-
-local BUY_HOVER_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Circular, Enum.EasingDirection.Out)
-local BUY_PRESS_INFO = TweenInfo.new(0.08, Enum.EasingStyle.Circular, Enum.EasingDirection.Out)
-local BUY_RELEASE_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
 --[[
 	O contorno de cada linha de raridade.
@@ -235,6 +220,10 @@ local ShopController = {
 		DataController = {},
 		InterfaceController = {},
 		MusicController = {},
+
+		-- A outra loja da mesma `ScreenGui`. So para saber se ela esta aberta antes de
+		-- apagar a ScreenGui das duas -- ver o `_setShopEnabled`.
+		RoundCardShopController = {},
 	},
 
 	Signals = {
@@ -353,41 +342,6 @@ local function styleRarityStroke(label : TextLabel, rarity : string)
 end
 
 --[=[
-	Leva o `UIScale` para o tamanho que o estado do botao pede, cancelando o tween
-	anterior.
-
-	O alvo sai do estado inteiro, e nao do evento que acabou de chegar: apertado
-	vence pousado, que vence parado. Sem isso, soltar o clique com o mouse ainda em
-	cima devolveria o botao ao tamanho normal em vez do tamanho de hover, e a
-	proxima saida do mouse nao teria nada para desfazer.
-
-	`Tween:Cancel()` para o tween sem devolver a propriedade -- a escala fica onde
-	chegou e o tween novo parte dali, que e o que faz duas animacoes emendarem em vez
-	de saltarem.
-]=]
-local function applyButtonScale(maid, scale : UIScale, state)
-	maid:DoCleaning()
-
-	local target, info
-
-	if state.Pressed then
-		target, info = BUY_PRESS_SCALE, BUY_PRESS_INFO
-	elseif state.Hovered then
-		target, info = BUY_HOVER_SCALE, BUY_HOVER_INFO
-	else
-		target, info = 1, BUY_RELEASE_INFO
-	end
-
-	local tween = TweenService:Create(scale, info, { Scale = target })
-
-	maid:GiveTask(function()
-		tween:Cancel()
-	end)
-
-	tween:Play()
-end
-
---[=[
 	Escreve as linhas de raridade de um container, da mais comum para a mais rara.
 
 	A `Rarity` autorada dentro do container e o template daquela caixa: ela sai da
@@ -443,81 +397,6 @@ function ShopController:_renderOdds(entry)
 end
 
 --[=[
-	Liga o crescer e o afundar do botao `Buy` de um container.
-
-	O aperto e o soltar sao `InputBegan`/`InputEnded`, e nao `MouseButton1Down/Up`,
-	porque a loja e jogada no celular tambem: filtrando `MouseButton1` **e** `Touch`,
-	o mesmo par de eventos cobre o clique e o toque. Nenhum dos dois consome o
-	input, entao o `Activated` que faz a compra continua saindo normalmente.
-
-	Duas coisas que o par de eventos sozinho nao cobre:
-
-	* **Soltar fora do botao.** Arrastar para fora e soltar la nao dispara o
-	  `InputEnded` daqui, e a escala ficaria presa no apertado para sempre -- por
-	  isso o `MouseLeave` tambem desfaz o aperto.
-	* **Toque nao tem hover.** A Roblox manda `MouseEnter` no toque como se fosse um
-	  mouse, entao soltar o dedo devolveria o botao ao tamanho de hover por um quadro
-	  antes do `MouseLeave` chegar. Um toque que termina limpa os dois estados de uma
-	  vez.
-
-	Vai no `ItemMaid`, junto do resto do bind do container: um `_render` novo
-	desconecta tudo e cancela o tween que estiver no meio.
-]=]
-function ShopController:_bindBuyFeedback(button : GuiButton)
-	local scale = button:FindFirstChildWhichIsA("UIScale")
-	if not scale then
-		return
-	end
-
-	local state = { Hovered = false, Pressed = false }
-
-	local tweenMaid = Maid.new()
-	self.ItemMaid:GiveTask(tweenMaid)
-
-	local function refresh()
-		applyButtonScale(tweenMaid, scale, state)
-	end
-
-	self.ItemMaid:GiveTask(button.MouseEnter:Connect(function()
-		state.Hovered = true
-		refresh()
-	end))
-
-	self.ItemMaid:GiveTask(button.MouseLeave:Connect(function()
-		state.Hovered = false
-		state.Pressed = false
-		refresh()
-	end))
-
-	self.ItemMaid:GiveTask(button.InputBegan:Connect(function(input : InputObject)
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
-			return
-		end
-
-		state.Pressed = true
-		refresh()
-	end))
-
-	self.ItemMaid:GiveTask(button.InputEnded:Connect(function(input : InputObject)
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
-			return
-		end
-
-		state.Pressed = false
-
-		if input.UserInputType == Enum.UserInputType.Touch then
-			state.Hovered = false
-		end
-
-		refresh()
-	end))
-
-	-- A escala autorada e a de parado. Um container que ficou grande porque o painel
-	-- fechou com o mouse em cima dele volta ao normal no bind seguinte.
-	scale.Scale = 1
-end
-
---[=[
 	Liga um container autorado ao item da loja que ele representa.
 
 	Devolve nil quando o container nao tem a estrutura que a arte promete -- e um
@@ -560,7 +439,13 @@ function ShopController:_bindContainer(container : Instance, item)
 			self:_requestPurchase(item)
 		end))
 
-		self:_bindBuyFeedback(buy)
+		--[[
+			O peso do botao (crescer no hover, afundar no aperto) e do `ButtonUtil`: a
+			loja de cartas usa o mesmo, e as duas tem de responder ao toque do mesmo
+			jeito. Vai no `ItemMaid`, junto do resto do bind do container -- um `_render`
+			novo desconecta tudo e cancela o tween que estiver no meio.
+		]]
+		ButtonUtil.bindFeedback(buy, self.ItemMaid)
 	end
 
 	--[[
@@ -684,11 +569,30 @@ end
 	dono de cada GUI queria, e escrever no `Enabled` direto no meio de um pedido
 	(o dele, ou o da cutscene) faria o valor certo ser lido tarde demais. Ver o
 	comentario do `SetEnabled` la.
+
+	**Apagar nao e so desta loja.** A `ShopUI` e a mesma ScreenGui da loja de cartas,
+	entao fechar esta com a outra aberta apagaria o painel dela junto. Quem manda no
+	`Enabled` e "alguma loja esta aberta", e nao esta.
+
+	Hoje as duas nao chegam a se cruzar pela proximidade: os balcoes estao a 274 studs
+	um do outro e os raios sao de 5, e enquanto uma loja esta aberta o `Hide` esconde a
+	HUD inteira -- o botao que levaria ao outro balcao nem esta clicavel. A guarda e
+	para quem abre um painel **sem** passar por um balcao: o `Open` e publico, e um
+	comando do Cmdr (ou o botao que alguem ligue amanha) nao tem por que apagar a loja
+	que ja estava na tela.
 ]=]
 function ShopController:_setShopEnabled(enabled : boolean)
 	local screenGui = self.ScreenGui
 	if not screenGui or not screenGui.Parent then
 		return
+	end
+
+	if not enabled then
+		local cardShop = self.Controllers.RoundCardShopController
+
+		if cardShop and cardShop:IsOpen() then
+			return
+		end
 	end
 
 	local interface = self.Controllers.InterfaceController
@@ -701,58 +605,45 @@ function ShopController:_setShopEnabled(enabled : boolean)
 end
 
 --[=[
-	O `BlurEffect` do fundo, criado na primeira vez que a loja abre.
-
-	Procurado pelo nome antes de ser criado: o `UILibraryController` cria o mesmo
-	`UIBlur` para os paineis dele, e quem chegar primeiro ganha. A marca do
-	`LightingKeep` e (re)escrita sempre, porque a instancia pode ter vindo de la sem
-	ela.
+	Tira o painel da tela no fim do fechamento: a moldura desta loja apaga e a
+	ScreenGui vai com ela, se a outra loja nao estiver usando.
 ]=]
-function ShopController:_getBlur() : BlurEffect
-	local blur = Lighting:FindFirstChild(BLUR_NAME)
-
-	if not blur or not blur:IsA("BlurEffect") then
-		blur = Instance.new("BlurEffect")
-		blur.Name = BLUR_NAME
-		blur.Size = 0
-		blur.Parent = Lighting
+function ShopController:_hidePanel()
+	if self.Wrapper and self.Wrapper.Parent then
+		self.Wrapper.Visible = false
 	end
 
-	blur:SetAttribute(LightingConfig.KeepAttribute, true)
-
-	return blur
+	self:_setShopEnabled(false)
 end
 
 --[=[
-	Leva o borrao a `BLUR_SIZE` na abertura e de volta a zero no fechamento.
+	Leva o borrao do fundo a `BLUR_SIZE` na abertura e de volta a zero no fechamento.
+
+	O `BlurEffect` e o `UIBlur` compartilhado do `LightingUtil`: o mesmo que o
+	`UILibraryController` usa nos paineis dele e que a loja de cartas usa no dela.
+	Dois borroes somariam, e o fundo sairia com o dobro do que qualquer um dos dois
+	pediu.
 
 	Um tween por vez, no `BlurMaid`: fechar no meio da abertura cancela a subida e
-	desce a partir de onde ela chegou, em vez de as duas escreverem no mesmo `Size` ao
-	mesmo tempo.
+	desce a partir de onde ela chegou.
 
-	`Tween:Cancel()` nao devolve a propriedade -- e o que faz as duas emendarem.
+	O tempo sai da propria `OpenShop` (`track.Duration`), entao o borrao entra e sai
+	junto com o painel mesmo que o designer re-cronometre a animacao.
 ]=]
 function ShopController:_playBlur(open : boolean)
-	-- Fechar sem nunca ter aberto nao cria efeito nenhum: o `_releaseScreen` roda no
-	-- bind de toda copia da `ShopUI`, e um `BlurEffect` por jogador que nunca chegou
-	-- perto da loja e lixo no Lighting.
-	if not open and not Lighting:FindFirstChild(BLUR_NAME) then
-		return
-	end
-
-	local blur = self:_getBlur()
-
 	self.BlurMaid:DoCleaning()
 
 	local duration = (self.PanelTrack and self.PanelTrack.Duration) or BLUR_FALLBACK_TIME
 	local info = TweenInfo.new(duration, BLUR_EASING_STYLE, BLUR_EASING_DIRECTION)
-	local tween = TweenService:Create(blur, info, { Size = if open then BLUR_SIZE else 0 })
+
+	local tween = LightingUtil.TweenUIBlur(if open then BLUR_SIZE else 0, info)
+	if not tween then
+		return
+	end
 
 	self.BlurMaid:GiveTask(function()
 		tween:Cancel()
 	end)
-
-	tween:Play()
 end
 
 --[=[
@@ -868,38 +759,13 @@ end
 	descer a arvore acha o mesmo part de sempre onde quer que o artista o agrupe.
 ]=]
 function ShopController:_getMapPart(partName : string) : Instance?
-	local cached = self.MapParts[partName]
-	if cached and cached.Parent then
-		return cached
-	end
-
-	local map = workspace:FindFirstChild(ShopConfig.REFERENCE_PARENT_NAME)
-	local part = map and map:FindFirstChild(partName, true)
-
-	if not part and not self.WarnedMissing[partName] then
-		self.WarnedMissing[partName] = true
-		warn(`[ShopController]: no {partName} under Workspace.{ShopConfig.REFERENCE_PARENT_NAME}.`)
-	end
-
-	self.MapParts[partName] = part
-	return part
-end
-
---[=[
-	Where a marker part sits, whether it is a bare part or a model.
-]=]
-local function getPivot(part : Instance?) : CFrame?
-	if not part then
-		return nil
-	end
-
-	if part:IsA("BasePart") then
-		return part.CFrame
-	elseif part:IsA("Model") then
-		return part:GetPivot()
-	end
-
-	return nil
+	return MarkerUtil.find(
+		ShopConfig.REFERENCE_PARENT_NAME,
+		partName,
+		self.MapParts,
+		self.WarnedMissing,
+		"ShopController"
+	)
 end
 
 --[=[
@@ -909,7 +775,7 @@ end
 	concentricos -- chegar ao balcao nunca pode acontecer sem ele ter levantado antes.
 ]=]
 function ShopController:GetReferencePosition() : Vector3?
-	local pivot = getPivot(self:_getMapPart(ShopConfig.REFERENCE_PART_NAME))
+	local pivot = MarkerUtil.pivotOf(self:_getMapPart(ShopConfig.REFERENCE_PART_NAME))
 	return pivot and pivot.Position or nil
 end
 
@@ -976,12 +842,12 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 	self.List = list
 
 	--[[
-		O painel e a moldura de fora nascem `Visible = false` no StarterGui. Quem
-		manda em ver ou nao ver a loja e o `Enabled` da ScreenGui, entao os dois sobem
-		acesos e ficam assim -- a `OpenShop` cuida da entrada pela escala e pela
-		transparencia.
+		O painel sobe aceso e fica assim; a moldura de fora e que vai e vem, porque e
+		ela que separa esta loja da de cartas dentro da mesma ScreenGui. Ver o
+		comentario do `WRAPPER_NAME`.
 	]]
-	wrapper.Visible = true
+	self.Wrapper = wrapper
+	wrapper.Visible = false
 	panel.Visible = true
 
 	--[[
@@ -1043,7 +909,7 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 		local connection = self.PanelTrack.Completed:Connect(function()
 			-- Only the closing pass ends with the panel hidden.
 			if not self.IsOpenState and screenGui.Parent then
-				self:_setShopEnabled(false)
+				self:_hidePanel()
 			end
 		end)
 
@@ -1063,7 +929,7 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 		e zera o `IsOpenState` aqui. Sem devolver a tela, o pedido de esconder ficaria
 		de pe com a loja fechada -- o jogador renasceria sem HUD e com o fundo borrado.
 	]]
-	self:_setShopEnabled(false)
+	self:_hidePanel()
 	self:_releaseScreen()
 
 	-- A fresh copy means a respawn: the player may well still be standing next to
@@ -1152,6 +1018,12 @@ function ShopController:Open()
 	]]
 	self:_setShopEnabled(true)
 
+	-- A moldura acende **antes** da animacao, senao a `OpenShop` rodaria com o painel
+	-- fora da tela e a loja apareceria pronta no fim dela.
+	if self.Wrapper and self.Wrapper.Parent then
+		self.Wrapper.Visible = true
+	end
+
 	self:_playPanel(false)
 	self:_playBlur(true)
 
@@ -1174,7 +1046,7 @@ function ShopController:Close()
 		-- The panel hides when the reversed animation completes, in _bindUI.
 		self:_playPanel(true)
 	else
-		self:_setShopEnabled(false)
+		self:_hidePanel()
 	end
 
 	self.Signals.OpenChanged:Fire(false)
@@ -1196,13 +1068,12 @@ function ShopController:TeleportToShop() : boolean
 		return false
 	end
 
-	local pivot = getPivot(self:_getMapPart(ShopConfig.TELEPORT_PART_NAME))
+	local pivot = MarkerUtil.pivotOf(self:_getMapPart(ShopConfig.TELEPORT_PART_NAME))
 	if not pivot then
 		return false
 	end
 
-	local part = self.MapParts[ShopConfig.TELEPORT_PART_NAME]
-	local halfHeight = (part and part:IsA("BasePart")) and (part.Size.Y / 2) or 0
+	local halfHeight = MarkerUtil.halfHeightOf(self.MapParts[ShopConfig.TELEPORT_PART_NAME])
 
 	character:PivotTo(pivot * CFrame.new(0, halfHeight + ShopConfig.TELEPORT_HEIGHT_OFFSET, 0))
 
@@ -1334,6 +1205,10 @@ function ShopController:init()
 	-- raridade que estao na tela agora.
 	self.Entries = {}
 	self.IsOpenState = false
+
+	-- A moldura de fora do painel (`ShopUI.Frame`), acesa so enquanto esta loja esta
+	-- na tela. Ver o comentario do `WRAPPER_NAME`.
+	self.Wrapper = nil
 
 	-- As chances por item, vindas do servidor -- nil enquanto a resposta nao chega.
 	self.CrateOdds = nil

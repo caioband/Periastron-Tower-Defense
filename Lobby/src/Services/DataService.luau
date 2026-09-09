@@ -191,6 +191,35 @@ function DataService:Update(Player : Player, Key : string, callbackFunc)
 	return editedData
 end
 
+--[=[
+	Grava o perfil agora, em vez de esperar o autosave do ProfileStore.
+
+	Quem precisa disto e o `ProcessReceipt` do `MonetizationService`: ele so devolve
+	`PurchaseGranted` depois que o que foi comprado esta **no disco**. Sem isso, um
+	servidor que caisse entre a compra e o autosave cobraria o jogador e perderia a
+	entrega -- e o `PurchaseHistory`, que e o que impede a compra de ser creditada duas
+	vezes, some junto.
+
+	Devolve `false` quando nao ha perfil aberto ou quando a gravacao falhou, e e por
+	isso que ela e um `pcall`: o receipt volta como `NotProcessedYet` e a Roblox tenta
+	de novo, que e melhor do que confirmar uma entrega que nao ficou gravada.
+
+	Existia so na Game ate agora, porque nenhum developer product tinha sido vendido
+	ainda. O primeiro deles (o reroll da loja de cartas) e do **Lobby**, e sem este
+	metodo o `ProcessReceipt` erraria aqui dentro: nenhuma compra seria creditada, em
+	nenhuma das duas places.
+]=]
+function DataService:Save(Player : Player)
+	local entry = self.Profiles[Player]
+	if not entry then return false end
+
+	local ok = pcall(function()
+		entry.Session:Save()
+	end)
+
+	return ok
+end
+
 function DataService:init()
 	self:construct()
 
