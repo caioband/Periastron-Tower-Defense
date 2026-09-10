@@ -408,6 +408,13 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 		return nil
 	end
 
+	-- A MOST BOXES OPENED conta daqui: so a caixa gasta e rolada de verdade. O
+	-- `PlayUnboxing` (o `unbox` do Cmdr) nao passa por aqui e nao conta.
+	DataService:Update(Player, "Stats", function(stats)
+		stats.BoxesOpened = (tonumber(stats.BoxesOpened) or 0) + 1
+		return stats
+	end)
+
 	if result.Unit then
 		DataService:Update(Player, "Units", function(units)
 			units = units or {}

@@ -162,12 +162,56 @@ function DataService:Get(Player : Player, callbackFunc)
 	end)
 end
 
-function DataService:Destroy(Player : Player)
-	if self.Profiles[Player] then
-		self.Profiles[Player].Session:EndSession()
-		self.Profiles[Player].Profile:Destroy()
-		self.Profiles[Player] = nil
+--[=[
+	Registra algo para acontecer com o perfil ainda aberto, no instante anterior
+	ao fechamento da sessao. O mesmo gancho do `DataService` da Game.
+
+	Todo caminho de saida passa pelo `Destroy`: o `PlayerRemoving` de quem sai
+	sozinho e o `BindToClose` do desligamento do servidor. Registrar aqui cobre os
+	dois de uma vez e nao depende da ordem em que os services conectaram o proprio
+	`PlayerRemoving` -- o que fosse escrito depois do `EndSession` se perderia.
+
+	`order` (0 por padrao) e para quem precisa **ler** o perfil depois de todo
+	mundo que ainda escreve nele: rodam do menor para o maior, e na ordem de
+	registro dentro do mesmo numero. O `LeaderboardService` usa 1 para pegar o
+	perfil ja com o tempo de jogo final do `PlaytimeService`.
+]=]
+function DataService:OnBeforeRelease(callback : (Player) -> (), order : number?)
+	if not self.BeforeRelease then
+		self.BeforeRelease = {}
 	end
+
+	table.insert(self.BeforeRelease, {
+		Callback = callback,
+		Order = order or 0,
+		Index = #self.BeforeRelease + 1,
+	})
+
+	table.sort(self.BeforeRelease, function(a, b)
+		if a.Order ~= b.Order then
+			return a.Order < b.Order
+		end
+
+		return a.Index < b.Index
+	end)
+end
+
+function DataService:Destroy(Player : Player)
+	local entry = self.Profiles[Player]
+	if not entry then return end
+
+	-- Um pcall por callback: erro em qualquer um deles nao pode impedir a sessao
+	-- de fechar, senao o perfil fica preso e o jogador nao entra em outro servidor.
+	for _, hook in self.BeforeRelease or {} do
+		local ok, err = pcall(hook.Callback, Player)
+		if not ok then
+			warn(string.format("[DataService]: callback de saida falhou para %s: %s", Player.Name, tostring(err)))
+		end
+	end
+
+	entry.Session:EndSession()
+	entry.Profile:Destroy()
+	self.Profiles[Player] = nil
 end
 
 function DataService:Update(Player : Player, Key : string, callbackFunc)

@@ -48,6 +48,37 @@ return {
 			-- DataService, entao nao precisa migracao.
 			Shards = 0,
 			XP = 0,
+
+			--[[
+				Contadores que existem para as leaderboards do lobby
+				(`Config.Leaderboard`). Nenhum deles muda o jogo: so contam.
+
+				  - `BoxesOpened`   -- caixas abertas de verdade (`CrateService:OpenCrate`);
+				                       o `unbox` do Cmdr so mostra a animacao e nao conta.
+				  - `MatchesPlayed` -- partidas em que o jogador ficou pelo menos
+				                       `MIN_MATCH_SECONDS` (`MatchStatsService`, Game).
+				  - `TimeInMatches` -- segundos dentro de um round rodando (idem).
+				  - `TimePlayed`    -- segundos com o perfil aberto, nas duas places
+				                       (`PlaytimeService`).
+
+				Os tempos sao em **segundos** inteiros; o `DD:HH:MM` e so da tela.
+
+				Nascem em zero para todo mundo, inclusive para quem ja jogava: o perfil
+				nunca guardou nada disso, entao nao ha de onde tirar o passado. Perfil
+				antigo ganha as chaves pelo reconcile do DataService.
+
+				**`CoinsEarned` (o total de coins ganhos, a MOST COINS) nao esta aqui de
+				proposito.** Para ele existe um passado aproximado: o saldo de hoje e o
+				minimo que o jogador ja ganhou. Se o template trouxesse a chave, o
+				reconcile a poria em zero e ninguem saberia mais quem era perfil antigo.
+				Sem ela, o `CurrencyService` ve a chave faltando quando o perfil carrega
+				e a cria com o `Cash` atual -- em perfil novo, isso e zero. Quem soma e
+				o `WaveService:grantReward`; estorno de loja e o Cmdr nao contam.
+			]]
+			BoxesOpened = 0,
+			MatchesPlayed = 0,
+			TimeInMatches = 0,
+			TimePlayed = 0,
 		},
 
 		Inventory = {
@@ -190,4 +221,15 @@ return {
 	CASH_PER_KILL_MIN = 6,
 	CASH_PER_KILL_MAX = 12,
 	MAX_DATA_TIME_OUT = 20,
+
+	--[[
+		Quanto tempo dentro de um round para ele contar em `Stats.MatchesPlayed` --
+		o "(3min+)" da leaderboard. Sem o piso, entrar e sair da partida seria o
+		jeito mais rapido de subir nela.
+
+		E o tempo **do jogador** no round, e nao a duracao do round: quem entra no
+		meio conta a partir de quando entrou. Vale para vitoria, derrota e saida no
+		meio. O `TimeInMatches` soma o tempo inteiro, ate das partidas curtas.
+	]]
+	MIN_MATCH_SECONDS = 180,
 }

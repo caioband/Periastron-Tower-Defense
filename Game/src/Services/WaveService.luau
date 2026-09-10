@@ -78,7 +78,18 @@ local WaveService = {
 			porque o round nao precisa saber que existe clima: se o service sumir, o
 			`setWave` continua igual.
 		]]
-		WaveStarted = Signal.new()
+		WaveStarted = Signal.new(),
+
+		--[[
+			O round entrou em `Running` (`RoundStarted`) e saiu dele (`RoundClosed`),
+			seja pelo fim da partida, seja por um `StopRound`/`ResetRound` no meio.
+
+			Quem escuta e o `MatchStatsService`, que conta o tempo de cada jogador
+			dentro da partida. `RoundClosed` so dispara para um round que estava
+			rodando: o reset da tela de resultado (`Finished`) nao fecha nada.
+		]]
+		RoundStarted = Signal.new(),
+		RoundClosed = Signal.new(),
 	},
 	ReadyPlayers = {},
 	PlayAgainVotes = {},
@@ -329,6 +340,11 @@ function WaveService:grantReward(player : Player, rewards) : boolean
 
 	dataService:Update(player, "Stats", function(stats)
 		stats.Cash = (stats.Cash or 0) + coins
+
+		-- O total ganho, que nunca desce (a MOST COINS). E o unico ganho de coins
+		-- do jogo: os outros `+=` no `Cash` sao estorno de compra e o Cmdr.
+		stats.CoinsEarned = (tonumber(stats.CoinsEarned) or 0) + coins
+
 		stats.Shards = (stats.Shards or 0) + shards
 		stats.XP = (stats.XP or 0) + xp
 		return stats
@@ -612,6 +628,8 @@ function WaveService:StartRound()
 	self.WaveCount = 0
 	table.clear(self.PaidRewards)
 
+	self.Signals.RoundStarted:Fire()
+
 	self.RoundThread = task.spawn(function()
 		self:runRound(generation)
 
@@ -619,6 +637,8 @@ function WaveService:StartRound()
 		if self:isCurrent(generation) then
 			self.State = ROUND_STATE.Finished
 			self.RoundThread = nil
+
+			self.Signals.RoundClosed:Fire()
 
 			-- A votacao de recomecar abre junto com a tela de resultado.
 			self:broadcastPlayAgain()
@@ -633,6 +653,8 @@ end
 	o servidor em Idle. Nao limpa mobs nem unidades; isso e `ResetRound`.
 ]=]
 function WaveService:StopRound(reason : string?)
+	local wasRunning = self.State == ROUND_STATE.Running
+
 	-- Invalida a geracao antes de tudo: o que escapar do cancelamento encontra
 	-- uma geracao diferente no proximo ponto de espera e se encerra sozinho.
 	self.Generation += 1
@@ -657,9 +679,18 @@ function WaveService:StopRound(reason : string?)
 	self.GameOver = false
 	table.clear(self.ReadyPlayers)
 
+	if wasRunning then
+		self.Signals.RoundClosed:Fire()
+	end
+
 	if reason then
 		print(string.format("[WaveService]: round interrompido (%s).", reason))
 	end
+end
+
+--- Se existe um round em `Running` agora (da espera pelos jogadores ate o fim).
+function WaveService:IsRoundRunning() : boolean
+	return self.State == ROUND_STATE.Running
 end
 
 --[=[

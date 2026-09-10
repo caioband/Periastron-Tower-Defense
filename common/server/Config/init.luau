@@ -16,6 +16,7 @@ type ServerConfig = {
 	Summon : typeof(require(script.Summon)),
 	Crate : typeof(require(script.Crate)),
 	Cmdr : typeof(require(script.Cmdr)),
+	Leaderboard : typeof(require(script.Leaderboard)),
 }
 
 local ServerConfig : ServerConfig = {}

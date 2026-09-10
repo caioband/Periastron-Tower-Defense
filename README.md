@@ -2005,6 +2005,107 @@ pergunta à Roblox foi feita no servidor, uma vez.
 funcionam para quem já as tem, e o `PromptGamePassPurchaseFinished` cobre a compra
 feita por fora (página da experiência). A vitrine é trabalho à parte.
 
+## Leaderboards globais (`Workspace.Leaderboards`, Lobby)
+
+Oito boards no mapa do lobby, cada uma um modelo com `Main > SurfaceGui >
+ScrollingFrame > Frame`. O `Frame` é o **molde**: o servidor o tira da tela e
+clona uma linha por posição (`Position` = `1º`, `Username`, `Value`), até o top 50.
+Quem faz tudo é o `LeaderboardService` (`common/server/Services`); a lista de
+boards fica em `Config.Leaderboard` (servidor).
+
+| Modelo | Número do perfil | Formato |
+| --- | --- | --- |
+| `HighestLevelLB` | `Stats.XP` (mostra o nível) | `25` |
+| `MostCoinsLB` | `Stats.CoinsEarned` (total ganho, não o saldo) | `1.25M` |
+| `MostMatchesWonLB` | `Stats.Wins` | `1.25M` |
+| `NightmareWinsLB` | `Stats.DifficultyWins.Nightmare` | `1.25M` |
+| `MostBoxesOpened` | `Stats.BoxesOpened` | `1.25M` |
+| `MostMatchesPlayedLB` | `Stats.MatchesPlayed` | `1.25M` |
+| `MostTimeInMatchesLB` | `Stats.TimeInMatches` (segundos) | `DD:HH:MM` |
+| `MostTimePlayedLB` | `Stats.TimePlayed` (segundos) | `DD:HH:MM` |
+
+A HIGHEST LEVEL guarda o **XP**, e não o nível: a ordem é a mesma, e o XP desempata
+quem já está no nível máximo.
+
+### Um OrderedDataStore por board
+
+O perfil continua sendo a fonte; a store é uma cópia ordenada dele, com o UserId
+como chave. Pedir o topo é **uma página** do `GetSortedAsync(false, 50, 1)` — o
+mesmo custo com mil ou com um bilhão de jogadores na store, porque ela já guarda as
+chaves em ordem. Nada percorre a store inteira. O `1` do fim tira quem está em zero
+(coins gastos até o fim, por exemplo).
+
+O nome de cada store é `<PROFILE_KEY>_LB_<Store>`: trocar a `PROFILE_KEY` zera os
+perfis **e** as boards juntos, em vez de deixar o topo mostrando números de perfis
+que ninguém mais lê.
+
+### Quem grava, e quando
+
+As duas places gravam (a Game muda XP, coins, vitórias e partidas; a Lobby muda
+coins, caixas e tempo), então o service é `common`. Cada servidor manda os números
+dos próprios jogadores:
+
+- quando o perfil carrega (tudo que não for zero);
+- a cada `WRITE_INTERVAL` (120s), **só o que mudou** desde a última escrita;
+- na saída e no desligamento, pelo `DataService:OnBeforeRelease`.
+
+Tudo passa por uma fila com uma entrada por store+jogador: um número que muda de
+novo antes de a escrita sair substitui a entrada, e não duplica. A fila respeita o
+budget de escrita da Roblox (60 + 10 por jogador por minuto) e, se a store falhar,
+espera o próximo ciclo. O `BindToClose` segura o servidor até ela esvaziar (25s no
+máximo).
+
+Jogador de UserId negativo (cliente de teste do Studio) não grava: a store é a do
+jogo, e ele sujaria o topo de verdade.
+
+### Quem lê
+
+Só onde existe `Workspace.Leaderboards` — hoje, a Lobby. A cada `READ_INTERVAL`
+(120s) ela lê as oito boards, resolve os nomes num lote só
+(`UserService:GetUserInfosByUserIdsAsync`, com cache) e reescreve o texto das
+linhas. As linhas são reaproveitadas entre leituras, e as que sobram ficam
+escondidas. A SurfaceGui está no Workspace, então o que o servidor escreve replica
+para todo mundo.
+
+### Os quatro contadores novos
+
+Nascem em **zero para todo mundo**, inclusive para quem já jogava: o perfil nunca
+guardou nada disso. Perfil antigo ganha as chaves pelo reconcile.
+
+| Chave | Quem escreve | Regra |
+| --- | --- | --- |
+| `BoxesOpened` | `CrateService:OpenCrate` (Lobby) | caixa gasta e rolada; o `unbox` do Cmdr não conta |
+| `TimePlayed` | `PlaytimeService` (common) | do perfil carregado até a saída, nas duas places; escreve de minuto em minuto |
+| `TimeInMatches` | `MatchStatsService` (Game) | tempo real com o `WaveService` em `Running`, da espera pelos jogadores à última wave |
+| `MatchesPlayed` | `MatchStatsService` (Game) | +1 quando o tempo do jogador naquele round passa de `Data.MIN_MATCH_SECONDS` (180s) — vitória, derrota ou saída no meio |
+
+O `MatchStatsService` abre um relógio por jogador no `WaveService.Signals.RoundStarted`
+(ou quando ele entra num round rodando) e fecha no `RoundClosed` — fim da partida ou
+reset no meio — ou na saída. Fechar tira o relógio, então uma partida conta uma vez
+por jogador.
+
+### A ordem dos ganchos de saída
+
+`OnBeforeRelease(callback, order)` agora existe nos dois `DataService`, e o `order`
+(0 por padrão) decide quem roda primeiro. O `LeaderboardService` registra com `1`
+para tirar o retrato final **depois** de quem ainda escreve no perfil na saída — a
+recompensa de quem sai no meio (`WaveService`), o último minuto do
+`PlaytimeService`, o relógio do `MatchStatsService`. Sem o número, a ordem seria a
+de quem subiu primeiro no `Me`, que não é garantida.
+
+### MOST COINS é o total ganho
+
+`Stats.CoinsEarned` só sobe: gastar na loja não derruba ninguém da board. Quem
+soma é o `WaveService:grantReward`, junto com o `Cash` — é o único ganho de coins
+do jogo. Estorno de compra (`ShopService`, `RoundCardShopService`) e o `cash` do
+Cmdr mexem só no saldo.
+
+A chave **não está no template**, e é de propósito. Quem jogava antes dela já
+ganhou pelo menos o saldo que tem, então o `CurrencyService` (common), ao ver a
+chave faltando no perfil que carregou, a cria com o `Cash` atual — perfil novo tem
+saldo zero e começa do zero. Com a chave no template, o reconcile a criaria em
+zero antes, e não daria mais para saber quem era perfil antigo.
+
 ## Evento novo do servidor para o cliente precisa ser declarado
 
 O identificador de um evento do Warp nasce no **servidor**. Quando o cliente faz
