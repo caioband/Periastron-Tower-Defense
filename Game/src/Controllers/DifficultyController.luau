@@ -6,14 +6,27 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
+local Configs = Shared:WaitForChild("Config")
+
+local SharedConfig = require(Configs.SharedConfig)
 local Me = require(Vendor.Me)
 local Framework = Me.new()
+
+local UnlockConfig = SharedConfig.DifficultyUnlockConfig
 
 local SELECTED_TRANSPARENCY = 0
 local IDLE_TRANSPARENCY = 0.4
 
+-- O frame do cadeado dentro do botao, e o rotulo dele. Botao sem `Locked` e um
+-- botao que a arte declarou como sempre aberto -- ver `collectLock`.
+local LOCK_NAME = "Locked"
+local LOCK_LABEL_NAME = "Time"
+
 local DifficultyController = {
-	Buttons = {}
+	Buttons = {},
+
+	-- { [dificuldade] = { Button, Frame, Label, WasActive, WasAutoButtonColor } }
+	Locks = {},
 }
 
 local function formatClock(seconds : number)
@@ -84,6 +97,103 @@ function DifficultyController:auditButtons(options : { string }?)
 	end
 end
 
+--[=[
+	Guarda o cadeado de um botao, se ele tiver um.
+
+	O estado de origem do botao vai junto (`WasActive`, `WasAutoButtonColor`) porque
+	destrancar tem de **devolver** o que a arte autorou, e nao chutar `true`: um botao
+	que nasceu sem `AutoButtonColor` nao pode ganhar o efeito ao abrir.
+]=]
+function DifficultyController:collectLock(button : ImageButton)
+	local frame = button:FindFirstChild(LOCK_NAME)
+	if not frame or not frame:IsA("GuiObject") then return end
+
+	self.Locks[button.Name] = {
+		Button = button,
+		Frame = frame,
+		Label = frame:FindFirstChild(LOCK_LABEL_NAME),
+		WasActive = button.Active,
+		WasAutoButtonColor = button.AutoButtonColor,
+	}
+end
+
+--[=[
+	As vitorias e o XP deste jogador, ou nil enquanto a replica nao chegou.
+
+	Nil e o chute seguro: sem perfil, `isUnlocked` responde "trancado" e a tela mostra
+	tudo travado. Errar para o outro lado abriria o Nightmare por um instante e o
+	fecharia na cara do jogador quando o perfil chegasse.
+]=]
+function DifficultyController:stats() : { [string] : any }?
+	local replica = self.replica
+	local stats = replica and replica.Data and replica.Data.Stats
+
+	return typeof(stats) == "table" and stats or nil
+end
+
+--[=[
+	Pinta o cadeado de cada botao a partir do perfil de agora.
+
+	Tres coisas mudam juntas, e por isso moram na mesma funcao: o `Locked` aparece, o
+	botao para de responder e o rotulo diz o que falta. Deixar o botao vivo por baixo
+	de um cadeado desenhado seria uma dificuldade que parece trancada e vota no clique.
+
+	`Active = false` ja basta para o `MouseButton1Click` nao disparar -- o clique
+	confere de novo mesmo assim, porque um botao sem `Locked` na arte nunca passa por
+	aqui e continuaria clicavel.
+]=]
+function DifficultyController:renderLocks()
+	local stats = self:stats()
+
+	for name, lock in self.Locks do
+		local unlocked = UnlockConfig.isUnlocked(name, stats)
+
+		lock.Frame.Visible = not unlocked
+
+		if lock.Label and not unlocked then
+			lock.Label.Text = UnlockConfig.lockText(name, stats)
+		end
+
+		lock.Button.Active = unlocked and lock.WasActive
+		lock.Button.AutoButtonColor = unlocked and lock.WasAutoButtonColor
+	end
+end
+
+--[=[
+	Segura a replica do jogador e repinta os cadeados a cada escrita em `Stats`.
+
+	Mesmo formato do contador do HUD e do cadeado dos mapas: o `DataService` escreve a
+	chave `Stats` inteira, mas a escuta e o `OnChange` para que a escrita mais funda
+	(`Stats.DifficultyWins`) tambem conte. Assim a vitoria que abre o Hard aparece no
+	board do proximo round sem o jogador trocar de servidor.
+]=]
+function DifficultyController:watchProfile()
+	task.spawn(function()
+		--[[
+			O `DataController` e pedido aqui, e nao pela tabela `Controllers` que o resto
+			dos controllers declara no topo: aquela tabela e preenchida no `start`, e este
+			controller monta no `init`. Com a GUI ja na tela o `construct` nao cede em
+			nenhum `WaitForChild` e termina inteiro antes de qualquer `start` rodar -- a
+			referencia ainda seria o placeholder vazio. O `Get` com yield espera o loader.
+		]]
+		local dataController = Framework:Get("DataController", false, true)
+
+		local replica = dataController:GetReplica()
+		if not replica then return end
+
+		self.replica = replica
+		self:renderLocks()
+
+		replica:OnChange(function(_action, path)
+			if path[1] ~= nil and path[1] ~= "Stats" then
+				return
+			end
+
+			self:renderLocks()
+		end)
+	end)
+end
+
 function DifficultyController:updateUI(state)
 	self:updateClock(state)
 	self:setHotbarVisible(state.locked ~= nil)
@@ -146,12 +256,20 @@ function DifficultyController:construct()
 	for _, child in self.board:GetChildren() do
 		if child:IsA("ImageButton") then
 			self.Buttons[child.Name] = child
+			self:collectLock(child)
 
 			child.MouseButton1Click:Connect(function()
+				if not UnlockConfig.isUnlocked(child.Name, self:stats()) then return end
+
 				Framework:Fire("SelectDifficulty", child.Name)
 			end)
 		end
 	end
+
+	-- Antes de a replica chegar tudo aparece trancado, e e assim que fica se ela nunca
+	-- chegar: o servidor recusaria o voto de qualquer jeito.
+	self:renderLocks()
+	self:watchProfile()
 
 	Framework:Listen("DifficultySelection", function(state)
 		self:updateUI(state)

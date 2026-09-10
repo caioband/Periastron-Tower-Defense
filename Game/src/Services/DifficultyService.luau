@@ -12,7 +12,10 @@ local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
 
+local SharedConfig = require(Configs.SharedConfig)
+
 local DifficultyConfig = ServerConfig.Difficulty
+local UnlockConfig = SharedConfig.DifficultyUnlockConfig
 
 local Framework = Me.new()
 
@@ -24,7 +27,11 @@ local CLIENT_READY_TIMEOUT = 60
 
 local DifficultyService = {
 	Services = {
-		MobService = {}
+		MobService = {},
+
+		-- De onde saem as vitorias por dificuldade e o XP que destravam os presets de
+		-- cima. Ver `isUnlockedFor`.
+		DataService = {}
 	},
 	Votes = {},
 	Selected = nil,
@@ -33,6 +40,28 @@ local DifficultyService = {
 
 function DifficultyService:GetSelected()
 	return DifficultyConfig.Get(self.Selected)
+end
+
+--[=[
+	Se este jogador ja pode votar nesta dificuldade.
+
+	E a mesma conta que o `DifficultyController` usa para desenhar o cadeado, com o
+	mesmo config -- e aqui ela vale de verdade: o voto e um nome, e um nome e o que
+	qualquer cliente pode mandar. Sem esta linha, o Nightmare abriria para quem nunca
+	ganhou uma partida, e bastaria **um** desses votos para arrastar a sala inteira
+	para la.
+
+	Perfil que ainda nao carregou conta como zero vitoria e nivel 1: aparece trancado,
+	que e o lado seguro, e a tela do jogador esta mostrando a mesma coisa pela mesma
+	conta.
+]=]
+function DifficultyService:isUnlockedFor(player : Player, difficultyName : string?) : boolean
+	local dataService = self.Services.DataService
+	local profiles = dataService and dataService.Profiles
+	local entry = profiles and profiles[player]
+	local stats = entry and entry.Profile.Data.Stats
+
+	return UnlockConfig.isUnlocked(difficultyName, typeof(stats) == "table" and stats or nil)
 end
 
 function DifficultyService:timeLeft()
@@ -187,6 +216,13 @@ function DifficultyService:construct()
 	Framework:Listen("SelectDifficulty", function(player, difficultyName)
 		if not self.SelectionActive then return end
 		if not DifficultyConfig.Exists(difficultyName) then return end
+
+		if not self:isUnlockedFor(player, difficultyName) then
+			warn(string.format(
+				"[DifficultyService]: %s votou em %s, que ainda esta trancada para ele.",
+				player.Name, difficultyName))
+			return
+		end
 
 		if self.Votes[player.UserId] == difficultyName then
 			self.Votes[player.UserId] = nil

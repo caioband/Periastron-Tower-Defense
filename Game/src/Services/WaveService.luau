@@ -21,6 +21,7 @@ local Signal = require(Packages.Signal)
 
 local WaveConfig = ServerConfig.Wave
 local GamepassConfig = SharedConfig.GamepassConfig
+local UnlockConfig = SharedConfig.DifficultyUnlockConfig
 
 local Framework = Me.new()
 
@@ -399,6 +400,26 @@ function WaveService:onRoundEnded(won : boolean)
 			if dataService then
 				dataService:Update(player, "Stats", function(stats)
 					stats.Wins = (stats.Wins or 0) + 1
+
+					--[[
+						A mesma vitoria contada de novo, agora com a dificuldade em que ela
+						aconteceu -- e o que destrava as dificuldades de cima
+						(`SharedConfig.DifficultyUnlockConfig`). O total acima nao serve para
+						isso: ele nao sabe dizer se as vitorias sao do Easy ou do Impossible.
+
+						A chave nasce aqui, na primeira vitoria naquela dificuldade, em vez de
+						vir pronta do template -- a lista de presets e do config do servidor, e
+						copia-la para dentro do perfil seria a mesma lista em dois lugares. Quem
+						le trata chave ausente como zero.
+					]]
+					local difficultyWins = stats[UnlockConfig.WINS_KEY]
+					if typeof(difficultyWins) ~= "table" then
+						difficultyWins = {}
+						stats[UnlockConfig.WINS_KEY] = difficultyWins
+					end
+
+					difficultyWins[preset.Name] = (difficultyWins[preset.Name] or 0) + 1
+
 					return stats
 				end)
 			end

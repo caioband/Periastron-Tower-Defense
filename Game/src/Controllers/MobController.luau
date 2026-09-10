@@ -26,6 +26,20 @@ local Framework = Me.new()
 local HIT_FLASH_COLOR = Color3.fromRGB(255, 50, 50)
 local HIT_FLASH_TIME = 0.12
 
+--[[
+	O realce de quem levou choque -- o raio do Electro.
+
+	Mesmo amarelo, mesmas transparencias e mesma ideia do realce de unidade atordoada
+	(`UnitPlacementController`): "este esta parado". Ele dura exatamente o tranco, que
+	e curto -- e o que faz o jogador ver que a fila travou, em vez de so ver o raio
+	passar e os inimigos continuarem andando.
+
+	Nome proprio para nao brigar com o `HitFlash` vermelho, que pisca por cima dele a
+	cada golpe e some sozinho.
+]]
+local SHOCK_HIGHLIGHT = "ShockHighlight"
+local SHOCK_COLOR = Color3.fromRGB(255, 200, 60)
+
 local SHAKE_DURATION = 0.6
 local SHAKE_MAGNITUDE = 0.35
 local SHAKE_FREQUENCY = 18
@@ -144,6 +158,38 @@ local function flashMob(mob)
 	highlight.Parent = mob
 
 	task.delay(HIT_FLASH_TIME, function()
+		if highlight and highlight.Parent then
+			highlight:Destroy()
+		end
+	end)
+end
+
+--[=[
+	Pinta um inimigo de amarelo enquanto o tranco do choque durar.
+
+	Um realce por inimigo: um choque em cima de outro troca o realce e recomeca o
+	prazo, em vez de empilhar dois Highlights brigando pelo mesmo modelo -- e e o
+	mesmo que o `MobService:StunMob` faz com o tranco em si, onde o prazo maior manda.
+
+	A espera corre no relogio da **partida**, como a do `StunMob` do outro lado: no 3x
+	os 0,3s acabam em um decimo de segundo real, e o realce tem que apagar junto com
+	eles, senao ele sobreviveria ao proprio motivo.
+]=]
+local function shockMob(mob, duration : number)
+	local existing = mob:FindFirstChild(SHOCK_HIGHLIGHT)
+	if existing then
+		existing:Destroy()
+	end
+
+	local highlight = Instance.new("Highlight")
+	highlight.Name = SHOCK_HIGHLIGHT
+	highlight.FillColor = SHOCK_COLOR
+	highlight.OutlineColor = SHOCK_COLOR
+	highlight.FillTransparency = 0.6
+	highlight.OutlineTransparency = 0.2
+	highlight.Parent = mob
+
+	GameClock.Delay(duration, function()
 		if highlight and highlight.Parent then
 			highlight:Destroy()
 		end
@@ -672,6 +718,29 @@ function MobController:construct()
 				position = impactPos,
 				unitId = unitId,
 			})
+		end
+	end)
+
+	--[[
+		O raio do Electro: o `VFXController` desenha o arco e daqui sai o realce dos
+		inimigos que ele tocou. Os dois escutam o mesmo evento de proposito -- e o
+		mesmo par do `UnitStunned`, onde o realce da unidade e o VFX do congelamento
+		tambem vem separados.
+
+		Sem `stun` (a unidade nao para ninguem) nao ha realce: ele diz que o inimigo
+		esta travado, e nao que ele levou dano -- isso ja e o `HitFlash` vermelho.
+	]]
+	Framework:Listen("ChainLightning", function(arc)
+		if typeof(arc) ~= "table" or typeof(arc.targets) ~= "table" then return end
+
+		local duration = tonumber(arc.stun) or 0
+		if duration <= 0 then return end
+
+		for _, target in arc.targets do
+			local mob = self.SpawnedMobs[target.mobId]
+			if mob and mob.Parent then
+				shockMob(mob, duration)
+			end
 		end
 	end)
 

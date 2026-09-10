@@ -23,6 +23,25 @@ return {
 	Template = {
 		Stats = {
 			Wins = 0,
+
+			--[[
+				As vitorias **por dificuldade**, `{ [dificuldade] = quantas }` -- o que
+				destrava as dificuldades de cima (ver `SharedConfig.DifficultyUnlockConfig`).
+
+				Separado do `Wins` acima, que continua sendo o total e e o que os mapas e o
+				leaderstats leem. Um total nao serve para o cadeado: quem tem 20 vitorias no
+				Easy nao mostrou nada sobre o Hard.
+
+				Nasce **vazia**, e nao com uma chave por preset: a lista de dificuldades vive
+				no config do servidor (`Config.Difficulty.Order`) e repeti-la aqui seria a
+				mesma lista em dois lugares, esperando para se desencontrar. Quem escreve e o
+				`WaveService`, que cria a chave da dificuldade vencida na hora; quem le trata
+				chave ausente como zero. Perfil antigo ganha a tabela pelo reconcile do
+				DataService, entao nao precisa migracao -- e ganha vazia: as vitorias de antes
+				desta chave nao tem dificuldade registrada e nao ha de onde tira-la.
+			]]
+			DifficultyWins = {},
+
 			Cash = 0,
 
 			-- Moeda premium. Perfis antigos ganham a chave pelo reconcile do

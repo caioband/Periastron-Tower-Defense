@@ -39,19 +39,46 @@
 	esta atras do alvo. `PierceWidth` e a unica coisa entre "pega quem a linha corta
 	de raspao" e "limpa a fileira do lado".
 
-	`Slow` e `Burn` sao o que o golpe **deixa** no inimigo, alem do dano. Nenhuma
-	unidade de hoje declara os dois -- eles existem para quando o roster ganhar uma
-	unidade `Ice` ou `Fire`:
+	`Slow`, `Stun` e `Burn` sao o que o golpe **deixa** no inimigo, alem do dano. Hoje
+	so o Electro deixa alguma coisa (o tranco do choque); o `Slow` espera uma unidade
+	`Ice` e o `Burn`, uma `Fire`:
 
 	| Campo | O que e |
 	| --- | --- |
 	| `Slow` | `{ Amount, Duration }` -- `Amount` e a fracao de velocidade tirada (0.3 e "anda 30% mais devagar") |
+	| `Stun` | `{ Duration }` -- o inimigo para **de vez** por tantos segundos |
 	| `Burn` | `{ Damage, Ticks, Interval }` -- tantos tiques de tanto dano, de tantos em tantos segundos |
 
-	Quem os executa e o `MobService` (`ApplySlow`, `ApplyBurn`), que e o dono do
-	estado do inimigo; quem os dispara e o `UnitService:creditDamage`, depois de o
-	dano ter entrado. As cartas de round Chill Out e Fire Hazard multiplicam
+	`Slow` e `Stun` nao sao a mesma coisa em intensidades diferentes: a lentidao mexe
+	na velocidade do inimigo, o tranco tira ele do laco de movimento. Os dois cabem no
+	mesmo golpe (nenhuma unidade de hoje declara os dois), e e por serem coisas
+	diferentes que o tranco pode ser tao curto: parado e parado, e um terco de segundo
+	disso ja e um pedaco de caminho que o inimigo nao andou.
+
+	Quem os executa e o `MobService` (`ApplySlow`, `StunMob`, `ApplyBurn`), que e o
+	dono do estado do inimigo; quem os dispara e o `UnitService:creditDamage`, depois
+	de o dano ter entrado. As cartas de round Chill Out e Fire Hazard multiplicam
 	exatamente estes numeros.
+
+	`Chain` e o golpe que **salta** de inimigo para inimigo. Ele nao usa o alvo como
+	area nem como linha: o primeiro e o alvo mirado, e da fica pulando para o vizinho
+	mais proximo que ainda nao foi tocado, ate `Targets` inimigos.
+
+	| Campo | O que e |
+	| --- | --- |
+	| `Targets` | quantos inimigos o raio toca no total, contando o primeiro |
+	| `Radius` | studs que o salto alcanca **a partir de cada inimigo**, e nao da unidade |
+
+	O `Radius` sair de cada inimigo e o que separa o salto da area: um raio de 4 saltos
+	acompanha a fila do caminho e chega bem alem do alcance da unidade, enquanto uma
+	area do mesmo tamanho so pegaria quem esta amontoado. Quem enfileira melhor os
+	inimigos ganha mais com a unidade, que e a mesma ideia do `Piercing` -- so que sem
+	linha reta, entao a curva do caminho nao corta o golpe pela metade.
+
+	**Nao ha queda por inimigo**, ao contrario do `PierceFalloff`: o quarto inimigo da
+	corrente leva o mesmo que o primeiro. Isso e de proposito e e caro, entao o preco
+	esta no `Targets` e no `Cooldown` -- e la que se mexe se a unidade ficar forte
+	demais, e nao numa queda que ela nao tem.
 
 	`HitFalloff` e a mesma ideia da queda da flecha, so que entre os **golpes** de um
 	ataque so, e nao entre os alvos de um golpe: ele e a perda de um golpe para o
@@ -88,6 +115,67 @@ local UnitStats = {
 		RangeStats = {
 			Increment = 1,
 			Max = 10,
+		},
+	},
+
+	--[=[
+		O raio que salta: um golpe a cada 5s que toca quatro inimigos e para cada um
+		deles no lugar por um instante.
+
+		**Ela vende alcance de golpe, e nao dano por alvo.** 4 x 18 sao 72 de dano por
+		ciclo, ou 14,4 de DPS com a corrente cheia -- 4,8 por 100 de caixa, na casa do
+		Rocket (4,4) e do Berserker (5,1), as outras duas lendarias que a regra 1 la de
+		cima cobra por uma coisa que elas nao vendem. Contra um alvo sozinho sao 3,6 de
+		DPS, e ai ela e de longe a pior da tabela -- e esta certo, porque sozinha ela
+		nao faz nada do que faz.
+
+		Em cima disso vem o tranco, e ele e **de proposito pequeno**: 0,3s parado num
+		ciclo de 5s tiram 6% do caminho que os quatro andariam. Isso e um tropeco, e
+		nao um controle -- quem para inimigo de verdade e o Time Stop, que custa uma
+		carta. Ela nao deixa lentidao nenhuma: o inimigo para e volta a andar no ritmo
+		de sempre.
+
+		Os numeros que importam sao o `Targets` e o `Cooldown`, e o `Stun.Duration` e o
+		que os separa de um controle: subir aquele 0,3 para perto de 1 com quatro elos
+		a cada 5s vira "a fila anda quando o Electro deixa", que e outra unidade.
+
+		O `Cooldown = 5` cabe folgado na animacao `Attack`, que dura 1,67s -- ela passa
+		dois tercos do ciclo parada esperando o proximo raio.
+
+		Alcance medio (10), como o Subspace Tripminer: ela precisa alcancar a fila para
+		o salto ter de onde sair, mas o salto ja e o que a leva mais longe -- somar
+		alcance longo por cima seria pagar duas vezes pela mesma coisa.
+	]=]
+	["Electro"] = {
+		Rarity = "Legendary",
+		Class = "Electric",
+		Cost = 300,
+		Damage = 18,
+		Range = 10,
+		Cooldown = 5,
+		AttackType = "SingleShot",
+		HitInterval = 0,
+		Hits = 1,
+
+		-- Quatro inimigos no total (o alvo e mais tres saltos), sem perda de dano
+		-- entre eles. Ver o `Chain` no cabecalho.
+		Chain = { Targets = 4, Radius = 8 },
+
+		--[[
+			O tranco do choque, e a unica coisa que o golpe deixa: cada elo da corrente
+			para de vez por 0,3s e depois volta a andar no ritmo de sempre.
+
+			**Sem `Slow` de proposito.** Ela nao e uma unidade de controle, e o campo
+			existe (ver o `Stun` e o `Slow` no cabecalho) justamente para os dois nao
+			serem confundidos: lentidao mexe na velocidade, tranco tira o inimigo do
+			laco. Quem executa e o `MobService:StunMob`, o mesmo `StunnedUntil` do Time
+			Stop.
+		]]
+		Stun = { Duration = 0.3 },
+
+		RangeStats = {
+			Increment = 1,
+			Max = 14,
 		},
 	},
 

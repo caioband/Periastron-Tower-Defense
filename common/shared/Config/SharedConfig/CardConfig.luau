@@ -37,6 +37,7 @@ CardConfig.Images = {
 	Slingshot = "rbxassetid://101061040163272",
 	Archer = "rbxassetid://95837523891408",
 	["Subspace Tripminer"] = "rbxassetid://106851377383587",
+	Electro = "rbxassetid://105460799994551",
 }
 
 --[=[
@@ -66,8 +67,8 @@ end
 	como no `ClassIcon`: o `Info` carrega o nome e o nível da unidade dentro dele, e
 	sumir com a moldura levaria os dois junto.
 
-	Faltam Azure, Slingshot, Subspace Tripminer e Archer. É aqui que se conserta,
-	uma linha por unidade.
+	Faltam Azure, Slingshot, Subspace Tripminer, Archer e Electro. É aqui que se
+	conserta, uma linha por unidade.
 
 	O **Berserker** já tem a carta dele em `Images`, mas ainda não o retrato: o id
 	aqui é o do Slasher, provisório, e é uma linha para trocar quando a arte do
@@ -125,6 +126,7 @@ CardConfig.IndexImages = {
 	Rocket = { Locked = "rbxassetid://115737289351232", Unlocked = "rbxassetid://138706217718590" },
 	Berserker = { Locked = "rbxassetid://113406675089719", Unlocked = "rbxassetid://136437855682464" },
 	Entrepreneur = { Locked = "rbxassetid://114643462066100", Unlocked = "rbxassetid://96216096014823" },
+	Electro = { Locked = "rbxassetid://83094354840437", Unlocked = "rbxassetid://82433128727107" },
 }
 
 --[=[

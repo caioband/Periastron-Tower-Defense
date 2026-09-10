@@ -119,6 +119,24 @@ local UnitAttackConfig = {
 			{ Animation = "Attack", HitTime = 1.5 },
 		},
 	},
+
+	--[[
+		1,05s e o marcador `Hit` da animacao `Attack` do Electro (1,6667s de duracao),
+		e vale a mesma regra do Archer logo acima: o marcador e a **fonte** do numero,
+		este campo e a copia que as duas pontas obedecem, e quem cobra o dano e o
+		servidor, que nao tem `AnimationTrack` para escutar.
+
+		Aqui isso pesa mais do que no resto da tabela, porque nesta unidade o instante
+		nao decide so quando a vida sai: o raio que salta pelos inimigos e disparado
+		na mesma linha do dano (`UnitService:executeAttack`), entao o numero daqui e
+		literalmente o frame em que o jogador ve o raio. Mexeu o marcador, mexe aqui
+		junto -- senao o raio sai com o boneco ainda erguendo a mao.
+	]]
+	["Electro"] = {
+		AttackSequence = {
+			{ Animation = "Attack", HitTime = 1.05 },
+		},
+	},
 }
 
 return UnitAttackConfig

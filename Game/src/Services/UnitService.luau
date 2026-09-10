@@ -766,6 +766,7 @@ function UnitService:construct()
 	Framework:Listen("TripmineTriggered", function() end)
 	Framework:Listen("FarmPayout", function() end)
 	Framework:Listen("AuraBonusVFX", function() end)
+	Framework:Listen("ChainLightning", function() end)
 
 	Framework:Listen("SellUnit", function(player, unitId)
 		local foundIndex = nil
@@ -1047,9 +1048,11 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 		So depois de o dano ter entrado: um golpe que nao encostou em ninguem nao
 		congela nem queima ninguem.
 
-		> ⚠️ Nenhuma unidade do roster de hoje declara os dois -- ainda nao ha unidade
-		> `Ice` nem `Fire`. As cartas Chill Out e Fire Hazard multiplicam exatamente
-		> estes numeros, e passam a valer no dia em que uma existir.
+		> Hoje so o Electro deixa alguma coisa, e e o tranco logo abaixo: ele entra em
+		> **cada elo** da corrente, porque este caminho e o mesmo para qualquer alvo que
+		> tenha levado dano. Lentidao e queimadura continuam sem dono -- ainda nao ha
+		> unidade `Ice` nem `Fire` --, e as cartas Chill Out e Fire Hazard multiplicam
+		> exatamente estes numeros no dia em que houver.
 	]]
 	if dealt > 0 then
 		local stats = SharedConfig.UnitStats[entry.unitName]
@@ -1062,6 +1065,21 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 		local burn = stats and stats.Burn
 		if burn then
 			self.Services.MobService:ApplyBurn(mobId, burn.Damage, burn.Ticks, burn.Interval, entry.ownerUserId)
+		end
+
+		--[[
+			O tranco: o inimigo para de vez por um instante, e so depois volta a andar
+			(lento, se o golpe tambem deixou `Slow` -- nenhum deixa hoje). E o mesmo
+			`StunnedUntil` do Time Stop, aplicado a um mob so.
+
+			Vem **depois** da lentidao de proposito, e a ordem importa: o `ApplySlow` nao
+			avisa a tela enquanto o mob esta parado, entao lentidao primeiro e tranco
+			depois deixa as duas pontas contando a mesma historia. Ao contrario, o aviso
+			de velocidade nova sairia por cima do "parou".
+		]]
+		local stun = stats and stats.Stun
+		if stun then
+			self.Services.MobService:StunMob(mobId, stun.Duration)
 		end
 	end
 
@@ -1443,15 +1461,22 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 	local pierce = projectile and projectile.Subtype == "Piercing" and projectile or nil
 
 	--[[
+		O raio que salta: o golpe deixa de ser "o alvo" e passa a ser a corrente que
+		sai dele. Quem monta a corrente e o `MobService`, que e o dono da posicao de
+		todo mundo -- aqui so se cobra o dano de cada elo e se manda o desenho.
+	]]
+	local chain = unitStats.Chain
+
+	--[[
 		O corte que a carta Cleave It To Me liga no corpo a corpo, com os numeros dela
 		dentro. Congelado aqui junto com o dano, e nao relido a cada acerto, pelo mesmo
 		motivo: um MultiShot leva quase um segundo, e a carta pode vencer no meio dele.
 
-		So vale para quem nao tem area nem projetil -- os dois ja acertam mais de um
-		alvo por conta propria, e somar o corte por cima seria a mesma unidade cobrando
-		duas vezes pela mesma ideia.
+		So vale para quem nao tem area, projetil nem corrente -- os tres ja acertam mais
+		de um alvo por conta propria, e somar o corte por cima seria a mesma unidade
+		cobrando duas vezes pela mesma ideia.
 	]]
-	local cleave = (not aoe and not projectile) and self:cardFlag(entry, "Cleave") or nil
+	local cleave = (not aoe and not projectile and not chain) and self:cardFlag(entry, "Cleave") or nil
 
 	local range = self:getRange(entry, weather)
 	local totalHits = unitStats.Hits or 1
@@ -1562,7 +1587,59 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 			local predictedPos = resolvedMobId and self.Services.MobService:PredictPosition(resolvedMobId)
 
 			local hits = {}
-			if aoe then
+			if chain and resolvedMobId then
+				--[=[
+					A corrente: o alvo mirado e os saltos a partir dele.
+
+					Todos levam o **mesmo** dano -- esta e a unica forma de acertar varios
+					alvos do arquivo que nao tem queda nenhuma (a flecha tem o
+					`PierceFalloff`, o corte tem o `Falloff`, o combo tem o `HitFalloff`).
+					Ver o `Chain` no `UnitStats`: o preco disso esta no `Targets` e no
+					cooldown longo, e e la que se mexe.
+
+					O tranco nao aparece aqui: ele e o `Stun` da unidade, aplicado pelo
+					`creditDamage` a cada elo -- o mesmo caminho de qualquer coisa que um
+					golpe deixe no inimigo. O que este bloco manda para o cliente e so o
+					desenho, e o `stun` vai junto porque o realce amarelo do inimigo dura
+					exatamente o tempo em que ele esta parado.
+				]=]
+				local mobService = self.Services.MobService
+				local targets = mobService:GetChainTargets(resolvedMobId, chain.Targets, chain.Radius)
+
+				local stun = unitStats.Stun
+				local arc = {
+					unitId = unitId,
+					origin = unitPosition,
+					stun = stun and stun.Duration or 0,
+					targets = {},
+				}
+
+				for _, targetId in targets do
+					--[[
+						A posicao **antes** do dano: o golpe pode derrubar o inimigo, e o mob
+						removido ja nao tem posicao para dar. Sem isto o raio ficaria sem a
+						ponta justamente naquele que ele matou.
+					]]
+					table.insert(arc.targets, {
+						mobId = targetId,
+						position = mobService:getMobPosition(targetId),
+					})
+
+					self:creditDamage(entry, targetId, hitDamage, auraBonus)
+					table.insert(hits, { mobId = targetId, damage = hitDamage })
+				end
+
+				--[[
+					O raio sai daqui, e nao do cliente: esta linha roda no instante do
+					marcador `Hit` (o `HitTime` do `UnitAttackConfig` e o windup deste
+					`task.spawn`), e a corrente que ele desenha e a mesma que acabou de
+					cobrar dano. Deixar o cliente escolher os alvos poria o desenho em
+					inimigos que nao levaram nada.
+				]]
+				for _, plr in ipairs(Players:GetPlayers()) do
+					Framework:Fire("ChainLightning", plr, arc)
+				end
+			elseif aoe then
 				local aoeCenter = predictedPos or unitPosition
 				local mobsInRadius = self.Services.MobService:GetMobsInRadius(aoeCenter, aoe.Radius)
 				for _, targetId in ipairs(mobsInRadius) do

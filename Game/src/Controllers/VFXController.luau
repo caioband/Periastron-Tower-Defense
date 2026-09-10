@@ -37,10 +37,50 @@ local MONEY_VFX_FALLBACK = 3
 local FREEZE_VFX_FALLBACK = 2
 local FREEZE_AURA_FALLBACK = 2
 
+--[=[
+	O impacto da ponta do raio do Electro, bem mais baixo que o do raio do clima.
+
+	O asset e o mesmo (`LightningBeam`), e e no Attachment da **ponta** dele que o
+	addon guarda o que acontece onde o raio bate: a tag `CraterVFX` com `Count = 40`
+	de detritos, mais os atributos `CameraShake` e `ImpactFrames`. Autorado assim, ele
+	e um raio caindo do ceu -- e e isso que o clima quer.
+
+	O `Size` daqui e pouco mais da metade do autorado (1,8 contra 3 de comprimento), e
+	nao um terco como na primeira versao: com detrito miudo demais a marca no chao
+	sumia no meio da wave e o raio parecia nao ter encostado em nada.
+
+	Numa corrente aquilo sai **por elo**: quatro pontas no mesmo quadro sao quatro
+	tremores de camera, quatro impact frames e 160 detritos a cada golpe. O golpe de
+	uma torre nao pode sequestrar a tela do jogador desse jeito, ainda mais um que se
+	repete a partida inteira. A cratera fica, pequena: ela e o que marca no chao onde
+	o raio encostou.
+
+	O raio do trovao continua com tudo, e nao passa por aqui -- ele cai uma vez a cada
+	cinco segundos e e um acontecimento da wave, nao um ataque.
+
+	`Clear` **apaga** o atributo em vez de zera-lo porque e assim que o addon desliga:
+	ele le `attrs.X` e sai fora quando nao acha nada (`if not attr then return end`).
+	Um zero ali continuaria ligando o efeito, so que com numero zerado.
+]=]
+local CHAIN_IMPACT = {
+	Attributes = {
+		Count = 6,
+		Radius = 3,
+		Variance = 1,
+		Size = Vector3.new(1.8, 0.7, 1.2),
+	},
+
+	Clear = { "CameraShake", "ImpactFrames" },
+}
+
 local VFXController = {
 	Controllers = {
 		UnitPlacementController = {},
-		WeatherController = {}
+		WeatherController = {},
+
+		-- De onde saem os modelos dos inimigos, para o raio do Electro terminar em
+		-- cada um deles. Ver `mobPoint`.
+		MobController = {}
 	}
 }
 VFXController.Library = {}
@@ -193,6 +233,23 @@ function VFXController:PlayAuraBonus(unitId : string)
 
 	VFX.emit(clone)
 	VFX.destroyAfter(clone, VFX.maxLifetime(clone) or MONEY_VFX_FALLBACK)
+end
+
+--[=[
+	Baixa o impacto da ponta de um raio: cratera menor, sem impact frame e sem tremor
+	de camera. Ver o `CHAIN_IMPACT`.
+
+	Mexe no **clone**, e nunca no asset -- o raio do clima sai do mesmo template e tem
+	de continuar chegando inteiro.
+]=]
+local function tuneBeamImpact(tip : Instance, impact)
+	for name, value in impact.Attributes do
+		tip:SetAttribute(name, value)
+	end
+
+	for _, name in impact.Clear do
+		tip:SetAttribute(name, nil)
+	end
 end
 
 local function disarmPart(part : BasePart)
@@ -463,8 +520,11 @@ end
 
 	Vale tanto para o raio que desce da nuvem quanto para o salto de uma unidade
 	para outra — a unica diferenca entre os dois e onde ficam as pontas.
+
+	`impact` e opcional e so o raio do Electro manda um (`CHAIN_IMPACT`): sem ele, a
+	ponta chega com o que veio autorado no asset, que e o raio cheio do clima.
 ]=]
-function VFXController:spawnBeam(from : Vector3, to : Vector3) : Attachment?
+function VFXController:spawnBeam(from : Vector3, to : Vector3, impact : { [string] : any }?) : Attachment?
 	local asset = self.Library[ThunderConfig.Asset]
 	if not asset then
 		warn(`[VFXController]: nao achei o VFX "{ThunderConfig.Asset}" em Assets.VFX.`)
@@ -477,6 +537,12 @@ function VFXController:spawnBeam(from : Vector3, to : Vector3) : Attachment?
 		warn(`[VFXController]: "{ThunderConfig.Asset}" nao tem o Attachment filho que marca o fim do raio.`)
 		beam:Destroy()
 		return nil
+	end
+
+	-- Antes do emit, e no clone: o addon le os atributos da ponta na hora em que ela
+	-- e emitida, entao mudar depois nao mudaria nada.
+	if impact then
+		tuneBeamImpact(tip, impact)
 	end
 
 	-- Precisa estar no DataModel antes do emit: o modulo ignora o que esta solto.
@@ -576,6 +642,61 @@ function VFXController:PlayLightningChain(links)
 	end
 end
 
+--[=[
+	Meio do corpo de um inimigo, ou a posicao que o servidor mandou quando o modelo
+	nao esta mais la.
+
+	O par do `chainPoint`, que faz o mesmo com unidades -- e separado dele porque as
+	duas coisas vivem em controllers diferentes: unidade e do
+	`UnitPlacementController`, inimigo e do `MobController`.
+
+	O modelo manda quando existe. O cliente simula o andar dos inimigos por conta
+	propria, entao a posicao que veio no evento ja e de alguns quadros atras na hora
+	em que o raio e desenhado -- em cima de um inimigo rapido isso e um arco terminando
+	visivelmente atras dele.
+]=]
+function VFXController:mobPoint(mobId : string?, fallback : Vector3?) : Vector3?
+	local mobs = self.Controllers.MobController
+	local model = mobId and mobs and mobs.SpawnedMobs and mobs.SpawnedMobs[mobId]
+
+	if model and model.Parent then
+		return model:GetPivot().Position
+	end
+
+	return if typeof(fallback) == "Vector3" then fallback else nil
+end
+
+--[=[
+	O raio do Electro: um arco da unidade ate o primeiro inimigo, e dai de um para o
+	seguinte na ordem em que a corrente saltou.
+
+	O asset e o mesmo do raio do clima (`ThunderConfig.Asset`, pelo `spawnBeam`) --
+	e o mesmo addon desenhando a mesma coisa, e por isso o raio do trovao e o da
+	unidade se parecem de proposito.
+
+	Quem escolheu os alvos foi o servidor, no instante do marcador `Hit`
+	(`UnitService:executeAttack`): daqui nao sai nenhuma decisao, so o desenho da
+	corrente que ja cobrou dano.
+
+	Inimigo que ja saiu da tela e nao mandou posicao nenhuma nao interrompe a
+	corrente: o arco seguinte sai do ultimo ponto que deu para desenhar, em vez de o
+	raio morrer no meio.
+]=]
+function VFXController:PlayChainLightning(arc)
+	if typeof(arc) ~= "table" or typeof(arc.targets) ~= "table" then return end
+
+	local from = self:chainPoint(arc.unitId, arc.origin)
+	if not from then return end
+
+	for _, target in arc.targets do
+		local to = self:mobPoint(target.mobId, target.position)
+		if not to then continue end
+
+		self:spawnBeam(from, to, CHAIN_IMPACT)
+		from = to
+	end
+end
+
 function VFXController:buildLibrary()
 	local folder = Assets:FindFirstChild("VFX")
 	if not folder then return end
@@ -595,6 +716,15 @@ function VFXController:construct()
 
 	Framework:Listen("LightningChain", function(links)
 		self:PlayLightningChain(links)
+	end)
+
+	--[[
+		O raio do Electro. O `MobController` escuta o mesmo evento para pintar os
+		inimigos de amarelo -- aqui e so o arco, la e so o realce, e os dois chegam
+		no mesmo quadro.
+	]]
+	Framework:Listen("ChainLightning", function(arc)
+		self:PlayChainLightning(arc)
 	end)
 
 	Framework:Listen("AuraBonusVFX", function(unitId : string)

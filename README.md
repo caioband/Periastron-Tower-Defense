@@ -1247,6 +1247,105 @@ O campo é genérico: vale para qualquer unidade de vários `Hits`, com os golpe
 espaçados por `HitInterval` ou por `HitTimes`. Sem o campo, todos os golpes do
 ciclo valem igual — que é como o Azure continua batendo.
 
+### O raio que salta (Electro)
+
+A quarta forma de um golpe acertar mais de um alvo, e a única sem queda de dano. As
+outras três medem quem entra: a **área** pega quem está dentro do raio, a flecha
+`Piercing` e o corte do Cleave pegam quem está na **linha**. A corrente do Electro
+não mede nada — ela anda:
+
+```lua
+["Electro"] = {
+    Damage = 18,
+    Cooldown = 5,
+    Chain = { Targets = 4, Radius = 8 },
+    Stun  = { Duration = 0.3 },
+}
+```
+
+O primeiro elo é o alvo que a prioridade da torre escolheu. Daí em diante o raio pula
+para o inimigo mais próximo **do último tocado** que ainda não está na corrente e está
+a no máximo `Radius` dele, até `Targets` inimigos ou até não haver mais ninguém ao
+alcance do último salto (`MobService:GetChainTargets`).
+
+**O raio é medido de cada inimigo, e não da unidade** — é o que separa a corrente de
+uma área. Três saltos de 8 studs chegam a 24 studs da unidade, que tem alcance 10:
+quanto melhor o mapa enfileira, mais longe a corrente vai. A contrapartida é que ela
+morre num buraco — inimigo isolado a 35 studs do anterior não recebe o salto, mesmo
+sobrando elo.
+
+**Não há queda por inimigo.** O quarto leva os mesmos 18 do primeiro, e é a única
+forma de acerto múltiplo do jogo assim (a flecha tem `PierceFalloff`, o corte tem
+`Falloff`, o combo tem `HitFalloff`). O preço disso está no `Targets` e no `Cooldown` —
+é neles que se mexe se a unidade ficar forte demais, e não numa queda que ela não tem.
+
+**Ela vende alcance de golpe, não dano por alvo.** 4 × 18 dão 14,4 de DPS com a
+corrente cheia, 4,8 por 100 de caixa — a casa do Rocket (4,4) e do Berserker (5,1), as
+outras duas lendárias que a regra 1 de `UnitStats` cobra por uma coisa que elas não
+vendem. Contra um alvo sozinho são 3,6 de DPS, e aí ela é de longe a pior da tabela.
+
+Em cima disso vem o tranco: cada elo **para no lugar** por 0,3s. Não é lentidão, e a
+diferença é de mecanismo e não de intensidade:
+
+| | O que faz | Onde mora |
+| --- | --- | --- |
+| `Stun` | tira o inimigo do laço de movimento — parado de vez | `MobService:StunMob` |
+| `Slow` | mexe na velocidade com que ele anda | `MobService:ApplySlow` |
+
+Os dois são campos genéricos que qualquer unidade pode declarar, aplicados pelo
+`creditDamage` a cada elo que levou dano. **O Electro declara só o `Stun`** — o inimigo
+para e volta a andar no ritmo de sempre. `Slow` e `Burn` continuam sem dono, esperando
+uma unidade `Ice` e uma `Fire`.
+
+O tranco é de propósito pequeno: 0,3s num ciclo de 5s tiram 6% do caminho que os quatro
+andariam. Isso é um tropeço, não um controle — quem para inimigo de verdade é o Time
+Stop, e custa uma carta. O número que separa uma coisa da outra é o `Stun.Duration`:
+subir aquele 0,3 para perto de 1, com quatro elos a cada 5s, vira "a fila anda quando o
+Electro deixa", que é outra unidade.
+
+O realce amarelo dura exatamente o tranco. É curto de propósito — ele é o estado, e
+sobreviver ao próprio motivo faria o jogador achar que o inimigo continua preso.
+
+**O desenho sai do servidor, no frame do marcador.** O `HitTime = 1.05` do
+`UnitAttackConfig` é o marcador `Hit` da animação `Attack` (1,6667s), e é o windup do
+`executeAttack`: na mesma linha em que a corrente cobra dano, o servidor dispara
+`ChainLightning` com os elos na ordem do salto. Deixar o cliente escolher os alvos
+poria o raio em inimigos que não levaram nada.
+
+O evento é escutado por dois controllers, como o `UnitStunned`:
+
+| Quem | O que faz |
+| --- | --- |
+| `VFXController` | um arco da unidade até o 1º elo, e de cada elo para o seguinte |
+| `MobController` | o realce amarelo em cada inimigo, enquanto o tranco durar |
+
+O arco é o mesmo asset do raio do clima (`WeatherConfig.Thunder.Asset`, pelo
+`spawnBeam`) — é o mesmo addon desenhando a mesma coisa, e os dois se parecem de
+propósito. As pontas usam o modelo do inimigo quando ele já replicou, e não a posição
+que veio no evento: o cliente simula o andar dos mobs por conta própria, então a
+posição do servidor já está alguns quadros atrás na hora de desenhar.
+
+**O impacto é mais baixo que o do clima, e é a única diferença entre os dois.** Onde o
+raio bate é o Attachment da ponta do asset que manda, e ele vem autorado como um raio
+caindo do céu: tag `CraterVFX` com 40 detritos, mais `CameraShake` e `ImpactFrames`.
+Numa corrente isso sai **por elo** — quatro pontas no mesmo quadro seriam quatro
+tremores de câmera, quatro impact frames e 160 detritos a cada golpe, a partida
+inteira. O `spawnBeam` aceita um `impact` opcional, e só a corrente manda um
+(`CHAIN_IMPACT`, no `VFXController`): a cratera fica, menor (6 detritos num raio de 3,
+com pouco mais da metade do tamanho autorado), e o tremor e o impact frame saem. Os dois saem por **apagar** o atributo, que é como o
+addon desliga (`if not attr then return end`) — zerá-lo continuaria ligando o efeito.
+A mexida é sempre no clone; o asset fica intacto e o raio do clima continua chegando
+inteiro.
+
+O realce é o mesmo amarelo da unidade atordoada (`255, 200, 60`), e é ele que faz a
+lentidão aparecer — sem ele o jogador veria o raio e não teria como ligar uma coisa à
+outra.
+
+**Ela é a primeira unidade `Electric` do roster**, então três coisas que já existiam
+passaram a ter dono: o bônus passivo de +10% de dano no clima de trovão
+(`Effects.Thunder.Units.Electric`), a carga temporária de quem leva um raio em cheio
+(`Thunder.Charge`) e as cartas de round Overcharge e a de +15% para Electric.
+
 ## Cartas de round
 
 De X em X waves a loja da beirada oferece três cartas sorteadas. O catálogo inteiro
@@ -1700,6 +1799,57 @@ o mesmo saldo — e confere a posse **de novo** dentro da escrita de `RoundCards
 que dois cliques no mesmo quadro não paguem duas vezes pela mesma carta. O que falhar
 depois da cobrança é devolvido.
 
+## O cadeado das dificuldades
+
+Fácil e Médio são de todo mundo. As três de cima abrem por **uma** de duas coisas — o
+que vier primeiro:
+
+| Dificuldade | Vitórias | ou Nível |
+| --- | --- | --- |
+| Hard | 4 no Medium | 3 |
+| Impossible | 4 no Hard | 6 |
+| Nightmare | 6 no Impossible | 12 |
+
+As duas fontes medem coisas diferentes, e é por isso que são duas. As vitórias na
+dificuldade de baixo dizem que o jogador **dá conta** dela, e é o caminho curto de quem
+está jogando bem. O nível é a rede: XP cai em derrota e em run abandonada, então quem
+perde muito mas joga muito também chega — só vitória prenderia o jogador ruim no Medium
+para sempre.
+
+Repare que `Wins` conta a dificuldade **de baixo**, e não a que está sendo destravada:
+não há como ganhar no Nightmare antes de ele abrir. Isso faz o lado das vitórias ser
+sequencial (para as 6 do Impossible foi preciso antes destravar o Impossible), enquanto
+o lado do nível pode pular degraus.
+
+A tabela mora em `SharedConfig.DifficultyUnlockConfig`, e não junto dos presets em
+`Config.Difficulty` (que é só do servidor): nada nela é sigiloso, e o cliente precisa
+dela para desenhar o cadeado antes de perguntar qualquer coisa. Mesmo arranjo do
+`MapConfig`.
+
+**Onde ficam as vitórias.** `Stats.Wins` continua sendo o total — é o que o leaderstats
+e o cadeado dos mapas leem. O cadeado daqui lê `Stats.DifficultyWins`
+(`{ [dificuldade] = quantas }`), escrito pelo `WaveService` no mesmo `:Update` da
+vitória. Um total não serviria: 20 vitórias no Easy não dizem nada sobre o Hard. A
+tabela nasce vazia e ganha a chave da dificuldade na primeira vitória nela — a lista de
+presets é do config do servidor, e copiá-la para dentro do perfil seria a mesma lista em
+dois lugares. Perfil antigo recebe a tabela pelo reconcile, e a recebe **vazia**: as
+vitórias de antes desta chave não têm dificuldade registrada. O nível não é guardado em
+lugar nenhum — sai do `Stats.XP` pelo `LevelConfig:Resolve`.
+
+**A conta vale nas duas pontas.** O `DifficultyController` esconde o `Locked` de cada
+botão, devolve o `Active`/`AutoButtonColor` que a arte autorou e escreve o que falta no
+rótulo (`Locked.Time`: "4 more wins in Medium or Level 3"); o `DifficultyService`
+recusa o voto com a mesma função. As duas são necessárias: o voto é um nome, e um nome é
+o que qualquer cliente pode mandar — bastaria um voto forjado para arrastar a sala
+inteira para o Nightmare.
+
+Enquanto a réplica não chega, tudo aparece trancado. É o mesmo chute seguro dos mapas:
+errar para o outro lado abriria o Nightmare por um instante e o fecharia na cara do
+jogador quando o perfil chegasse.
+
+Botão sem frame `Locked` na arte é um botão sempre aberto — é assim que Easy e Medium se
+declaram, sem precisar de entrada em config nenhum.
+
 ## Configuração: o que é replicado e o que não é
 
 Antes, `ReplicatedStorage.Shared.Config.Server` era replicado para todo cliente —
@@ -1709,7 +1859,7 @@ e a lista de admins do Cmdr. Isso foi separado:
 | | Onde | Conteúdo |
 |---|---|---|
 | **Servidor** | `ServerScriptService.Config` ← `common/server/Config` | `Data` (PROFILE_KEY + template), `Wave`, `Summon`, `Difficulty`, `Cmdr` (ADMIN_USER_IDS, GROUP_ID, ALLOW_IN_STUDIO) |
-| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, DeckConfig, RoundCardConfig, RoundCardShopConfig, CardModifier, `Mob`, `Cmdr` cosmético, `GamepassConfig`) |
+| **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, DifficultyUnlockConfig, DeckConfig, RoundCardConfig, RoundCardShopConfig, CardModifier, `Mob`, `Cmdr` cosmético, `GamepassConfig`) |
 
 Convenção nos scripts de servidor:
 

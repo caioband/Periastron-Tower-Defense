@@ -25,6 +25,15 @@ local UnitVFXConfig = {
 	["Subspace Tripminer"] = { PLACEMENT_EFFECT },
 	["Entrepreneur"] = { PLACEMENT_EFFECT },
 	["Azure"] = { PLACEMENT_EFFECT },
+
+	--[[
+		So o efeito de colocar. O raio dela nao entra aqui de proposito: este config e
+		para efeito que o **cliente** dispara sozinho a partir do golpe (`OnAttack`,
+		`OnHit`), e o raio precisa da lista de inimigos que a corrente tocou -- uma
+		coisa que so o servidor tem. Ele vem pelo evento `ChainLightning`, no
+		`VFXController`.
+	]]
+	["Electro"] = { PLACEMENT_EFFECT },
 }
 
 return UnitVFXConfig

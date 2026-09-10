@@ -84,6 +84,23 @@ UnitUpgradeConfig.Units = {
 		CostMultiplier = 1.7,
 		DamageMultiplier = 1.3,
 	},
+
+	--[[
+		Sem `CooldownMultiplier`, como o Berserker: o intervalo entre dois raios e o
+		freio da corrente (ver o comentario dela no `UnitStats`). Cadencia nela nao
+		compra so dano -- compra tranco, em quatro inimigos de uma vez --, e e por isso
+		que o upgrade daqui nao mexe nela: quanto mais perto um raio do outro, mais a
+		fila anda em soquinhos. Upgrade nesta unidade compra dano e alcance.
+
+		A escada de preco e a das outras duas lendarias caras -- ela custa 300 de
+		caixa para entrar em campo, entao o upgrade nao pode custar como o de uma
+		unidade de 100.
+	]]
+	["Electro"] = {
+		BaseCost = 150,
+		CostMultiplier = 1.7,
+		DamageMultiplier = 1.25,
+	},
 }
 
 --[[

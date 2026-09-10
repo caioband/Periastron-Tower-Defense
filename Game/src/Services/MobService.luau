@@ -387,8 +387,9 @@ end
 	golpe, senao lentidoes iguais em sequencia nunca renovariam.
 
 	> ⚠️ Nenhuma unidade de hoje deixa lentidao: e `UnitStats[nome].Slow` que liga
-	> isto, e o roster ainda nao tem uma unidade `Ice`. A mecanica existe para a
-	> carta Chill Out ter o que multiplicar no dia em que ela existir.
+	> isto, e o roster ainda nao tem uma unidade `Ice` -- o Electro para o inimigo
+	> (`StunMob`) em vez de o atrasar. A mecanica existe para a carta Chill Out ter o
+	> que multiplicar no dia em que uma existir.
 ]=]
 function MobService:ApplySlow(mobId : string, amount : number?, duration : number?)
 	local mob = self.ActiveMobs[mobId]
@@ -427,6 +428,55 @@ function MobService:ApplySlow(mobId : string, amount : number?, duration : numbe
 			for _, player in Players:GetPlayers() do
 				Framework:Fire("UpdateMobSpeed", player, mobId, mob.CurrentSpeed)
 			end
+		end
+	end)
+end
+
+--[=[
+	Para um inimigo de vez, por `duration` segundos de partida.
+
+	E o mesmo `StunnedUntil` do Time Stop e do gimmick do boss -- o laco de movimento
+	so anda com `now >= StunnedUntil` --, so que num inimigo so. Nao e lentidao: a
+	lentidao mexe na velocidade, e isto tira o mob do laco. Uma unidade pode deixar as
+	duas no mesmo golpe, embora nenhuma deixe hoje: o Electro so para.
+
+	**O prazo maior manda, e o mais curto nao encosta nele.** Um choque de 0,3s no meio
+	de um Time Stop de 5s nao pode devolver o inimigo ao caminho quando os 0,3s
+	acabarem -- por isso a saida antecipada la em cima e a conferencia do prazo na hora
+	de soltar. Renovar um choque que ainda esta correndo so estende o prazo.
+
+	O `UpdateMobSpeed` para zero e o outro lado disto: quem move o boneco na tela e o
+	`MobController`, e sem o aviso ele continuaria andando ate o servidor mandar a
+	posicao de volta.
+]=]
+function MobService:StunMob(mobId : string, duration : number?)
+	local mob = self.ActiveMobs[mobId]
+	if not mob then return end
+
+	duration = math.max(0, duration or 0)
+	if duration <= 0 then return end
+
+	local stunnedUntil = GameClock.Now() + duration
+
+	-- Ja esta parado por mais tempo do que este choque pediria: nao ha o que fazer,
+	-- e mexer aqui seria encurtar o congelamento de quem chegou antes.
+	if stunnedUntil <= (mob.StunnedUntil or 0) then return end
+
+	mob.StunnedUntil = stunnedUntil
+
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("UpdateMobSpeed", player, mobId, 0)
+	end
+
+	GameClock.Delay(duration, function()
+		-- Morreu, ou a tabela dele ja e de outro mob com o mesmo id.
+		if self.ActiveMobs[mobId] ~= mob then return end
+
+		-- Um congelamento mais longo assumiu no meio deste: quem solta o mob e ele.
+		if GameClock.Now() < (mob.StunnedUntil or 0) then return end
+
+		for _, player in Players:GetPlayers() do
+			Framework:Fire("UpdateMobSpeed", player, mobId, mob.CurrentSpeed)
 		end
 	end)
 end
@@ -960,6 +1010,70 @@ end
 -- pergunta quem pisou nela — continua chamando por aqui.
 function MobService:GetNearestMobInRange(position : Vector3, range : number)
 	return self:GetBestMobInRange(position, range, TargetPriority.Default)
+end
+
+--[=[
+	A corrente do raio: o alvo mirado e os vizinhos por onde ela salta.
+
+	Comeca no `startMobId` e, a cada passo, pula para o inimigo **mais proximo do
+	ultimo tocado** que ainda nao esta na corrente e esta a no maximo `radius` dele.
+	Para quando a corrente chega a `maxTargets` ou quando nao ha mais ninguem ao
+	alcance do ultimo salto.
+
+	**O raio e medido do ultimo inimigo, e nao da unidade** -- e o que separa isto de
+	um `GetMobsInRadius`. A corrente anda junto com a fila do caminho e chega bem alem
+	do alcance de quem a disparou, enquanto uma area do mesmo tamanho so pegaria quem
+	estivesse amontoado em volta do alvo.
+
+	Sai na ordem em que o raio passa, que e a ordem que o cliente desenha (um arco de
+	cada um para o seguinte) e a que uma queda de dano por salto usaria, se um dia
+	existir -- a unidade de hoje nao tem nenhuma.
+
+	O alvo mirado vem sempre na corrente, mesmo sozinho: quem chama ja resolveu que
+	ele leva o golpe, e uma corrente vazia significaria um golpe perdido.
+]=]
+function MobService:GetChainTargets(startMobId : string, maxTargets : number?, radius : number?) : { string }
+	local chain = { startMobId }
+
+	local limit = math.max(1, math.floor(maxTargets or 1))
+	local reach = math.max(0, radius or 0)
+	if limit <= 1 or reach <= 0 then
+		return chain
+	end
+
+	local current = self:getMobPosition(startMobId)
+	if not current then
+		return chain
+	end
+
+	local visited = { [startMobId] = true }
+
+	while #chain < limit do
+		local nextId, nextPos, nextDistance = nil, nil, nil
+
+		for mobId in self.ActiveMobs do
+			if visited[mobId] then continue end
+
+			local pos = self:getMobPosition(mobId)
+			if not pos then continue end
+
+			local distance = (pos - current).Magnitude
+			if distance > reach then continue end
+
+			if not nextDistance or distance < nextDistance then
+				nextId, nextPos, nextDistance = mobId, pos, distance
+			end
+		end
+
+		-- O ultimo da corrente esta sozinho: o raio morre nele, mesmo faltando salto.
+		if not nextId then break end
+
+		visited[nextId] = true
+		current = nextPos
+		table.insert(chain, nextId)
+	end
+
+	return chain
 end
 
 function MobService:GetMobsInRadius(position, radius)
