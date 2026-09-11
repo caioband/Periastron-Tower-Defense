@@ -1257,9 +1257,9 @@ não mede nada — ela anda:
 ```lua
 ["Electro"] = {
     Damage = 18,
-    Cooldown = 5,
+    Cooldown = 2.5,                                -- fixo, o upgrade nao mexe
     Chain = { Targets = 4, Radius = 8 },
-    Stun  = { Duration = 0.3 },
+    Stun  = { Duration = 0.3, MaxDuration = 0.5 }, -- sobe ate 0,5 no maximo
 }
 ```
 
@@ -1279,10 +1279,9 @@ forma de acerto múltiplo do jogo assim (a flecha tem `PierceFalloff`, o corte t
 `Falloff`, o combo tem `HitFalloff`). O preço disso está no `Targets` e no `Cooldown` —
 é neles que se mexe se a unidade ficar forte demais, e não numa queda que ela não tem.
 
-**Ela vende alcance de golpe, não dano por alvo.** 4 × 18 dão 14,4 de DPS com a
-corrente cheia, 4,8 por 100 de caixa — a casa do Rocket (4,4) e do Berserker (5,1), as
-outras duas lendárias que a regra 1 de `UnitStats` cobra por uma coisa que elas não
-vendem. Contra um alvo sozinho são 3,6 de DPS, e aí ela é de longe a pior da tabela.
+**Ela vende alcance de golpe, não dano por alvo.** 4 × 18 a cada 2,5s dão 28,8 de DPS
+com a corrente cheia, 9,6 por 100 de caixa — dentro do teto da regra 1 de `UnitStats`.
+Contra um alvo sozinho são 7,2 de DPS (2,4 por 100), e aí ela é das piores da tabela.
 
 Em cima disso vem o tranco: cada elo **para no lugar** por 0,3s. Não é lentidão, e a
 diferença é de mecanismo e não de intensidade:
@@ -1297,11 +1296,23 @@ Os dois são campos genéricos que qualquer unidade pode declarar, aplicados pel
 para e volta a andar no ritmo de sempre. `Slow` e `Burn` continuam sem dono, esperando
 uma unidade `Ice` e uma `Fire`.
 
-O tranco é de propósito pequeno: 0,3s num ciclo de 5s tiram 6% do caminho que os quatro
-andariam. Isso é um tropeço, não um controle — quem para inimigo de verdade é o Time
-Stop, e custa uma carta. O número que separa uma coisa da outra é o `Stun.Duration`:
-subir aquele 0,3 para perto de 1, com quatro elos a cada 5s, vira "a fila anda quando o
-Electro deixa", que é outra unidade.
+O tranco vai de 0,3s parado num ciclo de 2,5s no nível 0 (12% do caminho que os quatro
+andariam) a 0,5s no nível máximo (20%). Isso ainda é tropeço, não controle — quem para
+inimigo de verdade é o Time Stop, e custa uma carta. O número que separa uma coisa da
+outra é o `Stun.Duration`: subir o tranco para perto do ciclo inteiro vira "a fila anda
+quando o Electro deixa", que é outra unidade.
+
+**O cooldown é fixo; o upgrade compra dano, alcance e tranco.** O Electro não tem
+`CooldownMultiplier`, e o tranco sobe em linha reta (`UnitUpgradeConfig:GetStunDuration`,
+que lê o `Stun.MaxDuration`):
+
+| Nível | 0 | 1 | 2 | 3 | 4 | 5 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Tranco | 0,30 | 0,34 | 0,38 | 0,42 | 0,46 | 0,50 |
+
+O `creditDamage` e o `ChainLightning` (o realce amarelo) leem o mesmo
+`GetStunDuration` com o nível da unidade, então o inimigo fica amarelo exatamente o
+tempo em que está parado, em qualquer nível.
 
 O realce amarelo dura exatamente o tranco. É curto de propósito — ele é o estado, e
 sobreviver ao próprio motivo faria o jogador achar que o inimigo continua preso.
@@ -2096,15 +2107,127 @@ de quem subiu primeiro no `Me`, que não é garantida.
 ### MOST COINS é o total ganho
 
 `Stats.CoinsEarned` só sobe: gastar na loja não derruba ninguém da board. Quem
-soma é o `WaveService:grantReward`, junto com o `Cash` — é o único ganho de coins
-do jogo. Estorno de compra (`ShopService`, `RoundCardShopService`) e o `cash` do
-Cmdr mexem só no saldo.
+soma é quem **dá** coins: o `WaveService:grantReward` (recompensa de partida) e o
+`ContractService` (resgate de contrato), junto com o `Cash`. Estorno de compra
+(`ShopService`, `RoundCardShopService`) e o `cash` do Cmdr mexem só no saldo.
 
 A chave **não está no template**, e é de propósito. Quem jogava antes dela já
 ganhou pelo menos o saldo que tem, então o `CurrencyService` (common), ao ver a
 chave faltando no perfil que carregou, a cria com o `Cash` atual — perfil novo tem
 saldo zero e começa do zero. Com a chave no template, o reconcile a criaria em
 zero antes, e não daria mais para saber quem era perfil antigo.
+
+## Painel por proximidade (`Shared.Util.ProximityPanel`, Lobby)
+
+A loja de caixas, a loja de cartas e o quadro de contratos são o mesmo painel:
+abre quando o jogador chega num ponto do mapa, fecha quando ele sai, entra pela
+`OpenShop` do Cascade, borra o fundo e esconde o resto da UI pelo
+`InterfaceController`. Esse bloco era copiado em cada controller; hoje é o
+`ProximityPanel`, e o controller entra só com o conteúdo:
+
+```lua
+self.Proximity = ProximityPanel.new({
+	Name = "ContractController",
+	ScreenGui = "Contracts", Wrapper = "Frame", Panel = "MainBoard",
+	Animation = "OpenShop",
+	HideReason = "Contracts",
+	GetReference = function() return target.Position end,
+	Radius = 6,
+	InterfaceController = self.Controllers.InterfaceController,
+	OnBind = function(screenGui, wrapper, panel, maid) ... end, -- cada cópia nova da ScreenGui
+	BeforeOpen = function() ... end,                            -- logo antes de entrar
+	CanDisable = function() return true end,                    -- ScreenGui dividida (a ShopUI)
+})
+self.Proximity:Start()
+```
+
+- **Só a travessia age.** Fechar no X parado ali não reabre no tick seguinte; o
+  painel volta quando o jogador sai e entra de novo. `EnterRange()` é para o
+  teleporte da HUD: marca a entrada e abre, senão a saída nunca aconteceria.
+- **A moldura (`Wrapper`) é quem vai e vem**, e não a ScreenGui. A `ShopUI` carrega
+  as duas lojas; o `CanDisable` de cada uma devolve false com a vizinha aberta, e o
+  fechamento apaga só a moldura.
+- **Cópia nova nasce apagada e devolve a tela** — morrer com o painel aberto não
+  deixa o jogador sem HUD.
+- O Cascade é procurado na primeira vez que um painel liga, e não no topo do
+  módulo: a Game também monta o `Shared.Util` e não tem o runtime.
+
+## Contratos (`StarterGui.Contracts`, Lobby)
+
+O quadro abre na `Workspace.ContractsBoard.TargetPart` (`ContractConfig.Board`).
+Tem três seções, cada uma com a contagem até a virada:
+
+| Período | Contratos | Vira em (UTC) |
+| --- | --- | --- |
+| Hourly | 2 | toda hora cheia |
+| Daily | 3 | meia-noite |
+| Weekly | 4 | segunda 00:00 |
+
+A lista, o que cada contrato conta e quanto paga ficam em
+`SharedConfig.ContractConfig`, um contrato por linha. A descrição sai com o
+progresso no fim: `Win 4 games in Volcano on Hard (1/4)`.
+
+### Quem faz o quê
+
+| Peça | Place | O quê |
+| --- | --- | --- |
+| `ContractService` | common | sorteia na virada, anota o progresso, escreve em lote, resgata e paga |
+| `ContractTrackerService` | Game | transforma a partida em eventos (`Record`) |
+| `CrateService` | Lobby | o evento `Unbox`, com a raridade da unidade que saiu |
+| `ContractController` | Lobby | desenha o quadro a partir da replica e manda o CLAIM |
+
+O perfil guarda `Data.Contracts = { Hourly|Daily|Weekly = { Period, Slots } }`.
+Cada slot tem `{ Id, Params, Progress, Claimed }`, e `Seen` para o login.
+
+### Sorteio
+
+- **Por jogador, na virada.** A cada 2s (e quando o perfil carrega), cada período
+  é comparado com o de agora; o que virou é sorteado de novo. Contrato não resgatado
+  se perde junto.
+- **Variação.** Os contratos do período anterior vão para o fim da urna: só
+  voltam quando não sobram novos suficientes. Com as listas de hoje, isso nunca
+  acontece para quem já abriu tudo.
+- **Cadeados.** Contrato preso a mapa ou dificuldade que o jogador ainda não abriu
+  não sai (o Volcano de quem tem duas vitórias, o Nightmare de quem é nível 1), e o
+  `Random` sorteia só entre os abertos. O `D_Stun676` só sai para quem tem unidade
+  que atordoa (`NeedsUnitStat = "Stun"`), e o `{Class}` só entre as classes que o
+  jogador tem.
+
+### O que conta
+
+Tudo é **do próprio jogador**: kill, dano e atordoamento são de quem era a
+unidade, e o caixa é o dele. Só o clima e a wave são da sala.
+
+| Evento | Fonte |
+| --- | --- |
+| `Win` | `WaveService.Signals.MatchFinished`, com mapa, dificuldade, base cheia, amigo na sala e as classes que **todas** as unidades colocadas tinham em comum |
+| `Kill`, `BossKill`, `Stun`, `Damage` | `MobService.SessionStats` (e o `SessionDamage`), lidos a cada 3s |
+| `MatchCashSpent`, `MatchCashEarned` | idem, com `Mode = "Max"`: a melhor partida, e não a soma |
+| `WaveReached` | `WaveService.Signals.WaveStarted` (`Max`) |
+| `Weather` | `WeatherRoundService.Signals.WeatherStarted` — só o clima que entra, e não o aviso |
+| `MatchTime` | `MatchStatsService.Signals.Closed` (segundos) |
+| `Unbox` | `CrateService:OpenCrate` — o `unbox` do Cmdr e o summon não contam |
+| `Login` | o dia UTC em que o jogador está online, marcado a cada tick (`Distinct`) |
+
+- **"With only {Class} units"**: vale se todas as unidades colocadas na partida
+  tinham aquela classe, inclusive as vendidas. Unidade sem classe quebra a condição.
+- **"With 1 or more friends"**: amigo na Roblox na mesma partida. A pergunta é feita
+  quando o jogador entra no servidor, e fica guardada até a vitória.
+
+### Escrita em lote e resgate
+
+`Record` só anota numa fila por jogador. O `Flush` escreve tudo num `Update` de
+`Contracts` a cada 2s, no fim da partida e na saída. Cada entrada lembra o período
+e o `Id` do slot, então progresso de um contrato que venceu não cai no que tomou o
+lugar dele.
+
+O CLAIM manda só `(período, slot)`. O servidor escreve a fila, confere se o slot
+está completo e não foi pago, marca e paga, sem nada que ceda no meio. Dois
+cliques não pagam duas vezes. A recompensa soma `Cash` (e `CoinsEarned`),
+`Shards` e caixas (pelo `CrateService:GiveCrates`).
+
+Na UI, coin e shard usam as linhas autoradas do `RewardsContainer`, e cada caixa
+vira um texto `8x Fragmented Crate` na `OtherReward`, clonada quando há mais de uma.
 
 ## Evento novo do servidor para o cliente precisa ser declarado
 

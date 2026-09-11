@@ -203,6 +203,12 @@ function Wave.HasBoss(waveNumber : number, difficultyName : string?)
 	return waveNumber >= (preset.MaxWaves or TABLE_LENGTH)
 end
 
+--- Se a entidade e o chefe. Quem pergunta e o `MobService`, que conta os chefes que
+--- cada jogador derrubou (o contrato "Defeat 70 bosses").
+function Wave.IsBoss(entityName : string?) : boolean
+	return entityName == BOSS_ENTITY
+end
+
 function Wave.GetSpawns(waveNumber : number, difficultyName : string?)
 	local preset = Difficulty.Get(difficultyName)
 	local position = tablePosition(waveNumber, preset)

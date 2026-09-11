@@ -2,6 +2,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
+local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
@@ -10,6 +11,7 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Signal = require(Packages.Signal)
 
 local Framework = Me.new()
 
@@ -72,7 +74,17 @@ local WeatherRoundService = {
 		MapService = {},
 		WaveService = {},
 		DifficultyService = {}
-	}
+	},
+
+	Signals = {
+		--[[
+			(weatherName) -- um clima do round entrou no ar. So o que entra de verdade:
+			o aviso nao conta, e o clima que a carta Weather Report apagou e volta na wave
+			seguinte tambem nao (e o mesmo clima). Quem escuta e o
+			`ContractTrackerService` ("Experience Weathers 60 times").
+		]]
+		WeatherStarted = Signal.new(),
+	},
 }
 
 -- Clima no ar por decisão deste service, e a última wave em que ele vale.
@@ -199,6 +211,8 @@ function WeatherRoundService:applyScheduled(waveNumber : number)
 	self.ActiveUntilWave = waveNumber + math.max(1, RoundConfig.Duration or 1) - 1
 
 	roundPrint(string.format("'%s' entrou na wave %d, ate a %d.", weatherName, waveNumber, self.ActiveUntilWave))
+
+	self.Signals.WeatherStarted:Fire(weatherName)
 end
 
 --[=[

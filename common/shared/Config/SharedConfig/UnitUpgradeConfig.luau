@@ -86,11 +86,11 @@ UnitUpgradeConfig.Units = {
 	},
 
 	--[[
-		Sem `CooldownMultiplier`, como o Berserker: o intervalo entre dois raios e o
-		freio da corrente (ver o comentario dela no `UnitStats`). Cadencia nela nao
-		compra so dano -- compra tranco, em quatro inimigos de uma vez --, e e por isso
-		que o upgrade daqui nao mexe nela: quanto mais perto um raio do outro, mais a
-		fila anda em soquinhos. Upgrade nesta unidade compra dano e alcance.
+		Sem `CooldownMultiplier`, como o Berserker: os 2,5s entre dois raios valem em
+		todo nivel. Cadencia nela nao compra so dano -- compra tranco, em quatro
+		inimigos de uma vez --, e quanto mais perto um raio do outro, mais a fila anda
+		em soquinhos. Upgrade nesta unidade compra dano, alcance e a duracao do tranco
+		(ver `GetStunDuration` e o comentario dela no `UnitStats`).
 
 		A escada de preco e a das outras duas lendarias caras -- ela custa 300 de
 		caixa para entrar em campo, entao o upgrade nao pode custar como o de uma
@@ -198,6 +198,29 @@ function UnitUpgradeConfig:GetCooldown(unitName, level, weather)
 	if attackSpeed <= 0 then return cooldown end
 
 	return cooldown / attackSpeed
+end
+
+--[=[
+	Quanto tempo o golpe da unidade para o inimigo, no nivel dado. Zero para quem nao
+	atordoa.
+
+	`Stun.Duration` e o do nivel 0; com `Stun.MaxDuration`, o tranco sobe em linha
+	reta ate ele no nivel maximo. Sem clima, como a aura: o clima de raio tem o
+	tranco proprio dele (`WeatherConfig.Thunder`), e nao mexe no das unidades.
+]=]
+function UnitUpgradeConfig:GetStunDuration(unitName, level)
+	local stats = UnitStats[unitName]
+	local stun = stats and stats.Stun
+
+	if not stun then
+		return 0
+	end
+
+	local base = stun.Duration or 0
+	local top = stun.MaxDuration or base
+	local progress = math.clamp((level or 0) / self.MaxUpgrades, 0, 1)
+
+	return base + (top - base) * progress
 end
 
 --[=[

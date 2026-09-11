@@ -27,6 +27,7 @@ local CrateService = {
 	Services = {
 		DataService = {},
 		IndexService = {},
+		ContractService = {},
 	},
 
 	Signals = {
@@ -427,6 +428,13 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 		local IndexService = self.Services.IndexService
 		if IndexService then
 			IndexService:UnlockUnit(Player, result.Unit)
+		end
+
+		-- "Unbox 2 Legendary Cards": a raridade e a da unidade que saiu, de qualquer
+		-- caixa. O summon nao passa por aqui e nao conta.
+		local ContractService = self.Services.ContractService
+		if ContractService then
+			ContractService:Record(Player, SharedConfig.ContractConfig.Events.Unbox, 1, { Rarity = result.Rarity })
 		end
 	end
 

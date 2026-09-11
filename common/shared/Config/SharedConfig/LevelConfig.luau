@@ -30,11 +30,11 @@ LevelConfig.CURVE = 1.35
 	`HUDController`, que a le do proprio ImageLabel em vez de repetir o id aqui.
 ]=]
 LevelConfig.BAR_IMAGES = {
-	{ Threshold = 0.2, Image = "rbxassetid://71367481116643" },
-	{ Threshold = 0.4, Image = "rbxassetid://83385703938319" },
-	{ Threshold = 0.6, Image = "rbxassetid://110060923151658" },
-	{ Threshold = 0.8, Image = "rbxassetid://74477590913623" },
-	{ Threshold = 1.0, Image = "rbxassetid://125881151350609" },
+	{ Threshold = 0.2, Image = "rbxassetid://134959500194037" },
+	{ Threshold = 0.4, Image = "rbxassetid://114833771984043" },
+	{ Threshold = 0.6, Image = "rbxassetid://130493899698635" },
+	{ Threshold = 0.8, Image = "rbxassetid://93135811626919" },
+	{ Threshold = 1.0, Image = "rbxassetid://135439475286984" },
 }
 
 export type LevelState = {

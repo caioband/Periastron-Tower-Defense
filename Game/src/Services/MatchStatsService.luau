@@ -2,6 +2,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local ServerScriptService = game:GetService("ServerScriptService")
 
+local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 local ServerConfigs = ServerScriptService:WaitForChild("Config")
@@ -9,6 +10,7 @@ local ServerConfigs = ServerScriptService:WaitForChild("Config")
 local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
+local Signal = require(Packages.Signal)
 
 local Framework = Me.new()
 
@@ -43,6 +45,15 @@ local MatchStatsService = {
 
 	-- [Player] = `os.clock()` de quando ele entrou no round rodando.
 	JoinedAt = {},
+
+	Signals = {
+		--[[
+			(player, seconds) -- o relogio do jogador fechou, com o tempo que ele passou
+			naquele round. Dispara antes de o perfil fechar, na saida tambem. Quem escuta
+			e o `ContractTrackerService` ("Play 7 hours worth of matches").
+		]]
+		Closed = Signal.new(),
+	},
 }
 
 --[[ INTERNAL ]]
@@ -66,6 +77,8 @@ function MatchStatsService:_close(player : Player)
 	local dataService = self.Services.DataService
 	local profiles = dataService and dataService.Profiles
 	if not (profiles and profiles[player]) then return end
+
+	self.Signals.Closed:Fire(player, seconds)
 
 	dataService:Update(player, "Stats", function(stats)
 		stats.TimeInMatches = (tonumber(stats.TimeInMatches) or 0) + seconds

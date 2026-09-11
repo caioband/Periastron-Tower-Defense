@@ -4,6 +4,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local SharedConfig = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("SharedConfig")
+local ContractConfig = require(SharedConfig:WaitForChild("ContractConfig"))
 local CrateConfig = require(SharedConfig:WaitForChild("CrateConfig"))
 local DeckConfig = require(SharedConfig:WaitForChild("DeckConfig"))
 local IndexConfig = require(SharedConfig:WaitForChild("IndexConfig"))
@@ -159,6 +160,21 @@ return {
 			sozinho quando o número do bloco muda.
 		]]
 		RoundCardRoll = RoundCardShopConfig.createEmptyRoll(),
+
+		--[[
+			Os contratos do quadro do lobby, por periodo:
+			`{ Hourly|Daily|Weekly = { Period, Slots = { { Id, Params, Progress, Claimed, Seen? } } } }`.
+
+			`Period` e o numero do periodo em que os slots foram sorteados
+			(`ContractConfig.periodOf`); quando o de agora e outro, o `ContractService`
+			sorteia de novo. `Params` e o que o `Random` do contrato tirou (mapa,
+			dificuldade, classe), e `Seen` so existe nos de `Mode = "Distinct"` (os dias do
+			login). Estrutura e regras em `SharedConfig.ContractConfig`.
+
+			Nasce com `Period = -1`, que nao e periodo nenhum: o primeiro carregamento ja
+			sorteia os tres. Perfil antigo ganha a chave pelo reconcile.
+		]]
+		Contracts = ContractConfig.createEmpty(),
 
 		-- Quantas cartas cabem no deck. Fica no perfil porque é para crescer com o
 		-- jogador; o `DeckConfig.DEFAULT_CARD_LIMIT` é só o valor de partida, e o

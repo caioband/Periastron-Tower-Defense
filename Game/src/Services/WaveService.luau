@@ -90,6 +90,16 @@ local WaveService = {
 		]]
 		RoundStarted = Signal.new(),
 		RoundClosed = Signal.new(),
+
+		--[[
+			(won : boolean, preset) -- a partida chegou ao fim de verdade: ultima wave
+			vencida ou base no chao. Dispara depois das recompensas, com os jogadores que
+			estavam na sala. Reset e saida nao disparam isto (so o `RoundClosed`).
+
+			Quem escuta e o `ContractTrackerService`: a vitoria dos contratos e esta, com
+			o mapa, a dificuldade e a vida da base de agora.
+		]]
+		MatchFinished = Signal.new(),
 	},
 	ReadyPlayers = {},
 	PlayAgainVotes = {},
@@ -341,8 +351,9 @@ function WaveService:grantReward(player : Player, rewards) : boolean
 	dataService:Update(player, "Stats", function(stats)
 		stats.Cash = (stats.Cash or 0) + coins
 
-		-- O total ganho, que nunca desce (a MOST COINS). E o unico ganho de coins
-		-- do jogo: os outros `+=` no `Cash` sao estorno de compra e o Cmdr.
+		-- O total ganho, que nunca desce (a MOST COINS). Os ganhos de coins do jogo sao
+		-- este e o resgate de contrato (`ContractService`); os outros `+=` no `Cash`
+		-- sao estorno de compra e o Cmdr.
 		stats.CoinsEarned = (tonumber(stats.CoinsEarned) or 0) + coins
 
 		stats.Shards = (stats.Shards or 0) + shards
@@ -451,6 +462,8 @@ function WaveService:onRoundEnded(won : boolean)
 			mvp = mvp,
 		})
 	end
+
+	self.Signals.MatchFinished:Fire(won, preset)
 end
 
 function WaveService:getArrowLeadTime()

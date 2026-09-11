@@ -1,6 +1,5 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -14,17 +13,12 @@ local Signal = require(Packages.Signal)
 
 local SharedConfig = require(Configs.SharedConfig)
 local ButtonUtil = require(Util.ButtonUtil)
-local LightingUtil = require(Util.LightingUtil)
 local MarkerUtil = require(Util.MarkerUtil)
+local ProximityPanel = require(Util.ProximityPanel)
 local UIUtil = require(Util.UIUtil)
 
 local ShopConfig = SharedConfig.ShopConfig
 local RarityConfig = SharedConfig.RarityConfig
-
--- Cascade lives only in the place (see Lobby/README.md), so it is reached by name
--- instead of through the Rojo tree.
-local CascadeRuntime = ReplicatedStorage:WaitForChild("CascadeRuntimeEngine")
-local AnimationService = require(CascadeRuntime:WaitForChild("AnimationService"))
 
 local Framework = Me.new()
 
@@ -38,13 +32,9 @@ local SHOP_UI_NAME = "ShopUI"
 	e a moldura desenhada -- e nele que a `OpenShop` escreve.
 
 	**A `ShopUI` carrega duas lojas.** O `Frame` e esta, a de caixas, e o `RCSS` ao
-	lado dele e a de cartas (`RoundCardShopController`). Por isso o `Visible` do
-	wrapper e de quem abre, e nao ligado uma vez no bind: as duas dividem o `Enabled`
-	da ScreenGui, e um wrapper aceso para sempre poria as duas lojas na tela sempre
-	que qualquer uma abrisse.
-
-	O painel de dentro continua aceso desde o bind -- ele nunca aparece sozinho, e a
-	`OpenShop` cuida da entrada dele pela escala e pela transparencia.
+	lado dele e a de cartas (`RoundCardShopController`). Quem abre e fecha a moldura
+	e o `ProximityPanel`, e o `CanDisable` dele e o que impede esta loja de apagar a
+	ScreenGui com a vizinha aberta.
 ]=]
 local WRAPPER_NAME = "Frame"
 local PANEL_NAME = "ImageLabel"
@@ -60,11 +50,9 @@ local BUY_BUTTON_NAME = "Buy"
 
 local RARITY_ROW_PREFIX = "Rarity_"
 
--- O X mora no `Frame` de fora, e nao no painel. O contador de shards ainda nao
--- existe no painel novo -- a loja nao depende de nenhum dos dois para funcionar,
--- porque ela abre e fecha por proximidade.
+-- O contador de shards ainda nao existe no painel novo -- a loja nao depende dele
+-- para funcionar. O X (`Close`, no `Frame` de fora) e ligado pelo `ProximityPanel`.
 local SHARDS_LABEL_NAME = "CurrentShards"
-local CLOSE_BUTTON_NAME = "Close"
 
 local HUD_UI_NAME = "HUD"
 local HUD_FRAME_NAME = "HUDFrame"
@@ -85,24 +73,6 @@ local ODDS_REQUEST_INTERVAL = 2
 	de cada GUI queria e devolve exatamente aquilo.
 ]=]
 local HIDE_REASON = "Shop"
-
---[=[
-	O blur do fundo enquanto a loja esta aberta.
-
-	Reaproveita o `UIBlur` que o `UILibraryController` ja usa nos paineis dele, em vez
-	de pendurar um segundo `BlurEffect` no Lighting: dois blurs somam, e o fundo
-	sairia com o dobro do borrao quando os dois estivessem abertos.
-
-	Ele nasce com o `LightingKeep` do `LightingConfig`, senao a troca de preset o
-	varreria -- quem cuida disso e o `LightingUtil.GetUIBlur`.
-
-	O tempo sai da propria `OpenShop` (`track.Duration`), entao o borrao entra e sai
-	junto com o painel mesmo que o designer re-cronometre a animacao.
-]=]
-local BLUR_SIZE = 24
-local BLUR_FALLBACK_TIME = 0.25
-local BLUR_EASING_STYLE = Enum.EasingStyle.Quad
-local BLUR_EASING_DIRECTION = Enum.EasingDirection.Out
 
 --[=[
 	O som da compra, um por moeda. Toca no **resultado** do servidor, e nao no
@@ -222,7 +192,7 @@ local ShopController = {
 		MusicController = {},
 
 		-- A outra loja da mesma `ScreenGui`. So para saber se ela esta aberta antes de
-		-- apagar a ScreenGui das duas -- ver o `_setShopEnabled`.
+		-- apagar a ScreenGui das duas -- ver o `CanDisable` no `construct`.
 		RoundCardShopController = {},
 	},
 
@@ -562,128 +532,6 @@ function ShopController:_requestOdds()
 	end)
 end
 
---[=[
-	Liga e desliga a `ShopUI`.
-
-	Sempre pelo `InterfaceController` quando ele existe: e ele quem guarda o que o
-	dono de cada GUI queria, e escrever no `Enabled` direto no meio de um pedido
-	(o dele, ou o da cutscene) faria o valor certo ser lido tarde demais. Ver o
-	comentario do `SetEnabled` la.
-
-	**Apagar nao e so desta loja.** A `ShopUI` e a mesma ScreenGui da loja de cartas,
-	entao fechar esta com a outra aberta apagaria o painel dela junto. Quem manda no
-	`Enabled` e "alguma loja esta aberta", e nao esta.
-
-	Hoje as duas nao chegam a se cruzar pela proximidade: os balcoes estao a 274 studs
-	um do outro e os raios sao de 5, e enquanto uma loja esta aberta o `Hide` esconde a
-	HUD inteira -- o botao que levaria ao outro balcao nem esta clicavel. A guarda e
-	para quem abre um painel **sem** passar por um balcao: o `Open` e publico, e um
-	comando do Cmdr (ou o botao que alguem ligue amanha) nao tem por que apagar a loja
-	que ja estava na tela.
-]=]
-function ShopController:_setShopEnabled(enabled : boolean)
-	local screenGui = self.ScreenGui
-	if not screenGui or not screenGui.Parent then
-		return
-	end
-
-	if not enabled then
-		local cardShop = self.Controllers.RoundCardShopController
-
-		if cardShop and cardShop:IsOpen() then
-			return
-		end
-	end
-
-	local interface = self.Controllers.InterfaceController
-
-	if interface then
-		interface:SetEnabled(screenGui, enabled)
-	else
-		screenGui.Enabled = enabled
-	end
-end
-
---[=[
-	Tira o painel da tela no fim do fechamento: a moldura desta loja apaga e a
-	ScreenGui vai com ela, se a outra loja nao estiver usando.
-]=]
-function ShopController:_hidePanel()
-	if self.Wrapper and self.Wrapper.Parent then
-		self.Wrapper.Visible = false
-	end
-
-	self:_setShopEnabled(false)
-end
-
---[=[
-	Leva o borrao do fundo a `BLUR_SIZE` na abertura e de volta a zero no fechamento.
-
-	O `BlurEffect` e o `UIBlur` compartilhado do `LightingUtil`: o mesmo que o
-	`UILibraryController` usa nos paineis dele e que a loja de cartas usa no dela.
-	Dois borroes somariam, e o fundo sairia com o dobro do que qualquer um dos dois
-	pediu.
-
-	Um tween por vez, no `BlurMaid`: fechar no meio da abertura cancela a subida e
-	desce a partir de onde ela chegou.
-
-	O tempo sai da propria `OpenShop` (`track.Duration`), entao o borrao entra e sai
-	junto com o painel mesmo que o designer re-cronometre a animacao.
-]=]
-function ShopController:_playBlur(open : boolean)
-	self.BlurMaid:DoCleaning()
-
-	local duration = (self.PanelTrack and self.PanelTrack.Duration) or BLUR_FALLBACK_TIME
-	local info = TweenInfo.new(duration, BLUR_EASING_STYLE, BLUR_EASING_DIRECTION)
-
-	local tween = LightingUtil.TweenUIBlur(if open then BLUR_SIZE else 0, info)
-	if not tween then
-		return
-	end
-
-	self.BlurMaid:GiveTask(function()
-		tween:Cancel()
-	end)
-end
-
---[=[
-	Devolve a tela: o resto da UI volta e o borrao sai.
-
-	Chamado no `Close` e tambem no bind de uma copia nova da `ShopUI` -- morrer com a
-	loja aberta traz uma `ScreenGui` nova e zera o `IsOpenState`, e sem isto o pedido
-	de esconder ficaria de pe com a loja fechada, deixando o jogador sem HUD.
-
-	`Show` e `_playBlur(false)` sao idempotentes, entao chamar com a loja ja fechada
-	nao faz nada.
-]=]
-function ShopController:_releaseScreen()
-	local interface = self.Controllers.InterfaceController
-	if interface then
-		interface:Show(HIDE_REASON)
-	end
-
-	self:_playBlur(false)
-end
-
---[=[
-	Drives the panel through OpenShop. The track is created once per ShopUI and kept,
-	so opening and closing is a direction change on the same animation -- closing
-	mid-open picks up from wherever the panel got to instead of snapping.
-]=]
-function ShopController:_playPanel(reverse : boolean)
-	local track = self.PanelTrack
-	if not track then
-		return
-	end
-
-	if track.State ~= "Playing" then
-		track:Scrub(reverse and track.Duration or 0)
-	end
-
-	track:SetSpeed(reverse and -1 or 1)
-	track:Play()
-end
-
 function ShopController:_requestPurchase(item)
 	self.Signals.PurchaseRequested:Fire(item)
 
@@ -780,75 +628,22 @@ function ShopController:GetReferencePosition() : Vector3?
 end
 
 --[=[
-	Opens the shop when the player walks up to the part and closes it when they walk
-	away. Only the crossing acts, so closing the panel by hand while still standing
-	there does not fight the player by reopening it every check.
+	O conteudo da loja numa copia nova da `ShopUI`. O painel em si -- a moldura, a
+	`OpenShop`, o X, o borrao e o pedido de tela -- e do `ProximityPanel`, que chama
+	isto no fim do bind dele. A `ShopUI` e `ResetOnSpawn`, entao roda de novo a cada
+	respawn.
 ]=]
-function ShopController:_updateProximity()
-	local character = Players.LocalPlayer.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	local position = root and self:GetReferencePosition()
+function ShopController:_onBind(screenGui : ScreenGui, panel : GuiObject)
+	local list = panel:WaitForChild(LIST_NAME, 10)
 
-	local inRange = false
-	if position and root then
-		inRange = (root.Position - position).Magnitude <= ShopConfig.OPEN_RADIUS
-	end
-
-	if inRange == self.InRange then
-		return
-	end
-
-	self.InRange = inRange
-
-	if inRange then
-		self:Open()
-	else
-		self:Close()
-	end
-end
-
-function ShopController:_watchProximity()
-	self.Maid:GiveTask(RunService.Heartbeat:Connect(function(deltaTime : number)
-		self.ProximityClock += deltaTime
-
-		if self.ProximityClock < ShopConfig.PROXIMITY_INTERVAL then
-			return
-		end
-
-		self.ProximityClock = 0
-		self:_updateProximity()
-	end))
-end
-
---[=[
-	Binds to a ShopUI instance. ShopUI has ResetOnSpawn enabled, so this runs again
-	for every fresh copy the engine parents into PlayerGui.
-]=]
-function ShopController:_bindUI(screenGui : ScreenGui)
-	local wrapper = screenGui:WaitForChild(WRAPPER_NAME, 10)
-	local panel = wrapper and wrapper:WaitForChild(PANEL_NAME, 10)
-	local list = panel and panel:WaitForChild(LIST_NAME, 10)
-
-	if not wrapper or not panel or not list then
+	if not list then
 		warn(`[ShopController]: could not find {SHOP_UI_NAME}.{WRAPPER_NAME}.{PANEL_NAME}.{LIST_NAME}.`)
 		return
 	end
 
-	self.UIMaid:DoCleaning()
 	self.ItemMaid:DoCleaning()
 
-	self.ScreenGui = screenGui
-	self.Panel = panel
 	self.List = list
-
-	--[[
-		O painel sobe aceso e fica assim; a moldura de fora e que vai e vem, porque e
-		ela que separa esta loja da de cartas dentro da mesma ScreenGui. Ver o
-		comentario do `WRAPPER_NAME`.
-	]]
-	self.Wrapper = wrapper
-	wrapper.Visible = false
-	panel.Visible = true
 
 	--[[
 		O contador de shards e opcional: o painel novo ainda nao traz um, e a loja
@@ -863,78 +658,7 @@ function ShopController:_bindUI(screenGui : ScreenGui)
 	self.ShardsLabel = panel:FindFirstChild(SHARDS_LABEL_NAME, true)
 		or screenGui:FindFirstChild(SHARDS_LABEL_NAME, true)
 
-	--[[
-		O X da loja.
-
-		Procurado a partir do `Frame` de fora e **em profundidade**: hoje ele e filho
-		direto dele, pendurado no canto de cima, e nao do painel desenhado. Buscar so
-		no painel deixaria o botao mudo. A busca comeca no wrapper e nao na ScreenGui
-		para nao alcancar o `Close` do painel antigo (`ShopUI.ImageLabel`), que e irmao
-		dele e continua na arvore.
-
-		Fechar na mão não desliga a proximidade: o `_updateProximity` só age na
-		**travessia**, então o painel não é reaberto no tick seguinte só porque o
-		jogador continua parado ali. Ele volta quando o jogador sair do raio e
-		voltar — que é o que "fechei porque não quero agora" quer dizer.
-
-		Vai no `UIMaid`, junto com o resto do bind: a `ShopUI` é `ResetOnSpawn`, e a
-		cópia nova traz um botão novo.
-	]]
-	local closeButton = wrapper:FindFirstChild(CLOSE_BUTTON_NAME, true)
-
-	if closeButton and closeButton:IsA("GuiButton") then
-		self.UIMaid:GiveTask(closeButton.Activated:Connect(function()
-			self:Close()
-		end))
-	else
-		warn(`[ShopController]: no {CLOSE_BUTTON_NAME} under {SHOP_UI_NAME}.{WRAPPER_NAME} -- the shop only closes by walking away.`)
-	end
-
-	--[[
-		A `OpenShop` escreve em `UIScale/Scale` e em `ImageTransparency`. O painel novo
-		nao traz um `UIScale` autorado, e sem ele a primeira faixa nao teria onde
-		escrever -- a loja apareceria por fade, sem crescer. Criar aqui e inofensivo
-		para um painel que ja tenha o seu: o `FindFirstChildWhichIsA` acha o autorado
-		primeiro.
-	]]
-	if not panel:FindFirstChildWhichIsA("UIScale") then
-		local scale = Instance.new("UIScale")
-		scale.Name = "PanelScale"
-		scale.Parent = panel
-	end
-
-	self.PanelTrack = AnimationService.CreateTrack(panel, ShopConfig.OPEN_ANIMATION)
-
-	if self.PanelTrack then
-		local connection = self.PanelTrack.Completed:Connect(function()
-			-- Only the closing pass ends with the panel hidden.
-			if not self.IsOpenState and screenGui.Parent then
-				self:_hidePanel()
-			end
-		end)
-
-		self.UIMaid:GiveTask(function()
-			connection.Disconnect()
-		end)
-	end
-
 	self.Entries = {}
-	self.IsOpenState = false
-	self.OpenToken += 1
-
-	--[[
-		A copia nova nasce apagada, e o que a copia velha tinha pedido e devolvido.
-
-		A `ShopUI` e `ResetOnSpawn`: morrer com a loja aberta traz uma `ScreenGui` nova
-		e zera o `IsOpenState` aqui. Sem devolver a tela, o pedido de esconder ficaria
-		de pe com a loja fechada -- o jogador renasceria sem HUD e com o fundo borrado.
-	]]
-	self:_hidePanel()
-	self:_releaseScreen()
-
-	-- A fresh copy means a respawn: the player may well still be standing next to
-	-- the part, and the next check has to open the new panel.
-	self.InRange = false
 
 	self:_render()
 	self:_updateShards()
@@ -962,17 +686,12 @@ function ShopController:_bindHud(screenGui : ScreenGui)
 	end))
 end
 
+--- A HUD, pelo botao que leva ate a loja. A `ShopUI` e seguida pelo `ProximityPanel`.
 function ShopController:_observeUI()
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 	local function onChild(child : Instance)
-		if not child:IsA("ScreenGui") then
-			return
-		end
-
-		if child.Name == SHOP_UI_NAME then
-			self:_bindUI(child)
-		elseif child.Name == HUD_UI_NAME then
+		if child:IsA("ScreenGui") and child.Name == HUD_UI_NAME then
 			self:_bindHud(child)
 		end
 	end
@@ -987,78 +706,31 @@ end
 --[[ EXTERNAL ]]
 
 function ShopController:IsOpen() : boolean
-	return self.IsOpenState == true
+	return self.Proximity ~= nil and self.Proximity:IsOpen()
 end
 
 function ShopController:Open()
-	if not self.ScreenGui or not self.ScreenGui.Parent or self.IsOpenState then
-		return
+	if self.Proximity then
+		self.Proximity:Open()
 	end
-
-	self.IsOpenState = true
-	self.OpenToken += 1
-
-	--[[
-		A loja e a unica coisa na tela enquanto esta aberta: o HUD, o portal e o que
-		mais a lobby tiver saem, e voltam ao que o dono deles queria no fechamento.
-
-		O `Except` e a propria `ShopUI`, senao o pedido esconderia o painel que ele
-		esta abrindo.
-	]]
-	local interface = self.Controllers.InterfaceController
-	if interface then
-		interface:Hide(HIDE_REASON, { Except = { SHOP_UI_NAME } })
-	end
-
-	--[[
-		Pelo `_setShopEnabled`, e nao no `Enabled` direto: o aviso de `Enabled` chega
-		no fim do quadro, e a loja acende no **mesmo** instante em que o pedido varre
-		as GUIs. Escrevendo direto, o pedido ainda leria o `false` de antes como o que
-		o dono queria e apagaria o painel de volta no mesmo quadro.
-	]]
-	self:_setShopEnabled(true)
-
-	-- A moldura acende **antes** da animacao, senao a `OpenShop` rodaria com o painel
-	-- fora da tela e a loja apareceria pronta no fim dela.
-	if self.Wrapper and self.Wrapper.Parent then
-		self.Wrapper.Visible = true
-	end
-
-	self:_playPanel(false)
-	self:_playBlur(true)
-
-	self.Signals.OpenChanged:Fire(true)
 end
 
 function ShopController:Close()
-	if not self.ScreenGui or not self.IsOpenState then
-		return
+	if self.Proximity then
+		self.Proximity:Close()
 	end
-
-	self.IsOpenState = false
-	self.OpenToken += 1
-
-	-- Devolvida no comeco do fechamento, e nao no fim dele: o resto da UI e o fundo
-	-- voltam **atras** do painel, em vez de aparecerem de uma vez depois que ele sai.
-	self:_releaseScreen()
-
-	if self.PanelTrack then
-		-- The panel hides when the reversed animation completes, in _bindUI.
-		self:_playPanel(true)
-	else
-		self:_hidePanel()
-	end
-
-	self.Signals.OpenChanged:Fire(false)
 end
 
 --[=[
-	Drops the player on the teleport marker next to the shop. The marker sits inside
-	OPEN_RADIUS, so the proximity check opens the panel right after the landing --
-	the button does not open it by hand.
+	Drops the player on the teleport marker next to the shop.
 
 	The client owns its own character, so moving it here is enough; the server sees
 	the new position through the usual replication.
+
+	O pouso fica **fora** do `OPEN_RADIUS`, que hoje e o balcao (5 studs) e nao o
+	patio inteiro. Entao o botao abre a loja na mao, pelo `EnterRange` -- que marca a
+	entrada junto, senao a travessia de saida nunca aconteceria e a loja aberta pelo
+	botao ficaria pendurada na tela por mais longe que ele andasse.
 ]=]
 function ShopController:TeleportToShop() : boolean
 	local character = Players.LocalPlayer.Character
@@ -1080,25 +752,16 @@ function ShopController:TeleportToShop() : boolean
 	-- Without this the player keeps whatever momentum they had and slides off.
 	root.AssemblyLinearVelocity = Vector3.zero
 
-	--[[
-		O pouso fica **fora** do `OPEN_RADIUS`, que hoje e o balcao (5 studs) e nao o
-		patio inteiro. Entao o botao abre a loja na mao, e nao pela proximidade.
-
-		Marcar a entrada junto e o que fecha o ciclo: sem isso a travessia de saida
-		nunca aconteceria (o jogador ja estava "fora"), e a loja aberta pelo botao
-		ficaria pendurada na tela por mais longe que ele andasse.
-	]]
-	self.InRange = true
-	self:Open()
+	if self.Proximity then
+		self.Proximity:EnterRange()
+	end
 
 	return true
 end
 
 function ShopController:Toggle()
-	if self.IsOpenState then
-		self:Close()
-	else
-		self:Open()
+	if self.Proximity then
+		self.Proximity:Toggle()
 	end
 end
 
@@ -1173,9 +836,49 @@ function ShopController:construct()
 		music:PreloadSFX(names)
 	end
 
+	--[[
+		O painel: a moldura, a `OpenShop`, o borrao, o pedido de tela e a proximidade
+		do balcao. O que esta loja tem de proprio entra pelo `OnBind`.
+	]]
+	self.Proximity = ProximityPanel.new({
+		Name = "ShopController",
+		ScreenGui = SHOP_UI_NAME,
+		Wrapper = WRAPPER_NAME,
+		Panel = PANEL_NAME,
+		Animation = ShopConfig.OPEN_ANIMATION,
+		HideReason = HIDE_REASON,
+		GetReference = function()
+			return self:GetReferencePosition()
+		end,
+		Radius = ShopConfig.OPEN_RADIUS,
+		Interval = ShopConfig.PROXIMITY_INTERVAL,
+		InterfaceController = self.Controllers.InterfaceController,
+
+		-- A `ShopUI` e dividida com a loja de cartas: fechar esta com a outra aberta
+		-- nao pode apagar a ScreenGui das duas.
+		CanDisable = function()
+			local cardShop = self.Controllers.RoundCardShopController
+			return not (cardShop and cardShop:IsOpen())
+		end,
+
+		OnBind = function(screenGui, _wrapper, panel)
+			self:_onBind(screenGui, panel)
+		end,
+	})
+
+	local openChanged = self.Proximity.Signals.OpenChanged:Connect(function(isOpen : boolean)
+		self.Signals.OpenChanged:Fire(isOpen)
+	end)
+
+	self.Maid:GiveTask(function()
+		openChanged:Disconnect()
+		self.Proximity:Destroy()
+	end)
+
+	self.Proximity:Start()
+
 	self:_observeUI()
 	self:_watchShards()
-	self:_watchProximity()
 end
 
 function ShopController:start()
@@ -1188,27 +891,18 @@ end
 
 function ShopController:init()
 	self.Maid = Maid.new()
-	self.UIMaid = Maid.new()
 	self.ItemMaid = Maid.new()
 	self.HudMaid = Maid.new()
 
-	-- O tween do borrao vive fora do bind da UI: ele e do Lighting, e nao da
-	-- `ScreenGui` que a engine refaz a cada respawn.
-	self.BlurMaid = Maid.new()
-
-	self.Maid:GiveTask(self.UIMaid)
 	self.Maid:GiveTask(self.ItemMaid)
 	self.Maid:GiveTask(self.HudMaid)
-	self.Maid:GiveTask(self.BlurMaid)
+
+	-- O `ProximityPanel` desta loja, criado no `construct`.
+	self.Proximity = nil
 
 	-- Uma entrada por caixa desenhada: o item, o container dela e as linhas de
 	-- raridade que estao na tela agora.
 	self.Entries = {}
-	self.IsOpenState = false
-
-	-- A moldura de fora do painel (`ShopUI.Frame`), acesa so enquanto esta loja esta
-	-- na tela. Ver o comentario do `WRAPPER_NAME`.
-	self.Wrapper = nil
 
 	-- As chances por item, vindas do servidor -- nil enquanto a resposta nao chega.
 	self.CrateOdds = nil
@@ -1218,13 +912,6 @@ function ShopController:init()
 	-- mapa guarda o container que faltou, pela mesma razao: avisar uma vez.
 	self.MapParts = {}
 	self.WarnedMissing = {}
-
-	-- Bumped on every open, close and rebind, so a delayed batch that belongs to a
-	-- previous open does not fire over the current one.
-	self.OpenToken = 0
-
-	self.InRange = false
-	self.ProximityClock = 0
 end
 
 return ShopController

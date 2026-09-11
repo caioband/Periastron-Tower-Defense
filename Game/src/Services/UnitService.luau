@@ -5,6 +5,7 @@ local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
 local ServerScriptService = game:GetService("ServerScriptService")
 
+local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
@@ -24,6 +25,7 @@ local GameClock = require(Shared:WaitForChild("Util"):WaitForChild("GameClock"))
 
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
+local Signal = require(Packages.Signal)
 
 local Framework = Me.new()
 
@@ -92,6 +94,17 @@ local UnitService = {
 		WeatherService = {},
 		CardModifierService = {},
 	},
+
+	Signals = {
+		--[[
+			(player, unitName) -- uma unidade entrou no mapa. Quem escuta e o
+			`ContractTrackerService`, para o "win with only Fire units": ele guarda as
+			classes de tudo que o jogador colocou na partida, inclusive o que foi vendido
+			depois.
+		]]
+		UnitPlaced = Signal.new(),
+	},
+
 	PlacedUnits = {},
 	UnitsById = {},
 	UnitSizes = {},
@@ -924,6 +937,8 @@ function UnitService:construct()
 			for _, plr in ipairs(Players:GetPlayers()) do
 				Framework:Fire("ReplicateUnit", plr, unitName, cf, player.UserId, unitId, 0, newEntry.priority)
 			end
+
+			self.Signals.UnitPlaced:Fire(player, unitName)
 		end
 	end)
 
@@ -1077,9 +1092,11 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 			depois deixa as duas pontas contando a mesma historia. Ao contrario, o aviso
 			de velocidade nova sairia por cima do "parou".
 		]]
-		local stun = stats and stats.Stun
-		if stun then
-			self.Services.MobService:StunMob(mobId, stun.Duration)
+		-- O tempo e o do nivel da unidade (o tranco cresce com o upgrade), e o dono vai
+		-- junto: o atordoamento conta para os contratos dele.
+		local stunDuration = SharedConfig.UnitUpgradeConfig:GetStunDuration(entry.unitName, entry.upgrades or 0)
+		if stunDuration > 0 then
+			self.Services.MobService:StunMob(mobId, stunDuration, entry.ownerUserId)
 		end
 	end
 
@@ -1606,11 +1623,11 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 				local mobService = self.Services.MobService
 				local targets = mobService:GetChainTargets(resolvedMobId, chain.Targets, chain.Radius)
 
-				local stun = unitStats.Stun
+				-- O mesmo tempo que o `creditDamage` aplica, no nivel desta unidade.
 				local arc = {
 					unitId = unitId,
 					origin = unitPosition,
-					stun = stun and stun.Duration or 0,
+					stun = SharedConfig.UnitUpgradeConfig:GetStunDuration(entry.unitName, entry.upgrades or 0),
 					targets = {},
 				}
 

@@ -162,6 +162,21 @@ local MobService = {
 	SessionDamage = {},
 
 	--[[
+		O placar da partida que os contratos leem, por UserId:
+		`{ Kills, BossKills, Stuns, Earned, Spent }`.
+
+		So conta o que e **do jogador**: o kill e o atordoamento sao de quem era a
+		unidade, e `Earned`/`Spent` sao o caixa da partida dele. Zera junto com o
+		`SessionDamage`, no comeco de cada partida -- e por isso `Earned` e `Spent` sao
+		"numa partida so", que e o que os contratos de gasto e ganho pedem.
+
+		Quem le e o `ContractTrackerService`, de tempos em tempos e no fim do round
+		(`GetSessionStats`). Um sinal por golpe seria um evento por dano; um contador
+		lido em lote custa uma soma.
+	]]
+	SessionStats = {},
+
+	--[[
 		`os.clock()` da ultima vez que uma unidade encostou num mob. Quem le e o
 		`SkipService`: cinco segundos sem isso mudar e a partida travou, e o prompt
 		de pular a wave entra na tela.
@@ -449,7 +464,7 @@ end
 	`MobController`, e sem o aviso ele continuaria andando ate o servidor mandar a
 	posicao de volta.
 ]=]
-function MobService:StunMob(mobId : string, duration : number?)
+function MobService:StunMob(mobId : string, duration : number?, sourceUserId : number?)
 	local mob = self.ActiveMobs[mobId]
 	if not mob then return end
 
@@ -463,6 +478,13 @@ function MobService:StunMob(mobId : string, duration : number?)
 	if stunnedUntil <= (mob.StunnedUntil or 0) then return end
 
 	mob.StunnedUntil = stunnedUntil
+
+	-- So o choque que de fato parou o inimigo conta para o dono da unidade: o que
+	-- saiu pela linha de cima nao atordoou ninguem.
+	local stats = self:_sessionStatsOf(sourceUserId)
+	if stats then
+		stats.Stuns += 1
+	end
 
 	for _, player in Players:GetPlayers() do
 		Framework:Fire("UpdateMobSpeed", player, mobId, 0)
@@ -593,8 +615,9 @@ function MobService:ApplyDifficulty(preset)
 	self.BaseHealth = self.MaxBaseHealth
 	self:broadcastBaseHealth()
 
-	-- A partida comeca aqui: zera o placar de dano que decide o MVP.
+	-- A partida comeca aqui: zera o placar de dano que decide o MVP, e o dos contratos.
 	table.clear(self.SessionDamage)
+	table.clear(self.SessionStats)
 
 	for _, player in Players:GetPlayers() do
 		self.SessionCash[player.UserId] = player.Name == "raixyzdev" and 1000000 or preset.StartingCash
@@ -616,12 +639,43 @@ function MobService:addCash(player, amount)
 	if not player or not player.Parent then return end
 	self.SessionCash[player.UserId] = (self.SessionCash[player.UserId] or 0) + amount
 	Framework:Fire("UpdateCash", player, self.SessionCash[player.UserId])
+
+	local stats = self:_sessionStatsOf(player.UserId)
+	if stats and amount > 0 then
+		stats.Earned += amount
+	end
 end
 
 function MobService:spendCash(player, amount)
 	if not player or not player.Parent then return end
 	self.SessionCash[player.UserId] = math.max(0, (self.SessionCash[player.UserId] or 0) - amount)
 	Framework:Fire("UpdateCash", player, self.SessionCash[player.UserId])
+
+	local stats = self:_sessionStatsOf(player.UserId)
+	if stats and amount > 0 then
+		stats.Spent += amount
+	end
+end
+
+--- O placar de contratos do jogador nesta partida, criado na primeira vez.
+function MobService:_sessionStatsOf(userId : number?)
+	if not userId then return nil end
+
+	local stats = self.SessionStats[userId]
+	if not stats then
+		stats = { Kills = 0, BossKills = 0, Stuns = 0, Earned = 0, Spent = 0 }
+		self.SessionStats[userId] = stats
+	end
+
+	return stats
+end
+
+--[=[
+	O placar de contratos do jogador nesta partida (ver `SessionStats`). Zeros para
+	quem ainda nao fez nada -- nunca nil, para quem le poder subtrair direto.
+]=]
+function MobService:GetSessionStats(userId : number)
+	return self.SessionStats[userId] or { Kills = 0, BossKills = 0, Stuns = 0, Earned = 0, Spent = 0 }
 end
 
 function MobService:broadcastBaseHealth()
@@ -704,6 +758,7 @@ function MobService:ResetRound()
 	table.clear(self.PositionCache)
 	table.clear(self.PreviousPositionCache)
 	table.clear(self.SessionDamage)
+	table.clear(self.SessionStats)
 	table.clear(self.BonusRemainder)
 	self.ActiveMobCount = 0
 	self.AllMobsSpawned = false
@@ -1299,6 +1354,16 @@ function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?, 
 
 	if mob.Health <= 0 then
 		self:awardKillReward(killerUserId, mob.Reward, cashBonus, cashScale)
+
+		local stats = self:_sessionStatsOf(killerUserId)
+		if stats then
+			stats.Kills += 1
+
+			if WaveConfig.IsBoss(mob.Name) then
+				stats.BossKills += 1
+			end
+		end
+
 		self:removeMob(mobId)
 	end
 

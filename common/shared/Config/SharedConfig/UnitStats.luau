@@ -119,28 +119,31 @@ local UnitStats = {
 	},
 
 	--[=[
-		O raio que salta: um golpe a cada 5s que toca quatro inimigos e para cada um
+		O raio que salta: um golpe a cada 2,5s que toca quatro inimigos e para cada um
 		deles no lugar por um instante.
 
 		**Ela vende alcance de golpe, e nao dano por alvo.** 4 x 18 sao 72 de dano por
-		ciclo, ou 14,4 de DPS com a corrente cheia -- 4,8 por 100 de caixa, na casa do
-		Rocket (4,4) e do Berserker (5,1), as outras duas lendarias que a regra 1 la de
-		cima cobra por uma coisa que elas nao vendem. Contra um alvo sozinho sao 3,6 de
-		DPS, e ai ela e de longe a pior da tabela -- e esta certo, porque sozinha ela
-		nao faz nada do que faz.
+		ciclo, ou 28,8 de DPS com a corrente cheia -- 9,6 por 100 de caixa, dentro do
+		teto da regra 1. Contra um alvo sozinho sao 7,2 de DPS, 2,4 por 100: ai ela e
+		das piores da tabela -- e esta certo, porque sozinha ela nao faz nada do que faz.
 
-		Em cima disso vem o tranco, e ele e **de proposito pequeno**: 0,3s parado num
-		ciclo de 5s tiram 6% do caminho que os quatro andariam. Isso e um tropeco, e
-		nao um controle -- quem para inimigo de verdade e o Time Stop, que custa uma
-		carta. Ela nao deixa lentidao nenhuma: o inimigo para e volta a andar no ritmo
-		de sempre.
+		Em cima disso vem o tranco: 0,3s parado num ciclo de 2,5s no nivel 0 (12% do
+		caminho que os quatro andariam), subindo ate 0,5s no maximo (20%). Ela nao
+		deixa lentidao nenhuma: o inimigo para e volta a andar no ritmo de sempre.
 
 		Os numeros que importam sao o `Targets` e o `Cooldown`, e o `Stun.Duration` e o
-		que os separa de um controle: subir aquele 0,3 para perto de 1 com quatro elos
-		a cada 5s vira "a fila anda quando o Electro deixa", que e outra unidade.
+		que os separa de um controle: subir o tranco para perto do ciclo inteiro vira
+		"a fila anda quando o Electro deixa", que e outra unidade -- quem para inimigo
+		de verdade e o Time Stop, que custa uma carta.
 
-		O `Cooldown = 5` cabe folgado na animacao `Attack`, que dura 1,67s -- ela passa
-		dois tercos do ciclo parada esperando o proximo raio.
+		**O cooldown e fixo; o upgrade compra dano, alcance e tranco.** Sem
+		`CooldownMultiplier` no `UnitUpgradeConfig`, os 2,5s valem em todo nivel, e o
+		tranco sobe em linha reta:
+
+		| Nivel  | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Tranco | 0,30 | 0,34 | 0,38 | 0,42 | 0,46 | 0,50 |
+
+		Os 2,5s ainda cabem na animacao `Attack`, que dura 1,67s.
 
 		Alcance medio (10), como o Subspace Tripminer: ela precisa alcancar a fila para
 		o salto ter de onde sair, mas o salto ja e o que a leva mais longe -- somar
@@ -152,7 +155,7 @@ local UnitStats = {
 		Cost = 300,
 		Damage = 18,
 		Range = 10,
-		Cooldown = 5,
+		Cooldown = 2.5,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
@@ -163,7 +166,12 @@ local UnitStats = {
 
 		--[[
 			O tranco do choque, e a unica coisa que o golpe deixa: cada elo da corrente
-			para de vez por 0,3s e depois volta a andar no ritmo de sempre.
+			para de vez por um instante e depois volta a andar no ritmo de sempre.
+
+			O tranco cresce com o upgrade: `Duration` no nivel 0 (0,3s) ate
+			`MaxDuration` no nivel maximo (0,5s), em linha reta -- ver
+			`UnitUpgradeConfig:GetStunDuration`. Unidade sem `MaxDuration` para sempre
+			o mesmo tanto.
 
 			**Sem `Slow` de proposito.** Ela nao e uma unidade de controle, e o campo
 			existe (ver o `Stun` e o `Slow` no cabecalho) justamente para os dois nao
@@ -171,7 +179,7 @@ local UnitStats = {
 			laco. Quem executa e o `MobService:StunMob`, o mesmo `StunnedUntil` do Time
 			Stop.
 		]]
-		Stun = { Duration = 0.3 },
+		Stun = { Duration = 0.3, MaxDuration = 0.5 },
 
 		RangeStats = {
 			Increment = 1,

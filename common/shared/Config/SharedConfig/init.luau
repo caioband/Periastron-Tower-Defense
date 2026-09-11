@@ -17,6 +17,7 @@ type Shared = {
 	LevelConfig : typeof(require(script.LevelConfig)),
 	DifficultyUnlockConfig : typeof(require(script.DifficultyUnlockConfig)),
 	IndexConfig : typeof(require(script.IndexConfig)),
+	ContractConfig : typeof(require(script.ContractConfig)),
 	Cmdr : typeof(require(script.Cmdr)),
 	SellValue : number,
 	SellRefundRatio : number,
