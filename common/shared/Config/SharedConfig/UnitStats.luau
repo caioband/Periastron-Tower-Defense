@@ -288,15 +288,19 @@ local UnitStats = {
 		Rarity = "Epic",
 		Class = "Magic",
 		Cost = 350,
-		Damage = 75,
+		-- O servidor arredonda o dano cobrado: no nivel 0 a mina tira 38.
+		Damage = 37.5,
 		Range = 10,
-		Cooldown = 3,
+		-- O do nivel 0; o upgrade desce ate 3s no maximo (ver o `UnitUpgradeConfig`).
+		Cooldown = 5,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
 		Tripmine = {
 			BaseLimit = 3,
 			LimitPerUpgrade = 1,
+			-- Teto das minas no mapa: 3, 4, 5 e dai para em 6 nos niveis 3 a 5.
+			MaxLimit = 6,
 			TriggerRadius = 2.5,
 			AOE = { Radius = 6 },
 
@@ -314,7 +318,7 @@ local UnitStats = {
 		},
 		RangeStats = {
 			Increment = 1,
-			Max = 14,
+			Max = 12,
 		},
 	},
 

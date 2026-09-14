@@ -1,15 +1,14 @@
 --[[
 	A votação de pular a wave: `StarterGui.Interface.SkipPrompt`.
 
-	O prompt aparece sozinho quando a partida trava — nenhuma unidade encosta em
-	nenhum mob por `IdleTime` segundos —, e some sozinho assim que alguém volta a
-	bater em alguma coisa. Quem decide isso é o `SkipService`; quem desenha é o
-	`SkipPromptController`.
+	O prompt aparece sozinho `OfferDelay` segundos depois de a wave começar e fica
+	até ela acabar. Dano de unidade não esconde: a votação é da wave, e não de um
+	momento em que a partida parecia travada. Quem decide isso é o `SkipService`;
+	quem desenha é o `SkipPromptController`.
 
-	`IdleTime` é medido em **tempo real**, e não no `GameClock`: ele existe para
+	`OfferDelay` é medido em **tempo real**, e não no `GameClock`: ele existe para
 	medir a paciência de quem está olhando a tela, e não o ritmo da partida. No 2x
-	o jogo anda mais rápido, mas cinco segundos parados continuam sendo cinco
-	segundos parados.
+	o jogo anda mais rápido, mas sete segundos continuam sendo sete segundos.
 
 	A animação é a mesma do `WeatherWarning` (ver `WarningConfig`): o prompt desce
 	de `SlideOffset` acima do lugar autorado enquanto a transparência de **todos**
@@ -32,13 +31,14 @@ SkipConfig.CancelName = "Cancel"
 SkipConfig.CountName = "PlayerCount"
 
 --[[
-	Segundos sem nenhuma unidade encostar num mob para o prompt entrar. Volta a
-	zero a cada wave nova e a cada dano que uma unidade faz.
+	Segundos entre a wave começar (o instante em que os mobs dela começam a nascer)
+	e o prompt entrar. Se a wave ainda estiver nascendo nessa hora, ele espera o
+	último mob -- ver `WaveService:CanSkipWave`.
 ]]
-SkipConfig.IdleTime = 5
+SkipConfig.OfferDelay = 7
 
--- De quanto em quanto o servidor confere a ociosidade. Não precisa ser fino: o
--- que ele mede é uma janela de cinco segundos.
+-- De quanto em quanto o servidor confere se já é hora de abrir ou de fechar. Não
+-- precisa ser fino: o que ele mede é uma janela de sete segundos.
 SkipConfig.PollInterval = 0.25
 
 --[[

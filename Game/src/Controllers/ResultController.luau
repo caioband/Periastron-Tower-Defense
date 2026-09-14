@@ -43,6 +43,7 @@ local Framework = Me.new()
 		    ├── ExpContainer        Frame da barra de XP
 		    │   └── Bar             Size.X.Scale de BAR_MIN (0%) a BAR_MAX (100%)
 		    ├── ExpAmount           TextLabel "XP/proximo nivel"
+		    ├── ExpOrnament         ImageLabel decorativo, entra junto com o ExpContainer
 		    ├── PlayAgain           ImageButton
 		    └── Lobby               ImageButton
 
@@ -88,6 +89,7 @@ local TITLE_NAME = "RewardTitle"
 local REWARDS_NAME = "RewardsContainer"
 local EXP_NAME = "ExpContainer"
 local EXP_TEXT_NAME = "ExpAmount"
+local EXP_ORNAMENT_NAME = "ExpOrnament"
 local BAR_NAME = "Bar"
 
 local VIEWPORT_NAME = "ViewportFrame"
@@ -778,7 +780,7 @@ end
 	  5. RewardTitle, MVPText e o ViewportFrame do MVP entram em fade juntos
 	  6. RewardsContainer liga e cada label desliza de dentro do wrapper, um a cada
 	     REWARD_STAGGER
-	  7. ExpContainer e ExpAmount ligam e a barra enche do XP de antes ate o de agora
+	  7. ExpContainer, ExpAmount e ExpOrnament ligam e a barra enche do XP de antes ate o de agora
 	  8. PlayAgain e Lobby entram em fade
 
 	Mudou o ritmo, o easing ou a ordem? E aqui e nas constantes do topo — nenhum
@@ -798,6 +800,9 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 	if not panel then
 		warn(`ResultController: {SCREEN_NAME}.{PANEL_NAME} nao encontrado.`)
 	end
+
+	-- Antes do snapshot e de a GUI ligar: o painel ja entra com a arte do resultado.
+	self:applyPanelImage(panel, info.won ~= false)
 
 	-- A tela antiga nao participa de nada; se ainda existir, fica fora do caminho.
 	local legacy = screen:FindFirstChild(LEGACY_PANEL_NAME)
@@ -852,6 +857,7 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 
 	local expGroup = self:prepareGroup(exp)
 	local expTextGroup = self:prepareGroup(expText)
+	local expOrnamentGroup = self:prepareGroup(panel and panel:FindFirstChild(EXP_ORNAMENT_NAME))
 	local playAgainGroup = self:prepareGroup(playAgain)
 	local lobbyGroup = self:prepareGroup(lobby)
 
@@ -910,6 +916,7 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 
 		self:revealGroup(expGroup)
 		self:revealGroup(expTextGroup)
+		self:revealGroup(expOrnamentGroup)
 
 		if exp then
 			self:playExpAnimation(exp, expText and expText:IsA("TextLabel") and expText or nil, info)
@@ -921,6 +928,30 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 
 		self.revealThread = nil
 	end)
+end
+
+-- A arte do painel na derrota. A da vitoria e a que veio autorada no Studio.
+local DEFEAT_PANEL_IMAGE = "rbxassetid://132074829939960"
+local AUTHORED_IMAGE_ATTRIBUTE = "AuthoredImage"
+
+--[=[
+	Troca a arte do `MainScreen` conforme o resultado: derrota usa
+	`DEFEAT_PANEL_IMAGE`, vitoria a autorada.
+
+	A autorada e guardada num atributo do proprio painel na primeira vez que a tela
+	abre. A mesma copia da ScreenGui atravessa um "jogar de novo" sem respawn, e uma
+	vitoria depois de uma derrota precisa ter para onde voltar.
+]=]
+function ResultController:applyPanelImage(panel : Instance?, won : boolean)
+	if not panel or not panel:IsA("ImageLabel") then return end
+
+	local authored = panel:GetAttribute(AUTHORED_IMAGE_ATTRIBUTE)
+	if typeof(authored) ~= "string" then
+		authored = panel.Image
+		panel:SetAttribute(AUTHORED_IMAGE_ATTRIBUTE, authored)
+	end
+
+	panel.Image = if won then authored else DEFEAT_PANEL_IMAGE
 end
 
 --[[ API ]]

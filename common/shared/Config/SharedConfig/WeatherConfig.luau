@@ -256,6 +256,9 @@ WeatherConfig.MapPools = {
 	SnowyCastle = { "Snow", "Wind", "Fog", "Rain" },
 	Mountain = { "Snow", "Wind", "Fog", "Thunder", "Drought", "Rain" },
 	Snowy = { "Snow", "Wind", "Fog" },
+	Swamp = { "Fog", "Rain" },
+	Beach = { "Wind", "Rain", "Thunder", "Drought" },
+	["Pale Garden"] = { "Fog", "Rain", "Sandstorm", "Snow", "Thunder", "Wind" },
 }
 
 --[[

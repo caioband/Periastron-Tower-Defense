@@ -16,19 +16,16 @@ local SkipConfig = SharedConfig.SkipConfig
 --[=[
 	A votacao de pular a wave.
 
-	O prompt nao tem botao para abrir: ele aparece quando a partida trava. O
-	criterio e o contato — nenhuma unidade encostou em nenhum mob por
-	`SkipConfig.IdleTime` segundos. Quem marca o contato e o proprio `DamageMob` do
-	`MobService` (`LastContact`), que e por onde passa todo dano do jogo; aqui so se
-	le o relogio.
+	O prompt nao tem botao para abrir: ele aparece `SkipConfig.OfferDelay`
+	segundos depois de a wave comecar. Quem marca o comeco e o `WaveService`
+	(`WaveStartedAt`); aqui so se le o relogio.
 
 	Fechada a votacao, quem pula a wave e o `WaveService:SkipWave()`: a proxima
 	comeca com os mobs da anterior ainda no caminho.
 
-	**A votacao e do momento, e nao da wave.** Voltou a haver contato — um mob
-	entrou no alcance de alguem, uma tripmine estourou —, o prompt sai da tela e os
-	votos que estavam la sao descartados. O motivo de pular deixou de existir, e um
-	voto dado ha meia wave nao pode fechar a votacao de agora.
+	**A votacao e da wave.** Dano de unidade nao fecha nada: aberta, ela so sai da
+	tela quando a wave deixa de poder ser pulada -- acabou sozinha, foi pulada ou o
+	round parou --, e os votos valem ate la.
 
 	Cada abertura tem um `Token`. E ele que deixa o cliente esconder o prompt
 	quando o jogador clica em Cancel sem esconder o proximo: um token novo e uma
@@ -37,7 +34,6 @@ local SkipConfig = SharedConfig.SkipConfig
 local SkipService = {
 	Services = {
 		WaveService = {},
-		MobService = {},
 	},
 
 	-- Votos da votacao aberta, por UserId. Zerados a cada abertura e a cada
@@ -107,17 +103,17 @@ function SkipService:_close()
 end
 
 --[=[
-	Se a votacao deveria estar na tela agora: uma wave pulavel no ar e ninguem
-	encostando em ninguem ha `IdleTime` segundos.
+	Se a votacao deveria estar na tela agora: uma wave pulavel no ar, comecada ha
+	pelo menos `OfferDelay` segundos.
 ]=]
 function SkipService:_shouldOffer() : boolean
 	local waveService = self.Services.WaveService
-	local mobService = self.Services.MobService
 
-	if not waveService or not mobService then return false end
+	if not waveService then return false end
 	if not waveService:CanSkipWave() then return false end
 
-	return (os.clock() - (mobService.LastContact or 0)) >= SkipConfig.IdleTime
+	local startedAt = waveService.WaveStartedAt
+	return startedAt ~= nil and (os.clock() - startedAt) >= SkipConfig.OfferDelay
 end
 
 --[=[

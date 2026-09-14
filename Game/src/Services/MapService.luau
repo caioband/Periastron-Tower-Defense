@@ -18,6 +18,9 @@ local Vendor = Shared:WaitForChild("Vendor")
 ]]
 local Maps = ServerStorage:WaitForChild("Maps")
 
+-- Atributo da pasta `Maps` que forca o mapa num play do Studio. Ver `getStudioMap`.
+local STUDIO_MAP_ATTRIBUTE = "StudioMap"
+
 local Configs = Shared:WaitForChild("Config")
 local ServerConfigs = ServerScriptService:WaitForChild("Config")
 
@@ -129,18 +132,43 @@ function ExampleService:getTeleportedMap(player : Player) : string?
 end
 
 --[=[
+	O mapa pedido pelo atributo `StudioMap` da pasta `ServerStorage.Maps`, para
+	testar um mapa especifico no Studio sem depender do sorteio.
+
+	So o `resolveStartingMap` le isto, e so no Studio: o servidor de verdade continua
+	obedecendo o Lobby. Passa pela mesma validacao do TeleportData -- nome fora do
+	MapConfig ou sem pasta avisa e cai no sorteio, em vez de subir sem mapa.
+]=]
+function ExampleService:getStudioMap() : string?
+	local requested = Maps:GetAttribute(STUDIO_MAP_ATTRIBUTE)
+	if typeof(requested) ~= "string" or requested == "" then
+		return nil
+	end
+
+	local resolved = MapConfig.resolveMap(requested)
+	if not resolved or not Maps:FindFirstChild(resolved) then
+		warn(string.format("[MapService]: o atributo %s pede '%s', que nao esta no MapConfig ou nao existe em ServerStorage.Maps; sorteando.",
+			STUDIO_MAP_ATTRIBUTE, requested))
+		return nil
+	end
+
+	return resolved
+end
+
+--[=[
 	Decide qual mapa carregar.
 
-	No Studio nao existe TeleportData, entao sorteia e segue — sem aviso, para nao
-	poluir o output em todo teste. Em servidor de verdade o esperado e vir do
-	Lobby; nao vindo, avisa e sorteia.
+	No Studio nao existe TeleportData, entao vale o `StudioMap` (ver
+	`getStudioMap`) e, sem ele, sorteia e segue — sem aviso, para nao poluir o
+	output em todo teste. Em servidor de verdade o esperado e vir do Lobby; nao
+	vindo, avisa e sorteia.
 
 	Yield: em servidor precisa de um jogador para ler o JoinData, e o primeiro so
 	chega depois do boot.
 ]=]
 function ExampleService:resolveStartingMap() : string?
 	if RunService:IsStudio() then
-		return self:pickRandomMap()
+		return self:getStudioMap() or self:pickRandomMap()
 	end
 
 	local player = Players:GetPlayers()[1] or Players.PlayerAdded:Wait()

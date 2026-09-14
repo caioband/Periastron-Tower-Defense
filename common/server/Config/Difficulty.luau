@@ -84,7 +84,7 @@ Difficulty.Presets = {
 		BaseHealth = 180,
 		MobDamage = 15,
 		IntermissionTime = 60,
-		WaveInterval = 2.5,
+		WaveInterval = 1.25,
 		MaxWaves = 15,
 	},
 
@@ -106,7 +106,7 @@ Difficulty.Presets = {
 		BaseHealth = 140,
 		MobDamage = 20,
 		IntermissionTime = 60,
-		WaveInterval = 2.5,
+		WaveInterval = 1.25,
 		MaxWaves = 20,
 	},
 
@@ -128,7 +128,7 @@ Difficulty.Presets = {
 		BaseHealth = 125,
 		MobDamage = 25,
 		IntermissionTime = 45,
-		WaveInterval = 2.5,
+		WaveInterval = 1.25,
 		MaxWaves = 25,
 	},
 
@@ -150,7 +150,7 @@ Difficulty.Presets = {
 		BaseHealth = 100,
 		MobDamage = 25,
 		IntermissionTime = 40,
-		WaveInterval = 2.5,
+		WaveInterval = 1.25,
 		MaxWaves = 30,
 	},
 
@@ -172,7 +172,7 @@ Difficulty.Presets = {
 		BaseHealth = 75,
 		MobDamage = 25,
 		IntermissionTime = 30,
-		WaveInterval = 2.5,
+		WaveInterval = 1.25,
 		MaxWaves = 35,
 	},
 }

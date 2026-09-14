@@ -177,16 +177,6 @@ local MobService = {
 	SessionStats = {},
 
 	--[[
-		`os.clock()` da ultima vez que uma unidade encostou num mob. Quem le e o
-		`SkipService`: cinco segundos sem isso mudar e a partida travou, e o prompt
-		de pular a wave entra na tela.
-
-		Tempo real de proposito, e nao `GameClock`: o que ele mede e a paciencia de
-		quem esta olhando, e nao o ritmo da partida.
-	]]
-	LastContact = 0,
-
-	--[[
 		Ate quando o Time Stop segura todo mundo, no relogio da partida, e o token
 		do congelamento que esta valendo. Nil fora de um congelamento. Ver
 		`FreezeAll`.
@@ -762,7 +752,6 @@ function MobService:ResetRound()
 	table.clear(self.BonusRemainder)
 	self.ActiveMobCount = 0
 	self.AllMobsSpawned = false
-	self.LastContact = os.clock()
 
 	-- Um Time Stop do round anterior nao pode congelar a primeira wave do proximo.
 	-- O `FreezeToken` sobe para o degelo agendado nao mexer mais em nada.
@@ -943,10 +932,6 @@ function MobService:SpawnWave(waveNumber)
 		mapa. O numero ja e o de mobs vivos: o spawn soma, o `removeMob` subtrai, e
 		o reset de round zera.
 	]]
-
-	-- A janela de ociosidade recomeca com a wave: os mobs ainda estao a caminho das
-	-- unidades, e o silencio da caminhada nao e a partida travada.
-	self.LastContact = os.clock()
 
 	task.spawn(function()
 		for _, spawnEntry in spawnList do
@@ -1323,10 +1308,6 @@ end
 function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?, cashScale : number?)
 	local mob = self.ActiveMobs[mobId]
 	if not mob then return 0 end
-
-	-- Alguem encostou em alguem: a partida nao esta travada. Marcado aqui porque
-	-- este e o unico caminho de dano do jogo — torre, tripmine, respingo de area.
-	self.LastContact = os.clock()
 
 	--[[
 		O "quebradico" do Staff of Azure Ever Ice usado durante a neve: todo dano que

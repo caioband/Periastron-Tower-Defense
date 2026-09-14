@@ -18,10 +18,20 @@ UnitUpgradeConfig.Units = {
 		CostMultiplier = 1.6,
 		DamageMultiplier = 1.25,
 	},
+	--[[
+		Dano e cooldown param em alvos fixos no nivel maximo, pela mesma conta do
+		Slasher logo abaixo: a raiz `MaxUpgrades`-esima de alvo/base, para o topo cair
+		exatamente em 115 de dano e 3s de cooldown.
+
+		| Nivel    | 0  | 1    | 2    | 3    | 4    | 5  |
+		| Dano     | 38 | 47   | 59   | 73   | 92   | 115 |
+		| Cooldown | 5  | 4,51 | 4,08 | 3,68 | 3,32 | 3  |
+	]]
 	["Subspace Tripminer"] = {
 		BaseCost = 100,
 		CostMultiplier = 1.6,
-		DamageMultiplier = 1.25,
+		DamageMultiplier = (115 / UnitStats["Subspace Tripminer"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+		CooldownMultiplier = (3 / UnitStats["Subspace Tripminer"].Cooldown) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 	},
 	["Entrepreneur"] = {
 		BaseCost = 100,

@@ -86,6 +86,27 @@ module.MAPS = {
 		WinsRequired = 8,
 		Image = "rbxassetid://102911300807811",
 	},
+
+	-- Beach, Swamp e Pale Garden estao sem faixa em `SharedSounds.Musics` por
+	-- enquanto: a partida fica sem musica ate ela existir.
+	["Beach"] = {
+		DisplayName = "Beach",
+		WinsRequired = 11,
+		Image = "rbxassetid://98956022122852",
+	},
+
+	["Swamp"] = {
+		DisplayName = "Swamp",
+		WinsRequired = 13,
+		Image = "rbxassetid://115839585540675",
+	},
+
+	-- A pasta em `ServerStorage.Maps` tem espaco no nome, e a chave tambem.
+	["Pale Garden"] = {
+		DisplayName = "Pale Garden",
+		WinsRequired = 16,
+		Image = "rbxassetid://119383142532337",
+	},
 }
 
 --[=[

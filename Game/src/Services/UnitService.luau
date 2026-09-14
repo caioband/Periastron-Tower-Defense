@@ -1241,7 +1241,10 @@ function UnitService:getDamage(entry, stats, weather : string?) : number
 end
 
 function UnitService:getMineLimit(entry, tripmineConfig)
-	return (tripmineConfig.BaseLimit or 3) + (entry.upgrades or 0) * (tripmineConfig.LimitPerUpgrade or 1)
+	local limit = (tripmineConfig.BaseLimit or 3) + (entry.upgrades or 0) * (tripmineConfig.LimitPerUpgrade or 1)
+
+	-- `MaxLimit` e o teto: os upgrades seguintes continuam valendo pelo dano.
+	return math.min(limit, tripmineConfig.MaxLimit or math.huge)
 end
 
 function UnitService:getActiveMineCount(entry)

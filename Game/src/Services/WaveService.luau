@@ -28,7 +28,7 @@ local Framework = Me.new()
 local DataConfig = ServerConfig.Data
 
 local INTERMISSION_TIME = 60
-local WAVE_INTERVAL = 2.5
+local WAVE_INTERVAL = 1.25
 local SELECTION_TIME = 15
 
 -- Respiro entre o ultimo voto de recomecar e o round de fato reiniciar, para o
@@ -549,6 +549,9 @@ function WaveService:runRound(generation : number)
 		task.wait(self:getArrowLeadTime())
 		if not self:isCurrent(generation) then return end
 
+		-- Tempo real, como a espera das setas logo acima: e daqui que o `SkipService`
+		-- conta os segundos ate oferecer a votacao de pular.
+		self.WaveStartedAt = os.clock()
 		self.Services.MobService:SpawnWave(self.WaveCount)
 
 		if not self:awaitWaveEnd(generation) then return end
