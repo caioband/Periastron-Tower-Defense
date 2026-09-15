@@ -50,6 +50,10 @@ function Unit:loadAnimations()
 		]=]
 		if animation.Name == "Idle" then
 			track.Priority = Enum.AnimationPriority.Movement
+
+			-- A pose de base toca a partida inteira, entao ela e sempre em laco --
+			-- mesmo exportada sem o `Loop` ligado, como a do Archmage veio.
+			track.Looped = true
 		end
 
 		self.loadedAnimations[animation.Name] = track

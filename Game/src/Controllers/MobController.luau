@@ -441,6 +441,9 @@ function MobController:createEntity(entityData)
 		speed = speed,
 		pointIndex = 2,
 		points = smooth.points,
+		-- O caminho inteiro, e nao so os pontos: o `MobTeleported` precisa das
+		-- distancias acumuladas para achar onde o mob reaparece.
+		smooth = smooth,
 		extentsSize = extentsSize,
 	}
 
@@ -656,6 +659,36 @@ end
 function MobController:construct()
 	Framework:Listen("SpawnClientMob", function(entityData)
 		self:createEntity(entityData)
+	end)
+
+	--[[
+		O Teleport do Archmage jogou o mob para tras no caminho. O servidor manda a
+		distancia nova, e daqui o boneco reaparece nela: o laco de movimento persegue
+		o `pointIndex`, entao ele passa a ser o primeiro ponto depois dessa distancia.
+	]]
+	Framework:Listen("MobTeleported", function(mobId, distance)
+		local movement = self.MobMovement[mobId]
+		local smooth = movement and movement.smooth
+		if not smooth or typeof(distance) ~= "number" then return end
+
+		local position = PathUtil.GetPositionAtDistance(smooth, distance)
+		if not position then return end
+
+		local nextIndex = #smooth.points + 1
+		for index, at in ipairs(smooth.cumulative) do
+			if at > distance then
+				nextIndex = index
+				break
+			end
+		end
+		movement.pointIndex = math.max(2, nextIndex)
+
+		local model = movement.model
+		if model and model.Parent then
+			local height = position.Y + (movement.extentsSize.Y / 2)
+			model:PivotTo(CFrame.new(position.X, height, position.Z) * model:GetPivot().Rotation)
+			self.MobLastPosition[mobId] = model:GetPivot().Position
+		end
 	end)
 
 	Framework:Listen("UpdateMobSpeed", function(mobId, newSpeed)

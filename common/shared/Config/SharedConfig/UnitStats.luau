@@ -39,15 +39,16 @@
 	esta atras do alvo. `PierceWidth` e a unica coisa entre "pega quem a linha corta
 	de raspao" e "limpa a fileira do lado".
 
-	`Slow`, `Stun` e `Burn` sao o que o golpe **deixa** no inimigo, alem do dano. Hoje
-	so o Electro deixa alguma coisa (o tranco do choque); o `Slow` espera uma unidade
-	`Ice` e o `Burn`, uma `Fire`:
+	`Slow`, `Stun`, `Burn` e `Frost` sao o que o golpe **deixa** no inimigo, alem do
+	dano. Hoje deixam o Electro (o tranco do choque) e o Frostione (os acumulos de
+	gelo); o `Burn` espera uma unidade `Fire`:
 
 	| Campo | O que e |
 	| --- | --- |
 	| `Slow` | `{ Amount, Duration }` -- `Amount` e a fracao de velocidade tirada (0.3 e "anda 30% mais devagar") |
 	| `Stun` | `{ Duration }` -- o inimigo para **de vez** por tantos segundos |
 	| `Burn` | `{ Damage, Ticks, Interval }` -- tantos tiques de tanto dano, de tantos em tantos segundos |
+	| `Frost` | `{ Slow, Duration, FreezeStacks, FreezeDuration, Radius, MaxRadius }` -- um acumulo por acerto, contado **por unidade**; com qualquer acumulo o inimigo fica `Slow` mais lento, o acerto de uma unidade renova so o prazo dos dela, e `FreezeStacks` de uma mesma unidade o congelam por `FreezeDuration` e zeram a conta de todas. `Radius` (ate `MaxRadius` no nivel maximo) da o mesmo acumulo, sem dano, a quem estiver em volta do alvo |
 
 	`Slow` e `Stun` nao sao a mesma coisa em intensidades diferentes: a lentidao mexe
 	na velocidade do inimigo, o tranco tira ele do laco de movimento. Os dois cabem no
@@ -96,6 +97,45 @@
 ]]
 
 local UnitStats = {
+	--[[ COSMIC ]]
+
+	--[=[
+		Tres ataques em sequencia, e so depois o cooldown: `Meteor`, `Lightning` e
+		`Teleport`, na ordem do `AttackSequence` do `UnitAttackConfig`, que liga o
+		encadeamento com `ChainSequence`. Entre o comeco de um passo e o do seguinte a
+		espera e o `ChainDelay` de la (5s); o `Cooldown` conta depois da animacao do
+		ultimo. Sem inimigo no alcance, a sequencia espera no passo em que parou.
+
+		`Damage` e o do meteoro, e e o que o card mostra. O raio usa o dele
+		(`Combo.Lightning.Damage`), e os dois crescem com o mesmo multiplicador de
+		upgrade, carta e carga (`UnitService:getDamage`).
+
+		| Campo | O que e |
+		| --- | --- |
+		| `Combo.Meteor` | `{ Damage, Radius, MaxRadius, FallTime, Height }` -- nasce `Height` studs acima da unidade no `HitTime` do passo, cai em `FallTime` segundos ate onde o alvo estava quando o passo comecou, e explode em `Radius` (ate `MaxRadius` no nivel maximo) |
+		| `Combo.Lightning` | `{ Damage, Interval, Width }` -- linha reta ate o alcance, travada na direcao do alvo no `HitTime`; quem estiver nela leva `Damage` a cada `Interval` segundos ate o `HitEnd` do passo |
+		| `Combo.Teleport` | `{}` -- o alvo volta para o node anterior do caminho, ou para o comeco se ainda nao passou do primeiro (`MobService:TeleportMobBack`) |
+
+		O DPS do card sai de `Damage / Cooldown` e nao conta o raio nem a sequencia: e
+		so uma referencia.
+	]=]
+	["Archmage"] = {
+		Rarity = "Cosmic",
+		Class = "Magic",
+		Cost = 800,
+		Damage = 120,
+		Range = 15,
+		Cooldown = 8,
+		AttackType = "SingleShot",
+		HitInterval = 0,
+		Hits = 1,
+		Combo = {
+			Meteor = { Damage = 120, Radius = 8, MaxRadius = 10, FallTime = 1, Height = 15 },
+			Lightning = { Damage = 25, Interval = 0.1, Width = 2 },
+			Teleport = {},
+		},
+	},
+
 	--[[ LEGENDARY ]]
 
 	-- A mais forte em dano bruto, e de alcance curto: quatro golpes por ciclo, mas
@@ -319,6 +359,59 @@ local UnitStats = {
 		RangeStats = {
 			Increment = 1,
 			Max = 12,
+		},
+	},
+
+	--[[
+		Gelo de alvo unico: o tiro e o do Slingshot (sem area), e o que ela vende e o
+		controle, e nao o dano. Cada acerto deixa um acumulo de `Frost`; com qualquer
+		acumulo o inimigo anda 30% mais devagar, e no quarto ele congela por 3s.
+
+		Por isso o DPS por caixa fica abaixo do das outras Epic (regra 1): 10 a cada 1s
+		da 10 de DPS, ou 5 por 100 de caixa. O resto do preco e o congelamento: tiro
+		rapido fecha os quatro acumulos em 3s, e o mesmo alvo passa perto de metade do
+		tempo parado.
+	]]
+	["Frostione"] = {
+		Rarity = "Epic",
+		Class = "Ice",
+		Cost = 200,
+		Damage = 10,
+		Range = 10,
+		Cooldown = 1,
+		AttackType = "SingleShot",
+		HitInterval = 0,
+		Hits = 1,
+		Projectile = { Asset = "FrostioneProjectile", Speed = 60 },
+
+		--[[
+			Os acumulos de gelo (ver o `MobService:ApplyFrost`).
+
+			Os acumulos sao contados **por unidade**: cada Frostione tem a conta dela no
+			inimigo, e o acerto dela so renova o prazo dos dela. `Duration` e quanto
+			eles duram sem acerto novo. `FreezeStacks` acumulos de uma mesma unidade
+			congelam o inimigo por `FreezeDuration` segundos e zeram a conta de todas.
+
+			`Slow` e a lentidao, uma so, enquanto qualquer Frostione tiver acumulo no
+			inimigo -- a carta Chill Out multiplica este numero.
+
+			`Radius` e a area em volta do alvo: todo inimigo nela ganha um acumulo da
+			mesma unidade, como se tivesse levado o tiro, mas sem dano -- o dano
+			continua so no alvo. Sobe em linha reta ate `MaxRadius` no nivel maximo
+			(`UnitUpgradeConfig:GetFrostRadius`).
+		]]
+		Frost = {
+			Slow = 0.3,
+			Duration = 4,
+			FreezeStacks = 4,
+			FreezeDuration = 3,
+			Radius = 2,
+			MaxRadius = 4,
+		},
+
+		RangeStats = {
+			Increment = 1,
+			Max = 14,
 		},
 	},
 

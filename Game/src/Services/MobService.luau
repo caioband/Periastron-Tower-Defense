@@ -391,10 +391,9 @@ end
 	lentidao forte nao pode encurtar a forte. O prazo, esse sim, e sempre do ultimo
 	golpe, senao lentidoes iguais em sequencia nunca renovariam.
 
-	> ⚠️ Nenhuma unidade de hoje deixa lentidao: e `UnitStats[nome].Slow` que liga
-	> isto, e o roster ainda nao tem uma unidade `Ice` -- o Electro para o inimigo
-	> (`StunMob`) em vez de o atrasar. A mecanica existe para a carta Chill Out ter o
-	> que multiplicar no dia em que uma existir.
+	> Quem usa isto hoje e o Frostione, por dentro do `ApplyFrost`: a lentidao dos
+	> acumulos de gelo e esta, e e por aqui que a carta Chill Out a alcanca. O campo
+	> `UnitStats[nome].Slow`, que chama isto direto, continua sem nenhuma unidade.
 ]=]
 function MobService:ApplySlow(mobId : string, amount : number?, duration : number?)
 	local mob = self.ActiveMobs[mobId]
@@ -434,6 +433,88 @@ function MobService:ApplySlow(mobId : string, amount : number?, duration : numbe
 				Framework:Fire("UpdateMobSpeed", player, mobId, mob.CurrentSpeed)
 			end
 		end
+	end)
+end
+
+--[=[
+	Um acumulo de gelo num inimigo: o `Frost` do `UnitStats` de quem acertou.
+
+	**A conta e por unidade.** Cada Frostione tem os acumulos dela neste inimigo
+	(`mob.FrostStacks[unitId]`), e o acerto dela so renova o prazo dos dela
+	(`Frost.Duration`): duas Frostione no mesmo alvo nao fecham os quatro na metade
+	do tempo, cada uma fecha a sua.
+
+	A lentidao, essa, e uma so: o inimigo fica `Frost.Slow` mais lento enquanto
+	**qualquer** Frostione tiver acumulo nele. E a do `ApplySlow`, renovada a cada
+	acerto de qualquer uma com o mesmo prazo, entao ela acaba junto com os acumulos
+	do ultimo acerto -- e a carta Chill Out entra por la.
+
+	Quando a conta de uma unidade chega a `FreezeStacks`, o inimigo congela por
+	`FreezeDuration` (o `StunMob`, que conta para os contratos de atordoar do dono
+	dela) e a conta de **todas** zera, lentidao inclusive: descongelado, ele volta a
+	andar no ritmo de sempre. Acerto durante o congelamento nao soma, venha de quem
+	vier -- sem isso duas unidades seguidas deixariam o mesmo inimigo parado para
+	sempre.
+
+	O desenho do congelamento sai daqui pelo `MobFrozen`, porque so o servidor sabe
+	quando a conta fechou.
+]=]
+function MobService:ApplyFrost(mobId : string, frost, sourceUserId : number?, sourceUnitId : string?)
+	local mob = self.ActiveMobs[mobId]
+	if not mob or typeof(frost) ~= "table" then return end
+
+	local now = GameClock.Now()
+	if now < (mob.FrostFrozenUntil or 0) then return end
+
+	local stacks = mob.FrostStacks
+	if not stacks then
+		stacks = {}
+		mob.FrostStacks = stacks
+	end
+
+	-- Sem id, quem chamou nao disse de onde veio o acerto: cai numa conta comum.
+	local key = sourceUnitId or "_"
+	local state = stacks[key]
+	if not state then
+		state = { count = 0, token = 0 }
+		stacks[key] = state
+	end
+
+	state.count += 1
+	state.token += 1
+
+	if state.count >= math.max(1, frost.FreezeStacks or 4) then
+		local duration = math.max(0, frost.FreezeDuration or 0)
+
+		table.clear(stacks)
+		mob.FrostFrozenUntil = now + duration
+
+		-- A lentidao sai junto com os acumulos. O token novo invalida o fim que o
+		-- ultimo `ApplySlow` agendou, que senao mexeria na velocidade de novo depois.
+		-- Vem antes do `StunMob` de proposito: e o `CurrentSpeed` que ele devolve para
+		-- a tela quando o congelamento acaba.
+		mob.SlowToken = (mob.SlowToken or 0) + 1
+		mob.SlowScale = 1
+		mob.CurrentSpeed = computeSpeed(self, mob)
+
+		self:StunMob(mobId, duration, sourceUserId)
+
+		for _, player in Players:GetPlayers() do
+			Framework:Fire("MobFrozen", player, mobId, duration)
+		end
+
+		return
+	end
+
+	self:ApplySlow(mobId, frost.Slow, frost.Duration)
+
+	local token = state.token
+	GameClock.Delay(math.max(0, frost.Duration or 0), function()
+		-- Morreu, a conta zerou num congelamento (a tabela desta unidade saiu), ou esta
+		-- mesma unidade acertou de novo no meio: o prazo agora e o desse acerto.
+		if self.ActiveMobs[mobId] ~= mob or stacks[key] ~= state or state.token ~= token then return end
+
+		stacks[key] = nil
 	end)
 end
 
@@ -583,6 +664,85 @@ function MobService:getMobPathProgress(mob, position : Vector3, nodeDistances)
 	mob.NodeProgressClock = now
 
 	return mob.NodeProgress
+end
+
+--[=[
+	A distancia de cada node da rota ao longo do caminho **suavizado**, que e a regua
+	do `mob.Distance`.
+
+	As curvas arredondadas deixam o suavizado um pouco mais curto que a polilinha
+	crua, entao somar os trechos crus poria o node alguns studs a frente de onde o
+	mob de fato passa por ele. A distancia de um node e a do ponto do suavizado mais
+	perto dele.
+
+	Em cache na propria rota, que cai inteira quando o mapa muda.
+]=]
+local function nodeDistancesAlongSmooth(route)
+	if route.nodeSmoothDistances then
+		return route.nodeSmoothDistances
+	end
+
+	local smooth = route.smooth
+	local distances = {}
+
+	for _, position in route.positions do
+		local best, bestSquared = 1, math.huge
+		for index, point in smooth.points do
+			local offset = point - position
+			local squared = offset:Dot(offset)
+			if squared < bestSquared then
+				best, bestSquared = index, squared
+			end
+		end
+		table.insert(distances, smooth.cumulative[best] or 0)
+	end
+
+	route.nodeSmoothDistances = distances
+	return distances
+end
+
+--[=[
+	Joga um inimigo de volta para o node anterior do caminho: o ultimo que ele ja
+	passou, ou o comeco se ainda nao passou de nenhum. E o `Teleport` do Archmage, e
+	vale para boss tambem.
+
+	So a `Distance` volta. O `NextTurnIndex` fica onde estava de proposito, para os
+	gimmicks de curva (o Wall Smasher acelerando) nao dispararem de novo quando ele
+	passar pela mesma curva. O cliente simula a caminhada por conta propria, entao o
+	`MobTeleported` leva a distancia nova para ele pular junto.
+
+	Devolve se o inimigo de fato voltou.
+]=]
+function MobService:TeleportMobBack(mobId : string) : boolean
+	local mob = self.ActiveMobs[mobId]
+	if not mob then return false end
+
+	local routes = self:getRoutes()
+	local route = routes[mob.RouteIndex or 1] or routes[1]
+	if not route then return false end
+
+	-- Um node a menos de meio stud atras e "onde ele esta", e nao o anterior: o mob
+	-- parado em cima de um node volta para o de antes dele.
+	local target = 0
+	for _, distance in nodeDistancesAlongSmooth(route) do
+		if distance < mob.Distance - 0.5 and distance > target then
+			target = distance
+		end
+	end
+
+	if target >= mob.Distance then return false end
+
+	mob.Distance = target
+	mob.LastDistance = target
+	mob.NodeProgress = nil
+	self.PositionCache[mobId] = nil
+	self.PreviousPositionCache[mobId] = nil
+
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("MobTeleported", player, mobId, target)
+	end
+
+	return true
 end
 
 function MobService:getSmoothPath(routeIndex : number?)
@@ -1362,6 +1522,8 @@ function MobService:construct()
 	end)
 	Framework:Listen("SpawnClientMob", function() end)
 	Framework:Listen("UpdateMobSpeed", function() end)
+	Framework:Listen("MobFrozen", function() end)
+	Framework:Listen("MobTeleported", function() end)
 	Framework:Listen("KillClientMob", function() end)
 	Framework:Listen("HitClientMob", function() end)
 	Framework:Listen("AttackVisual", function() end)

@@ -137,6 +137,47 @@ local UnitAttackConfig = {
 			{ Animation = "Attack", HitTime = 1.05 },
 		},
 	},
+
+	--[[
+		1,1s e o marcador `Hit` da animacao `Attack` do Frostione (1,8333s de duracao).
+		Mesma regra das outras: o marcador e a fonte, este numero e a copia que as duas
+		pontas obedecem. E nele que o projetil sai e o servidor cobra o dano.
+
+		Escrito como `HitTimes` + `Duration`, e nao como `HitTime`, por causa do
+		cooldown: com upgrade ele desce ate 1s, abaixo da animacao. O `HitTime` e uma
+		espera fixa que so o cliente encolhe junto com a track; os `HitTimes` as duas
+		pontas dividem pelo mesmo fator (ver o `squeeze` do `UnitService` e o `fit`
+		do `Unit:playAttackVisual`), entao o tiro continua saindo no frame do
+		marcador com a animacao espremida.
+	]]
+	["Frostione"] = {
+		AttackSequence = {
+			{ Animation = "Attack", HitTimes = { 1.1 }, Duration = 1.8333 },
+		},
+	},
+
+	--[=[
+		Meteor, Lighting e Teleport, em sequencia. `ChainSequence` liga o encadeamento:
+		entre o comeco de um passo e o do seguinte a espera e o `ChainDelay` (5s), e o
+		`Cooldown` do `UnitStats` so conta depois da animacao do ultimo
+		(`UnitService:getAttackDelay`). O `ChainDelay` nunca encurta uma animacao: se
+		um passo durar mais que ele, a espera e a `Duration` do passo.
+
+		`Combo` diz qual ataque de `UnitStats[nome].Combo` o passo executa
+		(`UnitService:executeCombo`). Os tempos sao os marcadores das animacoes,
+		copiados na mao como nas outras unidades: o `Hit` da `Meteor` (1,7167s), o
+		`HitInitial` e o `HitEnd` da `Lighting` (0,9167s e 1,4167s) e o `Hit` da
+		`Teleport` (0,4167s). Mexeu o marcador, mexe aqui junto.
+	]=]
+	["Archmage"] = {
+		ChainSequence = true,
+		ChainDelay = 5,
+		AttackSequence = {
+			{ Animation = "Meteor", Combo = "Meteor", HitTime = 1.7167, Duration = 2.4167 },
+			{ Animation = "Lighting", Combo = "Lightning", HitTime = 0.9167, HitEnd = 1.4167, Duration = 2.0333 },
+			{ Animation = "Teleport", Combo = "Teleport", HitTime = 0.4167, Duration = 1.3667 },
+		},
+	},
 }
 
 return UnitAttackConfig

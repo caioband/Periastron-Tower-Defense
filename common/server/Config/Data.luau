@@ -87,6 +87,13 @@ return {
 			Crates = CrateConfig.createEmptyCrates(),
 		},
 
+		--[[
+			A garantia das raridades altas no unboxing: `{ [caixa] = { [raridade] =
+			aberturas seguidas sem ela } }`. Nasce vazio e cada caixa ganha a conta dela
+			na primeira abertura. Ver `ServerScriptService.Config.Crate.PITY_RARITIES`.
+		]]
+		Pity = {},
+
 		PurchaseHistory = {},
 
 		--[[

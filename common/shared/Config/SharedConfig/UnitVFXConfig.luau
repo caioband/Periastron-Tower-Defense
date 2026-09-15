@@ -34,6 +34,24 @@ local UnitVFXConfig = {
 		`VFXController`.
 	]]
 	["Electro"] = { PLACEMENT_EFFECT },
+
+	--[[
+		O `FrozenVFX` estoura no inimigo quando o projetil chega nele: `OnAttack` e o
+		evento da chegada do projetil (`Unit:playAttackVisual`). O alvo `MobRoot`
+		pendura o asset no `HumanoidRootPart` do inimigo e o solda, para ele seguir
+		quem anda -- ver `VFXController:attachToMob`.
+
+		O congelamento nao entra aqui: ele depende da conta de acumulos, que so o
+		servidor tem, e chega pelo evento `MobFrozen` (`VFXController:PlayIced`).
+	]]
+	["Frostione"] = {
+		PLACEMENT_EFFECT,
+		{
+			Event = "OnAttack",
+			Target = "MobRoot",
+			Effect = "FrozenVFX",
+		},
+	},
 }
 
 return UnitVFXConfig

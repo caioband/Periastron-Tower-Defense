@@ -111,6 +111,37 @@ UnitUpgradeConfig.Units = {
 		CostMultiplier = 1.7,
 		DamageMultiplier = 1.25,
 	},
+	--[[
+		O upgrade compra dano e cadencia ate alvos fixos no nivel maximo: 14 de dano
+		(10 -> 14) e cooldown pela metade (1s -> 0,5s), o que da 28 de DPS no topo.
+		Mesma conta do Slasher logo abaixo: a raiz `MaxUpgrades`-esima de alvo/base,
+		para o topo cair exatamente nos alvos. Lentidao e congelamento nao crescem --
+		mas tiro mais rapido fecha os quatro acumulos mais cedo, entao o congelamento
+		fica mais frequente com o nivel.
+
+		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Dano     | 10   | 11   | 11   | 12   | 13   | 14   |
+		| Cooldown | 1,00 | 0,87 | 0,76 | 0,66 | 0,57 | 0,50 |
+		| DPS      | 10,0 | 12,6 | 14,5 | 18,2 | 22,6 | 28,0 |
+	]]
+	["Frostione"] = {
+		BaseCost = 100,
+		CostMultiplier = 1.6,
+		DamageMultiplier = (14 / UnitStats["Frostione"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+		CooldownMultiplier = (0.5 / UnitStats["Frostione"].Cooldown) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+	},
+	--[[
+		+15% de dano por nivel, nos tres ataques. O cooldown do fim da sequencia desce
+		de 8s ate 6,5s no nivel maximo, pela mesma conta do Slasher: a raiz
+		`MaxUpgrades`-esima de alvo/base. O raio do meteoro cresce a parte
+		(`GetMeteorRadius`).
+	]]
+	["Archmage"] = {
+		BaseCost = 300,
+		CostMultiplier = 1.7,
+		DamageMultiplier = 1.15,
+		CooldownMultiplier = (6.5 / UnitStats["Archmage"].Cooldown) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+	},
 }
 
 --[[
@@ -228,6 +259,48 @@ function UnitUpgradeConfig:GetStunDuration(unitName, level)
 
 	local base = stun.Duration or 0
 	local top = stun.MaxDuration or base
+	local progress = math.clamp((level or 0) / self.MaxUpgrades, 0, 1)
+
+	return base + (top - base) * progress
+end
+
+--[=[
+	O raio da area de gelo que o acerto espalha em volta do alvo, no nivel dado. Zero
+	para quem nao tem `Frost` ou nao declara `Radius`.
+
+	Mesma escada do `GetStunDuration` logo acima: `Frost.Radius` no nivel 0 e
+	`Frost.MaxRadius` no maximo, em linha reta. Sem `MaxRadius` o raio nao cresce.
+]=]
+function UnitUpgradeConfig:GetFrostRadius(unitName, level)
+	local stats = UnitStats[unitName]
+	local frost = stats and stats.Frost
+
+	if not frost or not frost.Radius then
+		return 0
+	end
+
+	local base = frost.Radius
+	local top = frost.MaxRadius or base
+	local progress = math.clamp((level or 0) / self.MaxUpgrades, 0, 1)
+
+	return base + (top - base) * progress
+end
+
+--[=[
+	O raio da explosao do meteoro do Archmage no nivel dado. Mesma escada do
+	`GetFrostRadius` logo acima: `Combo.Meteor.Radius` no nivel 0 e `MaxRadius` no
+	maximo, em linha reta. Zero para quem nao tem meteoro.
+]=]
+function UnitUpgradeConfig:GetMeteorRadius(unitName, level)
+	local stats = UnitStats[unitName]
+	local meteor = stats and stats.Combo and stats.Combo.Meteor
+
+	if not meteor or not meteor.Radius then
+		return 0
+	end
+
+	local base = meteor.Radius
+	local top = meteor.MaxRadius or base
 	local progress = math.clamp((level or 0) / self.MaxUpgrades, 0, 1)
 
 	return base + (top - base) * progress

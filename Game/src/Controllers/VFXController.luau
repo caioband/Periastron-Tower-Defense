@@ -181,6 +181,16 @@ function VFXController:Trigger(unitName, eventName, context)
 	for _, entry in config do
 		if entry.Event ~= eventName then continue end
 
+		-- O asset vai para dentro do inimigo, soldado nele, e estoura uma vez so. Ver
+		-- `attachToMob`.
+		if entry.Target == "MobRoot" then
+			local mob = context.mobModel
+			if mob and mob.Parent then
+				self:EmitAttached(self:attachToMob(entry.Effect, mob, entry.WeldTo), entry.Duration)
+			end
+			continue
+		end
+
 		local target
 		if entry.Target == "Unit" then
 			target = context.unitModel
@@ -697,6 +707,300 @@ function VFXController:PlayChainLightning(arc)
 	end
 end
 
+-- O congelamento do Frostione: o asset em `Assets.VFX`, o nome do Highlight dele
+-- depois de mudar para o modelo do inimigo, e a faxina de quando o modulo `vfx` nao
+-- souber dizer quanto as particulas duram.
+local ICED_VFX_NAME = "IcedVFX"
+local ICED_HIGHLIGHT_NAME = "IcedHighlight"
+local ICED_VFX_FALLBACK = 2
+
+-- As tags com que o modulo `vfx` liga e desliga um asset sozinho. Ver `attachToMob`.
+local AUTO_VFX_TAGS = { "EnabledVFX", "SequencedVFX" }
+
+--[=[
+	Pendura um asset de `Assets.VFX` no `HumanoidRootPart` de um inimigo, soldado,
+	e devolve o clone.
+
+	O par do `attachVFX`, que faz o mesmo em unidades -- e separado dele por duas
+	diferencas:
+
+	**Seguir quem anda.** Unidade fica parada, inimigo nao. A Part do asset sai da
+	ancora e e soldada em `weldTo` (o proprio root quando nao vier nome), e o
+	`PivotTo` com que o `MobController` move o inimigo leva ela junto.
+
+	**Tirar as tags do modulo `vfx`.** O `IcedVFX` vem com `EnabledVFX`, e o
+	Highlight dele com `SequencedVFX`: o modulo liga e desliga quem tem essas tags
+	por conta propria, um quadro depois de entrar no Workspace, e passaria por cima
+	de quem acendeu os emissores na mao. Elas saem **antes** de parentear -- tirar
+	depois ainda dispararia o liga-desliga atrasado.
+]=]
+function VFXController:attachToMob(assetName : string?, mob : Model, weldTo : string?) : Instance?
+	if not assetName then return nil end
+
+	local root = mob:FindFirstChild(UNIT_ROOT_NAME) or mob.PrimaryPart
+	if not root or not root:IsA("BasePart") then return nil end
+
+	local template = self.Library[assetName]
+	if not template then
+		warn(`[VFXController]: nao achei o VFX "{assetName}" em Assets.VFX.`)
+		return nil
+	end
+
+	local clone = template:Clone()
+
+	for _, instance in { clone, unpack(clone:GetDescendants()) } do
+		for _, tag in AUTO_VFX_TAGS do
+			instance:RemoveTag(tag)
+		end
+		if instance:IsA("BasePart") then
+			disarmPart(instance)
+			instance.Massless = true
+		end
+	end
+
+	if clone:IsA("BasePart") then
+		clone.CFrame = root.CFrame
+
+		local anchor = weldTo and mob:FindFirstChild(weldTo)
+		if not anchor or not anchor:IsA("BasePart") then
+			anchor = root
+		end
+
+		clone.Anchored = false
+
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = clone
+		weld.Part1 = anchor
+		weld.Parent = clone
+	elseif clone:IsA("Attachment") then
+		-- Attachment herda a posicao do pai; so o deslocamento de montagem sai.
+		clone.CFrame = clone.CFrame.Rotation
+	end
+
+	clone.Parent = root
+
+	return clone
+end
+
+--[=[
+	O congelamento do Frostione num inimigo, pelos `duration` segundos que o servidor
+	aplicou.
+
+	O `IcedVFX` vai para o `HumanoidRootPart` soldado no `Torso`, com os emissores
+	ligados, e o Highlight dele muda para o modelo do inimigo, que e o que ele
+	precisa para pintar o corpo inteiro. No fim os emissores desligam, o Highlight
+	sai na hora e a Part so e destruida depois do rabo das ultimas particulas.
+
+	Um congelamento em cima de outro troca o anterior em vez de empilhar dois. O
+	inimigo morrer no meio limpa tudo sozinho: os dois vivem dentro do modelo.
+]=]
+function VFXController:PlayIced(mobId : string, duration : number?)
+	duration = tonumber(duration) or 0
+	if duration <= 0 then return end
+
+	local mobs = self.Controllers.MobController
+	local mob = mobs and mobs.SpawnedMobs and mobs.SpawnedMobs[mobId]
+	if not mob or not mob.Parent then return end
+
+	local root = mob:FindFirstChild(UNIT_ROOT_NAME) or mob.PrimaryPart
+	local previous = root and root:FindFirstChild(ICED_VFX_NAME)
+	if previous then
+		previous:Destroy()
+	end
+
+	local previousHighlight = mob:FindFirstChild(ICED_HIGHLIGHT_NAME)
+	if previousHighlight then
+		previousHighlight:Destroy()
+	end
+
+	local clone = self:attachToMob(ICED_VFX_NAME, mob, "Torso")
+	if not clone then return end
+
+	local highlight = clone:FindFirstChildWhichIsA("Highlight")
+	if highlight then
+		highlight.Name = ICED_HIGHLIGHT_NAME
+		highlight.Adornee = nil
+		highlight.Parent = mob
+	end
+
+	for _, descendant in clone:GetDescendants() do
+		if descendant:IsA("ParticleEmitter") then
+			descendant.Enabled = true
+		end
+	end
+
+	-- Tempo de partida, como o `StunMob` do outro lado: no 3x o congelamento acaba
+	-- antes em segundos reais, e o gelo tem que sair junto.
+	GameClock.Delay(duration, function()
+		if highlight and highlight.Parent then
+			highlight:Destroy()
+		end
+
+		if not clone.Parent then return end
+
+		for _, descendant in clone:GetDescendants() do
+			if descendant:IsA("ParticleEmitter") then
+				descendant.Enabled = false
+			end
+		end
+
+		VFX.destroyAfter(clone, VFX.maxLifetime(clone) or ICED_VFX_FALLBACK)
+	end)
+end
+
+-- Os dois ataques do Archmage que tem desenho: os assets em `Assets.VFX`, o
+-- Attachment da explosao dentro do meteoro, e a faxina de reserva.
+local METEOR_VFX_NAME = "Meteor"
+local METEOR_EXPLOSION_NAME = "EXPLOSION"
+local ARCHMAGE_LIGHTNING_NAME = "ArchmageLightning"
+local ARCHMAGE_VFX_FALLBACK = 2
+
+--[=[
+	Um clone solto no mundo, pronto para ser movido na mao: sem as tags com que o
+	modulo `vfx` liga e desliga um asset sozinho (ver `attachToMob`), e com toda
+	Part ancorada e desarmada -- os assets vem do plugin colidindo, e um meteoro
+	solido caindo empurraria unidade e apareceria no raycast do posicionamento.
+]=]
+local function looseVFXClone(template : Instance) : Instance
+	local clone = template:Clone()
+
+	for _, instance in { clone, unpack(clone:GetDescendants()) } do
+		for _, tag in AUTO_VFX_TAGS do
+			instance:RemoveTag(tag)
+		end
+		if instance:IsA("BasePart") then
+			disarmPart(instance)
+			instance.Anchored = true
+		end
+	end
+
+	return clone
+end
+
+-- Liga ou desliga os efeitos continuos de um asset, pulando o que estiver dentro de
+-- `skip` (a explosao do meteoro, que so estoura no fim).
+local function setEffectsEnabled(root : Instance, enabled : boolean, skip : Instance?)
+	for _, descendant in root:GetDescendants() do
+		if skip and descendant:IsDescendantOf(skip) then continue end
+
+		if descendant:IsA("ParticleEmitter") or descendant:IsA("Light") or descendant:IsA("Beam") or descendant:IsA("Trail") then
+			descendant.Enabled = enabled
+		end
+	end
+end
+
+--[=[
+	O meteoro do Archmage.
+
+	Nasce `height` studs acima do `HumanoidRootPart` da unidade e cai em linha reta
+	ate `aimPos` -- onde o alvo estava quando o ataque comecou, decidido pelo
+	servidor --, em `fallTime` segundos de partida. Os emissores fora do Attachment
+	`EXPLOSION` sao o rastro e ficam ligados durante a queda; no fim eles desligam, a
+	pedra some e o `EXPLOSION` estoura uma vez.
+
+	A queda e contada no relogio da partida, e nao num Tween: o servidor cobra o dano
+	depois do mesmo `fallTime` no `GameClock`, e no 2x um Tween em tempo real
+	explodiria depois de o inimigo ja ter levado o dano.
+]=]
+function VFXController:PlayMeteor(unitId : string, aimPos : Vector3, fallTime : number?, height : number?)
+	if typeof(aimPos) ~= "Vector3" then return end
+
+	local template = self.Library[METEOR_VFX_NAME]
+	if not template then
+		warn(`[VFXController]: nao achei o VFX "{METEOR_VFX_NAME}" em Assets.VFX.`)
+		return
+	end
+
+	local model = self:resolveUnitModel(unitId)
+	local root = model and (model:FindFirstChild(UNIT_ROOT_NAME) or model.PrimaryPart)
+	local origin = (root and root.Position or aimPos) + Vector3.new(0, tonumber(height) or 15, 0)
+
+	local meteor = looseVFXClone(template)
+	local explosion = meteor:FindFirstChild(METEOR_EXPLOSION_NAME)
+
+	local heading = aimPos - origin
+	local rotation = if heading.Magnitude > 1e-3 then CFrame.lookAt(Vector3.zero, heading) else CFrame.identity
+
+	setClonePivot(meteor, CFrame.new(origin) * rotation)
+	meteor.Parent = VFX.temp
+
+	setEffectsEnabled(meteor, true, explosion)
+
+	local duration = math.max(0.05, tonumber(fallTime) or 1)
+	local elapsed = 0
+	local connection
+	connection = game:GetService("RunService").Heartbeat:Connect(function(dt)
+		if not meteor.Parent then
+			connection:Disconnect()
+			return
+		end
+
+		elapsed += GameClock.Scaled(dt)
+		local alpha = math.min(1, elapsed / duration)
+		setClonePivot(meteor, CFrame.new(origin:Lerp(aimPos, alpha)) * rotation)
+
+		if alpha < 1 then return end
+		connection:Disconnect()
+
+		setEffectsEnabled(meteor, false, explosion)
+		if meteor:IsA("BasePart") then
+			meteor.Transparency = 1
+		end
+
+		if explosion then
+			VFX.emit(explosion)
+		end
+
+		VFX.destroyAfter(meteor, VFX.maxLifetime(meteor) or ARCHMAGE_VFX_FALLBACK)
+	end)
+end
+
+--[=[
+	O raio em linha do Archmage, ligado pelos `duration` segundos de dano.
+
+	O asset e comprido no eixo X, com a ponta (o Attachment) no +X. Ele comeca no
+	`HumanoidRootPart` da unidade e aponta, na horizontal, para `throughPos` -- a
+	mesma mira com que o servidor traca a linha que leva dano. Fica no mundo, e nao
+	dentro do modelo, para o giro suave da unidade nao entortar o desenho para fora
+	da linha de verdade.
+
+	A `SpotLight` vem com a tag do addon `Sequencer`, que nao roda em partida (falta
+	capability); por isso as tags saem no clone e tudo e ligado e desligado na mao.
+]=]
+function VFXController:PlayArchmageLightning(unitId : string, throughPos : Vector3, duration : number?)
+	if typeof(throughPos) ~= "Vector3" then return end
+
+	local template = self.Library[ARCHMAGE_LIGHTNING_NAME]
+	if not template then
+		warn(`[VFXController]: nao achei o VFX "{ARCHMAGE_LIGHTNING_NAME}" em Assets.VFX.`)
+		return
+	end
+
+	local model = self:resolveUnitModel(unitId)
+	local root = model and (model:FindFirstChild(UNIT_ROOT_NAME) or model.PrimaryPart)
+	if not root then return end
+
+	local start = root.Position
+	local heading = Vector3.new(throughPos.X - start.X, 0, throughPos.Z - start.Z)
+	if heading.Magnitude < 1e-3 then return end
+
+	local direction = heading.Unit
+	local beam = looseVFXClone(template)
+	local length = if beam:IsA("BasePart") then beam.Size.X else 0
+
+	setClonePivot(beam, CFrame.fromMatrix(start + direction * (length / 2), direction, Vector3.yAxis))
+	beam.Parent = VFX.temp
+
+	setEffectsEnabled(beam, true)
+
+	GameClock.Delay(math.max(0, tonumber(duration) or 0), function()
+		if not beam.Parent then return end
+
+		setEffectsEnabled(beam, false)
+		VFX.destroyAfter(beam, VFX.maxLifetime(beam) or ARCHMAGE_VFX_FALLBACK)
+	end)
+end
+
 function VFXController:buildLibrary()
 	local folder = Assets:FindFirstChild("VFX")
 	if not folder then return end
@@ -725,6 +1029,22 @@ function VFXController:construct()
 	]]
 	Framework:Listen("ChainLightning", function(arc)
 		self:PlayChainLightning(arc)
+	end)
+
+	-- O congelamento do Frostione: so o servidor sabe quando os acumulos fecharam a
+	-- conta, entao o aviso vem dele (`MobService:ApplyFrost`).
+	Framework:Listen("MobFrozen", function(mobId : string, duration : number)
+		self:PlayIced(mobId, duration)
+	end)
+
+	-- Os ataques do Archmage que tem desenho. Quem decide a mira e o tempo e o
+	-- servidor (`UnitService:executeCombo`); daqui sai so o desenho.
+	Framework:Listen("ArchmageMeteor", function(unitId : string, aimPos : Vector3, fallTime : number, height : number)
+		self:PlayMeteor(unitId, aimPos, fallTime, height)
+	end)
+
+	Framework:Listen("ArchmageLightning", function(unitId : string, throughPos : Vector3, duration : number)
+		self:PlayArchmageLightning(unitId, throughPos, duration)
 	end)
 
 	Framework:Listen("AuraBonusVFX", function(unitId : string)

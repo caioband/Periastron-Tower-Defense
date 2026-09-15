@@ -780,6 +780,8 @@ function UnitService:construct()
 	Framework:Listen("FarmPayout", function() end)
 	Framework:Listen("AuraBonusVFX", function() end)
 	Framework:Listen("ChainLightning", function() end)
+	Framework:Listen("ArchmageMeteor", function() end)
+	Framework:Listen("ArchmageLightning", function() end)
 
 	Framework:Listen("SellUnit", function(player, unitId)
 		local foundIndex = nil
@@ -1043,6 +1045,14 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 		(15% + 15% = 30%), e a carta e um multiplicador em cima do que sobrou. Somar
 		os dois faria "1.1x" virar "+10 pontos percentuais", que e outro numero.
 	]]
+
+	-- Onde o alvo estava **antes** do dano, para quem espalha gelo em volta dele (o
+	-- `Frost.Radius`): um alvo que morre com o tiro ja nao tem posicao para dar
+	-- depois, e a area tem que sair mesmo assim.
+	local unitStats = SharedConfig.UnitStats[entry.unitName]
+	local frostCenter = unitStats and unitStats.Frost and unitStats.Frost.Radius
+		and self.Services.MobService:getMobPosition(mobId)
+
 	local dealt = self.Services.MobService:DamageMob(
 		mobId, damage, entry.ownerUserId, auraBonus, self:cardMultiplier(entry, "HitIncome")
 	)
@@ -1063,11 +1073,12 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 		So depois de o dano ter entrado: um golpe que nao encostou em ninguem nao
 		congela nem queima ninguem.
 
-		> Hoje so o Electro deixa alguma coisa, e e o tranco logo abaixo: ele entra em
+		> Hoje deixam alguma coisa o Electro -- o tranco logo abaixo, que entra em
 		> **cada elo** da corrente, porque este caminho e o mesmo para qualquer alvo que
-		> tenha levado dano. Lentidao e queimadura continuam sem dono -- ainda nao ha
-		> unidade `Ice` nem `Fire` --, e as cartas Chill Out e Fire Hazard multiplicam
-		> exatamente estes numeros no dia em que houver.
+		> tenha levado dano -- e o Frostione, com os acumulos de gelo, que usam a
+		> lentidao por dentro. A queimadura continua sem dono -- ainda nao ha unidade
+		> `Fire` --, e a carta Fire Hazard multiplica exatamente estes numeros no dia em
+		> que houver.
 	]]
 	if dealt > 0 then
 		local stats = SharedConfig.UnitStats[entry.unitName]
@@ -1097,6 +1108,33 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 		local stunDuration = SharedConfig.UnitUpgradeConfig:GetStunDuration(entry.unitName, entry.upgrades or 0)
 		if stunDuration > 0 then
 			self.Services.MobService:StunMob(mobId, stunDuration, entry.ownerUserId)
+		end
+
+		-- Os acumulos de gelo do Frostione: lentidao enquanto durarem, congelamento no
+		-- ultimo. O `unitId` vai junto porque a conta e de cada unidade, e nao do
+		-- inimigo. Ver o `MobService:ApplyFrost`.
+		local frost = stats and stats.Frost
+		if frost then
+			local mobService = self.Services.MobService
+			mobService:ApplyFrost(mobId, frost, entry.ownerUserId, entry.unitId)
+
+			--[[
+				A area de gelo em volta do alvo: quem estiver nela ganha um acumulo da
+				mesma unidade, como se tivesse levado o tiro, mas sem dano -- o dano e so
+				do alvo. O raio cresce com o nivel (`GetFrostRadius`).
+
+				O centro e a posicao do alvo **antes** do dano (`frostCenter`, la em
+				cima): o alvo pode ter morrido com este tiro, e a area sai do mesmo jeito.
+				Ele fica de fora da lista porque ja levou o acumulo dele logo acima.
+			]]
+			local radius = SharedConfig.UnitUpgradeConfig:GetFrostRadius(entry.unitName, entry.upgrades or 0)
+			if frostCenter and radius > 0 then
+				for _, nearbyId in mobService:GetMobsInRadius(frostCenter, radius) do
+					if nearbyId ~= mobId then
+						mobService:ApplyFrost(nearbyId, frost, entry.ownerUserId, entry.unitId)
+					end
+				end
+			end
 		end
 	end
 
@@ -1158,7 +1196,7 @@ function UnitService:stepCombat()
 		if mobService.ActiveMobCount > 0
 			and stats
 			and now >= (entry.StunnedUntil or 0)
-			and now - (entry.lastAttack or 0) >= self:getCooldown(entry, now, weather)
+			and now - (entry.lastAttack or 0) >= self:getAttackDelay(entry, now, weather)
 		then
 			local unitPosition = entry.cf.Position
 			local range = self:getRange(entry, weather)
@@ -1200,6 +1238,38 @@ function UnitService:stepCombat()
 			end
 		end
 	end
+end
+
+--[=[
+	Quanto a unidade espera, desde o ultimo golpe, para dar o proximo.
+
+	Quase sempre e o cooldown. A excecao e a sequencia encadeada (`ChainSequence` no
+	`UnitAttackConfig`, o Archmage): no meio dela a espera e o `ChainDelay` contado
+	do comeco do passo que acabou de sair -- ou a `Duration` da animacao dele, se for
+	maior, para nenhum passo cortar o anterior --, e depois do ultimo passo e a
+	animacao dele **mais** o cooldown: o cooldown conta do fim da sequencia, e nao do
+	comeco do ultimo passo.
+
+	A sequencia sem inimigo no alcance nao anda: o `stepCombat` so ataca com alvo, e
+	o `attackStep` fica onde parou ate aparecer um.
+]=]
+function UnitService:getAttackDelay(entry, now : number, weather : string?) : number
+	local attackConfig = SharedConfig.UnitAttackConfig and SharedConfig.UnitAttackConfig[entry.unitName]
+	local sequence = attackConfig and attackConfig.ChainSequence and attackConfig.AttackSequence
+	local current = entry.attackStep or 0
+
+	if not sequence or #sequence == 0 or current == 0 then
+		return self:getCooldown(entry, now, weather)
+	end
+
+	local step = sequence[current]
+	local animation = step and step.Duration or 0
+
+	if current < #sequence then
+		return math.max(animation, attackConfig.ChainDelay or 0)
+	end
+
+	return animation + self:getCooldown(entry, now, weather)
 end
 
 --[=[
@@ -1451,6 +1521,99 @@ function UnitService:payFarmUnits()
 	end
 end
 
+--[=[
+	Um passo de sequencia com `Combo` (o Archmage): o ataque daquele passo, com os
+	numeros de `UnitStats[nome].Combo[step.Combo]`.
+
+	Os tempos sao os do passo (`HitTime`, `HitEnd`), no relogio da partida. A janela
+	desses passos e a `Duration` da animacao (`getAttackDelay`), maior ou igual a
+	ela, entao nenhum e espremido: os marcadores valem como estao.
+
+	O alvo e quem a unidade mirava quando o passo comecou -- e dele que sai a posicao
+	do meteoro, a direcao do raio e quem e teleportado.
+]=]
+function UnitService:executeCombo(entry, unitStats, step, targetId, weather : string?)
+	local combo = unitStats.Combo and unitStats.Combo[step.Combo]
+	local mobService = self.Services.MobService
+	if not combo or not mobService then return end
+
+	local unitId = entry.unitId
+	local unitName = entry.unitName
+	local unitPosition = entry.cf.Position
+
+	-- Congelados no comeco do passo, pelo mesmo motivo do golpe comum: um clima ou
+	-- uma carta que entre no meio nao muda o passo que ja comecou.
+	local auraBonus = self:getAuraBonus(entry, weather)
+	local damage = combo.Damage and self:getDamage(entry, combo, weather) or 0
+	local range = self:getRange(entry, weather)
+
+	-- Onde o alvo estava quando o passo comecou: e para la que o meteoro cai.
+	local aimPos = targetId and mobService:getMobPosition(targetId)
+
+	local function showHits(hits)
+		if #hits == 0 then return end
+		for _, plr in ipairs(Players:GetPlayers()) do
+			Framework:Fire("AttackVisual", plr, unitId, unitName, hits[1].mobId, hits)
+		end
+	end
+
+	task.spawn(function()
+		GameClock.Wait(step.HitTime or 0)
+
+		if step.Combo == "Meteor" then
+			if not aimPos then return end
+
+			local fallTime = combo.FallTime or 1
+			for _, plr in ipairs(Players:GetPlayers()) do
+				Framework:Fire("ArchmageMeteor", plr, unitId, aimPos, fallTime, combo.Height or 15)
+			end
+
+			-- O dano entra no impacto, junto com a explosao que o cliente toca.
+			GameClock.Wait(fallTime)
+
+			local radius = SharedConfig.UnitUpgradeConfig:GetMeteorRadius(unitName, entry.upgrades or 0)
+			local hits = {}
+			for _, mobId in mobService:GetMobsInRadius(aimPos, radius) do
+				self:creditDamage(entry, mobId, damage, auraBonus)
+				table.insert(hits, { mobId = mobId, damage = damage })
+			end
+			showHits(hits)
+		elseif step.Combo == "Lightning" then
+			-- A linha trava aqui, no inicio do dano: onde o alvo esta agora, ou onde ele
+			-- estava no comeco do passo se ja morreu.
+			local through = (targetId and mobService:getMobPosition(targetId)) or aimPos
+			if not through then return end
+
+			local window = math.max(0, (step.HitEnd or step.HitTime or 0) - (step.HitTime or 0))
+			local interval = math.max(0.05, combo.Interval or 0.1)
+			local ticks = math.max(1, math.floor(window / interval + 1e-6))
+
+			for _, plr in ipairs(Players:GetPlayers()) do
+				Framework:Fire("ArchmageLightning", plr, unitId, through, window)
+			end
+
+			for tick = 1, ticks do
+				-- Quem estiver na linha **neste** tique: inimigo que entra na reta no
+				-- meio do raio tambem leva.
+				local hits = {}
+				for _, mobId in mobService:GetMobsAlongLine(unitPosition, through, range, combo.Width or PIERCE_WIDTH) do
+					self:creditDamage(entry, mobId, damage, auraBonus)
+					table.insert(hits, { mobId = mobId, damage = damage })
+				end
+				showHits(hits)
+
+				if tick < ticks then
+					GameClock.Wait(interval)
+				end
+			end
+		elseif step.Combo == "Teleport" then
+			if targetId and mobService.ActiveMobs[targetId] then
+				mobService:TeleportMobBack(targetId)
+			end
+		end
+	end)
+end
+
 function UnitService:executeAttack(entry, unitStats, initialMobId, weather : string?)
 	local unitName = entry.unitName
 	local unitId = entry.unitId
@@ -1524,6 +1687,26 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 		ciclo e a animacao tem que encurtar junto.
 	]]
 	local swingWindow = self:getCooldown(entry, GameClock.Now(), weather)
+
+	--[[
+		O passo com `Combo` (o Archmage) tem caminho proprio, e sai daqui antes de
+		tudo o que e do golpe comum -- area, projetil, corrente, combo de acertos.
+
+		A janela dele e a `Duration` da animacao, e nao o cooldown: numa sequencia
+		encadeada o cooldown so vale depois do ultimo passo (`getAttackDelay`), e a
+		animacao tem que tocar inteira, sem espremer, para os marcadores continuarem
+		batendo com os tempos do servidor.
+	]]
+	if step and step.Combo then
+		swingWindow = step.Duration or swingWindow
+
+		for _, plr in ipairs(Players:GetPlayers()) do
+			Framework:Fire("UnitSwing", plr, unitId, unitName, initialMobId, stepIndex, swingWindow)
+		end
+
+		self:executeCombo(entry, unitStats, step, initialMobId, weather)
+		return
+	end
 
 	--[=[
 		O golpe que acerta varias vezes dentro da mesma animacao, cada acerto no seu

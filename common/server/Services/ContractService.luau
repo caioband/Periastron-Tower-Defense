@@ -151,11 +151,22 @@ local function ownedClasses(profile) : { string }
 	return classes
 end
 
-local function ownsUnitWith(profile, stat : string) : boolean
+--[=[
+	Se o jogador tem alguma unidade com o campo pedido no `UnitStats`. `stat` aceita
+	um nome so ou uma lista, e basta um deles: "atordoa", hoje, e `Stun` (o tranco do
+	Electro) ou `Frost` (o congelamento do Frostione).
+]=]
+local function ownsUnitWith(profile, stat : string | { string }) : boolean
+	local wanted = if typeof(stat) == "table" then stat else { stat }
+
 	for unitName, amount in (profile.Units or {}) do
 		local stats = UnitStats[unitName]
-		if (tonumber(amount) or 0) > 0 and typeof(stats) == "table" and stats[stat] ~= nil then
-			return true
+		if (tonumber(amount) or 0) > 0 and typeof(stats) == "table" then
+			for _, name in wanted do
+				if stats[name] ~= nil then
+					return true
+				end
+			end
 		end
 	end
 

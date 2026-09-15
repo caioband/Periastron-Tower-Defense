@@ -45,12 +45,13 @@ module.EXCLUDED_UNITS = {
 	A crate comum não alcança Cosmic: o único caminho dela para lá é evoluir antes
 	(veja UPGRADES abaixo).
 
-	⚠️ Cosmic está com peso ZERO em todas as linhas porque nenhuma unit tem essa
-	raridade no UnitStats. Quando o sorteio caía lá, o servidor descia um degrau e
-	só registrava um aviso — ou seja, o prêmio máximo do jogo entregava uma
-	lendária repetida, e era 10% da crate lendária (a de 1800 shards). O peso que
-	era do Cosmic foi para Legendary. No dia em que existir uma unit Cosmic, basta
-	devolver os pesos: 0,5 na rara, 1 na épica e 10 na lendária.
+	Cosmic só tem peso na épica (a Fragmented Crate), onde mora o Archmage, a única
+	unit Cosmic hoje. Nas outras linhas ela continua em zero de propósito.
+
+	⚠️ Zero no pool não é "nunca": a comum e a rara podem **evoluir** até a épica
+	(ver UPGRADES), e aí o sorteio é o do pool épico. Por esse caminho elas também
+	entregam Cosmic, bem mais raro — e o `GetDisplayOdds` mostra isso nas odds
+	delas, porque a chance publicada é a chance real.
 ]]
 module.POOLS = {
 	["Common"] = {
@@ -69,12 +70,14 @@ module.POOLS = {
 		Cosmic = 0,
 	},
 
+	-- A Fragmented Crate e a unica com Cosmic (o Archmage): o 1% saiu da Legendary,
+	-- que tinha ficado com o peso dela enquanto nao existia unit Cosmic.
 	["Epic"] = {
 		Common = 0,
 		Rare = 45,
 		Epic = 45,
-		Legendary = 10,
-		Cosmic = 0,
+		Legendary = 9,
+		Cosmic = 1,
 	},
 
 	["Legendary"] = {
@@ -168,6 +171,52 @@ function module.GetDisplayOdds(crateRarity : string) : { [string]: number }?
 	end
 
 	return odds
+end
+
+--[=[
+	A garantia (pity) das raridades altas: as que tem contador proprio por caixa, em
+	ordem de prioridade.
+
+	Cada caixa conta, no perfil de quem abre (`Pity[caixa][raridade]`), quantas
+	aberturas seguidas sairam **sem** aquela raridade. Quando a conta chega no limite
+	do `GetPityThreshold`, a abertura seguinte entrega uma unit daquela raridade, e a
+	conta volta a zero sempre que ela sai -- garantida ou nao.
+
+	As contas sao independentes: tirar Cosmic nao zera a de Legendary. Se as duas
+	vencerem na mesma abertura, manda a primeira desta lista, e a outra fica para a
+	abertura seguinte, porque a conta dela continua no limite.
+
+	Quem aplica e o `CrateService:OpenCrate`. O `unbox` do Cmdr nao abre caixa de
+	verdade e nao mexe em conta nenhuma.
+]=]
+module.PITY_RARITIES = { "Cosmic", "Legendary" }
+
+--[=[
+	Quantas aberturas seguidas sem `rarity` fazem a proxima ser garantida, numa caixa
+	daquele tier. Nil quando a caixa nao tem chance nenhuma dela -- entao nao ha o
+	que garantir.
+
+	Sai sozinho da chance **publicada** (`GetDisplayOdds`, com a evolucao dentro, e sem
+	a sorte da gamepass): com 1%, cem aberturas sem ela garantem a centesima primeira.
+	Mexeu nos pools ou nas evolucoes, o limite acompanha sem tocar em mais nada.
+
+		| Caixa (hoje)        | Legendary | Cosmic |
+		| Crate Of Beginnings |        80 |   2899 |
+		| Crate Of Nature     |        24 |    725 |
+		| Fragmented Crate    |         9 |    109 |
+		| Legendary Crate     |         3 |      - |
+]=]
+function module.GetPityThreshold(crateRarity : string, rarity : string) : number?
+	local odds = module.GetDisplayOdds(crateRarity)
+	local chance = odds and odds[rarity]
+
+	if not chance or chance <= 0 then
+		return nil
+	end
+
+	-- A folga tira o erro de ponto flutuante de uma chance redonda: 100 / 1 nao pode
+	-- virar 101 por causa de um 100.00000000001.
+	return math.max(1, math.ceil(100 / chance - 1e-9))
 end
 
 return module

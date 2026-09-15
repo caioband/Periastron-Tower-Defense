@@ -38,6 +38,8 @@ CardConfig.Images = {
 	Archer = "rbxassetid://95837523891408",
 	["Subspace Tripminer"] = "rbxassetid://106851377383587",
 	Electro = "rbxassetid://105460799994551",
+	Frostione = "rbxassetid://119338340194654",
+	Archmage = "rbxassetid://137825632441679",
 }
 
 --[=[
@@ -127,6 +129,9 @@ CardConfig.IndexImages = {
 	Berserker = { Locked = "rbxassetid://113406675089719", Unlocked = "rbxassetid://136437855682464" },
 	Entrepreneur = { Locked = "rbxassetid://114643462066100", Unlocked = "rbxassetid://96216096014823" },
 	Electro = { Locked = "rbxassetid://83094354840437", Unlocked = "rbxassetid://82433128727107" },
+	-- Provisório: o `Unlocked` repete o `Locked` até a arte da unidade descoberta chegar.
+	Frostione = { Locked = "rbxassetid://80161422857290", Unlocked = "rbxassetid://80161422857290" },
+	Archmage = { Locked = "rbxassetid://125536412737882", Unlocked = "rbxassetid://140669373263625" },
 }
 
 --[=[

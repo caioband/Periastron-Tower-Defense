@@ -35,7 +35,7 @@
 	  | `MinDifficulty` | a dificuldade do evento tem de ser esta ou maior |
 	  | `FullHealth` / `WithFriends` | a vitoria tem de ter sido com a base cheia / com amigo na sala |
 	  | `Rarity` | a raridade da unidade que saiu da caixa |
-	  | `NeedsUnitStat` | so sai para quem tem uma unidade com esse campo no `UnitStats` |
+	  | `NeedsUnitStat` | so sai para quem tem uma unidade com esse campo no `UnitStats`; aceita uma lista, e basta um deles |
 	  | `Format` | `Hours` mostra o progresso em horas (o `Goal` e em segundos) |
 	  | `Rewards` | `Cash`, `Shards` e `Crates` (`{ [tier da caixa] = quantas }`, ver `CrateConfig.CRATES`) |
 
@@ -144,8 +144,9 @@ ContractConfig.Contracts = {
 		{ Id = "D_Win6VolcanoMedium", Text = "Win 6 games in {Map} on Medium difficulty", Event = E.Win, Goal = 6, Map = "Volcano", Difficulty = "Medium",
 			Rewards = { Cash = 700, Shards = 9 } },
 
-		-- So quem tem uma unidade que atordoa (o Electro, hoje) recebe este.
-		{ Id = "D_Stun676", Text = "Stun enemies 676 times", Event = E.Stun, Goal = 676, NeedsUnitStat = "Stun",
+		-- So quem tem uma unidade que atordoa recebe este: o tranco do Electro (`Stun`) ou
+		-- o congelamento do Frostione (`Frost`).
+		{ Id = "D_Stun676", Text = "Stun enemies 676 times", Event = E.Stun, Goal = 676, NeedsUnitStat = { "Stun", "Frost" },
 			Rewards = { Cash = 800, Shards = 9 } },
 
 		{ Id = "D_Win3Nightmare", Text = "Win 3 games in Nightmare mode", Event = E.Win, Goal = 3, Difficulty = "Nightmare",

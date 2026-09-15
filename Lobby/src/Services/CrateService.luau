@@ -266,6 +266,65 @@ function CrateService:_rollUnit(rarity : string) : (string?, string?)
 	return nil, nil
 end
 
+--[=[
+	A raridade que esta garantida na proxima abertura desta caixa, ou nil.
+
+	Le as contas do `Pity` do perfil contra o limite de cada raridade
+	(`Crate.GetPityThreshold`), na ordem de `Crate.PITY_RARITIES`: se Cosmic e
+	Legendary venceram juntas, sai Cosmic agora e a Legendary continua vencida para a
+	abertura seguinte.
+]=]
+function CrateService:_dueRarity(crateRarity : string, profile : any) : string?
+	local CrateOdds = ServerConfig.Crate
+	local counters = profile and profile.Pity and profile.Pity[crateRarity]
+	if typeof(counters) ~= "table" then
+		return nil
+	end
+
+	for _, rarity in CrateOdds.PITY_RARITIES do
+		local threshold = CrateOdds.GetPityThreshold(crateRarity, rarity)
+		if threshold and (tonumber(counters[rarity]) or 0) >= threshold then
+			return rarity
+		end
+	end
+
+	return nil
+end
+
+--[=[
+	Atualiza as contas da garantia depois de uma abertura: zera a da raridade que saiu
+	e soma um nas outras.
+
+	`gotRarity` e a raridade da unit que o jogador de fato recebeu -- a mesma do
+	resultado --, e nao a sorteada: um tier sem unit nenhuma desce um degrau no
+	`_rollUnit`, e essa abertura nao entregou o tier de cima.
+
+	Caixa sem chance de uma raridade nao guarda conta dela: nao ha limite, e um
+	numero crescendo para sempre no perfil nao serviria para nada.
+]=]
+function CrateService:_recordPity(Player : Player, crateRarity : string, gotRarity : string?)
+	local CrateOdds = ServerConfig.Crate
+
+	self.Services.DataService:Update(Player, "Pity", function(pity)
+		pity = typeof(pity) == "table" and pity or {}
+
+		local counters = typeof(pity[crateRarity]) == "table" and pity[crateRarity] or {}
+
+		for _, rarity in CrateOdds.PITY_RARITIES do
+			if not CrateOdds.GetPityThreshold(crateRarity, rarity) then
+				counters[rarity] = nil
+			elseif gotRarity == rarity then
+				counters[rarity] = 0
+			else
+				counters[rarity] = (tonumber(counters[rarity]) or 0) + 1
+			end
+		end
+
+		pity[crateRarity] = counters
+		return pity
+	end)
+end
+
 export type UnboxingResult = {
 	-- The crate the player opened.
 	Crate : string,
@@ -282,8 +341,12 @@ export type UnboxingResult = {
 	`profile` e de quem esta abrindo, e so a sorte o le (ver `_rollRarity`). Sem ele o
 	sorteio e o do jogador sem gamepass nenhuma -- e o que faz o `unbox` do Cmdr rolar
 	a caixa "de fabrica" quando ninguem passa um perfil.
+
+	`forcedRarity` e a garantia (ver `_dueRarity`): vindo, ela passa por cima do
+	sorteio da raridade. A evolucao continua rolando -- o carretel mostra a caixa
+	evoluindo do mesmo jeito --, so a raridade entregue e que ja estava decidida.
 ]=]
-function CrateService:RollCrate(rarity : string, profile : any) : UnboxingResult?
+function CrateService:RollCrate(rarity : string, profile : any, forcedRarity : string?) : UnboxingResult?
 	local resolvedRarity = CrateConfig.resolveRarity(rarity)
 	if not resolvedRarity then
 		warn(string.format("[CrateService]: %q is not a valid crate rarity.", tostring(rarity)))
@@ -292,7 +355,7 @@ function CrateService:RollCrate(rarity : string, profile : any) : UnboxingResult
 
 	local poolCrate, upgrades = self:_rollCrateUpgrade(resolvedRarity)
 
-	local rolledRarity = self:_rollRarity(poolCrate, profile)
+	local rolledRarity = forcedRarity or self:_rollRarity(poolCrate, profile)
 	if not rolledRarity then
 		return nil
 	end
@@ -402,12 +465,25 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 
 	self.Signals.CrateAmountChanged:Fire(Player, resolvedRarity, remaining, -1)
 
-	local result = self:RollCrate(resolvedRarity, self:_profileOf(Player))
+	--[[
+		A garantia: se alguma raridade venceu a conta desta caixa, ela ja esta decidida
+		antes do sorteio (`_dueRarity`). As contas so andam depois de o roll dar certo:
+		abertura que falhou devolve a caixa e nao conta.
+
+		Nada entre ler as contas e escreve-las cede a thread, entao dois cliques
+		seguidos nao leem a mesma conta antes de ela andar.
+	]]
+	local profile = self:_profileOf(Player)
+	local dueRarity = self:_dueRarity(resolvedRarity, profile)
+
+	local result = self:RollCrate(resolvedRarity, profile, dueRarity)
 	if not result then
 		-- The roll is what failed, so hand the crate back instead of eating it.
 		self:GiveCrates(Player, resolvedRarity, 1)
 		return nil
 	end
+
+	self:_recordPity(Player, resolvedRarity, result.Rarity)
 
 	-- A MOST BOXES OPENED conta daqui: so a caixa gasta e rolada de verdade. O
 	-- `PlayUnboxing` (o `unbox` do Cmdr) nao passa por aqui e nao conta.
