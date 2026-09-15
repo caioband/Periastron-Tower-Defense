@@ -205,6 +205,39 @@ function TripmineController:clearUnitMines(unitId)
 	self.MinesByUnit[unitId] = nil
 end
 
+--[=[
+	Derruba toda mina do mapa: o fim do round.
+
+	As minas moram na `CurrentCamera`, que sobrevive ao round, e nenhum dos dois
+	caminhos que as destroem passa pelo fim da partida: mina em que ninguem pisou
+	nunca recebe `TripmineTriggered`, e o `RemoveUnit` de cada torre so chega no
+	`ResetRound`, que e o round **seguinte** comecando. No meio dos dois -- a tela
+	de resultado -- as minas do round que acabou ficavam armadas na Camera.
+
+	Nao substitui o `clearUnitMines`: aquele e uma torre saindo, este e o round
+	inteiro.
+]=]
+function TripmineController:clearAllMines()
+	for mineId, mine in self.Mines do
+		self:endArc(mineId)
+
+		if mine and mine.Parent then
+			mine:Destroy()
+		end
+	end
+
+	table.clear(self.Mines)
+	table.clear(self.MinesByUnit)
+
+	--[[
+		Arco cuja mina ja saiu da tabela por outro caminho: o laco acima nao passou
+		por ele, e o voo dele continuaria conectado ao `RenderStepped`.
+	]]
+	for mineId in self.Arcs do
+		self:endArc(mineId)
+	end
+end
+
 function TripmineController:construct()
 	Framework:Listen("TripmineThrown", function(unitId, mineId, mineCF, throwTime)
 		self:spawnMine(unitId, mineId, mineCF, throwTime)
@@ -216,6 +249,19 @@ function TripmineController:construct()
 
 	Framework:Listen("RemoveUnit", function(unitId)
 		self:clearUnitMines(unitId)
+	end)
+
+	--[[
+		O fim do round pelos dois lados: `GameOver` e a base caindo
+		(`MobService:onGameOver`) e `Win` e a ultima wave limpa. Nenhum dos dois
+		deixa mina no mapa.
+	]]
+	Framework:Listen("GameOver", function()
+		self:clearAllMines()
+	end)
+
+	Framework:Listen("Win", function()
+		self:clearAllMines()
 	end)
 end
 

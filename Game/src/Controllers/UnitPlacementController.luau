@@ -1527,6 +1527,37 @@ function UnitPlacementController:clearInteraction()
 	end
 end
 
+--[=[
+	Destroi a linha pontilhada de todas as unidades: o fim do round.
+
+	E o par do laco do `RemoveUnit`, para quando nao ha um `unitId` para procurar.
+	As linhas moram na `CurrentCamera`, que sobrevive ao round, e quem as destroi e
+	aquele evento -- que no fim da partida so chega no `ResetRound`, junto com o
+	round seguinte. Ate la elas ficavam na Camera, ja invisiveis (a tela de
+	resultado chama o `clearInteraction`, que apaga a da torre selecionada),
+	ocupando instancia por nada.
+
+	O modelo da torre nao e tocado de proposito: ele continua no mapa atras da tela
+	de resultado, e quem o derruba e o `RemoveUnit` do `ResetRound`.
+]=]
+function UnitPlacementController:clearAllDottedLines()
+	for unitModel, dottedLine in self.unitDottedLines do
+		if dottedLine then
+			dottedLine:Destroy()
+		end
+		self.dottedLineData[unitModel] = nil
+	end
+
+	table.clear(self.unitDottedLines)
+	table.clear(self.dottedLineData)
+
+	-- O giro era da linha da torre selecionada, e ela acabou de ser destruida.
+	if self.dottedLineSpinConn then
+		self.dottedLineSpinConn:Disconnect()
+		self.dottedLineSpinConn = nil
+	end
+end
+
 function UnitPlacementController:flashUpgrade(unitModel)
 	local highlight = Instance.new("Highlight")
 	highlight.FillColor = Color3.fromRGB(120, 255, 140)
@@ -1652,6 +1683,19 @@ function UnitPlacementController:construct()
 		-- O mapa pode ter mudado; a lista de parts do caminho e remontada no
 		-- proximo posicionamento.
 		invalidateGridParts()
+	end)
+
+	--[[
+		O fim do round pelos dois lados -- `GameOver` e a base caindo, `Win` e a
+		ultima wave limpa --, e as linhas pontilhadas saem nos dois. Ver o
+		`clearAllDottedLines`.
+	]]
+	Framework:Listen("GameOver", function()
+		self:clearAllDottedLines()
+	end)
+
+	Framework:Listen("Win", function()
+		self:clearAllDottedLines()
 	end)
 
 	Framework:Listen("RemoveUnit", function(unitId)
