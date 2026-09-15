@@ -452,9 +452,14 @@ end
 	Quando a conta de uma unidade chega a `FreezeStacks`, o inimigo congela por
 	`FreezeDuration` (o `StunMob`, que conta para os contratos de atordoar do dono
 	dela) e a conta de **todas** zera, lentidao inclusive: descongelado, ele volta a
-	andar no ritmo de sempre. Acerto durante o congelamento nao soma, venha de quem
-	vier -- sem isso duas unidades seguidas deixariam o mesmo inimigo parado para
-	sempre.
+	andar no ritmo de sempre.
+
+	Depois disso ele fica imune a gelo por mais `FreezeImmunity` segundos
+	(`mob.FrostImmuneUntil`): acerto nenhum soma acumulo enquanto ele esta congelado
+	**nem** durante a folga que vem logo em seguida, venha de quem vier. E o que
+	impede o congelamento sem fim -- sem a folga, a janela em que o inimigo anda e so
+	o tempo de refazer os quatro acumulos, que encolhe junto com o cooldown da
+	unidade (upgrade, clima de neve, cartas de cadencia) ate quase nada.
 
 	O desenho do congelamento sai daqui pelo `MobFrozen`, porque so o servidor sabe
 	quando a conta fechou.
@@ -464,7 +469,9 @@ function MobService:ApplyFrost(mobId : string, frost, sourceUserId : number?, so
 	if not mob or typeof(frost) ~= "table" then return end
 
 	local now = GameClock.Now()
-	if now < (mob.FrostFrozenUntil or 0) then return end
+
+	-- Congelado, ou na folga logo depois do degelo: o acerto nao deixa acumulo.
+	if now < (mob.FrostImmuneUntil or 0) then return end
 
 	local stacks = mob.FrostStacks
 	if not stacks then
@@ -485,9 +492,13 @@ function MobService:ApplyFrost(mobId : string, frost, sourceUserId : number?, so
 
 	if state.count >= math.max(1, frost.FreezeStacks or 4) then
 		local duration = math.max(0, frost.FreezeDuration or 0)
+		local immunity = math.max(0, frost.FreezeImmunity or 0)
 
 		table.clear(stacks)
-		mob.FrostFrozenUntil = now + duration
+
+		-- A imunidade cobre o congelamento inteiro mais a folga: enquanto ela nao
+		-- vencer, `ApplyFrost` sai na primeira linha.
+		mob.FrostImmuneUntil = now + duration + immunity
 
 		-- A lentidao sai junto com os acumulos. O token novo invalida o fim que o
 		-- ultimo `ApplySlow` agendou, que senao mexeria na velocidade de novo depois.
