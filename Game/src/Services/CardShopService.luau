@@ -84,6 +84,22 @@ local CardShopService = {
 	]]
 	Owned = {},
 
+	--[[
+		As cartas de prazo que estao descansando: `[UserId] = { [cardId] = Token }`.
+
+		O numero e a **ultima** abertura em que a carta ainda esta fora do sorteio daquele
+		jogador. Ver o `_rest`, que escreve, e o `_poolFor`, que le.
+	]]
+	Resting = {},
+
+	--[[
+		As cartas de uma vez so que este jogador ja tirou da mesa: `[UserId] = { [cardId] = true }`.
+
+		Nao ha volta nesta tabela -- ela so e esvaziada no fim do round. Ver o `_isStacking`,
+		que diz quem entra aqui, e o `_spend`, que escreve.
+	]]
+	Spent = {},
+
 	-- Sobe a cada abertura. E o que faz um clique atrasado numa oferta velha nao
 	-- comprar nada da nova.
 	Token = 0,
@@ -140,6 +156,10 @@ CardShopService.Effects = {
 			Duration = params.Duration,
 			Zone = zone,
 			UnitId = target and target.UnitId or nil,
+
+			-- Para o proximo anel deste jogador saber que este lugar esta ocupado. Ver o
+			-- `FindZoneOverlap`.
+			OwnerUserId = player.UserId,
 		})
 
 		return string.format("%d regra(s) no campo%s", applied,
@@ -197,6 +217,7 @@ CardShopService.Effects = {
 				Card = context.Card,
 				Duration = params.Immunity,
 				Zone = { Position = target.Position, Radius = radius },
+				OwnerUserId = player.UserId,
 			})
 		end
 
@@ -327,6 +348,108 @@ function CardShopService:_pool()
 end
 
 --[=[
+	A carta e de prazo?
+
+	E a pergunta que decide quem descansa depois de usada, e a resposta e o proprio
+	`Params.Duration`: a carta cujo efeito **vence sozinho** e uma janela, e a que nao
+	tem prazo e uma decisao que vale o round inteiro.
+
+	A regra e derivada do config, e nao uma lista escrita a mao, de proposito: carta
+	nova com `Duration` ja nasce descansando, e uma carta que perde o prazo num ajuste
+	de balanceamento para de descansar no mesmo commit. Uma lista paralela divergiria
+	do catalogo no primeiro numero que alguem mexesse.
+]=]
+function CardShopService:_isTemporary(card) : boolean
+	local duration = card and card.Params and card.Params.Duration
+
+	return typeof(duration) == "number" and duration > 0
+end
+
+--[=[
+	Poe a carta para descansar uma abertura na mao deste jogador.
+
+	O prazo e escrito em **aberturas da loja**, e nao em waves ou em segundos: o que a
+	regra promete e "nao sai na proxima oferta", e a proxima oferta e a proxima vez que
+	o `Open` roda -- numa dificuldade de intervalo 6 isso e mais tempo do que numa de
+	4, que e exatamente o certo, porque a oferta e o recurso escasso, e nao o relogio.
+
+	`Token + 1` e a abertura seguinte a esta, e a comparacao do `_poolFor` e `<=`:
+	usada depois da oferta da wave 4 (Token 1), a carta fica fora da wave 8 (Token 2) e
+	volta na wave 12 (Token 3).
+
+	Descansa **por jogador**, junto com a pool: quem usou o Time Stop nao o ve na
+	proxima oferta, e quem nao usou continua podendo sortea-lo.
+]=]
+function CardShopService:_rest(player : Player, cardId : string)
+	local resting = self.Resting[player.UserId]
+	if not resting then
+		resting = {}
+		self.Resting[player.UserId] = resting
+	end
+
+	resting[cardId] = self.Token + 1
+end
+
+--[=[
+	A carta empilha em cima de si mesma para sempre?
+
+	Sao tres coisas ao mesmo tempo, e a resposta cai do proprio config:
+
+	1. o efeito dela e uma **regra no campo** (`Effect = "Modifier"`) -- e a lista do
+	   `CardModifierService` aceita duas copias do mesmo registro, que se multiplicam;
+	2. ela **nao tem prazo**, entao a regra vale ate o fim do round;
+	3. ela **nao desenha area**, entao o que ela muda e o mapa inteiro.
+
+	As tres juntas sao o unico caso em que comprar a mesma carta de novo e sempre a
+	melhor jogada possivel: o Overcharge duas vezes e 1.56x de dano em Electric, tres
+	vezes e 1.95x, e nada no jogo freia isso. A que tem prazo se resolve sozinha (ela
+	vence), a de area se resolve pelo chao (duas nao podem se tocar) e a que nao e
+	`Modifier` nao empilha regra nenhuma -- o Money Bag da dinheiro, o Zippers move uma
+	torre, o Weather Report limpa o ceu de uma wave.
+
+	Quem responde sim sai do sorteio daquele jogador **na compra**, e nao volta nesta
+	partida. Ver o `_spend`.
+]=]
+function CardShopService:_isStacking(card) : boolean
+	if not card or card.Effect ~= "Modifier" then return false end
+	if self:_isTemporary(card) then return false end
+
+	local records = card.Params and card.Params.Modifiers
+	if typeof(records) ~= "table" then return false end
+
+	for _, record in records do
+		if record.Zone then return false end
+	end
+
+	return true
+end
+
+--[=[
+	Tira a carta da mesa deste jogador pelo resto da partida.
+
+	Chamado na **compra**, e nao so no uso: a carta comprada e uma decisao ja tomada,
+	mesmo que ela passe a wave inteira na hotbar. Sem isso o jogador guardaria tres
+	copias do Overcharge na mao e as usaria de uma vez -- que e exatamente o
+	empilhamento que a regra tira do jogo.
+
+	Chamado tambem no uso, para o caso de uma carta ter chegado a mao por fora da loja
+	(um comando de Cmdr, um presente). E barato, e escrever `true` duas vezes na mesma
+	chave nao custa nada.
+
+	Vale a partida, e nao o perfil: a proxima partida comeca com a mesa limpa, do mesmo
+	jeito que o caixa e a hotbar. Ver o `ResetRound`.
+]=]
+function CardShopService:_spend(player : Player, cardId : string)
+	local spent = self.Spent[player.UserId]
+	if not spent then
+		spent = {}
+		self.Spent[player.UserId] = spent
+	end
+
+	spent[cardId] = true
+end
+
+--[=[
 	As cartas que **este jogador** pode sortear: as de `_pool` que ele destravou na loja
 	de cartas do lobby.
 
@@ -338,6 +461,14 @@ end
 	tudo enquanto o dado nao chegou daria ao jogador uma oferta que ele nao pagou, e a
 	primeira wave de loja e cedo o bastante para a corrida acontecer de verdade.
 
+	Carta de prazo que ele acabou de usar fica de fora desta abertura (ver o `_rest`):
+	ela esta destravada, mas descansando. Nao ha aviso na tela -- de uma oferta de tres
+	cartas nao da para deduzir quais nao foram sorteadas, e a carta volta sozinha.
+
+	Carta de uma vez so que ele ja comprou fica de fora **do resto da partida** (ver o
+	`_spend`). Essa nao volta: a pool dele encolhe conforme ele monta a build, e e isso
+	que faz cada uma dessas cartas ser uma escolha em vez de um numero para repetir.
+
 	Pool vazia nao e erro: e o jogador que gastou os shards em outra coisa e nao tem
 	carta nenhuma destravada. A oferta simplesmente nao abre para ele -- ver o `Open`.
 ]=]
@@ -348,12 +479,19 @@ function CardShopService:_poolFor(player : Player, pool : { any })
 	local profile = entry and entry.Profile.Data or nil
 
 	local unlocked = RoundCardShopConfig.unlockedOf(profile)
+	local resting = self.Resting[player.UserId] or {}
+	local spent = self.Spent[player.UserId] or {}
 	local candidates = {}
 
 	for _, card in pool do
-		if unlocked[card.Id] then
-			table.insert(candidates, card)
-		end
+		if not unlocked[card.Id] then continue end
+		if spent[card.Id] then continue end
+
+		-- O numero e a ultima abertura em que ela ainda descansa, e esta e a de agora.
+		local restingUntil = resting[card.Id]
+		if restingUntil and self.Token <= restingUntil then continue end
+
+		table.insert(candidates, card)
 	end
 
 	return candidates
@@ -372,8 +510,13 @@ end
 	O alvo devolvido e **remontado**, campo por campo, em vez de repassado: assim
 	nada mais do que estas duas chaves atravessa para o efeito, por mais que o
 	cliente tenha enfiado na tabela.
+
+	A ultima conferencia de uma carta de area e o lugar estar livre das outras areas
+	**deste jogador** (ver `CardModifierService:FindZoneOverlap`). Ela e feita aqui, e
+	nao dentro do efeito, pelo mesmo motivo das outras: alvo recusado nao gasta a
+	carta, e o jogador volta para a mira com ela ainda na mao.
 ]=]
-function CardShopService:_checkTarget(card, target : any)
+function CardShopService:_checkTarget(player : Player, card, target : any)
 	local use = RoundCardConfig.GetUse(card.Id)
 
 	if use == RoundCardConfig.Use.Instant then
@@ -436,6 +579,28 @@ function CardShopService:_checkTarget(card, target : any)
 		end
 
 		checked.Rotation = rotation % (2 * math.pi)
+	end
+
+	--[[
+		Area encostando em area, so no `Use.Area`: o `Move` tambem manda uma posicao, mas
+		ela e o destino de uma torre, e nao um anel -- quem confere aquilo e o
+		`PlacementUtil`, pelas regras de posicionamento.
+
+		O cliente ja pinta a mira de vermelho aqui e nao deixa confirmar, entao chegar
+		neste ramo e cliente adulterado ou corrida de verdade: duas cartas de area usadas
+		no mesmo quadro, a segunda em cima da primeira.
+	]]
+	if use == RoundCardConfig.Use.Area then
+		local modifiers = self.Services.CardModifierService
+		local overlap = modifiers and modifiers:FindZoneOverlap(
+			player.UserId,
+			checked.Position,
+			RoundCardConfig.GetRadius(card.Id)
+		)
+
+		if overlap then
+			return nil, string.format("area encostando na do %s", tostring(overlap.Card))
+		end
 	end
 
 	return checked
@@ -588,6 +753,14 @@ function CardShopService:Buy(player : Player, token : any, cardId : any)
 	end
 	owned[uid] = card.Id
 
+	--[[
+		A carta que empilha sai da mesa dele aqui, na compra: dai para a frente ela nao e
+		mais sorteada nesta partida, tenha sido usada ou nao. Ver o `_isStacking`.
+	]]
+	if self:_isStacking(card) then
+		self:_spend(player, card.Id)
+	end
+
 	-- Uma compra por abertura: a oferta fecha para quem comprou.
 	self.Offers[player.UserId] = nil
 
@@ -646,12 +819,27 @@ function CardShopService:Use(player : Player, uid : any, target : any)
 		exemplo) acontece com a carta ja gasta, de proposito, para o estado da sala
 		nunca ficar meio mexido com a carta de volta na mao.
 	]]
-	local checked, reason = self:_checkTarget(card, target)
+	local checked, reason = self:_checkTarget(player, card, target)
 	if not checked then
 		return nil, reason
 	end
 
 	owned[uid] = nil
+
+	--[[
+		A carta de prazo sai do sorteio dele por uma abertura, e e aqui que isso e
+		marcado -- no **uso**, e nao na compra. Comprar e guardar na hotbar nao gastou
+		janela nenhuma; o que a regra cobra e ter tido o efeito no campo.
+
+		A que empilha ja saiu da mesa na compra, e e remarcada aqui so pelo caminho de
+		fora da loja: uma carta que chegou a mao sem passar pelo `Buy` nunca viu o
+		`_spend`.
+	]]
+	if self:_isTemporary(card) then
+		self:_rest(player, card.Id)
+	elseif self:_isStacking(card) then
+		self:_spend(player, card.Id)
+	end
 
 	Framework:Fire("RoundCardUsed", player, {
 		uid = uid,
@@ -743,6 +931,11 @@ end
 function CardShopService:ResetRound()
 	table.clear(self.Offers)
 	table.clear(self.Owned)
+
+	-- O descanso e contado em aberturas desta partida, e a mesa e desta partida: a
+	-- proxima comeca do zero, com o catalogo inteiro de volta na pool de cada um.
+	table.clear(self.Resting)
+	table.clear(self.Spent)
 
 	-- As regras que as cartas deixaram no campo saem junto: um anel de cajado nao
 	-- pode sobreviver a tela de resultado.
@@ -881,6 +1074,8 @@ function CardShopService:construct()
 	Players.PlayerRemoving:Connect(function(player : Player)
 		self.Offers[player.UserId] = nil
 		self.Owned[player.UserId] = nil
+		self.Resting[player.UserId] = nil
+		self.Spent[player.UserId] = nil
 	end)
 end
 

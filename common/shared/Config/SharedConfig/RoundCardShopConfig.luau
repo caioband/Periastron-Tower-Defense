@@ -333,16 +333,21 @@ RoundCardShopConfig.RESET_FORMAT = "RESETS IN: %s"
 --[=[
 	As cartas que um perfil novo nasce com destravadas.
 
-	As três originais, e por dois motivos. O primeiro é que sem nenhuma carta a
-	oferta de round **não abre**: um jogador novo veria a loja de round nunca
-	aparecer e não teria como ligar isso a uma loja no lobby que ele ainda não
-	visitou. O segundo é precedente — o `Units` do template já entrega Slasher,
-	Sword e Slingshot pela mesma razão: o jogo se apresenta com um pouco de tudo e
-	guarda o resto para ser conquistado.
+	Seis, e por dois motivos. O primeiro é que sem nenhuma carta a oferta de round
+	**não abre**: um jogador novo veria a loja de round nunca aparecer e não teria
+	como ligar isso a uma loja no lobby que ele ainda não visitou. O segundo é
+	precedente — o `Units` do template já entrega Slasher, Sword e Slingshot pela
+	mesma razão: o jogo se apresenta com um pouco de tudo e guarda o resto para ser
+	conquistado.
 
-	São as três instantâneas de sempre, que não pedem alvo nenhum: elas são o que a
-	loja de round sempre foi antes de o catálogo crescer, então o jogador aprende o
-	fluxo com as cartas que ele consegue usar sem aprender mira.
+	As três primeiras são as instantâneas de sempre, que não pedem alvo nenhum: elas
+	são o que a loja de round sempre foi antes de o catálogo crescer, então o jogador
+	aprende o fluxo com as cartas que ele consegue usar sem aprender mira.
+
+	As três seguintes são o resto do vocabulário: o Trumpet é um buff de prazo para a
+	sala inteira, e o Bloxy Cola e o Bloxiade são as duas bebidas — a primeira mira
+	que o jogador aprende, e a mais barata de errar. Sem uma carta de alvo no kit,
+	`Use.Unit` só seria descoberto depois de uma compra de shards às cegas.
 
 	Esvaziar esta lista fecha a oferta de round para quem nunca comprou nada — é uma
 	linha, e é uma decisão de design, não um efeito colateral.
@@ -351,6 +356,9 @@ RoundCardShopConfig.STARTER_CARDS = {
 	"TimeStop",
 	"TimeAcceleration",
 	"WeatherReport",
+	"Trumpet",
+	"BloxyCola",
+	"Bloxiade",
 }
 
 --[[ API ]]
@@ -358,10 +366,9 @@ RoundCardShopConfig.STARTER_CARDS = {
 --[=[
 	O `RoundCards` de um perfil novo: `{ [Id da carta] = true }`.
 
-	É o que o `Data.Template` guarda. Carta nova em `STARTER_CARDS` **não** entra nos
-	perfis antigos: o reconcile do `DataService` só cria a chave que falta, e quem já
-	tem um `RoundCards` fica com o dele. É o comportamento certo — a lista é o kit de
-	quem chega, e não um presente retroativo.
+	É o que o `Data.Template` guarda — e só ele: o reconcile do `DataService` cria a
+	chave onde ela falta, mas não mexe num `RoundCards` que já existe. Quem já jogava
+	recebe as cartas que entraram depois pelo `missingStarters` logo abaixo.
 ]=]
 function RoundCardShopConfig.createEmpty() : { [string]: boolean }
 	local unlocked = {}
@@ -375,6 +382,34 @@ function RoundCardShopConfig.createEmpty() : { [string]: boolean }
 	end
 
 	return unlocked
+end
+
+--[=[
+	As cartas do kit inicial que este `RoundCards` ainda não tem: `{ Id }`.
+
+	O kit é **retroativo**, e é uma decisão: `STARTER_CARDS` não é o presente de
+	chegada de quem começou naquele mês, é o piso de todo mundo. Quando ele cresce,
+	quem já jogava passa a ter o mesmo piso — senão dois jogadores lado a lado veriam
+	ofertas montadas com catálogos diferentes sem nada na tela explicando por quê.
+
+	O que ele **não** faz é devolver shards a quem já tinha comprado uma delas na loja
+	do lobby: a carta já está no `RoundCards` dele, então ela não aparece aqui e nada é
+	reescrito. Quem pagou continua com a carta; quem não pagou passa a ter.
+
+	Devolve uma lista vazia quando não falta nada — é o caso de quase toda chamada, e
+	é o que deixa quem escreve pular a escrita no perfil.
+]=]
+function RoundCardShopConfig.missingStarters(unlocked : any) : { string }
+	local owned = typeof(unlocked) == "table" and unlocked or {}
+	local missing = {}
+
+	for _, cardId in RoundCardShopConfig.STARTER_CARDS do
+		if owned[cardId] ~= true and RoundCardConfig.Get(cardId) then
+			table.insert(missing, cardId)
+		end
+	end
+
+	return missing
 end
 
 --[=[

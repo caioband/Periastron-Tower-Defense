@@ -1373,6 +1373,8 @@ lobby não teria o que vender. Hoje são dois filtros em fila:
 | --- | --- | --- |
 | efeito registrado | `CardShopService:_pool` | carta cujo `Effect` não existe em `Effects` — para ninguém |
 | carta destravada | `CardShopService:_poolFor` | carta que **este** jogador não comprou no lobby |
+| carta descansando | `CardShopService:_poolFor` | carta de prazo que ele usou na abertura passada |
+| carta gasta | `CardShopService:_poolFor` | carta de uma vez só que ele já comprou nesta partida |
 
 Jogador sem nenhuma carta destravada não recebe oferta, e a dele é apagada em vez de
 deixada como estava: sem isso ele ficaria com a oferta da wave de loja anterior na
@@ -1380,13 +1382,76 @@ tela, e o `Token` novo faria cada clique nela ser recusado como "oferta vencida"
 Perfil que ainda não carregou conta como vazio — liberar tudo enquanto o dado não
 chegou daria uma oferta que o jogador não pagou.
 
-Perfil novo nasce com as três originais destravadas
-(`RoundCardShopConfig.STARTER_CARDS`: Time Stop, Time Acceleration, Weather Report).
-Sem elas a oferta de round simplesmente nunca abriria para quem acabou de chegar, e
-ele não teria como ligar isso a uma loja do lobby que ainda não visitou — é o mesmo
-motivo pelo qual o `Units` do template já entrega Slasher, Sword e Slingshot.
-Esvaziar a lista fecha a oferta para quem nunca comprou nada: é uma linha, e é uma
-decisão de design.
+Perfil novo nasce com seis destravadas (`RoundCardShopConfig.STARTER_CARDS`): as três
+instantâneas originais — Time Stop, Time Acceleration, Weather Report — mais Trumpet,
+Bloxy Cola e Bloxiade. Sem elas a oferta de round simplesmente nunca abriria para quem
+acabou de chegar, e ele não teria como ligar isso a uma loja do lobby que ainda não
+visitou — é o mesmo motivo pelo qual o `Units` do template já entrega Slasher, Sword e
+Slingshot. As três últimas entraram para o kit ter uma carta de alvo: sem nenhuma,
+`Use.Unit` só seria descoberto depois de uma compra de shards às cegas. Esvaziar a
+lista fecha a oferta para quem nunca comprou nada: é uma linha, e é uma decisão de
+design.
+
+**O kit é retroativo**, e é a única parte dele que precisa de código: o reconcile do
+`DataService` cria a chave `RoundCards` onde ela falta, mas não mexe numa que já
+existe, então uma carta acrescentada à lista valeria só para contas criadas depois
+dela. Quem escreve o que falta é o `RoundCardStarterService` (`common/server/Services`,
+porque as duas places abrem perfil), a cada `PlayerDataLoaded`, e só quando falta —
+quem já comprou uma delas com shards não é tocado nem reembolsado.
+
+### As cartas de prazo descansam
+
+**Carta cujo efeito vence sozinho sai do sorteio dela por uma abertura.** Usada a
+oferta da wave 4, ela não pode ser sorteada na da wave 8 e volta na da 12; o
+`CardShopService:_rest` escreve `Token + 1` em `Resting[userId][cardId]` e o
+`_poolFor` corta enquanto a abertura de agora não passar desse número. É por jogador,
+como a pool: quem não usou continua podendo sorteá-la.
+
+Quem conta como "de prazo" é o próprio config — `Params.Duration` maior que zero
+(`_isTemporary`) —, e não uma lista escrita à mão: carta nova com prazo já nasce
+descansando, e uma que perca o prazo num ajuste de balanceamento para de descansar no
+mesmo commit. Hoje são seis: Time Stop, Time Acceleration, Trumpet, Azure Ever Ice,
+Bloxy Cola e Bloxiade. O Staff of Healing fica **de fora** apesar dos dez segundos de
+imunidade dele, porque o número dele se chama `Params.Immunity`.
+
+O descanso é contado em aberturas da loja, e não em waves nem em segundos: numa
+dificuldade de intervalo 6 ele é mais longo que numa de 4, o que é o certo — o que é
+escasso é a oferta, e não o relógio. Nada disso aparece na tela: de uma oferta de três
+cartas não dá para deduzir quais não foram sorteadas, e a carta volta sozinha.
+
+### As cartas que empilham são de uma vez só
+
+**Carta que empilha em cima de si mesma sai da mesa do jogador na compra e não volta
+nesta partida.** São três condições ao mesmo tempo (`CardShopService:_isStacking`), e
+todas saem do próprio config:
+
+1. o efeito é uma **regra no campo** (`Effect = "Modifier"`) — e a lista do
+   `CardModifierService` aceita duas cópias do mesmo registro, que se multiplicam;
+2. ela **não tem prazo**, então a regra vale até o fim do round;
+3. ela **não desenha área**, então o que ela muda é o mapa inteiro.
+
+As três juntas são o único caso em que recomprar a mesma carta é sempre a melhor
+jogada possível: Overcharge duas vezes é 1.56x de dano em Electric, três vezes é 1.95x,
+e nada freava isso. As outras já se resolvem sozinhas — a de prazo vence, a de área
+esbarra no chão (duas do mesmo jogador não podem se tocar) e a que não é `Modifier` não
+empilha regra nenhuma: Money Bag dá dinheiro, Zippers move uma torre, Weather Report
+limpa o céu de uma wave. Essas três continuam repetíveis.
+
+São onze hoje: Overcharge, Watts Up, Punch Line, Axecellent, Cleave It To Me,
+Abrakadabra, Iceolated, Ice To Meet You, Chill Out, Fire Hazard e No Pain No Gain.
+
+**A marca é posta na compra, e não no uso** (`_spend`, chamado do `Buy`): a carta
+comprada é uma decisão já tomada, mesmo que passe a wave inteira na hotbar. Sem isso o
+jogador guardaria três cópias do Overcharge na mão e as usaria de uma vez, que é
+exatamente o empilhamento que a regra tira do jogo. O `Use` remarca por garantia, para
+o caso de uma carta ter chegado à mão por fora da loja.
+
+Vale a partida, e não o perfil: a próxima começa com o catálogo inteiro na pool de cada
+um, como o caixa e a hotbar. A consequência esperada é que **a pool encolhe conforme a
+build é montada** — quem destravou poucas cartas e comprou as que empilham pode ficar
+com uma oferta de menos de três (o `Draw` já devolve o que houver) ou sem oferta
+nenhuma. O kit inicial não tem nenhuma delas, então quem acabou de chegar nunca fica
+sem loja.
 
 ### O tipo de uso
 
@@ -1504,6 +1569,26 @@ ela vai sentir) nas cartas que mexem em estatística, e o próprio
 `RoundCardShopController` nas que não mexem — o Zippers. A cor mora em
 `Targeting.Colors.Unit`, e os dois a leem de lá. Dois Highlights no mesmo modelo
 deixariam as duas cores brigando.
+
+**Duas áreas do mesmo jogador não podem se tocar.** O anel da mira fica vermelho
+(`Targeting.Colors.Blocked`) onde ele encostaria numa área que aquele jogador já
+desenhou, e ali o clique não vale — a carta continua na mão e a mira aberta, como no
+clique no céu. A conta é a distância entre os centros contra a soma dos raios, ignorando
+o `Y` (o anel é um círculo no chão, e o mapa tem altura), e ela existe em dois lugares
+de propósito: o `CardModifierController:FindZoneOverlap` pinta, o
+`CardModifierService:FindZoneOverlap` recusa o uso. As duas leem a mesma lista
+replicada, então não existe lugar verde onde o clique não valha.
+
+Sem a regra, empilhar três cajados no mesmo punhado de torres multiplicava os três
+buffs no mesmo lugar e a decisão que a carta vende — *onde* desenhar o anel — deixava
+de existir: o melhor lugar era sempre o lugar do anel anterior. **Só as áreas do próprio
+jogador contam**: numa sala de quatro, negar o chão por causa do cajado de outro tiraria
+do mapa os poucos pontos que valem a pena para quem chegou depois.
+
+Quem sabe de quem é a área é o `OwnerUserId` que o `CardModifierService:Apply` guarda
+no modificador — ele não muda nada do que o modificador faz, e existe só para esta
+pergunta. Zona vencida não segura lugar: a leitura passa pelo `GetActive`, que poda o
+que expirou.
 
 No instante em que a carta encosta na torre, ela solta o `AppliedVFX`
 (`Assets.VFX.EffectUnitAppliedVFX`), pendurado na `HumanoidRootPart` dela e

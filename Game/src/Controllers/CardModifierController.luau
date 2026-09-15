@@ -1,5 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -310,6 +311,39 @@ function CardModifierController:Multiplier(stat : string, unitName : string?, po
 	local unit = { UnitId = unitId, UnitName = unitName, Position = position }
 
 	return CardModifier.Multiplier(self.Modifiers, stat, unit, self:GetWorld())
+end
+
+--[=[
+	Uma area **deste** jogador que um anel de raio `radius` em `position` encostaria,
+	ou `nil` se o lugar esta livre.
+
+	E a mesma conta do `CardModifierService:FindZoneOverlap`, de proposito: o servidor
+	recusa o uso pela dele, e a mira pinta de vermelho pela daqui. As duas leem a mesma
+	lista replicada, entao o que o jogador ve antes de clicar e o que o servidor vai
+	responder -- se elas divergissem, existiria um lugar verde onde o clique nao vale.
+
+	Aqui nao ha poda de prazo: quem vence a zona e o servidor, e a lista chega refeita
+	a cada mudanca. Uma zona vencida no ultimo quadro pinta de vermelho por um instante
+	a mais, e nunca o contrario -- o erro cai para o lado seguro.
+]=]
+function CardModifierController:FindZoneOverlap(position : Vector3, radius : number)
+	if typeof(position) ~= "Vector3" or typeof(radius) ~= "number" then return nil end
+
+	local userId = Players.LocalPlayer and Players.LocalPlayer.UserId
+
+	for _, modifier in self.Modifiers do
+		local zone = modifier.Zone
+		if not zone or modifier.OwnerUserId ~= userId then continue end
+
+		local delta = zone.Position - position
+		local flat = math.sqrt(delta.X * delta.X + delta.Z * delta.Z)
+
+		if flat < (zone.Radius or 0) + radius then
+			return modifier
+		end
+	end
+
+	return nil
 end
 
 --[[ CICLO DE VIDA ]]

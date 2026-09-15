@@ -122,6 +122,7 @@ end
 	| `Duration` | segundos de partida; sem isso, o registro dura o round |
 	| `Zone` | `{ Position, Radius }`, para os registros marcados com `Zone = true` |
 	| `UnitId` | a torre escolhida, para os registros marcados com `Target = true` |
+	| `OwnerUserId` | quem usou a carta; e por ele que o `FindZoneOverlap` separa as areas |
 
 	Os registros sao **copiados**, e nunca apontados: o do config e a declaracao da
 	carta, e duas copias da mesma carta na mesma partida escreveriam alvo e prazo uma
@@ -144,6 +145,13 @@ function CardModifierService:Apply(records, options) : number
 			Uid = options.Uid,
 			Card = options.Card,
 			ExpiresAt = expiresAt,
+
+			--[[
+				Quem usou a carta. Ele nao muda o que o modificador faz -- o efeito e da sala,
+				venha de quem vier --, e existe para uma pergunta so: se a proxima area **deste
+				jogador** pode cair aqui. Ver o `FindZoneOverlap`.
+			]]
+			OwnerUserId = options.OwnerUserId,
 
 			Stats = record.Stats,
 			Flags = record.Flags,
@@ -199,6 +207,45 @@ function CardModifierService:Remove(uid : any) : number
 	end
 
 	return removed
+end
+
+--[=[
+	A area deste jogador que uma nova de raio `radius` em `position` encostaria, ou
+	`nil` se o lugar esta livre.
+
+	**Duas areas do mesmo jogador nao podem se tocar**: a conta e a distancia entre os
+	centros contra a soma dos raios, que e o teste de dois circulos se cruzando. Sem
+	ela, empilhar tres cajados no mesmo punhado de torres multiplicava os tres buffs
+	no mesmo lugar, e a decisao que a carta vende -- *onde* desenhar o anel -- deixava
+	de existir: o melhor lugar era sempre o lugar do anel anterior.
+
+	**So as do proprio jogador contam.** Numa sala de quatro, negar o lugar por causa
+	do cajado de outro jogador tiraria do mapa os poucos pontos que valem a pena para
+	quem chegou depois, e a disputa por chao nao e o que a carta cobra. Cada um
+	arruma o proprio tabuleiro.
+
+	O `Y` sai da conta: o anel e um circulo no chao, e o mapa tem altura. Medir em
+	tres dimensoes deixaria duas areas coladas passarem so porque uma esta numa rampa.
+
+	Le pelo `GetActive`, e nao pela lista crua: uma zona que ja venceu -- os dez
+	segundos do Staff of Healing -- nao segura mais lugar nenhum.
+]=]
+function CardModifierService:FindZoneOverlap(userId : number?, position : Vector3, radius : number)
+	if typeof(position) ~= "Vector3" or typeof(radius) ~= "number" then return nil end
+
+	for _, modifier in self:GetActive() do
+		local zone = modifier.Zone
+		if not zone or modifier.OwnerUserId ~= userId then continue end
+
+		local delta = zone.Position - position
+		local flat = math.sqrt(delta.X * delta.X + delta.Z * delta.Z)
+
+		if flat < (zone.Radius or 0) + radius then
+			return modifier
+		end
+	end
+
+	return nil
 end
 
 --[=[

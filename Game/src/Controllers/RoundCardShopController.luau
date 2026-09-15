@@ -135,6 +135,10 @@ local RoundCardShopController = {
 		-- Quem desenha o buff e o debuff em cima das unidades. E ele quem mostra, na
 		-- cabeca de cada torre, o que a carta que esta sendo mirada faria com ela.
 		WeatherFeedbackController = {},
+
+		-- Quem tem a lista das areas que ja estao no chao. E ele quem diz se o anel
+		-- debaixo do cursor encosta numa area deste jogador. Ver `_updateTargeting`.
+		CardModifierController = {},
 	},
 }
 
@@ -1189,17 +1193,65 @@ function RoundCardShopController:_buildRing(radius : number, color : Color3?) : 
 			descendant.CanCollide = false
 			descendant.CanQuery = false
 			descendant.CanTouch = false
-
-			if color then
-				descendant.Color = color
-			end
 		end
+	end
+
+	if color then
+		self:_paintRing(ring, color)
 	end
 
 	ring.Parent = workspace.CurrentCamera
 	self.TargetMaid:GiveTask(ring)
 
 	return ring
+end
+
+--[=[
+	Pinta o anel da mira.
+
+	E uma funcao a parte porque a cor do anel de area **muda no meio da mira**: ela
+	vira vermelha onde o lugar esta ocupado por outra area do mesmo jogador e volta ao
+	verde quando o cursor sai de la (ver `_updateTargeting`).
+
+	A cor pedida e guardada no proprio Model, e a pintura sai fora quando ela nao mudou:
+	percorrer os descendentes do anel sessenta vezes por segundo para escrever a mesma
+	cor e trabalho que nao aparece na tela.
+]=]
+function RoundCardShopController:_paintRing(ring : Model, color : Color3)
+	if ring:GetAttribute("PaintedColor") == color then return end
+	ring:SetAttribute("PaintedColor", color)
+
+	for _, descendant in ring:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.Color = color
+		end
+	end
+end
+
+--[=[
+	Este lugar esta ocupado por outra area do **mesmo jogador**?
+
+	Vale so para o `Use.Area`: o segundo passo do Zippers tambem anda pelo chao, mas o
+	que decide o destino dele e o fantasma da torre, e nem ele nem a torre desenham
+	area nenhuma.
+
+	Quem responde e o `CardModifierController`, pela mesma conta que o servidor faz no
+	`FindZoneOverlap`. Sem ele (a lista ainda nao chegou), o lugar conta como livre: o
+	servidor confere de novo, e travar a carta por causa de um controller que nao subiu
+	seria pior do que um clique recusado.
+
+	Perguntado nos dois lugares que precisam da resposta -- a cor do anel, a cada
+	quadro, e o clique -- em vez de o clique reaproveitar o ultimo quadro desenhado: no
+	celular o primeiro toque **e** o primeiro quadro em que existe "onde o dedo esta", e
+	ali nao ha quadro anterior nenhum para consultar.
+]=]
+function RoundCardShopController:_blockedAt(cardId : string, ground : Vector3?) : boolean
+	if not ground then return false end
+
+	local modifiers = self.Controllers.CardModifierController
+	if not modifiers then return false end
+
+	return modifiers:FindZoneOverlap(ground, RoundCardConfig.GetRadius(cardId)) ~= nil
 end
 
 --[=[
@@ -1446,6 +1498,10 @@ function RoundCardShopController:_updateTargeting()
 	local ground = self:_groundAt(screenPosition)
 	if not ground then return end
 
+	-- Vermelho onde o anel encostaria numa area que este jogador ja desenhou. Ver
+	-- `_blockedAt`, que o clique pergunta de novo.
+	local blocked = targeting.Stage == USE.Area and self:_blockedAt(targeting.CardId, ground)
+
 	--[[
 		O anel segue o chao debaixo do cursor. Ele pode nao existir (asset faltando), e
 		a previa continua valendo do mesmo jeito: o que decide onde a carta cai e o
@@ -1454,6 +1510,7 @@ function RoundCardShopController:_updateTargeting()
 	local ring = targeting.Ring
 	if ring and ring.Parent then
 		ring:PivotTo(CFrame.new(ground.X, ground.Y + ring:GetExtentsSize().Y / 2, ground.Z))
+		self:_paintRing(ring, if blocked then TARGETING.Colors.Blocked else TARGETING.Colors.Area)
 	end
 
 	--[[
@@ -1530,6 +1587,19 @@ function RoundCardShopController:_confirmTarget(screenPosition : Vector2)
 
 	local ground = self:_groundAt(screenPosition)
 	if not ground then return end
+
+	--[[
+		Clique no vermelho nao vale, e nao cancela: e a mesma regra do clique no ceu logo
+		acima. A carta continua na mao e a mira aberta, e o jogador move o cursor para
+		fora da area que ja esta no chao.
+
+		O servidor confere isto de novo por conta dele (ver `CardShopService:_checkTarget`).
+		Aqui e feedback, e nao a regra -- o que esta em jogo e a viagem de ida e volta de um
+		clique que ja se sabe recusado.
+	]]
+	if targeting.Stage == USE.Area and self:_blockedAt(targeting.CardId, ground) then
+		return
+	end
 
 	self:_sendUse(targeting.Uid, { Position = ground })
 end

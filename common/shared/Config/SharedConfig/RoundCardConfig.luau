@@ -136,7 +136,11 @@ RoundCardConfig.Use = {
 	largar uma unidade —, ou Esc no PC.
 
 	As cores separam o que a mira está pedindo: verde é "escolha um lugar" e amarelo
-	é "escolha uma torre".
+	é "escolha uma torre". O vermelho é o terceiro estado do anel de área, e não uma
+	quarta coisa que a mira pede: ele é "aqui não" — o lugar debaixo do cursor encosta
+	numa área que **este mesmo jogador** já desenhou, e o clique ali não vale. É o
+	mesmo par verde/vermelho do fantasma de uma torre sendo posicionada, e de
+	propósito: é a frase que o jogador já sabe ler.
 
 	O segundo passo do Zippers -- a torre já escolhida, faltando o destino -- não tem
 	cor aqui porque ele não é uma mira: ele é o posicionamento inteiro, desenhado
@@ -172,6 +176,9 @@ RoundCardConfig.Targeting = {
 	Colors = {
 		Area = Color3.fromRGB(120, 235, 140),
 		Unit = Color3.fromRGB(255, 215, 60),
+
+		-- O anel de área em cima de outra área do mesmo jogador: aqui não.
+		Blocked = Color3.fromRGB(235, 85, 85),
 	},
 }
 
@@ -472,16 +479,26 @@ RoundCardConfig.Cards = {
 		Params = { Amount = 500 },
 	},
 
+	--[[
+		O buque para a sala inteira: 15% de cadencia em toda unidade, por 30 segundos
+		de partida.
+
+		O prazo e o que a poe na familia das bebidas, e nao na dos cajados: ela e uma
+		janela para empurrar uma wave dificil, e nao uma decisao de build. E, como toda
+		carta com `Duration`, ela sai do sorteio depois de usada e so volta na abertura
+		seguinte da loja (ver `CardShopService:_isTemporary`).
+	]]
 	{
 		Id = "Trumpet",
 		Title = "TRUMPET",
-		Description = "Every unit attacks 15% faster",
+		Description = "Every unit attacks 15% faster for 30 seconds",
 		Price = 400,
 		Weight = 1,
 		Use = RoundCardConfig.Use.Instant,
 		Image = "rbxassetid://74040128583244",
 		Effect = "Modifier",
 		Params = {
+			Duration = 30,
 			Modifiers = {
 				{ Stats = { AttackSpeed = 1.15 } },
 			},

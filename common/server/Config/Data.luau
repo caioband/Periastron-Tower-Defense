@@ -145,11 +145,11 @@ return {
 			escreve é o `RoundCardShopService` (Lobby), na compra na loja de cartas; quem
 			lê é o `_pool` do `CardShopService` (Game).
 
-			Nasce com as três originais (`RoundCardShopConfig.STARTER_CARDS`), senão a
-			oferta de round nunca abriria para quem acabou de chegar. Perfil antigo ganha
-			a chave pelo reconcile do DataService — e a ganha **vazia**, porque o
-			reconcile copia o template só onde ele falta e o kit de boas-vindas não é
-			retroativo.
+			Nasce com o kit inicial (`RoundCardShopConfig.STARTER_CARDS`), senão a oferta
+			de round nunca abriria para quem acabou de chegar. Perfil antigo ganha a chave
+			pelo reconcile do DataService — e a ganha **vazia**, porque o reconcile copia o
+			template só onde ele falta; quem preenche o que falta nele é o
+			`RoundCardStarterService`, que roda em toda abertura de perfil nas duas places.
 		]]
 		RoundCards = RoundCardShopConfig.createEmpty(),
 
