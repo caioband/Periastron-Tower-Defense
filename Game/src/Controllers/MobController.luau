@@ -722,6 +722,24 @@ function MobController:construct()
 		self.MobHealth[mobId] = nil
 	end)
 
+	--[[
+		Um tique da queimadura (`MobService:ApplyBurn`): o numero e a barra de vida,
+		como um golpe do `AttackVisual` logo abaixo, mas sem o flash -- ele piscaria
+		por cima do Highlight do fogo a cada meio segundo.
+	]]
+	Framework:Listen("MobBurnTick", function(mobId, damage)
+		local mob = self.SpawnedMobs[mobId]
+		if not mob or not mob.Parent or typeof(damage) ~= "number" then return end
+
+		spawnDamageNumber(mob, damage)
+
+		local hdata = self.MobHealth[mobId]
+		if hdata then
+			hdata.current = math.max(0, hdata.current - damage)
+			updateHealthBar(mob, hdata.current, hdata.max)
+		end
+	end)
+
 	Framework:Listen("AttackVisual", function(unitId, unitName, primaryMobId, hits)
 		local primaryMob = self.SpawnedMobs[primaryMobId]
 		local impactPos = (primaryMob and primaryMob.Parent and primaryMob:GetPivot().Position)

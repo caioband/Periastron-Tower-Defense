@@ -34,8 +34,7 @@ local CLOSE_TO_SCALE = 0.9
 	Owns the crate panel: the Backpack button opens and closes it.
 
 	Was a LocalScript parented to the HUD (StarterGui.HUD.BackpackToggle). It lives
-	here so the UI holds no code -- and so CrateController can close the panel when
-	the player opens a crate.
+	here so the UI holds no code. Opening a crate does **not** close the panel.
 ]=]
 local CrateUIController = {
 	Controllers = {},

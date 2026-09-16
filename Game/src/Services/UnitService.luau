@@ -645,7 +645,7 @@ end
 
 	`source` e o clima que causou o atordoamento, e viaja junto para o cliente:
 	parar de atacar e sempre o mesmo realce amarelo, mas o congelamento da neve tem
-	VFX proprio (`Effects.Snow.Freeze.Asset`) e o raio nao. Sem `source` — o gimmick
+	VFX proprio (`Effects.Snow.Freeze.Asset`, o `IcedVFX`) e o raio nao. Sem `source` — o gimmick
 	de mob — o cliente so desenha o realce.
 ]=]
 function UnitService:StunUnit(entry, duration : number, source : string?)
@@ -1076,9 +1076,8 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 		> Hoje deixam alguma coisa o Electro -- o tranco logo abaixo, que entra em
 		> **cada elo** da corrente, porque este caminho e o mesmo para qualquer alvo que
 		> tenha levado dano -- e o Frostione, com os acumulos de gelo, que usam a
-		> lentidao por dentro. A queimadura continua sem dono -- ainda nao ha unidade
-		> `Fire` --, e a carta Fire Hazard multiplica exatamente estes numeros no dia em
-		> que houver.
+		> lentidao por dentro. A queimadura e do Pyre, e a carta Fire Hazard multiplica
+		> os tiques dela.
 	]]
 	if dealt > 0 then
 		local stats = SharedConfig.UnitStats[entry.unitName]

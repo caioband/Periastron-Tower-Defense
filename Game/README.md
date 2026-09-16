@@ -1325,8 +1325,7 @@ exportada como `Idle` ou `Core` empataria com o que o `Animate` padrão já est�
 tocando — a carta seria usada e o boneco não faria nada.
 
 O `VFXController` ganhou o par `AttachAsset` / `EmitAttached` para isso: pendurar e
-estourar deixaram de ser o mesmo instante. O `playFreezeBurst`, que sempre fez as duas
-coisas juntas, agora é uma linha em cima desse par.
+estourar deixaram de ser o mesmo instante. O congelamento da neve, que usava o par, hoje é o `IcedVFX` pelo `playModelStatus`.
 
 O gesto sai na confirmação do servidor (`RoundCardUsed`), e não no clique: quem gasta
 a carta é ele, e um uso recusado não pode deixar o personagem posando. **Só quem usou

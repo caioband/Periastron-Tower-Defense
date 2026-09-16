@@ -22,6 +22,9 @@ local UnitVFXConfig = {
 	["Berserker"] = { PLACEMENT_EFFECT },
 	["Slingshot"] = { PLACEMENT_EFFECT },
 	["Archer"] = { PLACEMENT_EFFECT },
+	-- A queimadura nao entra aqui: so o servidor sabe se o alvo ja queimava, e o
+	-- desenho chega pelo evento `MobBurning` (`VFXController:PlayBurning`).
+	["Pyre"] = { PLACEMENT_EFFECT },
 	["Subspace Tripminer"] = { PLACEMENT_EFFECT },
 	["Entrepreneur"] = { PLACEMENT_EFFECT },
 	["Azure"] = { PLACEMENT_EFFECT },

@@ -40,14 +40,14 @@
 	de raspao" e "limpa a fileira do lado".
 
 	`Slow`, `Stun`, `Burn` e `Frost` sao o que o golpe **deixa** no inimigo, alem do
-	dano. Hoje deixam o Electro (o tranco do choque) e o Frostione (os acumulos de
-	gelo); o `Burn` espera uma unidade `Fire`:
+	dano. Hoje deixam o Electro (o tranco do choque), o Frostione (os acumulos de
+	gelo) e o Pyre (a queimadura):
 
 	| Campo | O que e |
 	| --- | --- |
 	| `Slow` | `{ Amount, Duration }` -- `Amount` e a fracao de velocidade tirada (0.3 e "anda 30% mais devagar") |
 	| `Stun` | `{ Duration }` -- o inimigo para **de vez** por tantos segundos |
-	| `Burn` | `{ Damage, Ticks, Interval }` -- tantos tiques de tanto dano, de tantos em tantos segundos |
+	| `Burn` | `{ Damage, Ticks, Interval }` -- tantos tiques de tanto dano, de tantos em tantos segundos. Nao acumula: acerto em quem ja queima nao soma dano nem renova o prazo |
 	| `Frost` | `{ Slow, Duration, FreezeStacks, FreezeDuration, FreezeImmunity, Radius, MaxRadius }` -- um acumulo por acerto, contado **por unidade**; com qualquer acumulo o inimigo fica `Slow` mais lento, o acerto de uma unidade renova so o prazo dos dela, e `FreezeStacks` de uma mesma unidade o congelam por `FreezeDuration` e zeram a conta de todas. Descongelado, ele ainda passa `FreezeImmunity` segundos sem aceitar acumulo nenhum. `Radius` (ate `MaxRadius` no nivel maximo) da o mesmo acumulo, sem dano, a quem estiver em volta do alvo |
 
 	`Slow` e `Stun` nao sao a mesma coisa em intensidades diferentes: a lentidao mexe
@@ -528,6 +528,42 @@ local UnitStats = {
 		RangeStats = {
 			Increment = 1,
 			Max = 20,
+		},
+	},
+
+	--[[
+		A primeira unidade `Fire`: tiro unico com projetil, e o acerto deixa o alvo
+		queimando -- 3 de dano a cada 0,5s por 10s, 60 no total, pelo
+		`MobService:ApplyBurn`.
+
+		**A queimadura nao acumula**, venha de quem vier: acerto em quem ja queima so
+		da o dano do tiro, sem somar tique nem renovar o prazo. Por isso o valor dela
+		esta em **espalhar** o fogo, e nao em insistir no mesmo alvo.
+
+		**Os numeros de custo, alcance e cooldown sao provisorios.** O que nao e
+		chute: `Cooldown = 2,1` fica logo acima da animacao `Attack` (2,033s), pelo
+		mesmo motivo do Archer; 15 de dano em 2,1s da 7,1 de DPS no tiro, e com a
+		queimadura inteira (6 de DPS) chega a 13,1 -- 8,8 por 100 de caixa, abaixo do
+		teto de 15 da regra 1 la de cima.
+
+		A queimadura nao cresce com upgrade, clima nem carta de dano: so a carta Fire
+		Hazard mexe nela.
+	]]
+	["Pyre"] = {
+		Rarity = "Rare",
+		Class = "Fire",
+		Cost = 150,
+		Damage = 15,
+		Range = 10,
+		Cooldown = 2.1,
+		AttackType = "SingleShot",
+		HitInterval = 0,
+		Hits = 1,
+		Projectile = { Asset = "PyreProjectile", Speed = 60 },
+		Burn = { Damage = 3, Ticks = 20, Interval = 0.5 },
+		RangeStats = {
+			Increment = 1,
+			Max = 14,
 		},
 	},
 

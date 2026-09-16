@@ -82,6 +82,14 @@ local UnitAttackConfig = {
 		},
 	},
 
+	-- 1,017s e o marcador `Hit` da animacao `Attack` do Pyre (2,033s de duracao).
+	-- Mesma regra do Archer logo acima: o marcador e a fonte, este numero e a copia.
+	["Pyre"] = {
+		AttackSequence = {
+			{ Animation = "Attack", HitTime = 1.017 },
+		},
+	},
+
 	--[=[
 		Quatro golpes numa animacao so, e nao quatro animacoes: os instantes sao os
 		marcadores `Hit` da `Attack` do Berserker (0,4333s, 1,2667s, 2,3833s e

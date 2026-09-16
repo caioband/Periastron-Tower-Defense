@@ -474,26 +474,18 @@ WeatherConfig.Effects = {
 			Duration = 10,
 
 			--[[
-				Os dois VFX do congelamento, em `Assets.VFX`, clonados para dentro da
-				`HumanoidRootPart` da unidade e tocados pelo modulo
-				`ReplicatedStorage.vfx`. Sao dois porque o congelamento tem dois
-				momentos, e cada um pede um jeito diferente de tocar:
-
-				- `Asset` e o **estouro**: emissores de rajada (`EmitCount`, sem `Rate`),
-				  tocados com `emit` uma vez. E o instante em que a unidade trava, e
-				  dura ~1s.
-				- `Aura` e o **estado**: emissores continuos que nascem desligados, e
-				  entram com `enable` e saem com `disable`. E o que fica no ar pelos
-				  `Duration` segundos inteiros, dizendo que aquela unidade *esta*
-				  congelada — sem ele so o realce amarelo sobreviveria ao estouro.
+				O desenho do congelamento, em `Assets.VFX`: o mesmo `IcedVFX` do
+				congelamento do Frostione nos inimigos -- particulas soldadas no corpo
+				da unidade e o Highlight dele pintando o modelo inteiro, pelos segundos
+				que o servidor aplicou (`VFXController:PlayFreeze`).
 
 				`Freeze` existir e tambem o que diz ao `VFXController` que este
 				atordoamento tem desenho proprio: ele nao compara o clima com "Snow",
 				ele procura o `Freeze` de quem causou o atordoamento. Clima sem `Freeze`
-				— e o raio, e o gimmick de mob — continua so com o realce amarelo.
+				— e o raio, e o gimmick de mob — continua so com o realce amarelo, e o
+				congelado fica sem ele, para o amarelo nao brigar com o gelo.
 			]]
-			Asset = "FrozenVFX",
-			Aura = "FrozenAuraVFX",
+			Asset = "IcedVFX",
 		},
 	},
 

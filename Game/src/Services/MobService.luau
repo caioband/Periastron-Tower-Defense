@@ -594,14 +594,17 @@ end
 	tique, e nao no total: uma queimadura que ja esta no ar cobra mais assim que a
 	carta e usada, em vez de esperar a proxima.
 
-	Renovar substitui em vez de empilhar: dois golpes de fogo no mesmo inimigo sao
-	uma queimadura com o prazo recomecado, e nao duas correndo em paralelo. Empilhar
-	faria uma unidade de fogo rapida multiplicar o proprio DPS pelo numero de golpes
-	que couberem na duracao.
+	**Nao acumula nem renova**: acerto de fogo em quem ja esta queimando e ignorado,
+	venha da mesma unidade ou de outra -- nem soma dano, nem recomeca o prazo. So
+	depois de a queimadura acabar um acerto novo acende outra. Sem isso uma unidade
+	de fogo rapida multiplicaria o proprio DPS, e varias no mesmo alvo manteriam o
+	fogo aceso para sempre.
 
-	> ⚠️ Como a lentidao acima, nenhuma unidade de hoje queima: e
-	> `UnitStats[nome].Burn` que liga isto, e o roster ainda nao tem uma unidade
-	> `Fire`.
+	Os tiques cobram em nome de quem **acendeu** o fogo: e o `ownerUserId` dele que
+	leva a caixa ate o fim, mesmo que outro jogador acerte o alvo no meio.
+
+	O desenho sai daqui pelo `MobBurning`, porque so o servidor sabe se o acerto
+	acendeu fogo novo ou caiu em quem ja queimava. Hoje quem queima e o Pyre.
 ]=]
 function MobService:ApplyBurn(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?)
 	local mob = self.ActiveMobs[mobId]
@@ -613,17 +616,32 @@ function MobService:ApplyBurn(mobId : string, damage : number?, ticks : number?,
 
 	if damage <= 0 or ticks <= 0 or interval <= 0 then return end
 
-	mob.BurnToken = (mob.BurnToken or 0) + 1
-	local token = mob.BurnToken
+	local now = GameClock.Now()
+	if now < (mob.BurningUntil or 0) then return end
+
+	local duration = ticks * interval
+	mob.BurningUntil = now + duration
+
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("MobBurning", player, mobId, duration)
+	end
 
 	task.spawn(function()
 		for _ = 1, ticks do
 			GameClock.Wait(interval)
 
-			if self.ActiveMobs[mobId] ~= mob or mob.BurnToken ~= token then return end
+			if self.ActiveMobs[mobId] ~= mob then return end
 
 			local tick = math.max(1, math.floor(damage * self:cardStat("Burn") + 0.5))
-			self:DamageMob(mobId, tick, ownerUserId)
+			local dealt = self:DamageMob(mobId, tick, ownerUserId)
+
+			-- O `DamageMob` nao avisa a tela: o numero e a barra de vida de um golpe
+			-- comum saem do `AttackVisual` da unidade, e o tique nao tem unidade.
+			if dealt > 0 then
+				for _, player in Players:GetPlayers() do
+					Framework:Fire("MobBurnTick", player, mobId, dealt)
+				end
+			end
 		end
 	end)
 end
@@ -1534,6 +1552,8 @@ function MobService:construct()
 	Framework:Listen("SpawnClientMob", function() end)
 	Framework:Listen("UpdateMobSpeed", function() end)
 	Framework:Listen("MobFrozen", function() end)
+	Framework:Listen("MobBurning", function() end)
+	Framework:Listen("MobBurnTick", function() end)
 	Framework:Listen("MobTeleported", function() end)
 	Framework:Listen("KillClientMob", function() end)
 	Framework:Listen("HitClientMob", function() end)

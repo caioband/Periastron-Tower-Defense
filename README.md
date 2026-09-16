@@ -559,39 +559,22 @@ unidade a cada 30s e a congela por 10s. Congelar é o mesmo atordoamento do raio
 acontecer.
 
 O `UnitStunned` leva um terceiro argumento, `source`: o clima que causou o
-atordoamento. O realce amarelo do `UnitPlacementController` vale para qualquer um
-deles, mas o VFX é só de quem tiver um — o `VFXController` procura o
-`Effects.<clima>.Freeze` do `source` em vez de comparar o nome com `"Snow"`, então o
-raio e o gimmick de mob caem fora sozinhos.
+atordoamento. O `VFXController` procura o `Effects.<clima>.Freeze` do `source` em vez
+de comparar o nome com `"Snow"`, então o raio e o gimmick de mob caem fora sozinhos e
+ficam só com o realce amarelo do `UnitPlacementController`.
 
-São **dois** VFX, porque o congelamento tem dois momentos e cada um pede um jeito
-diferente de tocar:
+**O desenho é o mesmo do congelamento do Frostione nos inimigos**: `Freeze.Asset` é o
+`IcedVFX`, tocado pelo `VFXController:playModelStatus` — a mesma função do gelo e do
+fogo nos inimigos. As partículas vão para a `HumanoidRootPart` soldadas no `Torso`, e
+o Highlight do asset muda para a raiz do modelo da unidade, pintando o corpo inteiro.
+O congelado **não** ganha o realce amarelo, para as duas cores não se misturarem.
 
-| Config | Asset | Como toca |
-| --- | --- | --- |
-| `Freeze.Asset` | `FrozenVFX` | o **estouro** do instante em que a unidade trava: emissores de rajada, um `emit` só, ~1s |
-| `Freeze.Aura` | `FrozenAuraVFX` | o **estado**, pelos 10s inteiros: emissores contínuos que nascem desligados, entram com `enable` e saem com `disable` |
-
-Sem a aura, só o realce amarelo sobreviveria ao estouro — o jogador veria o momento
-de congelar, e nada dizendo que a unidade *está* congelada. O `disable` não destrói
-na hora: a faxina espera o rabo das últimas partículas, senão a aura sumiria com um
-corte no fim de cada congelamento. A duração que vale é a que o servidor **de fato
-aplicou** (chega no próprio `UnitStunned`), não o `Freeze.Duration` do config: o
-prazo maior manda em `StunUnit`, e a aura tem que acompanhar o que a unidade está
-sentindo.
-
-Os dois assets são Parts de partículas, e o `attachVFX` cuida das duas coisas que
-parentear sozinho não resolve. **Posicionar**: Part filha de Part não herda posição,
-então o clone recebe o CFrame da `HumanoidRootPart` (o dinheirinho do Entrepreneur
-não precisa disso, porque o asset dele é um Attachment). **Desarmar**: os assets vêm
-do plugin com `CanCollide`, `CanQuery` e `CanTouch` ligados — dentro de uma unidade
-isso vira uma caixa invisível que empurra quem passa e aparece nos `GetPartsInPart`
-do posicionamento, recusando um lugar vazio para quem tentar construir do lado.
-
-O clone da aura mantém o nome do asset, e é por ele que uma aura anterior é achada e
-desfeita: congelar de novo quem já está congelado troca a aura em vez de empilhar
-duas. Achar pelo nome também faz a unidade levar `Destroy` (venda, recomeço de round)
-limpar tudo sozinha, sem bookkeeping para desencontrar.
+A duração que vale é a que o servidor **de fato aplicou** (chega no próprio
+`UnitStunned`), não o `Freeze.Duration` do config: o prazo maior manda em `StunUnit`.
+No fim os emissores desligam, o Highlight sai na hora e a Part só é destruída depois
+do rabo das últimas partículas. Congelar de novo quem já está congelado troca o
+desenho em vez de empilhar dois, e vender a unidade limpa tudo junto com o modelo. O
+Staff of Healing apaga antes da hora pelo `StopFreeze` (`stopModelStatus`).
 
 #### Buff e debuff na unidade
 
@@ -1247,6 +1230,30 @@ O campo é genérico: vale para qualquer unidade de vários `Hits`, com os golpe
 espaçados por `HitInterval` ou por `HitTimes`. Sem o campo, todos os golpes do
 ciclo valem igual — que é como o Azure continua batendo.
 
+### O fogo que não acumula (Pyre)
+
+A primeira unidade `Fire`, Rare: tiro único com o `PyreProjectile`, 15 de dano, e o
+acerto deixa o alvo queimando — 3 de dano a cada 0,5s por 10s
+(`UnitStats.Pyre.Burn`, executado pelo `MobService:ApplyBurn`).
+
+**A queimadura não acumula nem renova.** Acerto em quem já queima — do mesmo Pyre ou
+de outro — só dá o dano do tiro: nem soma tique, nem recomeça o prazo
+(`mob.BurningUntil`). O fogo novo só acende depois de o anterior apagar. Os tiques
+cobram em nome de quem acendeu.
+
+O desenho é o `Assets.VFX.BurningVFX`: o servidor avisa pelo `MobBurning` só quando
+acende fogo novo, e o `VFXController:PlayBurning` solda o asset no inimigo e passa o
+Highlight dele para a raiz do modelo — o mesmo caminho do congelamento do Frostione
+(`playMobStatus`).
+
+Cada tique avisa a tela pelo `MobBurnTick` (número de dano e barra de vida no
+`MobController`): o `DamageMob` não fala com o cliente, e sem esse evento o fogo tirava
+vida sem nada aparecer.
+
+Custo (150), alcance (10) e cooldown (2,1s, logo acima da animação de 2,033s) são
+provisórios. A queimadura não cresce com upgrade nem clima; só a carta Fire Hazard
+mexe nela.
+
 ### O raio que salta (Electro)
 
 A quarta forma de um golpe acertar mais de um alvo, e a única sem queda de dano. As
@@ -1293,8 +1300,8 @@ diferença é de mecanismo e não de intensidade:
 
 Os dois são campos genéricos que qualquer unidade pode declarar, aplicados pelo
 `creditDamage` a cada elo que levou dano. **O Electro declara só o `Stun`** — o inimigo
-para e volta a andar no ritmo de sempre. `Slow` e `Burn` continuam sem dono, esperando
-uma unidade `Ice` e uma `Fire`.
+para e volta a andar no ritmo de sempre. O `Burn` é do Pyre (ver abaixo), e o `Slow`
+direto continua sem dono — o Frostione usa a lentidão por dentro do `ApplyFrost`.
 
 O tranco vai de 0,3s parado num ciclo de 2,5s no nível 0 (12% do caminho que os quatro
 andariam) a 0,5s no nível máximo (20%). Isso ainda é tropeço, não controle — quem para
@@ -1610,11 +1617,9 @@ assinatura antes de reescrever a billboard.
 ### Duas cartas ainda não fazem nada
 
 `Chill Out` (+10% na lentidão do gelo) e `Fire Hazard` (+20% no dano de
-queimadura) são multiplicadores globais que o `MobService` já lê (`ApplySlow`,
-`ApplyBurn`), mas **nenhuma unidade do roster de hoje congela ou queima**: é
-`UnitStats[nome].Slow` / `.Burn` que liga as duas mecânicas, e ainda não existe
-unidade `Ice` nem `Fire`. As duas cartas passam a valer no dia em que existir uma,
-sem passar por aqui.
+queimadura) são multiplicadores globais que o `MobService` lê (`ApplySlow`,
+`ApplyBurn`). Hoje a lentidão é a dos acúmulos do Frostione e a queimadura é a do
+Pyre, então as duas já valem.
 
 ## A loja de cartas do lobby
 

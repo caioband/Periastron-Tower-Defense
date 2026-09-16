@@ -83,6 +83,12 @@ UnitUpgradeConfig.Units = {
 		CostMultiplier = 1.6,
 		DamageMultiplier = 1.25,
 	},
+	-- A escada das outras Rare de tiro. So o tiro cresce: a queimadura e fixa.
+	["Pyre"] = {
+		BaseCost = 100,
+		CostMultiplier = 1.6,
+		DamageMultiplier = 1.25,
+	},
 	-- Mesma escada do Slingshot, que e a unidade de que ele e uma variacao.
 	["Archer"] = {
 		BaseCost = 100,

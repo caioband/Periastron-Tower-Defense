@@ -43,7 +43,6 @@ local REQUEST_COOLDOWN = 0.5
 local CrateController = {
 	Controllers = {
 		DataController = {},
-		CrateUIController = {},
 	},
 
 	Signals = {
@@ -238,8 +237,10 @@ function CrateController:GetCrates() : { [string]: number }
 end
 
 --[=[
-	Asks the server to open one crate of a rarity and gets the panel out of the way so
-	the player can watch the unboxing.
+	Asks the server to open one crate of a rarity.
+
+	The Backpack panel stays open on purpose: the player can keep opening crates
+	from it without reopening the panel after every unboxing.
 
 	The amount check here is only to keep the UI from firing pointless requests -- the
 	server reads the profile and is what actually spends the crate.
@@ -262,7 +263,6 @@ function CrateController:RequestOpen(rarity : string) : boolean
 	self.LastRequest = now
 
 	Framework:Fire("RequestOpenCrate", resolvedRarity)
-	self.Controllers.CrateUIController:Close()
 
 	return true
 end

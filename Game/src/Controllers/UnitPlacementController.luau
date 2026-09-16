@@ -1844,7 +1844,12 @@ function UnitPlacementController:construct()
 		end
 	end
 
-	Framework:Listen("UnitStunned", function(unitId, duration)
+	Framework:Listen("UnitStunned", function(unitId, duration, source)
+		-- O congelamento de clima tem desenho proprio, com o Highlight azul do gelo
+		-- (`VFXController:PlayFreeze`): o amarelo por cima so sujaria a cor.
+		local effects = SharedConfig.WeatherConfig.GetEffects(source)
+		if effects and effects.Freeze then return end
+
 		highlightUnit(unitId, duration, Color3.fromRGB(255, 200, 60), STUN_HIGHLIGHT)
 	end)
 

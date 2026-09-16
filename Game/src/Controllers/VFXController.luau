@@ -34,8 +34,16 @@ local UNIT_ROOT_NAME = "HumanoidRootPart"
 -- Prazo de faxina de quando o proprio modulo nao souber dizer quanto o efeito
 -- dura (asset sem particula, ou com `EmitDuration` infinito).
 local MONEY_VFX_FALLBACK = 3
-local FREEZE_VFX_FALLBACK = 2
-local FREEZE_AURA_FALLBACK = 2
+
+-- Os estados desenhados num modelo inteiro (`playModelStatus`): o congelamento --
+-- do Frostione nos inimigos e do clima nas unidades -- e a queimadura do Pyre. O
+-- asset em `Assets.VFX`, o nome do Highlight dele depois de mudar para o modelo, e
+-- a faxina de quando o modulo `vfx` nao souber dizer quanto as particulas duram.
+local ICED_VFX_NAME = "IcedVFX"
+local ICED_HIGHLIGHT_NAME = "IcedHighlight"
+local BURNING_VFX_NAME = "BurningVFX"
+local BURNING_HIGHLIGHT_NAME = "BurningHighlight"
+local STATUS_VFX_FALLBACK = 2
 
 --[=[
 	O impacto da ponta do raio do Electro, bem mais baixo que o do raio do clima.
@@ -279,7 +287,7 @@ end
 	porque o asset dele e um Attachment, que herda.
 
 	**Desarmar.** Os assets vem do plugin com `CanCollide`, `CanQuery` e `CanTouch`
-	ligados (o `FrozenAuraVFX` vem assim). Dentro de uma unidade isso vira uma caixa
+	ligados (o `FrozenVFX` vem assim). Dentro de uma unidade isso vira uma caixa
 	invisivel que empurra quem passa e, pior, aparece nos `GetPartsInPart` do
 	posicionamento — recusando um lugar vazio para todo mundo que tentar construir
 	do lado. Nao da para depender de o asset vir certo do Studio.
@@ -318,7 +326,7 @@ end
 --[=[
 	Pendura um asset de `Assets.VFX` numa Part e devolve o clone, **sem estourar**.
 
-	E a metade da frente do `playFreezeBurst`, separada porque nem todo efeito nasce
+	E a metade da frente do `EmitAttached`, separada porque nem todo efeito nasce
 	e estoura no mesmo instante: o da carta de round e pendurado no jogador na hora
 	em que ela e usada e so estoura quando a animacao chega no marcador. Quem separa
 	os dois fica devendo o `EmitAttached` -- ou a destruicao do clone, se o estouro
@@ -351,111 +359,49 @@ function VFXController:EmitAttached(clone : Instance?, fallback : number?)
 	VFX.destroyAfter(clone, VFX.maxLifetime(clone) or fallback or DEFAULT_LIFETIME)
 end
 
---- O estouro do congelamento: o instante em que a unidade trava.
-function VFXController:playFreezeBurst(assetName : string?, root : BasePart)
-	self:EmitAttached(self:AttachAsset(assetName, root), FREEZE_VFX_FALLBACK)
-end
-
 --[=[
-	A aura do congelamento: o estado, enquanto ele durar.
+	O congelamento de clima na unidade que acabou de travar: o mesmo `IcedVFX` do
+	congelamento do Frostione nos inimigos, pelo `playModelStatus` -- particulas
+	soldadas no `Torso` e o Highlight dele na raiz do modelo da unidade.
 
-	`enable`/`disable` em vez de `emit` porque os emissores sao continuos e nascem
-	desligados — quem manda neles e o `Enabled`, nao um numero de particulas. O
-	`disable` e o desligar, e a destruicao vem so depois do rabo das ultimas
-	particulas, senao a aura sumiria com um corte no fim de cada congelamento.
-
-	`duration` e o que o servidor de fato aplicou, e nao o `Freeze.Duration` do
-	config: o atordoamento pode ter vindo mais longo (o prazo maior manda, em
-	`UnitService:StunUnit`), e a aura tem que acompanhar o que a unidade esta
-	sentindo.
-
-	O clone mantem o nome do asset, e e por ele que uma aura anterior e achada e
-	desfeita: congelar de novo quem ja esta congelado troca a aura em vez de
-	empilhar duas. Achar pelo nome tambem faz a unidade levar `Destroy` (venda,
-	recomeco de round) limpar tudo sozinha, sem bookkeeping para desencontrar.
-]=]
-function VFXController:playFreezeAura(assetName : string?, root : BasePart, duration : number)
-	if not assetName or duration <= 0 then return end
-
-	local template = self.Library[assetName]
-	if not template then
-		warn(`[VFXController]: nao achei o VFX "{assetName}" em Assets.VFX.`)
-		return
-	end
-
-	local previous = root:FindFirstChild(assetName)
-	if previous then
-		previous:Destroy()
-	end
-
-	local clone = attachVFX(template, root)
-
-	VFX.enable(clone)
-
-	-- A `duration` e o prazo do congelamento, que corre no relogio da partida: a
-	-- aura tem que apagar quando a unidade descongela, e nao segundos depois.
-	GameClock.Delay(duration, function()
-		-- A unidade pode ter sido vendida, ou uma aura nova pode ter substituido
-		-- esta: nos dois casos o clone ja saiu do Workspace e nao ha o que desligar.
-		if not clone.Parent then return end
-
-		VFX.disable(clone)
-		VFX.destroyAfter(clone, VFX.maxLifetime(clone) or FREEZE_AURA_FALLBACK)
-	end)
-end
-
---[=[
-	O congelamento da neve, na unidade que acabou de travar: o estouro e a aura.
-
-	Nada aqui e escrito em cima do nome "Snow": o desenho sai do `Freeze` do clima
-	que o servidor mandou como causa do atordoamento. Clima sem `Freeze` (o raio) e
+	Nada aqui e escrito em cima do nome "Snow": o asset sai do `Freeze` do clima que
+	o servidor mandou como causa do atordoamento. Clima sem `Freeze` (o raio) e
 	atordoamento sem clima nenhum (o gimmick de mob) caem fora sozinhos, e ficam so
 	com o realce amarelo que o `UnitPlacementController` desenha.
+
+	`duration` e o que o servidor de fato aplicou, e nao o `Freeze.Duration` do
+	config: o prazo maior manda em `UnitService:StunUnit`.
 ]=]
 function VFXController:PlayFreeze(unitId : string, weatherName : string?, duration : number?)
 	local effects = WeatherConfig.GetEffects(weatherName)
 	local freeze = effects and effects.Freeze
-	if not freeze then return end
+	if not freeze or not freeze.Asset then return end
 
 	local model = self:resolveUnitModel(unitId)
 	if not model or not model.Parent then return end
 
-	local root = model:FindFirstChild(UNIT_ROOT_NAME) or model.PrimaryPart
-	if not root or not root:IsA("BasePart") then return end
-
-	self:playFreezeBurst(freeze.Asset, root)
-	self:playFreezeAura(freeze.Aura, root, duration or 0)
+	self:playModelStatus(model, freeze.Asset, ICED_HIGHLIGHT_NAME, duration)
 end
 
 --[=[
-	Apaga a aura de congelamento de uma unidade antes da hora dela.
+	Apaga o congelamento de uma unidade antes da hora dele.
 
-	E o Staff of Healing: ele tira o atordoamento no meio, e a aura tem prazo proprio
-	-- um `GameClock.Delay` que nasceu junto com ela e nao tem como saber que o
-	congelamento acabou mais cedo. Sem isto a unidade voltaria a atacar envolvida numa
-	nevasca que ja nao existe.
+	E o Staff of Healing: ele tira o atordoamento no meio, e o desenho tem prazo
+	proprio -- um `GameClock.Delay` que nasceu junto com ele e nao tem como saber que
+	o congelamento acabou mais cedo. Sem isto a unidade voltaria a atacar ainda
+	coberta de gelo.
 
-	As auras sao procuradas pelo nome do asset, que e o mesmo do clone (ver
-	`playFreezeAura`), e os nomes saem do config: um clima novo com `Freeze` proprio
-	entra nesta limpeza sem passar por aqui.
-
-	O desligar e o mesmo do fim normal -- `disable` e destruicao so depois do rabo das
-	ultimas particulas --, senao a aura sumiria com um corte.
+	Os nomes saem do config: um clima novo com `Freeze` proprio entra nesta limpeza
+	sem passar por aqui.
 ]=]
 function VFXController:StopFreeze(unitId : string)
 	local model = self:resolveUnitModel(unitId)
 	if not model or not model.Parent then return end
 
-	local root = model:FindFirstChild(UNIT_ROOT_NAME) or model.PrimaryPart
-	if not root then return end
-
 	for _, effects in WeatherConfig.Effects do
-		local aura = effects.Freeze and effects.Freeze.Aura
-		local clone = aura and root:FindFirstChild(aura)
-
-		if clone then
-			VFX.disable(clone)
-			VFX.destroyAfter(clone, VFX.maxLifetime(clone) or FREEZE_AURA_FALLBACK)
+		local asset = effects.Freeze and effects.Freeze.Asset
+		if asset then
+			self:stopModelStatus(model, asset, ICED_HIGHLIGHT_NAME)
 		end
 	end
 end
@@ -707,13 +653,6 @@ function VFXController:PlayChainLightning(arc)
 	end
 end
 
--- O congelamento do Frostione: o asset em `Assets.VFX`, o nome do Highlight dele
--- depois de mudar para o modelo do inimigo, e a faxina de quando o modulo `vfx` nao
--- souber dizer quanto as particulas duram.
-local ICED_VFX_NAME = "IcedVFX"
-local ICED_HIGHLIGHT_NAME = "IcedHighlight"
-local ICED_VFX_FALLBACK = 2
-
 -- As tags com que o modulo `vfx` liga e desliga um asset sozinho. Ver `attachToMob`.
 local AUTO_VFX_TAGS = { "EnabledVFX", "SequencedVFX" }
 
@@ -783,42 +722,40 @@ function VFXController:attachToMob(assetName : string?, mob : Model, weldTo : st
 end
 
 --[=[
-	O congelamento do Frostione num inimigo, pelos `duration` segundos que o servidor
-	aplicou.
+	Um estado que o servidor pos num modelo -- inimigo ou unidade: congelado,
+	queimando --, desenhado pelos `duration` segundos que ele aplicou.
 
-	O `IcedVFX` vai para o `HumanoidRootPart` soldado no `Torso`, com os emissores
-	ligados, e o Highlight dele muda para o modelo do inimigo, que e o que ele
-	precisa para pintar o corpo inteiro. No fim os emissores desligam, o Highlight
-	sai na hora e a Part so e destruida depois do rabo das ultimas particulas.
+	O asset vai para o `HumanoidRootPart` soldado no `Torso`, com os emissores
+	ligados, e o Highlight dele muda para a raiz do modelo, que e o que ele precisa
+	para pintar o corpo inteiro. No fim os emissores desligam, o Highlight sai na
+	hora e a Part so e destruida depois do rabo das ultimas particulas.
 
-	Um congelamento em cima de outro troca o anterior em vez de empilhar dois. O
-	inimigo morrer no meio limpa tudo sozinho: os dois vivem dentro do modelo.
+	O mesmo estado em cima de outro troca o anterior em vez de empilhar dois. O
+	modelo sair no meio (inimigo morto, unidade vendida) limpa tudo sozinho: os dois
+	vivem dentro dele. Estados diferentes convivem -- cada um tem o nome do asset e
+	do Highlight dele.
 ]=]
-function VFXController:PlayIced(mobId : string, duration : number?)
+function VFXController:playModelStatus(mob : Model, assetName : string, highlightName : string, duration : number?)
 	duration = tonumber(duration) or 0
-	if duration <= 0 then return end
-
-	local mobs = self.Controllers.MobController
-	local mob = mobs and mobs.SpawnedMobs and mobs.SpawnedMobs[mobId]
-	if not mob or not mob.Parent then return end
+	if duration <= 0 or not mob.Parent then return end
 
 	local root = mob:FindFirstChild(UNIT_ROOT_NAME) or mob.PrimaryPart
-	local previous = root and root:FindFirstChild(ICED_VFX_NAME)
+	local previous = root and root:FindFirstChild(assetName)
 	if previous then
 		previous:Destroy()
 	end
 
-	local previousHighlight = mob:FindFirstChild(ICED_HIGHLIGHT_NAME)
+	local previousHighlight = mob:FindFirstChild(highlightName)
 	if previousHighlight then
 		previousHighlight:Destroy()
 	end
 
-	local clone = self:attachToMob(ICED_VFX_NAME, mob, "Torso")
+	local clone = self:attachToMob(assetName, mob, "Torso")
 	if not clone then return end
 
 	local highlight = clone:FindFirstChildWhichIsA("Highlight")
 	if highlight then
-		highlight.Name = ICED_HIGHLIGHT_NAME
+		highlight.Name = highlightName
 		highlight.Adornee = nil
 		highlight.Parent = mob
 	end
@@ -829,8 +766,8 @@ function VFXController:PlayIced(mobId : string, duration : number?)
 		end
 	end
 
-	-- Tempo de partida, como o `StunMob` do outro lado: no 3x o congelamento acaba
-	-- antes em segundos reais, e o gelo tem que sair junto.
+	-- Tempo de partida, como o `StunMob` do outro lado: no 3x o estado acaba antes
+	-- em segundos reais, e o desenho tem que sair junto.
 	GameClock.Delay(duration, function()
 		if highlight and highlight.Parent then
 			highlight:Destroy()
@@ -844,8 +781,55 @@ function VFXController:PlayIced(mobId : string, duration : number?)
 			end
 		end
 
-		VFX.destroyAfter(clone, VFX.maxLifetime(clone) or ICED_VFX_FALLBACK)
+		VFX.destroyAfter(clone, VFX.maxLifetime(clone) or STATUS_VFX_FALLBACK)
 	end)
+end
+
+--[=[
+	Apaga um estado do `playModelStatus` antes da hora: o Highlight sai na hora, e a
+	Part so depois do rabo das ultimas particulas, como no fim normal. O `Delay` que
+	nasceu com o estado ainda dispara depois, e nao acha mais nada para mexer.
+]=]
+function VFXController:stopModelStatus(mob : Model, assetName : string, highlightName : string)
+	local highlight = mob:FindFirstChild(highlightName)
+	if highlight then
+		highlight:Destroy()
+	end
+
+	local root = mob:FindFirstChild(UNIT_ROOT_NAME) or mob.PrimaryPart
+	local clone = root and root:FindFirstChild(assetName)
+	if not clone then return end
+
+	-- Sai do nome para um estado novo logo em seguida nao destruir este no meio do
+	-- rabo das particulas.
+	clone.Name = assetName .. "Ending"
+
+	for _, descendant in clone:GetDescendants() do
+		if descendant:IsA("ParticleEmitter") then
+			descendant.Enabled = false
+		end
+	end
+
+	VFX.destroyAfter(clone, VFX.maxLifetime(clone) or STATUS_VFX_FALLBACK)
+end
+
+-- Um estado num inimigo, pelo id: o modelo mora no `MobController`.
+function VFXController:playMobStatus(mobId : string, assetName : string, highlightName : string, duration : number?)
+	local mobs = self.Controllers.MobController
+	local mob = mobs and mobs.SpawnedMobs and mobs.SpawnedMobs[mobId]
+	if not mob then return end
+
+	self:playModelStatus(mob, assetName, highlightName, duration)
+end
+
+-- O congelamento do Frostione (`IcedVFX`). Ver `playModelStatus`.
+function VFXController:PlayIced(mobId : string, duration : number?)
+	self:playMobStatus(mobId, ICED_VFX_NAME, ICED_HIGHLIGHT_NAME, duration)
+end
+
+-- A queimadura do Pyre (`BurningVFX`). Ver `playModelStatus`.
+function VFXController:PlayBurning(mobId : string, duration : number?)
+	self:playMobStatus(mobId, BURNING_VFX_NAME, BURNING_HIGHLIGHT_NAME, duration)
 end
 
 -- Os dois ataques do Archmage que tem desenho: os assets em `Assets.VFX`, o
@@ -1035,6 +1019,12 @@ function VFXController:construct()
 	-- conta, entao o aviso vem dele (`MobService:ApplyFrost`).
 	Framework:Listen("MobFrozen", function(mobId : string, duration : number)
 		self:PlayIced(mobId, duration)
+	end)
+
+	-- A queimadura do Pyre: so o servidor sabe se o acerto acendeu fogo novo ou caiu
+	-- em quem ja queimava (`MobService:ApplyBurn`).
+	Framework:Listen("MobBurning", function(mobId : string, duration : number)
+		self:PlayBurning(mobId, duration)
 	end)
 
 	-- Os ataques do Archmage que tem desenho. Quem decide a mira e o tempo e o
