@@ -83,11 +83,17 @@ UnitUpgradeConfig.Units = {
 		CostMultiplier = 1.6,
 		DamageMultiplier = 1.25,
 	},
-	-- A escada das outras Rare de tiro. So o tiro cresce: a queimadura e fixa.
+	--[[
+		O dano do tiro vai de 15 a 25 no nivel maximo, pela mesma conta do Slasher: a
+		raiz `MaxUpgrades`-esima de alvo/base. So o tiro cresce: a queimadura e fixa.
+
+		| Nivel | 0  | 1  | 2  | 3  | 4  | 5  |
+		| Dano  | 15 | 17 | 18 | 20 | 23 | 25 |
+	]]
 	["Pyre"] = {
 		BaseCost = 100,
 		CostMultiplier = 1.6,
-		DamageMultiplier = 1.25,
+		DamageMultiplier = (25 / UnitStats["Pyre"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 	},
 	-- Mesma escada do Slingshot, que e a unidade de que ele e uma variacao.
 	["Archer"] = {

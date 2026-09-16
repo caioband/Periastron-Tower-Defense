@@ -12,8 +12,60 @@ local module = {
 	SETTINGS = {
 		WALK_SPEED = 16,
 		RUN_SPEED = 24,
+		RUN_FOV = 78,
+		WALK_FOV = 70,
 	},
+
+	-- (isRunning : boolean) -- o botao de correr do celular acende e apaga por aqui.
+	Changed = Instance.new("BindableEvent"),
+	isRunning = false,
 }
+
+local function tweenFov(fov : number)
+	TweenService:Create(Camera, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { FieldOfView = fov }):Play()
+end
+
+function module:updateAnimation()
+	local runAnimation = movementController:getAnimation("Run")
+	if not runAnimation or not self.humanoid then return end
+
+	local isMoving = self.humanoid.MoveDirection.Magnitude > 0
+
+	if self.isRunning and isMoving then
+		if not runAnimation.IsPlaying then
+			runAnimation:Play()
+		end
+	else
+		if runAnimation.IsPlaying then
+			runAnimation:Stop()
+		end
+	end
+end
+
+--[=[
+	Liga ou desliga a corrida. O Shift do teclado segura (liga no aperto, desliga
+	no soltar); o botao do celular alterna -- os dois passam por aqui.
+]=]
+function module:setRunning(running : boolean)
+	if not self.humanoid or running == self.isRunning then return end
+
+	if running then
+		self.humanoid.WalkSpeed = self.SETTINGS.RUN_SPEED
+	elseif self.humanoid.WalkSpeed == self.SETTINGS.RUN_SPEED then
+		self.humanoid.WalkSpeed = self.SETTINGS.WALK_SPEED
+	end
+
+	self.isRunning = running
+
+	self:updateAnimation()
+	tweenFov(running and self.SETTINGS.RUN_FOV or self.SETTINGS.WALK_FOV)
+
+	self.Changed:Fire(running)
+end
+
+function module:toggle()
+	self:setRunning(not self.isRunning)
+end
 
 function module:begin(character)
 	self.character = character
@@ -21,25 +73,11 @@ function module:begin(character)
 
 	self.connections = {}
 	self.isRunning = false
+	self.Changed:Fire(false)
 
-	local function updateAnimation()
-		local runAnimation = movementController:getAnimation("Run")
-		if not runAnimation then return end
-
-		local isMoving = self.humanoid.MoveDirection.Magnitude > 0
-
-		if self.isRunning and isMoving then
-			if not runAnimation.IsPlaying then
-				runAnimation:Play()
-			end
-		else
-			if runAnimation.IsPlaying then
-				runAnimation:Stop()
-			end
-		end
-	end
-
-	table.insert(self.connections, self.humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(updateAnimation))
+	table.insert(self.connections, self.humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(function()
+		self:updateAnimation()
+	end))
 
 	table.insert(self.connections, self.humanoid.Jumping:Connect(function(active)
 		local runAnimation = movementController:getAnimation("Run")
@@ -51,7 +89,7 @@ function module:begin(character)
 
 		if not active and self.isRunning then
 			task.wait(0.55)
-			updateAnimation()
+			self:updateAnimation()
 		end
 	end))
 
@@ -59,39 +97,34 @@ function module:begin(character)
 		if gameProcessed then return end
 		if input.KeyCode ~= Enum.KeyCode.LeftShift then return end
 
-		self.humanoid.WalkSpeed = self.SETTINGS.RUN_SPEED
-		self.isRunning = true
-
-		updateAnimation()
-
-		local Tween = TweenService:Create(Camera, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = 78})
-		Tween:Play()
+		self:setRunning(true)
 	end))
 
 	table.insert(self.connections, UserInputService.InputEnded:Connect(function(input, gameProcessed)
 		if gameProcessed then return end
 		if input.KeyCode ~= Enum.KeyCode.LeftShift then return end
 
-		if self.humanoid.WalkSpeed == self.SETTINGS.RUN_SPEED then
-			self.humanoid.WalkSpeed = self.SETTINGS.WALK_SPEED
-		end
-
-		self.isRunning = false
-
-		updateAnimation()
-
-		local Tween = TweenService:Create(Camera, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {FieldOfView = 70})
-		Tween:Play()
+		self:setRunning(false)
 	end))
 end
 
 function module:stop()
-	for _, connection in (self.connections) do
-		connection:Disconnect()
+	if self.connections then
+		for _, connection in (self.connections) do
+			connection:Disconnect()
+		end
 	end
 
-	self.isRunning = nil
+	-- Morrer correndo nao pode deixar a camera aberta no FOV da corrida.
+	if self.isRunning then
+		tweenFov(self.SETTINGS.WALK_FOV)
+	end
+
+	self.isRunning = false
+	self.humanoid = nil
 	self.connections = nil
+
+	self.Changed:Fire(false)
 end
 
 return module

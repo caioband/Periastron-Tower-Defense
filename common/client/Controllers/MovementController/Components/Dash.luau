@@ -61,24 +61,31 @@ function module:createAfterimage()
 	end)
 end
 
-function module:begin(character)
-	self.character = character
-	self.humanoid = character:WaitForChild("Humanoid")
-	self.rootPart = character:WaitForChild("HumanoidRootPart")
+--[=[
+	Quanto do cooldown ainda falta, de 1 (acabou de dar o dash) a 0 (pronto). O
+	botao do celular desenha a recarga com isto.
+]=]
+function module:getCooldownAlpha() : number
+	local elapsed = os.clock() - self.lastRoll
+	return math.clamp(1 - elapsed / self.SETTINGS.COOLDOWN, 0, 1)
+end
 
-	self.connections = {}
+--[=[
+	O dash, se puder: a tecla do teclado e o botao do celular chamam o mesmo. Devolve
+	se o dash de fato saiu.
+]=]
+function module:tryDash() : boolean
+	if not self.rootPart or not self.humanoid then return false end
+	if self.isRolling or (os.clock() - self.lastRoll < self.SETTINGS.COOLDOWN) then return false end
 
-	table.insert(self.connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if gameProcessed or self.isRolling or (os.clock() - self.lastRoll < self.SETTINGS.COOLDOWN) then return end
-		if input.KeyCode ~= self.SETTINGS.KEYBIND then return end
-
+	do
 		self.isRolling = true
 		self.lastRoll = os.clock()
 
 		local rollAnimation = movementController:getAnimation("Dash")
 		if not rollAnimation then
 			self.isRolling = false
-			return
+			return false
 		end
 
 		local isAirborne = self.humanoid.FloorMaterial == Enum.Material.Air or self.humanoid:GetState() == Enum.HumanoidStateType.Freefall
@@ -152,6 +159,23 @@ function module:begin(character)
 			if att then att:Destroy() end
 			self.isRolling = false
 		end)
+	end
+
+	return true
+end
+
+function module:begin(character)
+	self.character = character
+	self.humanoid = character:WaitForChild("Humanoid")
+	self.rootPart = character:WaitForChild("HumanoidRootPart")
+
+	self.connections = {}
+
+	table.insert(self.connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed then return end
+		if input.KeyCode ~= self.SETTINGS.KEYBIND then return end
+
+		self:tryDash()
 	end))
 end
 
@@ -162,6 +186,10 @@ function module:stop()
 		end
 		self.connections = nil
 	end
+
+	-- Sem personagem vivo o botao do celular nao pode dar dash num corpo morto.
+	self.humanoid = nil
+	self.rootPart = nil
 end
 
 return module
