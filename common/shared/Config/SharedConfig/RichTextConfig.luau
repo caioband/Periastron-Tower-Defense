@@ -141,6 +141,29 @@ RichTextConfig.Presets = {
 } :: { [string] : Options }
 
 --[=[
+	As paletas que `[gradient=nome]` usa.
+
+	Cor em `r,g,b`, separadas por `;` — é o formato que o HyperText entende, e
+	repeti-lo aqui é mais honesto que inventar um nosso e converter no meio do
+	caminho. De 1 a 18 cores.
+
+	`MoveSpeed` é quantas voltas completas de cor o gradiente dá por segundo; zero é
+	gradiente parado. `MoveDir` ("left" ou "right") e `Rot` (graus) são opcionais.
+
+	O nome é o que o jogo escreve — `[gradient=orange]` —, e é ele que sobrevive a
+	uma troca de biblioteca. As cores são ajuste de designer e mudam aqui.
+]=]
+RichTextConfig.Gradients = {
+	-- O do módulo, para quem escreve `[gradient]` sem dizer qual.
+	default = { Colors = "85,170,255;255,85,0" },
+
+	orange = { Colors = "255,205,95;255,110,20", MoveSpeed = 0.2 },
+	green = { Colors = "165,255,150;35,170,80", MoveSpeed = 0.5 },
+	gold = { Colors = "255,240,170;225,165,40", MoveSpeed = 0.3 },
+	ice = { Colors = "200,245,255;70,160,255", MoveSpeed = 0.25 },
+}
+
+--[=[
 	A marcação que o jogo escreve, e no que ela vira em cada backend.
 
 	Cada alias tem uma coluna por backend. A do `Plain` não existe porque o Plain
@@ -197,9 +220,28 @@ RichTextConfig.Aliases = {
 	wiggle = { HyperText = { Open = "<anim=wiggle loop=true amp=.1 rot=false>", Close = "</anim>" } },
 
 	rainbow = { HyperText = { Open = "<rainbow=true>", Close = "</rainbow>" } },
-	shiny = { HyperText = { Open = "<shiny=true>", Close = "</shiny>" } },
 	fog = { HyperText = { Open = "<fog=true>", Close = "</fog>" } },
-	gradient = { HyperText = { Open = "<gradient=true>", Close = "</gradient>" } },
+
+	-- Faíscas em cima do texto. O valor é a cor delas: um atalho do módulo
+	-- (`[shiny=yellow]`) ou `r,g,b`.
+	shiny = { HyperText = { Open = "<shiny=true color=%s>", Close = "</shiny>" }, Default = "white" },
+
+	-- Gradiente por paleta batizada em `RichTextConfig.Gradients`.
+	gradient = {
+		HyperText = { Open = "<gradient=true %s>", Close = "</gradient>" },
+		Default = "default",
+		Converter = "Gradient",
+	},
+
+	-- Dourado com brilho: a cor da letra e a faísca de uma vez, porque as duas
+	-- juntas é que fazem o efeito — só a cor é texto amarelo, só a faísca é
+	-- purpurina no escuro.
+	gold = {
+		HyperText = {
+			Open = "<color=255,205,70><shiny=true color=255,240,175 rate=1.5>",
+			Close = "</shiny></color>",
+		},
+	},
 
 	--[[ RITMO E PONTUAÇÃO ]]
 

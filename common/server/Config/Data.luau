@@ -187,6 +187,21 @@ return {
 		-- jogador; o `DeckConfig.DEFAULT_CARD_LIMIT` é só o valor de partida, e o
 		-- reconcile do DataService dá a chave para quem é de antes dela.
 		CardLimit = DeckConfig.DEFAULT_CARD_LIMIT,
+
+		--[[
+			O tutorial já foi feito? `false` é "ainda não", e é o que faz o
+			`TutorialService` oferecer a fala de boas-vindas quando o jogador cai no
+			lobby. Quem escreve `true` é o `TutorialService:Complete`.
+
+			**Recusar o tutorial não escreve nada aqui**: quem disse "agora não"
+			continua sem ter feito, e é oferecido de novo na próxima vez. Mudar isso é
+			trocar uma linha no `TutorialService`, não a forma da chave.
+
+			Perfil antigo ganha a chave pelo reconcile do DataService — e ganha
+			`false`, porque não há como saber quem já passou por um tutorial que não
+			existia. Quem já joga há meses vai receber a oferta uma vez.
+		]]
+		Tutorial = false,
 	},
 
 	STARTING_CASH = 500,

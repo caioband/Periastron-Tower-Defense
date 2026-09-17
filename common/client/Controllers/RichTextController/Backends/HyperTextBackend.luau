@@ -54,6 +54,37 @@ local Converters = {
 
 		return string.format("%.4f", 1 / speed)
 	end,
+
+	--[[
+		O nome de uma paleta de `RichTextConfig.Gradients` vira os atributos da tag.
+
+		O jogo escreve `[gradient=orange]` e não precisa saber que do outro lado
+		existe um atributo chamado `colors` com ponto e vírgula no meio. Paleta que
+		não existe devolve `nil`, e o alias avisa em vez de desenhar um gradiente
+		qualquer.
+	]]
+	Gradient = function(value : string) : string?
+		local palette = Config.Gradients[value]
+		if not palette then
+			return nil
+		end
+
+		local attributes = { `colors={palette.Colors}` }
+
+		if palette.MoveSpeed then
+			table.insert(attributes, `moveSpeed={palette.MoveSpeed}`)
+		end
+
+		if palette.MoveDir then
+			table.insert(attributes, `moveDir={palette.MoveDir}`)
+		end
+
+		if palette.Rot then
+			table.insert(attributes, `rot={palette.Rot}`)
+		end
+
+		return table.concat(attributes, " ")
+	end,
 }
 
 --[[ INTERNAL ]]

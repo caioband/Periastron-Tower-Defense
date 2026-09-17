@@ -40,6 +40,10 @@ export type SendOptions = {
 	Auto : boolean?,
 	Preset : string?,
 	Speed : number?,
+
+	-- Os botões da caixa, só na parte que é dado: texto e visibilidade. O que eles
+	-- fazem ao serem clicados é do cliente, porque callback não atravessa a rede.
+	Buttons : { { Text : string?, Visible : boolean? } }?,
 }
 
 --[=[
@@ -60,10 +64,20 @@ end
 
 --[=[
 	A fala de teste do `DialogConfig.Demo`, que é por onde o comando `dialog` do
-	Cmdr entra.
+	Cmdr entra. Vai com os dois botões acesos, para eles serem vistos sem ninguém
+	escrever código.
+
+	A cópia é para o config não ser alterado por quem passar um `options` com
+	`Buttons` próprio — tabela de config é leitura, e quem a altera de longe estraga
+	a sessão inteira.
 ]=]
 function DialogService:SendDemo(players : { Player }?, options : SendOptions?)
-	self:Send(players, Config.Demo, options)
+	local merged : any = if options then table.clone(options) else {}
+	if merged.Buttons == nil then
+		merged.Buttons = Config.DemoButtons
+	end
+
+	self:Send(players, Config.Demo, merged)
 end
 
 --[[ CICLO DE VIDA ]]

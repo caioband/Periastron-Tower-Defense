@@ -33,6 +33,83 @@ DialogConfig.Text = {
 	Preset = "Dialogue",
 }
 
+--[=[
+	O que acontece **atrás** da fala enquanto ela está na tela.
+
+	Os três são pedidos a sistemas que já existem, e não invenção daqui:
+
+	  - `HideOtherUIs` usa o `InterfaceController` — o mesmo "some com o resto" do
+	    painel de mapas, da contagem do portal e da cutscene. `HideReason` é o nome
+	    do pedido; um `Show` com esse nome desfaz.
+	  - `Blur` usa o `UIBlur` compartilhado (`LightingUtil`), o mesmo borrão da loja
+	    e dos painéis de proximidade. Um só no Lighting: dois `BlurEffect` somariam.
+	  - `Duck` usa o `MusicController:Duck`, que abaixa a música sem mexer no volume
+	    que o jogador escolheu. Só a música: os SFX continuam no que estão, senão o
+	    próprio som de digitação da fala sairia abafado junto.
+
+	Cada um pode ser desligado por fala (`Blur = false` no `:Play()`), e o que está
+	aqui é o padrão de quando ninguém diz nada.
+
+	> O borrão é compartilhado de propósito, e isso tem um preço: fala que fecha
+	> enquanto um painel borrado está aberto leva o borrão dele junto. Na prática não
+	> acontece, porque a fala esconde os outros painéis — mas é bom saber antes de
+	> alguém desligar o `HideOtherUIs`.
+]=]
+DialogConfig.Background = {
+	HideOtherUIs = true,
+	HideReason = "Dialog",
+
+	Blur = {
+		Enabled = true,
+
+		-- O mesmo 24 do `ProximityPanel`: dois borrões diferentes para a mesma cara
+		-- de "tem painel na frente" só fariam a tela piscar entre um e outro.
+		Size = 24,
+
+		TweenIn = 0.35,
+		TweenOut = 0.25,
+		EasingStyle = Enum.EasingStyle.Quad,
+		EasingDirection = Enum.EasingDirection.Out,
+	},
+
+	Duck = {
+		Enabled = true,
+
+		-- Um quarto do volume: a música não some (a fala não é cutscene), só sai da
+		-- frente do que está sendo dito.
+		Scale = 0.25,
+
+		FadeIn = 0.4,
+		FadeOut = 0.8,
+	},
+}
+
+--[[
+	Os dois botões que o designer deixou dentro do `Container`.
+
+	`Names` é a ordem que o código usa: `Dialog:SetButton(1, ...)` mexe no primeiro
+	nome da lista. Na tela de hoje o `Button1` é o da **direita** e o `Button2` é o
+	da **esquerda** — a posição é do designer, e trocar a ordem aqui é como se
+	inverte isso sem mexer em quem chama.
+
+	O texto vai num TextLabel que o controller cria dentro do botão na primeira vez
+	que ele é usado: o botão é um ImageButton, não tem texto próprio, e a alternativa
+	seria exigir que alguém lembrasse de autorar um label em cada botão novo.
+	`Label` é a aparência desse label; `MaxTextSize` existe porque `TextScaled` num
+	botão de 169x61 transformaria "OK" numa letra de cartaz.
+]]
+DialogConfig.Buttons = {
+	Names = { "Button1", "Button2" },
+
+	Label = {
+		Name = "Label",
+		Font = Enum.Font.GothamBold,
+		Color = Color3.fromRGB(255, 255, 255),
+		MaxTextSize = 26,
+		Padding = 10,
+	},
+}
+
 --[[
 	Como o jogador passa a fala.
 
@@ -74,6 +151,18 @@ DialogConfig.AutoHold = 2.5
 	reticência aparecendo no ritmo de quem hesita, e de quebra mostra que a pausa
 	vale no meio de uma palavra, não só entre frases.
 ]]
+--[=[
+	Os botões que o comando `dialog` acende junto com a fala de teste.
+
+	Só texto: callback não atravessa a rede (é função), então na demo os dois
+	funcionam como "continuar" — que é o que um botão sem callback faz. Botão com
+	comportamento próprio se monta no cliente, com `Dialog:SetButton`.
+]=]
+DialogConfig.DemoButtons = {
+	{ Text = "YES" },
+	{ Text = "NO" },
+}
+
 DialogConfig.Demo = {
 	"[color=white]Caio is [/color][color=green]a good developer[/color][pause=0.8][color=white] and a [/color][color=blue][wiggle]chill guy[/wiggle][/color]",
 	".[pause=0.3].[pause=0.3].[pause=0.3] [color=red][shake]RIGHT?[/shake][/color][event=fim]",

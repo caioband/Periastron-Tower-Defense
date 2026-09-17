@@ -213,6 +213,10 @@ dialog [jogadores] [auto]            põe a fala de teste na caixa de diálogo
                                      jogadores omitido = todo mundo; auto = anda sozinha
 richtext [jogadores]                 abre a bancada de texto rico (rodar de novo fecha)
                                      jogadores omitido = só quem rodou
+tutorial [jogadores]                 manda a oferta de tutorial (não escreve no perfil)
+                                     jogadores omitido = só quem rodou
+highlight [caminho] [jogadores]      escurece a tela menos o GuiObject do caminho
+                                     ex.: highlight HUD.HUDLeft.Shop; sem caminho, apaga
 ```
 
 **Quem pode rodar comando.** A permissão é do servidor: o hook `BeforeRun` chama
@@ -1200,9 +1204,65 @@ próxima; na última, fecha. Fala pedida com `Auto = true` anda sozinha depois d
 `Dialog:OnEvent()` no momento em que a digitação passa pela marca — é o gancho para
 som, câmera ou VFX no meio da frase, em vez de um `task.wait` chutado.
 
+**Atrás da fala, a tela sai do caminho.** Enquanto a caixa está aberta: o resto da
+UI some, o fundo borra e a música abaixa. Nenhum dos três é invenção nova — são
+pedidos aos sistemas que já existiam:
+
+| O quê | Por quem | Detalhe |
+|---|---|---|
+| Esconde o resto | `InterfaceController:Hide("Dialog")` | o mesmo "some com o resto" da cutscene, do painel de mapas e da contagem do portal |
+| Borra o fundo | `LightingUtil.TweenUIBlur` | o `UIBlur` compartilhado (o da loja e dos painéis de proximidade), com tween de entrada e de saída |
+| Abafa o som | `MusicController:Duck` | abaixa a música sem mexer no volume que o jogador escolheu; SFX ficam como estão |
+
+Os padrões estão em `DialogConfig.Background` e cada um se desliga por fala:
+`Dialog:Play(texto, { Blur = false, Duck = false, HideUI = false })`.
+
+Três coisas que valem a pena saber:
+
+- **A `DialogGUI` não é escondida por ninguém, nem pela cutscene**, porque ela mora
+  dentro da pasta `SharedUIs` e o `InterfaceController` só acompanha filho **direto**
+  da `PlayerGui`. O pedido da fala manda um `Except` com o nome dela mesmo assim,
+  para o dia em que alguém mover a tela para fora da pasta.
+- **O fundo é aplicado por diferença.** Fala nova começando por cima de outra não
+  devolve o borrão a zero para subi-lo de novo — para o jogador a conversa nem
+  parou.
+- **Respawn com a fala aberta não deixa a tela borrada para sempre.** A `DialogGUI`
+  tem `ResetOnSpawn`, então morrer destruiria a caixa e o fechamento nunca chegaria;
+  o controller escuta o `Destroying` do container e devolve o que estava fora da tela
+  que morreu (borrão, UI e música), sem tocar no que já foi destruído.
+
+**Os dois botões da caixa.** `Button1` (direita) e `Button2` (esquerda) recebem
+texto, aparecem, somem e chamam o que a fala mandar:
+
+```lua
+Dialog:Play("Aceita o contrato?", {
+	Buttons = {
+		{ Text = "ACEITAR", OnClick = function() Contracts:Accept() end },
+		{ Text = "AGORA NAO", OnClick = function() Dialog:Close() end },
+	},
+})
+```
+
+Fora do `:Play()`: `Dialog:SetButton(indice, spec)` (`Text`, `Visible`, `OnClick` —
+só o que vier muda), `:SetButtons`, `:ClearButtons` e `:GetButton`, que devolve o
+ImageButton para quem quiser trocar imagem, animar ou pôr um ícone dentro. Três
+regras que valem a pena saber:
+
+- **Botão sem `OnClick` avança a fala.** É o gesto mais provável de quem apertou um
+  botão numa conversa, e evita botão que não faz nada.
+- **Fala que não pede botão começa sem botão.** Escolha de conversa velha na tela da
+  nova é defeito que só aparece na mão do jogador.
+- **O texto vai num TextLabel que o controller cria dentro do botão** na primeira
+  vez que ele é usado — o botão é um ImageButton e não tem texto próprio. Aparência
+  do label (fonte, cor, `MaxTextSize`, padding) em `DialogConfig.Buttons.Label`, e a
+  ordem dos índices em `DialogConfig.Buttons.Names`.
+
 Quando é o **servidor** quem sabe que a fala é devida (um contrato completado, uma
 wave especial), ela sai pelo `DialogService:Send(players, lines, options)`, que fala
-com o controller pelo evento `DialogPlay`.
+com o controller pelo evento `DialogPlay`. Dos botões ele manda só o que é dado —
+texto e visibilidade; o que o clique faz é do cliente, porque callback não atravessa
+a rede (o `dialog` do Cmdr acende os dois com `YES`/`NO`, e lá eles são
+"continuar").
 
 `dialog` no Cmdr põe o `DialogConfig.Demo` na tela — uma fala fixa que exercita de
 uma vez a máquina de escrever, o efeito, a pausa, a quebra de linha e o `[event=]`.
@@ -1227,7 +1287,8 @@ texto, `[nome=valor]` quando leva valor. A lista mora em
 | `[b] [i] [u] [s]` | negrito, itálico, sublinhado, riscado |
 | `[color=red] [size=40] [font=...] [trans=.5]` | aparência de um trecho |
 | `[stroke] [shadow] [mark]` | contorno, sombra, marca-texto |
-| `[shake] [wiggle] [rainbow] [shiny] [fog] [gradient]` | efeito |
+| `[shake] [wiggle] [rainbow] [fog]` | efeito |
+| `[shiny=yellow] [gradient=orange] [gold]` | faísca, gradiente por paleta (`RichTextConfig.Gradients`) e dourado com brilho |
 | `[br] [pause=1] [speed=40]` | quebra de linha, pausa na digitação, ritmo daqui pra frente |
 | `[img=123]` | imagem no meio da frase |
 | `[event=nome]` | dispara `handle:OnEvent` quando a digitação chega ali |
@@ -1324,6 +1385,120 @@ tela do jogo muda de linha.
 > `vendor/shared/HyperText` — a cópia é sem patch nosso, e o commit vendorizado está
 > no `Attribution.luau` ao lado. O módulo se requer por string (`require("./Util")`),
 > então a pasta precisa continuar com a forma que tem.
+
+## Tutorial
+
+Quem nunca fez o tutorial recebe a oferta ao cair no lobby:
+
+```
+Hello, {nome em gradiente laranja}, welcome to Periastron Tower Defense
+Would you like to play a Tutorial?
+```
+
+e, quando a segunda frase termina de ser escrita, os dois botões: `SURE!` à direita
+e `NO THANKS` à esquerda. Tudo em Press Start 2P, pela caixa de fala de sempre.
+
+**A chave no perfil é uma só:** `Tutorial`, no topo do Template
+(`common/server/Config/Data.luau`). `false` é "ainda não fez", e é o que todo perfil
+novo traz — e todo perfil antigo, que a ganha pelo reconcile do `DataService`. Quem
+já joga há meses recebe a oferta uma vez.
+
+**Recusar não escreve nada.** Quem disse "agora não" continua sem ter feito e é
+perguntado de novo na próxima vez que entrar. Quem escreve `true` é
+`TutorialService:Complete(player)`, que existe e **ainda não é chamado por ninguém**:
+quem termina um tutorial é o tutorial, e ele está por fazer.
+
+| Peça | Onde | O que faz |
+|---|---|---|
+| `TutorialService` | `common/server/Services` | lê a chave no `PlayerDataLoaded`, manda `TutorialPrompt`, recebe `TutorialAnswered`, tem `:Start` e `:Complete` |
+| `TutorialController` | `common/client/Controllers` | monta as falas, toca pelo `DialogController`, responde ao servidor e chama o `:OnAnswer` |
+| `TutorialConfig` | `SharedConfig` | as frases, a fonte, o tamanho, o texto dos botões e a espera antes de falar |
+
+**Só no lobby.** Os dois são `common/` porque o jogo é um universo só, mas oferecer
+tutorial a quem acabou de cair no meio de uma partida seria pior que não oferecer —
+a porta é o `PlaceId` contra `PortalConfig.LOBBY_PLACE_ID`, o mesmo id do "voltar ao
+lobby". Em place não publicado o `PlaceId` é 0 e a oferta não sai sozinha: para ver a
+fala existe o `tutorial` do Cmdr, que entra pelo mesmo `:Prompt` e não escreve nada.
+
+**Onde o tutorial de verdade entra.** No cliente, `TutorialController:OnAnswer(fn)`
+— chamado com `true` ou `false` e devolvendo a função que desinscreve. No servidor,
+`TutorialService:Start(player)`, que hoje só registra no output. Os passos se
+penduram num dos dois e esta fala não muda de linha.
+
+**A resposta é do botão.** Enquanto a escolha está no ar, clicar no vazio não fecha
+a caixa (`DialogController:hasChoice`) — sem isso a pergunta morreria no primeiro
+clique distraído no cenário.
+
+> A Press Start 2P é quase monoespaçada e ocupa perto do dobro da largura por
+> caractere da fonte padrão do renderizador, então `TutorialConfig.Text.Size` é 20 e
+> não os 24 do preset `Dialogue`. Mexer na fonte da oferta é mexer nesses dois
+> números juntos.
+
+## Destaque de UI (`HighlightController`)
+
+A tela escurece menos um retângulo em volta de um `GuiObject` — o holofote de um
+passo de tutorial:
+
+```lua
+local Highlight = Framework:Get("HighlightController")
+
+Highlight:Show(shopButton)
+Highlight:Show(deckButton, { Padding = 16 })   -- escorrega do anterior
+Highlight:Hide()
+```
+
+**A técnica é o `UIStroke` gigante**, que é a que o DevForum converge para este
+efeito: um frame transparente com um `UIStroke` de dez mil pixels pinta tudo o que
+está **fora** dele. O frame é o buraco, o stroke é o escuro, o `UICorner` arredonda
+— uma instância, sem imagem, sem máscara de quatro partes para manter alinhada.
+
+**O clique é outro assunto.** Stroke não recebe input: ele é contorno, não
+superfície. Para o jogador não comprar uma carta no escuro enquanto o tutorial
+aponta a loja, entram quatro frames `Active` em volta do buraco
+(`HighlightConfig.BlockInput`) — a técnica das quatro máscaras, usada só onde ela
+ganha do stroke.
+
+**O alinhamento é medido, não calculado.** `AbsolutePosition` vive no espaço com a
+inset da topbar: numa `ScreenGui` com `IgnoreGuiInset = true` — o caso desta, para o
+escuro cobrir a faixa de cima — o canto superior esquerdo reporta `(0, -36)`. É
+[intencional da Roblox, por compatibilidade](https://devforum.roblox.com/t/gui-absoluteposition-doesnt-respect-ignoreguiinset/1168583).
+Em vez de somar 36 na mão, ou de chamar `GuiService:GetGuiInset()` — que
+[devolve zero nos primeiros quadros depois do boot](https://devforum.roblox.com/t/guiservicegetguiinset-returns-0000-at-first/3472295),
+justo quando um tutorial roda —, o controller mantém um frame-sonda de tamanho zero
+na origem da própria tela e lê a posição dele. A diferença entre a sonda e o alvo é
+a resposta, e ela continua certa com ou sem inset, em qualquer aparelho, e mesmo que
+a regra mude.
+
+**Nada é pixel cravado.** Posição e tamanho são copiados do alvo, então valem em
+qualquer resolução; a folga e o raio do canto são **frações do menor lado do alvo**,
+com chão e teto (`HighlightConfig.Hole`) — 8px de folga num botão de 200px é um
+detalhe, e no mesmo botão a 60px é uma moldura. Na prática: 6px num ícone de 40,
+9px no botão de HUD de 169x61, 22px num painel de 600x300.
+
+**Alvo dentro de algo que corta** (`ScrollingFrame`) tem o retângulo **cortado
+junto**, ancestral por ancestral. Rolando para fora de vista, o destaque
+**suspende** — o alvo continua apontado e volta a brilhar quando o jogador rolar de
+volta, em vez de o passo do tutorial se perder. Só alvo tirado da `PlayerGui` apaga
+de vez.
+
+> O que não é coberto: alvo **rotacionado**. `AbsolutePosition`/`AbsoluteSize`
+> descrevem a caixa sem rotação, e o `UIStroke` não recorta em diagonal. Não existe
+> UI rotacionada no jogo hoje.
+
+**Segue o alvo por aviso, não por quadro.** O destaque reage ao `AbsolutePosition`,
+ao `AbsoluteSize` e ao `ViewportSize`; o `RenderStepped` do exemplo mais comum
+redesenha sessenta vezes por segundo um retângulo que não se mexe. Alvo destruído,
+invisível ou fora da `PlayerGui` apaga o destaque — apontar para o que não está mais
+lá é pior que não apontar.
+
+`DisplayOrder` do destaque é 5 (`HighlightConfig.Gui`): passa das telas do jogo, que
+estão todas em 0. Uma tela que precise aparecer **por cima** do escuro — a caixa de
+fala explicando o que está destacado — sobe o `DisplayOrder` dela; baixar o do
+destaque o mandaria para trás do HUD.
+
+O servidor pede pelo `HighlightService`, por **caminho de nomes** a partir da
+`PlayerGui` (`"HUD.HUDLeft.Shop"`), que é a única forma de falar de uma tela que só
+existe no cliente — e é o que o `highlight` do Cmdr usa.
 
 ## Unidades
 
