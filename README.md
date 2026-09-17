@@ -209,6 +209,10 @@ shards <ação> <jogadores> <valor>    Shards salvos (Stats.Shards)
 roundcash <ação> <jogadores> <valor> (só na Game) o dinheiro que paga as torres na partida
 strike [unidade]                     (só na Game) derruba um raio numa unidade posicionada
 units <ação> <jogadores> <unidade> [qtd]  o inventário salvo de unidades (Units do perfil)
+dialog [jogadores] [auto]            põe a fala de teste na caixa de diálogo
+                                     jogadores omitido = todo mundo; auto = anda sozinha
+richtext [jogadores]                 abre a bancada de texto rico (rodar de novo fecha)
+                                     jogadores omitido = só quem rodou
 ```
 
 **Quem pode rodar comando.** A permissão é do servidor: o hook `BeforeRun` chama
@@ -1141,6 +1145,185 @@ o pendente com `RequestServerRestart`, igual ao clima.
 > O evento é da engine e não dá para ensaiar de verdade — a única forma de vê-lo é
 > publicar uma atualização. Por isso existe o `restartwarning` do Cmdr, que entra
 > pelo mesmo `ServerRestartService:Schedule` sem nada ser realmente agendado.
+
+## Texto rico (`RichTextController`)
+
+Texto que aparece letra por letra, treme, muda de cor no meio da frase, leva imagem
+inline e avisa quando chegou num ponto. Quem desenha hoje é o **HyperText** v4.2.0
+(MIT, de @lopjoss), vendorizado em `vendor/shared/HyperText` — mas nenhuma tela do
+jogo fala com ele. Todas falam com o `RichTextController` (`common/client/`):
+
+```lua
+local RichText = Framework:Get("RichTextController")
+
+RichText:Write(label, "WARNING! [shake]FOG[/shake] COMING IN 3 ROUNDS", {
+	Preset = "Warning",
+})
+```
+
+Container que vai receber várias frases (uma fala de NPC, um tutorial) guarda o
+handle:
+
+```lua
+local handle = RichText:Bind(dialogueFrame, { Preset = "Dialogue" })
+
+handle:OnFinished(function(skipped)
+	prompt.Visible = true
+end)
+
+handle:Write("Bem-vindo, [color=yellow]comandante[/color].[pause=1] Sente-se.")
+```
+
+O handle tem `:Write`, `:Skip` (mostra tudo agora — é o que o clique do jogador no
+meio da fala deve fazer), `:Pause`, `:Resume`, `:Clear`, `:SetOptions`, `:GetText`,
+`:IsWriting`, `:OnFinished`, `:OnEvent` e `:Destroy`. O controller ainda tem
+`:Write`, `:Clear`, `:Release`, `:Escape`, `:Plain` e `:GetBackend`.
+
+### A caixa de fala (`DialogController`)
+
+`SharedUIs.DialogGUI.Container` é a caixa, e o `DialogController` (`common/client/`)
+é o único que encosta nela. Quem tem algo a dizer manda as linhas prontas:
+
+```lua
+local Dialog = Framework:Get("DialogController")
+
+Dialog:Play({
+	"Bem-vindo ao [color=yellow]Periastron[/color].[pause=.6] Sente-se.",
+	"A wave 8 traz [shake]NEVASCA[/shake].[event=fim]",
+})
+```
+
+Uma linha por vez: clique, toque, `E`, espaço, enter ou o A do controle. Com a linha
+ainda sendo escrita o gesto **mostra ela inteira**; com ela pronta, vai para a
+próxima; na última, fecha. Fala pedida com `Auto = true` anda sozinha depois de
+`DialogConfig.AutoHold`. O `[event=nome]` chega em quem se inscreveu no
+`Dialog:OnEvent()` no momento em que a digitação passa pela marca — é o gancho para
+som, câmera ou VFX no meio da frase, em vez de um `task.wait` chutado.
+
+Quando é o **servidor** quem sabe que a fala é devida (um contrato completado, uma
+wave especial), ela sai pelo `DialogService:Send(players, lines, options)`, que fala
+com o controller pelo evento `DialogPlay`.
+
+`dialog` no Cmdr põe o `DialogConfig.Demo` na tela — uma fala fixa que exercita de
+uma vez a máquina de escrever, o efeito, a pausa, a quebra de linha e o `[event=]`.
+
+> **A caixa mora no place, não no git:** o `StarterGui` não é sincronizado pelo Rojo.
+> Por isso o caminho é por nome em `DialogConfig.Gui` e resolvido tarde — renomear um
+> frame no Studio é uma linha de config, não um erro em runtime.
+>
+> **`Size` é a altura da linha em pixels na caixa do tamanho em que ela estava quando
+> o texto entrou.** O renderizador guarda esse tamanho como referência e reescala o
+> texto junto com a tela. Na `DialogGUI` de hoje (625x287) o `Dialogue` usa 24; 38 já
+> estoura a caixa e parte palavra no meio.
+
+### A marcação é nossa, com colchete
+
+`[nome]texto[/nome]` para o que envolve um trecho, `[nome]` para o que é um ponto no
+texto, `[nome=valor]` quando leva valor. A lista mora em
+`SharedConfig.RichTextConfig.Aliases`:
+
+| Marcação | O que faz |
+|---|---|
+| `[b] [i] [u] [s]` | negrito, itálico, sublinhado, riscado |
+| `[color=red] [size=40] [font=...] [trans=.5]` | aparência de um trecho |
+| `[stroke] [shadow] [mark]` | contorno, sombra, marca-texto |
+| `[shake] [wiggle] [rainbow] [shiny] [fog] [gradient]` | efeito |
+| `[br] [pause=1] [speed=40]` | quebra de linha, pausa na digitação, ritmo daqui pra frente |
+| `[img=123]` | imagem no meio da frase |
+| `[event=nome]` | dispara `handle:OnEvent` quando a digitação chega ali |
+
+**Só é tag o que está na tabela.** Qualquer outro colchete é texto comum — é o que
+faz `[1]` no meio de uma frase continuar sendo `[1]`, e o que faz um alias escrito
+errado aparecer na tela em vez de sumir calado. `[[` escreve um colchete literal.
+
+Uma tag crua da biblioteca (`<anim=bounce dur=2>`) continua atravessando o controller
+sem tradução. É a saída de emergência para o que ainda não virou alias, e quem a usa
+sabe que está se amarrando ao HyperText — a regra é: usou duas vezes, vira alias.
+
+### Opções e presets
+
+O que vale para a frase inteira não cabe dentro dela e vai por tabela: `Speed` (em
+**caracteres por segundo**, que é como se pensa em máquina de escrever — o backend
+converte), `Size`, `Color`, `Font`, `Weight`, `Italic`, `Transparency`, `Stroke`,
+`Shadow`, `Anim`/`AnimDuration`/`AnimLoop`, `Sound`/`SoundVolume`, `Align`,
+`VerticalAlign`, `ZIndex`, `Wrapped`, `Yield`.
+
+Combinações batizadas ficam em `RichTextConfig.Presets` — hoje `Instant`, `Warning` e
+`Dialogue`. O código do jogo diz o nome; o ajuste fino é do designer e muda no config
+sem ninguém ficar sabendo. A ordem é `Defaults` < preset < o que veio na chamada.
+
+> Opção passada num `:Write()` **fica** valendo para o handle, como se fosse um
+> `:SetOptions()` antes do texto. Elas viram configuração do renderizador lá dentro,
+> e desfazê-las a cada frase custaria uma remontagem por frase.
+
+### Texto de jogador passa pelo `:Escape()`
+
+Nome de jogador, mensagem de chat, qualquer coisa que o jogador escreveu:
+
+```lua
+RichText:Write(label, `{RichText:Escape(player.DisplayName)} entrou no lobby`)
+```
+
+O `:Escape()` dobra o colchete e troca `<` por `‹` (o sinal parecido, de largura
+simples). O segundo é obrigatório: o HyperText trata `<` como começo de tag e engoliria
+o resto da frase atrás de um `>` que nunca vem.
+
+### A bancada (`richtext` no Cmdr)
+
+`richtext` abre o `RichTextLabController`: uma caixa de texto para escrever a
+marcação, um botão **DISPLAY** que manda desenhar e um container onde o desenho
+acontece — mais **CLEAR** e um **PRESET** que percorre `Defaults`, `Dialogue`,
+`Instant` e `Warning`. Rodar o comando de novo fecha.
+
+É onde se experimenta marcação sem editar config, sem dar Play de novo e sem
+inventar um NPC para falar. O container da bancada vai ao `:Bind()` como o de
+qualquer tela do jogo, então o que aparece ali é o que apareceria na tela de
+verdade.
+
+Duas decisões dela que valem para quem for mexer:
+
+- **A tela é feita em código.** O `StarterGui` não é sincronizado pelo Rojo — uma
+  tela autorada no Studio não estaria no git, e ferramenta de dev que depende de
+  alguém ter o place aberto na versão certa não serve.
+- **Trocar de preset solta o handle e cria outro.** As opções de um handle se
+  acumulam (é o contrato: o que você pediu continua valendo), e numa bancada isso
+  mentiria — o contorno do `Warning` sobreviveria ao `Instant` e você estaria
+  olhando para uma mistura que nenhuma tela do jogo teria.
+
+Quem manda abrir é o servidor (`RichTextLabService`), pelo mesmo caminho de
+permissão de todo comando: bancada que o cliente abrisse sozinho seria uma tela de
+dev na mão de qualquer jogador.
+
+### O backend, e por que existem dois
+
+`RichTextController/Backends/` tem um módulo por tecnologia, e `RichTextConfig.Backends`
+é a ordem de preferência. O controller fica no primeiro que carregar.
+
+- **`HyperTextBackend`** — o de verdade. É o **único arquivo do jogo que sabe que o
+  HyperText existe**: ele traduz as opções neutras para os markups da lib e os
+  aliases para as tags dela. Requer o vendor **tarde e dentro de um `pcall`**, porque
+  o `Me:Load()` requer todo descendente de `Controllers` num laço sem proteção — um
+  erro de require aqui em cima derrubaria o boot do cliente inteiro.
+- **`PlainBackend`** — a reserva. Arranca a marcação e escreve texto puro num
+  TextLabel (criando um dentro do container, se o container não for de texto). Vendor
+  fora do sync, erro de require, mudança de engine: o aviso continua aparecendo, feio,
+  mas aparecendo. Ele também é a prova de que a interface é de verdade — o que o
+  controller sabe fazer é o que os dois sabem responder.
+
+No Plain, `[event=...]` não dispara e `OnFinished` chama assim que o texto entra
+(não existe digitação para esperar). Quem sincroniza fala com câmera precisa de um
+caminho que não dependa só do `OnEvent`.
+
+**Trocar de tecnologia** é escrever um backend novo com os mesmos métodos (`Load`,
+`Tag`, `Create`, `Apply`, `Render`, `Skip`/`Pause`/`Resume`/`Clear`, `Destroy`,
+`IsRendering`, `GetText`, `OnFinished`, `OnEvent`), acrescentar a coluna
+dele em `RichTextConfig.Aliases` e pôr o nome dele na frente de `Backends`. Nenhuma
+tela do jogo muda de linha.
+
+> Atualizar o HyperText é copiar `src/HyperText` do upstream por cima de
+> `vendor/shared/HyperText` — a cópia é sem patch nosso, e o commit vendorizado está
+> no `Attribution.luau` ao lado. O módulo se requer por string (`require("./Util")`),
+> então a pasta precisa continuar com a forma que tem.
 
 ## Unidades
 
@@ -2404,6 +2587,7 @@ Não vieram do Wally — foram coladas na mão no place original.
 | Replica | `vendor/shared/ReplicaClient.luau`, `vendor/ReplicaShared/`, `vendor/server/ReplicaServer.luau` | MAD STUDIO |
 | ProfileStore | `vendor/server/ProfileStore.luau` | MAD STUDIO (loleris) |
 | Satchel 1.4.1 | `common/client/Satchel/` | @WinnersTakesAll (MPL-2.0) |
+| HyperText 4.2.0 | `vendor/shared/HyperText` | @lopjoss (MIT) — só o `RichTextController` fala com ele |
 
 > `ReplicaClient` e `ReplicaServer` fazem `game.ReplicatedStorage.ReplicaShared`
 > **hardcoded**. Por isso `vendor/ReplicaShared` é mapeado exatamente nesse
