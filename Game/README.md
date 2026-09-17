@@ -1167,6 +1167,15 @@ limite, senão o cooldown de 3s contra windup mais voo deixaria plantar acima de
 O arco lê o relógio a cada quadro em vez de converter para segundos reais na chamada,
 então acelerar a partida **com uma mina no ar** encurta o que falta dela.
 
+#### O carregamento da mina
+
+A mina arma no pouso, mas não sai cheia: explode com 35% do dano
+(`Tripmine.Charge.StartDamage`) e sobe em linha reta até 100% em 5s
+(`Tripmine.Charge.Time`). Pisada aos 2,5s, tira 67,5%. O pouso grava `armedAt` na
+mina, e o `stepTripmines` aplica o fator (`mineChargeFactor`) em cima do dano
+completo, que já vem com upgrade, clima e cartas. O relógio é o `GameClock`, então no
+3x a mina carrega três vezes mais rápido, como o arremesso.
+
 #### A mina some depois de explodir?
 
 Sim, em qualquer velocidade — verificado. O `EXPLOSION_LIFETIME` (5s) e as partículas

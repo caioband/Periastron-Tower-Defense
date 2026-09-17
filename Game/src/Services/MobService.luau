@@ -607,6 +607,37 @@ end
 	acendeu fogo novo ou caiu em quem ja queimava. Hoje quem queima e o Pyre.
 ]=]
 function MobService:ApplyBurn(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?)
+	self:applyDamageOverTime(mobId, damage, ticks, interval, ownerUserId, {
+		UntilKey = "BurningUntil",
+		Event = "MobBurning",
+		CardStat = "Burn",
+	})
+end
+
+--[=[
+	Faz um inimigo sangrar. E a queimadura com outro nome e outro desenho: as mesmas
+	regras de tique, dono e **nao acumula nem renova** do `ApplyBurn`, com prazo
+	proprio (`BleedingUntil`) -- sangrar e queimar convivem no mesmo alvo.
+
+	Nenhuma carta mexe no sangramento: a Fire Hazard e do fogo. O desenho sai pelo
+	`MobBleeding` (`BleedVFX`). Hoje quem sangra e o Slasher.
+]=]
+function MobService:ApplyBleed(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?)
+	self:applyDamageOverTime(mobId, damage, ticks, interval, ownerUserId, {
+		UntilKey = "BleedingUntil",
+		Event = "MobBleeding",
+	})
+end
+
+--[=[
+	O dano ao longo do tempo por baixo do `ApplyBurn` e do `ApplyBleed`.
+
+	`kind.UntilKey` e o campo do prazo no mob (um por efeito, para os dois nao se
+	bloquearem), `kind.Event` e o aviso do desenho, e `kind.CardStat` e a carta global
+	que multiplica cada tique, quando houver. O tique na tela e o mesmo
+	`MobDamageTick` para todos: numero e barra de vida nao dependem do efeito.
+]=]
+function MobService:applyDamageOverTime(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?, kind)
 	local mob = self.ActiveMobs[mobId]
 	if not mob then return end
 
@@ -617,13 +648,13 @@ function MobService:ApplyBurn(mobId : string, damage : number?, ticks : number?,
 	if damage <= 0 or ticks <= 0 or interval <= 0 then return end
 
 	local now = GameClock.Now()
-	if now < (mob.BurningUntil or 0) then return end
+	if now < (mob[kind.UntilKey] or 0) then return end
 
 	local duration = ticks * interval
-	mob.BurningUntil = now + duration
+	mob[kind.UntilKey] = now + duration
 
 	for _, player in Players:GetPlayers() do
-		Framework:Fire("MobBurning", player, mobId, duration)
+		Framework:Fire(kind.Event, player, mobId, duration)
 	end
 
 	task.spawn(function()
@@ -632,14 +663,15 @@ function MobService:ApplyBurn(mobId : string, damage : number?, ticks : number?,
 
 			if self.ActiveMobs[mobId] ~= mob then return end
 
-			local tick = math.max(1, math.floor(damage * self:cardStat("Burn") + 0.5))
+			local multiplier = if kind.CardStat then self:cardStat(kind.CardStat) else 1
+			local tick = math.max(1, math.floor(damage * multiplier + 0.5))
 			local dealt = self:DamageMob(mobId, tick, ownerUserId)
 
 			-- O `DamageMob` nao avisa a tela: o numero e a barra de vida de um golpe
 			-- comum saem do `AttackVisual` da unidade, e o tique nao tem unidade.
 			if dealt > 0 then
 				for _, player in Players:GetPlayers() do
-					Framework:Fire("MobBurnTick", player, mobId, dealt)
+					Framework:Fire("MobDamageTick", player, mobId, dealt)
 				end
 			end
 		end
@@ -1553,7 +1585,8 @@ function MobService:construct()
 	Framework:Listen("UpdateMobSpeed", function() end)
 	Framework:Listen("MobFrozen", function() end)
 	Framework:Listen("MobBurning", function() end)
-	Framework:Listen("MobBurnTick", function() end)
+	Framework:Listen("MobBleeding", function() end)
+	Framework:Listen("MobDamageTick", function() end)
 	Framework:Listen("MobTeleported", function() end)
 	Framework:Listen("KillClientMob", function() end)
 	Framework:Listen("HitClientMob", function() end)

@@ -691,8 +691,10 @@ mapa. `Hops` é quantas camadas o salto pode andar (1 hoje) e `MaxTargets` fecha
 teto por camada; cada unidade é tocada uma vez só por descarga.
 
 `Electric` é a exceção que faz o clima valer a pena para alguém: além dos 10% de
-dano passivos enquanto o trovão durar, levar o raio (ou o salto) a **carrega** com
-+50% de dano e +50% de cadência por `Charge.Duration` (10s). O buff temporário mora
+dano passivos enquanto o trovão durar, levar o raio (ou o salto) **não a atordoa** —
+a **carrega** com +50% de dano (`Charge.Damage = 1.5`) e −50% de cooldown
+(`Charge.AttackSpeed = 2`, que divide o cooldown) por `Charge.Duration` (4s). Ela
+continua servindo de ponte para o salto. O buff temporário mora
 em `entry.Charge`, por fora do `UnitUpgradeConfig` — o config só conhece números que
 valem para todo mundo, e a carga é estado de partida de uma unidade específica.
 Recarregar antes de acabar renova o prazo em vez de empilhar.
@@ -704,8 +706,8 @@ comando `strike` continua alcançando qualquer unidade, porque testar o visual n
 Magic é legítimo.
 
 No cliente, `UnitStunned` pinta a unidade de amarelo e `UnitCharged` de ciano — as
-duas coisas vêm do mesmo raio e acontecem lado a lado, e sem separar as cores uma
-Electric carregada pareceria congelada. Os saltos são desenhados com o mesmo asset
+duas coisas vêm do mesmo raio e acontecem lado a lado em unidades vizinhas, e sem
+separar as cores uma Electric carregada pareceria atordoada. Os saltos são desenhados com o mesmo asset
 do raio (`VFXController:spawnBeam`), ligando o meio do corpo de uma unidade ao da
 outra, e sem estouro próprio: o do raio principal já está tocando.
 
@@ -1246,13 +1248,25 @@ acende fogo novo, e o `VFXController:PlayBurning` solda o asset no inimigo e pas
 Highlight dele para a raiz do modelo — o mesmo caminho do congelamento do Frostione
 (`playMobStatus`).
 
-Cada tique avisa a tela pelo `MobBurnTick` (número de dano e barra de vida no
+Cada tique avisa a tela pelo `MobDamageTick` (número de dano e barra de vida no
 `MobController`): o `DamageMob` não fala com o cliente, e sem esse evento o fogo tirava
 vida sem nada aparecer.
 
 Custo (150), alcance (10) e cooldown (2,1s, logo acima da animação de 2,033s) são
 provisórios. A queimadura não cresce com upgrade nem clima; só a carta Fire Hazard
 mexe nela.
+
+### O sangramento (Slasher)
+
+Cada golpe do Slasher deixa o alvo sangrando: 1 de dano por segundo, 5 tiques
+(`UnitStats.Slasher.Bleed`, executado pelo `MobService:ApplyBleed`). É a queimadura com
+outro nome: os dois passam pelo mesmo `MobService:applyDamageOverTime`, com as mesmas
+regras — **não acumula nem renova**, e os tiques cobram em nome de quem abriu o corte.
+
+O que muda é o prazo (`mob.BleedingUntil`, separado do `BurningUntil`, então sangrar e
+queimar convivem no mesmo inimigo), o desenho (`Assets.VFX.BleedVFX`, pelo evento
+`MobBleeding` e `VFXController:PlayBleeding`) e a carta: a Fire Hazard não mexe no
+sangramento.
 
 ### O raio que salta (Electro)
 
@@ -2318,6 +2332,21 @@ cliques não pagam duas vezes. A recompensa soma `Cash` (e `CoinsEarned`),
 
 Na UI, coin e shard usam as linhas autoradas do `RewardsContainer`, e cada caixa
 vira um texto `8x Fragmented Crate` na `OtherReward`, clonada quando há mais de uma.
+
+### Reroll pago
+
+Cada cabeçalho (`Hourly`, `Daily`, `Weekly`) tem um botão `RerollDice`. Ele abre um
+developer product diferente a cada reroll do período: o 1º reroll abre o produto 1, o
+2º o 2, e do 7º em diante fica no 7 (`ContractConfig.Reroll.Products` e
+`rerollProduct`). A contagem é `Contracts[kind].Rerolls` no perfil, e zera na virada
+porque o período novo nasce sem ela.
+
+O cliente só abre o prompt. Quem rerola é o recibo: o `ContractService` registra os 21
+produtos no `MonetizationService` (nas duas places, porque um recibo pendente volta
+onde o jogador estiver), e qualquer produto de uma aba rerola aquela aba, seja qual for
+a contagem. O `Reroll` sorteia a aba **inteira** de novo — inclusive o que já foi
+resgatado —, com progresso zerado e evitando os contratos que estavam lá. A fila de
+progresso é gravada antes, para não cair num contrato igual sorteado no mesmo slot.
 
 ## Evento novo do servidor para o cliente precisa ser declarado
 

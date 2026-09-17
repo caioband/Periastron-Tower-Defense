@@ -723,11 +723,12 @@ function MobController:construct()
 	end)
 
 	--[[
-		Um tique da queimadura (`MobService:ApplyBurn`): o numero e a barra de vida,
-		como um golpe do `AttackVisual` logo abaixo, mas sem o flash -- ele piscaria
-		por cima do Highlight do fogo a cada meio segundo.
+		Um tique de dano ao longo do tempo -- queimadura ou sangramento
+		(`MobService:applyDamageOverTime`): o numero e a barra de vida, como um golpe
+		do `AttackVisual` logo abaixo, mas sem o flash -- ele piscaria por cima do
+		Highlight do efeito a cada tique.
 	]]
-	Framework:Listen("MobBurnTick", function(mobId, damage)
+	Framework:Listen("MobDamageTick", function(mobId, damage)
 		local mob = self.SpawnedMobs[mobId]
 		if not mob or not mob.Parent or typeof(damage) ~= "number" then return end
 

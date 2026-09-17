@@ -1,5 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -279,7 +281,8 @@ function ContractController:_renderSection(kind : string)
 				entry.Task.Text = ContractConfig.describe(definition, slot)
 			end
 
-			writeRewards(entry.Row, definition.Rewards or {})
+			-- O slot traz a recompensa quando ela acompanha a dificuldade sorteada.
+			writeRewards(entry.Row, slot.Rewards or definition.Rewards or {})
 			writeClaim(entry, ContractConfig.isComplete(definition, slot), slot.Claimed == true)
 		end
 	end
@@ -324,6 +327,26 @@ function ContractController:_requestClaim(kind : string, index : number)
 end
 
 --[=[
+	Abre o prompt do reroll da aba, no produto que a contagem do perfil manda
+	(`ContractConfig.rerollProduct`).
+
+	O cliente **abre** a compra e nao credita nada: quem rerola e o recibo, no
+	`ContractService`, e a aba nova chega pela replica. Cancelar o prompt nao faz nada.
+	Sem debounce, como o reroll da loja de cartas: `PromptProductPurchase` nao empilha
+	janelas.
+]=]
+function ContractController:_promptReroll(kind : string)
+	local contracts = self:_contracts()
+	if not contracts then return end
+
+	local bucket = contracts[kind]
+	local productId = ContractConfig.rerollProduct(kind, bucket and bucket.Rerolls)
+	if not productId then return end
+
+	MarketplaceService:PromptProductPurchase(Players.LocalPlayer, productId)
+end
+
+--[=[
 	O conteudo numa copia nova da `Contracts`: acha as tres secoes e tira o molde de
 	cada uma da tela. O painel em si (moldura, animacao, borrao, proximidade) e do
 	`ProximityPanel`.
@@ -352,6 +375,19 @@ function ContractController:_onBind(panel : GuiObject)
 		end
 
 		local timer = header and header:FindFirstChild(GUI.Timer)
+
+		-- O dado de reroll do cabecalho. O clique vive no `RowMaid`, como os das
+		-- linhas: uma copia nova da `Contracts` liga os botoes dela.
+		local reroll = header and header:FindFirstChild(ContractConfig.Reroll.Button)
+		if reroll and reroll:IsA("GuiButton") then
+			self.RowMaid:GiveTask(reroll.Activated:Connect(function()
+				self:_promptReroll(kind)
+			end))
+
+			ButtonUtil.bindFeedback(reroll, self.RowMaid)
+		elseif header then
+			warn(`[ContractController]: no {ContractConfig.Reroll.Button} in {names.Header} -- the {kind} reroll does nothing.`)
+		end
 
 		self.Sections[kind] = {
 			Frame = frame,

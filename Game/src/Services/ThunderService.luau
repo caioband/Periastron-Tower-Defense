@@ -39,9 +39,9 @@ local WeatherConfig = SharedConfig.WeatherConfig
 	O raio nao tira vida: ele atordoa. Quem leva em cheio para por `Stun.Direct`
 	(20s, a wave inteira), e o choque salta para quem estiver perto, que para por
 	`Stun.Chain` (5s). Unidade `Electric` e a excecao que faz o clima valer a pena
-	para alguem: alem do bonus passivo do `Effects.Thunder`, levar o raio a carrega
-	com dano e cadencia por `Charge.Duration`. Os numeros estao todos em
-	`WeatherConfig.Thunder`.
+	para alguem: alem do bonus passivo do `Effects.Thunder`, levar o raio **nao** a
+	atordoa -- a carrega com dano e cooldown menor por `Charge.Duration`. Os numeros
+	estao todos em `WeatherConfig.Thunder`.
 ]]
 
 local ThunderService = {
@@ -170,18 +170,22 @@ end
 --[=[
 	O que uma unidade ganha por ser tocada pelo raio.
 
-	Atordoamento para todo mundo, e para quem é `Electric` também a carga: dano e
-	cadência bem acima do normal por alguns segundos. É o outro lado do trovão —
-	para a maioria das unidades ele é uma wave perdida, e para Electric é a melhor
-	wave da partida.
+	Atordoamento para todo mundo, menos para quem é `Electric`: essa leva a carga no
+	lugar, com dano acima e cooldown abaixo do normal por alguns segundos. É o outro
+	lado do trovão — para a maioria das unidades ele é uma wave perdida, e para
+	Electric é a melhor wave da partida.
+
+	A Electric continua servindo de ponte para o arco: o salto parte dela como de
+	qualquer outra unidade atingida.
 ]=]
 function ThunderService:applyHit(entry, duration : number)
 	local unitService = self.Services.UnitService
 	if not unitService then return end
 
-	unitService:StunUnit(entry, duration)
-
-	if not WeatherConfig.HasClass(entry.unitName, "Electric") then return end
+	if not WeatherConfig.HasClass(entry.unitName, "Electric") then
+		unitService:StunUnit(entry, duration)
+		return
+	end
 
 	local charge = Config.Charge
 	if not charge then return end

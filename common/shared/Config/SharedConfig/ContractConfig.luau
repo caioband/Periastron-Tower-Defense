@@ -38,6 +38,11 @@
 	  | `NeedsUnitStat` | so sai para quem tem uma unidade com esse campo no `UnitStats`; aceita uma lista, e basta um deles |
 	  | `Format` | `Hours` mostra o progresso em horas (o `Goal` e em segundos) |
 	  | `Rewards` | `Cash`, `Shards` e `Crates` (`{ [tier da caixa] = quantas }`, ver `CrateConfig.CRATES`) |
+	  | `RewardDifficulty` | com `Difficulty = Random`: a dificuldade para a qual o `Rewards` foi escrito. A recompensa escala para a sorteada na proporcao do premio de uma run (`WinCash` para coins, `WinShards` para shards e caixas, em `ServerScriptService.Config.Difficulty`) |
+
+	**Recompensa que escala e calculada no sorteio** e guardada no slot (`Slot.Rewards`),
+	porque o `Config.Difficulty` nao e replicado. A tela e o resgate leem a do slot
+	antes da do config.
 
 	**Contrato preso a mapa ou dificuldade trancados nao sai.** O Nightmare de quem
 	ainda nao abriu, o Volcano de quem tem duas vitorias: o sorteio pula (ver
@@ -82,6 +87,29 @@ ContractConfig.Board = {
 	Animation = "OpenShop",
 }
 
+--[[
+	O reroll de cada aba: um developer product por vez que o jogador rerola, em ordem.
+	O primeiro reroll do periodo abre o 1, o segundo o 2, e do 7 em diante fica no
+	ultimo da lista.
+
+	A contagem mora no perfil (`Contracts[kind].Rerolls`) e zera sozinha na virada,
+	porque o periodo novo nasce sem ela. O reroll sorteia a aba **inteira** de novo --
+	inclusive o que ja foi resgatado --, com progresso zerado e evitando os contratos
+	que estavam la (ver `ContractService:Reroll`).
+
+	Quem credita e o recibo, no servidor: qualquer um destes produtos rerola a aba
+	dele, seja qual for a contagem. O numero so decide qual produto o botao abre.
+]]
+ContractConfig.Reroll = {
+	Button = "RerollDice",
+
+	Products = {
+		Hourly = { 3713210488, 3713210581, 3713210596, 3713210618, 3713210662, 3713210676, 3713210698 },
+		Daily = { 3713210718, 3713210736, 3713210747, 3713210794, 3713210802, 3713210822, 3713210833 },
+		Weekly = { 3713210846, 3713210863, 3713210871, 3713210887, 3713210898, 3713210909, 3713210923 },
+	},
+}
+
 ContractConfig.Events = {
 	Win = "Win",
 	WaveReached = "WaveReached",
@@ -105,20 +133,25 @@ ContractConfig.Contracts = {
 		{ Id = "H_Win3", Text = "Win 3 games in any map", Event = E.Win, Goal = 3,
 			Rewards = { Cash = 250, Shards = 3 } },
 
-		{ Id = "H_Win2Castle", Text = "Win 2 games in {Map}", Event = E.Win, Goal = 2, Map = "SnowyCastle",
+		--[[
+			Os Ids que citam um mapa ou dificuldade (`H_Win2Castle`, `D_Win3Nightmare`...)
+			sao de quando o campo era fixo. Ficaram assim de proposito: o Id e a chave no
+			perfil, e troca-lo zeraria o progresso de quem ja tem o contrato.
+		]]
+		{ Id = "H_Win2Castle", Text = "Win 2 games in {Map}", Event = E.Win, Goal = 2, Map = RANDOM,
 			Rewards = { Cash = 200, Shards = 3 } },
 
-		{ Id = "H_Wave15Desert", Text = "Reach Wave 15 on {Map}", Event = E.WaveReached, Goal = 15, Mode = "Max", Map = "Desert",
+		{ Id = "H_Wave15Desert", Text = "Reach Wave 15 on {Map}", Event = E.WaveReached, Goal = 15, Mode = "Max", Map = RANDOM,
 			Rewards = { Cash = 150, Shards = 2 } },
 
-		{ Id = "H_Win2Medium", Text = "Win Medium difficulty twice on any map", Event = E.Win, Goal = 2, Difficulty = "Medium",
+		{ Id = "H_Win2Medium", Text = "Win {Difficulty} difficulty twice on any map", Event = E.Win, Goal = 2, Difficulty = RANDOM, RewardDifficulty = "Medium",
 			Rewards = { Cash = 250, Shards = 3 } },
 
 		-- "Durante uma partida": o `Max` guarda a melhor partida, e nao a soma delas.
 		{ Id = "H_Spend5000", Text = "Spend 5,000 coins during a match", Event = E.MatchCashSpent, Goal = 5000, Mode = "Max",
 			Rewards = { Cash = 200, Shards = 3 } },
 
-		{ Id = "H_BeatFarmMedium", Text = "Beat {Map} in Medium difficulty or higher", Event = E.Win, Goal = 1, Map = "Farm", MinDifficulty = "Medium",
+		{ Id = "H_BeatFarmMedium", Text = "Beat {Map} in Medium difficulty or higher", Event = E.Win, Goal = 1, Map = RANDOM, MinDifficulty = "Medium",
 			Rewards = { Cash = 200, Shards = 3 } },
 
 		{ Id = "H_Kill100", Text = "Kill 100 enemies", Event = E.Kill, Goal = 100,
@@ -127,7 +160,7 @@ ContractConfig.Contracts = {
 		{ Id = "H_WinFullHealth", Text = "Win with 100% base health", Event = E.Win, Goal = 1, FullHealth = true,
 			Rewards = { Cash = 150, Shards = 2 } },
 
-		{ Id = "H_Kill200Volcano", Text = "Kill 200 enemies on {Map}", Event = E.Kill, Goal = 200, Map = "Volcano",
+		{ Id = "H_Kill200Volcano", Text = "Kill 200 enemies on {Map}", Event = E.Kill, Goal = 200, Map = RANDOM,
 			Rewards = { Cash = 250, Shards = 3 } },
 
 		{ Id = "H_Damage30k", Text = "Deal 30,000 damage", Event = E.Damage, Goal = 30000,
@@ -141,7 +174,7 @@ ContractConfig.Contracts = {
 		{ Id = "D_Win6", Text = "Win 6 games in any map", Event = E.Win, Goal = 6,
 			Rewards = { Cash = 500, Shards = 7 } },
 
-		{ Id = "D_Win6VolcanoMedium", Text = "Win 6 games in {Map} on Medium difficulty", Event = E.Win, Goal = 6, Map = "Volcano", Difficulty = "Medium",
+		{ Id = "D_Win6VolcanoMedium", Text = "Win 6 games in {Map} on {Difficulty} difficulty", Event = E.Win, Goal = 6, Map = RANDOM, Difficulty = RANDOM, RewardDifficulty = "Medium",
 			Rewards = { Cash = 700, Shards = 9 } },
 
 		-- So quem tem uma unidade que atordoa recebe este: o tranco do Electro (`Stun`) ou
@@ -149,28 +182,28 @@ ContractConfig.Contracts = {
 		{ Id = "D_Stun676", Text = "Stun enemies 676 times", Event = E.Stun, Goal = 676, NeedsUnitStat = { "Stun", "Frost" },
 			Rewards = { Cash = 800, Shards = 9 } },
 
-		{ Id = "D_Win3Nightmare", Text = "Win 3 games in Nightmare mode", Event = E.Win, Goal = 3, Difficulty = "Nightmare",
+		{ Id = "D_Win3Nightmare", Text = "Win 3 games in {Difficulty} mode", Event = E.Win, Goal = 3, Difficulty = RANDOM, RewardDifficulty = "Nightmare",
 			Rewards = { Cash = 900, Shards = 8 } },
 
 		-- O caixa da partida, numa partida so (o `Max`), e nao os coins do perfil.
 		{ Id = "D_Earn20k", Text = "Earn 20,000 Cash in a single match", Event = E.MatchCashEarned, Goal = 20000, Mode = "Max",
 			Rewards = { Cash = 500, Shards = 7 } },
 
-		{ Id = "D_Win6Hard", Text = "Win 6 games in Hard mode", Event = E.Win, Goal = 6, Difficulty = "Hard",
+		{ Id = "D_Win6Hard", Text = "Win 6 games in {Difficulty} mode", Event = E.Win, Goal = 6, Difficulty = RANDOM, RewardDifficulty = "Hard",
 			Rewards = { Cash = 700, Shards = 8 } },
 
 		{ Id = "D_Kill600", Text = "Kill 600 enemies", Event = E.Kill, Goal = 600,
 			Rewards = { Cash = 500, Shards = 7 } },
 
-		{ Id = "D_Win4MapDifficulty", Text = "Win 4 games in {Map} on {Difficulty}", Event = E.Win, Goal = 4, Map = RANDOM, Difficulty = RANDOM,
+		{ Id = "D_Win4MapDifficulty", Text = "Win 4 games in {Map} on {Difficulty}", Event = E.Win, Goal = 4, Map = RANDOM, Difficulty = RANDOM, RewardDifficulty = "Medium",
 			Rewards = { Cash = 500, Shards = 7 } },
 
-		{ Id = "D_Win5DifficultyFriends", Text = "Win 5 games on {Difficulty} with 1 or more friends", Event = E.Win, Goal = 5, Difficulty = RANDOM, WithFriends = true,
+		{ Id = "D_Win5DifficultyFriends", Text = "Win 5 games on {Difficulty} with 1 or more friends", Event = E.Win, Goal = 5, Difficulty = RANDOM, RewardDifficulty = "Medium", WithFriends = true,
 			Rewards = { Cash = 400, Shards = 6 } },
 	},
 
 	Weekly = {
-		{ Id = "W_Win7MapClassNightmare", Text = "Win 7 games in {Map} with only {Class} units in Nightmare", Event = E.Win, Goal = 7, Map = RANDOM, Class = RANDOM, Difficulty = "Nightmare",
+		{ Id = "W_Win7MapClassNightmare", Text = "Win 7 games in {Map} with only {Class} units in {Difficulty}", Event = E.Win, Goal = 7, Map = RANDOM, Class = RANDOM, Difficulty = RANDOM, RewardDifficulty = "Nightmare",
 			Rewards = { Cash = 1000, Crates = { Epic = 8 } } },
 
 		-- Um dia UTC por vez, e so dentro da semana: e preciso entrar nos sete.
@@ -314,6 +347,19 @@ function ContractConfig.describe(definition, slot) : string
 	local progress = math.min(definition.Goal, (slot and slot.Progress) or 0)
 
 	return string.format("%s (%s/%s)", text, formatAmount(definition, progress), formatAmount(definition, definition.Goal))
+end
+
+--[=[
+	O developer product do proximo reroll da aba, dado quantos o jogador ja fez neste
+	periodo. Passou do fim da lista, fica no ultimo.
+]=]
+function ContractConfig.rerollProduct(kind : string, rerolls : number?) : number?
+	local products = ContractConfig.Reroll.Products[kind]
+	if not products or #products == 0 then return nil end
+
+	local index = math.clamp(math.floor(tonumber(rerolls) or 0) + 1, 1, #products)
+
+	return products[index]
 end
 
 --- Se o progresso do slot ja chegou no objetivo.

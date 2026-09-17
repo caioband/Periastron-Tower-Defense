@@ -622,8 +622,8 @@ end
 
 --[=[
 	Da a uma unidade um buff com prazo. Recarregar antes de acabar renova o prazo
-	em vez de empilhar: dois raios seguidos na mesma unidade dao 10s de buff a
-	partir do segundo, nao 50% em cima de 50%.
+	em vez de empilhar: dois raios seguidos na mesma unidade dao o prazo inteiro de
+	buff a partir do segundo, nao 50% em cima de 50%.
 ]=]
 function UnitService:ChargeUnit(entry, damage : number?, attackSpeed : number?, duration : number)
 	if not entry then return end
@@ -1092,6 +1092,11 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 			self.Services.MobService:ApplyBurn(mobId, burn.Damage, burn.Ticks, burn.Interval, entry.ownerUserId)
 		end
 
+		local bleed = stats and stats.Bleed
+		if bleed then
+			self.Services.MobService:ApplyBleed(mobId, bleed.Damage, bleed.Ticks, bleed.Interval, entry.ownerUserId)
+		end
+
 		--[[
 			O tranco: o inimigo para de vez por um instante, e so depois volta a andar
 			(lento, se o golpe tambem deixou `Slow` -- nenhum deixa hoje). E o mesmo
@@ -1436,9 +1441,24 @@ function UnitService:stepTripminer(entry, stats, now, weather : string?)
 
 			if not self.UnitsById[entry.unitId] then return end
 
-			entry.mines[mineId] = { position = position, cf = mineCF }
+			-- `armedAt` comeca o carregamento: ver `Tripmine.Charge` e `mineChargeFactor`.
+			entry.mines[mineId] = { position = position, cf = mineCF, armedAt = GameClock.Now() }
 		end)
 	end)
+end
+
+--[=[
+	Quanto do dano uma mina entrega agora: `StartDamage` no pouso, subindo em linha
+	reta ate 1 em `Charge.Time` segundos. Sem `Charge` no config a mina sai cheia.
+]=]
+local function mineChargeFactor(mine, config, now : number) : number
+	local charge = config.Charge
+	if not charge or (charge.Time or 0) <= 0 then return 1 end
+
+	local start = math.clamp(charge.StartDamage or 1, 0, 1)
+	local progress = math.clamp((now - (mine.armedAt or now)) / charge.Time, 0, 1)
+
+	return start + (1 - start) * progress
 end
 
 function UnitService:stepTripmines(now, weather : string?)
@@ -1463,7 +1483,8 @@ function UnitService:stepTripmines(now, weather : string?)
 				local triggeredBy = mobService:GetMobCrossing(mine.position, config.TriggerRadius or 2.5)
 				if triggeredBy then
 					entry.mines[mineId] = nil
-					local damage = self:getDamage(entry, stats, weather)
+					local fullDamage = self:getDamage(entry, stats, weather)
+					local damage = math.floor(fullDamage * mineChargeFactor(mine, config, now) + 0.5)
 					local radius = config.AOE and config.AOE.Radius or 6
 					local mobsHit = mobService:GetMobsInRadius(mine.position, radius)
 

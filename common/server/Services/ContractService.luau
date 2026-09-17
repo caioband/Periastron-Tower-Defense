@@ -61,6 +61,7 @@ local RELEASE_ORDER = 1
 local ContractService = {
 	Services = {
 		DataService = {},
+		MonetizationService = {},
 	},
 
 	-- [Player] = { ["Kind|Index"] = { Kind, Index, Period, Id, Mode, Value, Seen } }
@@ -195,6 +196,9 @@ local function isAvailable(definition, profile) : boolean
 	return true
 end
 
+-- Os campos que aceitam `Random` (ver `rollParams`).
+local RANDOM_FIELDS = { "Map", "Difficulty", "Class" }
+
 --- O que o `Random` de cada campo tira, entre o que este jogador ja abriu.
 local function rollParams(definition, profile, rng : Random) : { [string] : string }
 	local params = {}
@@ -217,6 +221,70 @@ local function rollParams(definition, profile, rng : Random) : { [string] : stri
 	end
 
 	return params
+end
+
+--[[ RECOMPENSA POR DIFICULDADE ]]
+
+-- Quanto maior, mais redonda: 213 coins viram 215.
+local CASH_ROUNDING = 5
+
+--[=[
+	Se a recompensa do contrato acompanha a dificuldade sorteada: so quando a
+	dificuldade e `Random` e o contrato diz para qual dificuldade o `Rewards` foi
+	escrito (`RewardDifficulty`).
+]=]
+local function scalesWithDifficulty(definition) : boolean
+	return definition ~= nil
+		and definition.Difficulty == RANDOM
+		and ServerConfig.Difficulty.Exists(definition.RewardDifficulty)
+end
+
+--[=[
+	O `Rewards` do contrato levado da `RewardDifficulty` para a dificuldade sorteada.
+
+	A proporcao e a do premio de uma run inteira no `Config.Difficulty`: coins pelo
+	`WinCash`, shards e caixas pelo `WinShards`. Se uma run no Nightmare paga 4x o
+	Medio, o contrato no Nightmare tambem paga 4x. Mexer nos presets rebalanceia os
+	contratos dos proximos sorteios sem tocar aqui.
+
+	Coins arredondam para `CASH_ROUNDING`; shards e caixas para o inteiro mais perto,
+	nunca abaixo de 1 quando a base paga alguma coisa. Devolve nil quando o contrato
+	nao escala -- ai vale o `Rewards` do config.
+]=]
+local function scaledRewards(definition, params) : { [string] : any }?
+	if not scalesWithDifficulty(definition) then return nil end
+
+	local difficulty = params and params.Difficulty
+	if not ServerConfig.Difficulty.Exists(difficulty) then return nil end
+
+	local base = ServerConfig.Difficulty.Get(definition.RewardDifficulty)
+	local rolled = ServerConfig.Difficulty.Get(difficulty)
+
+	local cashRatio = (rolled.WinCash or 0) / math.max(1, base.WinCash or 0)
+	local shardRatio = (rolled.WinShards or 0) / math.max(1, base.WinShards or 0)
+
+	local function scaleCount(amount : number?) : number?
+		if not amount or amount <= 0 then return amount end
+		return math.max(1, math.floor(amount * shardRatio + 0.5))
+	end
+
+	local rewards = definition.Rewards or {}
+	local result = {}
+
+	if rewards.Cash and rewards.Cash > 0 then
+		result.Cash = math.max(CASH_ROUNDING, math.floor(rewards.Cash * cashRatio / CASH_ROUNDING + 0.5) * CASH_ROUNDING)
+	end
+
+	result.Shards = scaleCount(rewards.Shards)
+
+	if rewards.Crates then
+		result.Crates = {}
+		for tier, amount in rewards.Crates do
+			result.Crates[tier] = scaleCount(amount)
+		end
+	end
+
+	return result
 end
 
 --[=[
@@ -259,9 +327,13 @@ function ContractService:_draw(kind : string, previous : { any }, profile, rng :
 		for _, definition in group do
 			if #slots >= count then break end
 
+			local params = rollParams(definition, profile, rng)
+
 			table.insert(slots, {
 				Id = definition.Id,
-				Params = rollParams(definition, profile, rng),
+				Params = params,
+				-- Nil quando o contrato nao escala: vale o `Rewards` do config.
+				Rewards = scaledRewards(definition, params),
 				Progress = 0,
 				Claimed = false,
 			})
@@ -272,8 +344,34 @@ function ContractService:_draw(kind : string, previous : { any }, profile, rng :
 end
 
 --[=[
+	Se um slot ja sorteado precisa de conserto: campo `Random` sem valor no `Params`,
+	ou recompensa por dificuldade que ainda nao foi calculada.
+
+	Acontece quando o config muda com o periodo correndo. Sem o valor o `matches`
+	nunca casaria -- o contrato ficaria impossivel ate a virada (uma semana, no
+	semanal) --, e sem o `Rewards` o slot pagaria o do config em qualquer
+	dificuldade.
+]=]
+local function needsRepair(slot) : boolean
+	local definition = typeof(slot) == "table" and ContractConfig.get(slot.Id)
+	if not definition then return false end
+
+	for _, field in RANDOM_FIELDS do
+		if definition[field] == RANDOM and not (slot.Params and slot.Params[field]) then
+			return true
+		end
+	end
+
+	return scalesWithDifficulty(definition) and slot.Rewards == nil
+end
+
+--[=[
 	Sorteia de novo cada periodo que virou. Uma escrita so para os tres, e nenhuma
 	quando nada virou -- que e o caso de quase todo tick.
+
+	Na mesma escrita, conserta os slots que precisam (`needsRepair`): so o campo
+	que falta e sorteado, a recompensa sai da dificuldade que o slot tem, e o
+	progresso fica.
 ]=]
 function ContractService:_ensurePeriods(player : Player)
 	local profile = self:_profileOf(player)
@@ -283,21 +381,49 @@ function ContractService:_ensurePeriods(player : Player)
 	local time = now()
 
 	local stale = {}
+	local repair = false
 	for _, kind in ContractConfig.KIND_ORDER do
 		local bucket = contracts and contracts[kind]
 		local period = ContractConfig.periodOf(kind, time)
 
 		if not bucket or bucket.Period ~= period then
 			stale[kind] = period
+		elseif typeof(bucket.Slots) == "table" then
+			for _, slot in bucket.Slots do
+				if needsRepair(slot) then
+					repair = true
+				end
+			end
 		end
 	end
 
-	if next(stale) == nil then return end
+	if next(stale) == nil and not repair then return end
 
 	local rng = Random.new()
 
 	self.Services.DataService:Update(player, "Contracts", function(current)
 		current = typeof(current) == "table" and current or ContractConfig.createEmpty()
+
+		for _, bucket in current do
+			if typeof(bucket) ~= "table" or typeof(bucket.Slots) ~= "table" then continue end
+
+			for _, slot in bucket.Slots do
+				if not needsRepair(slot) then continue end
+
+				local definition = ContractConfig.get(slot.Id)
+
+				slot.Params = typeof(slot.Params) == "table" and slot.Params or {}
+				for field, value in rollParams(definition, profile, rng) do
+					if slot.Params[field] == nil then
+						slot.Params[field] = value
+					end
+				end
+
+				if slot.Rewards == nil then
+					slot.Rewards = scaledRewards(definition, slot.Params)
+				end
+			end
+		end
 
 		for kind, period in stale do
 			local bucket = current[kind]
@@ -470,6 +596,52 @@ function ContractService:Flush(player : Player)
 	end)
 end
 
+--[[ REROLL ]]
+
+--[=[
+	Sorteia a aba `kind` inteira de novo e soma um na contagem de rerolls dela. So
+	quem chama e o recibo do developer product (ver `construct`): nao ha evento do
+	cliente para isto, porque a unica prova de pagamento e o recibo.
+
+	Tudo sai: resgatado ou nao, com progresso ou nao. Os contratos novos evitam os
+	que estavam la sempre que sobra o bastante (o `previous` do `_draw`).
+
+	A fila de progresso e gravada **antes**: ela aponta para o slot pelo indice, pelo
+	periodo e pelo `Id`, e um reroll que sorteasse o mesmo contrato no mesmo lugar
+	receberia o progresso do anterior.
+
+	Devolve false quando nao deu para rerolar (perfil fechado) -- ai o recibo volta
+	como `NotProcessedYet` e a Roblox tenta de novo.
+]=]
+function ContractService:Reroll(player : Player, kind : string) : boolean
+	if not ContractConfig.isKind(kind) or not self:_profileOf(player) then
+		return false
+	end
+
+	-- A virada primeiro: pago no ultimo segundo do periodo, o reroll vale para o novo.
+	self:_ensurePeriods(player)
+	self:Flush(player)
+
+	local profile = self:_profileOf(player)
+	local rng = Random.new()
+	local rerolled = false
+
+	self.Services.DataService:Update(player, "Contracts", function(current)
+		local bucket = current and current[kind]
+		if typeof(bucket) ~= "table" then return current end
+
+		local previous = typeof(bucket.Slots) == "table" and bucket.Slots or {}
+
+		bucket.Slots = self:_draw(kind, previous, profile, rng)
+		bucket.Rerolls = (tonumber(bucket.Rerolls) or 0) + 1
+		rerolled = true
+
+		return current
+	end)
+
+	return rerolled
+end
+
 --[[ RESGATE ]]
 
 --[=[
@@ -563,7 +735,8 @@ function ContractService:Claim(player : Player, kind : any, index : any) : (bool
 		return current
 	end)
 
-	self:_grant(player, definition.Rewards or {})
+	-- A do slot quando a dificuldade sorteada mexeu nela (`scaledRewards`).
+	self:_grant(player, slot.Rewards or definition.Rewards or {})
 
 	return true, nil
 end
@@ -615,6 +788,24 @@ function ContractService:construct()
 		local ok, reason = self:Claim(player, kind, index)
 		Framework:Fire("ContractClaimResult", player, kind, index, ok, reason)
 	end)
+
+	--[[
+		Os rerolls pagos: cada produto de cada aba credita um reroll dela. Registrado
+		nas duas places, porque o recibo que nao foi processado volta onde o jogador
+		estiver -- e ele pode ter ido para a partida antes disso.
+	]]
+	local monetization = self.Services.MonetizationService
+	if monetization then
+		for kind, products in ContractConfig.Reroll.Products do
+			for _, productId in products do
+				monetization:RegisterProduct(productId, function(player : Player)
+					return self:Reroll(player, kind)
+				end)
+			end
+		end
+	else
+		warn("[ContractService]: sem MonetizationService; o reroll dos contratos nao vai ser creditado.")
+	end
 
 	task.spawn(function()
 		while true do

@@ -39,15 +39,16 @@
 	esta atras do alvo. `PierceWidth` e a unica coisa entre "pega quem a linha corta
 	de raspao" e "limpa a fileira do lado".
 
-	`Slow`, `Stun`, `Burn` e `Frost` sao o que o golpe **deixa** no inimigo, alem do
-	dano. Hoje deixam o Electro (o tranco do choque), o Frostione (os acumulos de
-	gelo) e o Pyre (a queimadura):
+	`Slow`, `Stun`, `Burn`, `Bleed` e `Frost` sao o que o golpe **deixa** no inimigo,
+	alem do dano. Hoje deixam o Electro (o tranco do choque), o Frostione (os acumulos
+	de gelo), o Pyre (a queimadura) e o Slasher (o sangramento):
 
 	| Campo | O que e |
 	| --- | --- |
 	| `Slow` | `{ Amount, Duration }` -- `Amount` e a fracao de velocidade tirada (0.3 e "anda 30% mais devagar") |
 	| `Stun` | `{ Duration }` -- o inimigo para **de vez** por tantos segundos |
 	| `Burn` | `{ Damage, Ticks, Interval }` -- tantos tiques de tanto dano, de tantos em tantos segundos. Nao acumula: acerto em quem ja queima nao soma dano nem renova o prazo |
+	| `Bleed` | `{ Damage, Ticks, Interval }` -- igual ao `Burn`, com prazo proprio (sangrar e queimar convivem no mesmo alvo) e sem a carta de fogo |
 	| `Frost` | `{ Slow, Duration, FreezeStacks, FreezeDuration, FreezeImmunity, Radius, MaxRadius }` -- um acumulo por acerto, contado **por unidade**; com qualquer acumulo o inimigo fica `Slow` mais lento, o acerto de uma unidade renova so o prazo dos dela, e `FreezeStacks` de uma mesma unidade o congelam por `FreezeDuration` e zeram a conta de todas. Descongelado, ele ainda passa `FreezeImmunity` segundos sem aceitar acumulo nenhum. `Radius` (ate `MaxRadius` no nivel maximo) da o mesmo acumulo, sem dano, a quem estiver em volta do alvo |
 
 	`Slow` e `Stun` nao sao a mesma coisa em intensidades diferentes: a lentidao mexe
@@ -56,7 +57,7 @@
 	diferentes que o tranco pode ser tao curto: parado e parado, e um terco de segundo
 	disso ja e um pedaco de caminho que o inimigo nao andou.
 
-	Quem os executa e o `MobService` (`ApplySlow`, `StunMob`, `ApplyBurn`), que e o
+	Quem os executa e o `MobService` (`ApplySlow`, `StunMob`, `ApplyBurn`, `ApplyBleed`), que e o
 	dono do estado do inimigo; quem os dispara e o `UnitService:creditDamage`, depois
 	de o dano ter entrado. As cartas de round Chill Out e Fire Hazard multiplicam
 	exatamente estes numeros.
@@ -355,6 +356,19 @@ local UnitStats = {
 				ar (ou o contrario).
 			]]
 			ThrowTime = 0.35,
+
+			--[[
+				Carregamento da mina depois de pousar.
+
+				Ela arma assim que toca o chao, mas explode com so `StartDamage` do dano
+				(0.35 = 35%) e sobe em linha reta ate 100% em `Time` segundos. Pisada aos
+				2.5s, tira 67.5%. Tempo de partida, como o `ThrowTime`: no 3x carrega tres
+				vezes mais rapido.
+			]]
+			Charge = {
+				Time = 5,
+				StartDamage = 0.35,
+			},
 		},
 		RangeStats = {
 			Increment = 1,
@@ -597,6 +611,11 @@ local UnitStats = {
 		alcancaria o mesmo que as unidades de tiro medio sem ter deixado de ser
 		corpo a corpo em nada.
 	]]
+	--[[
+		Cada golpe deixa o alvo sangrando: 1 de dano por segundo, 5 tiques. Como a
+		queimadura, **nao acumula nem renova** -- golpe em quem ja sangra so da o dano
+		do golpe. Upgrade, clima e carta nao mexem no sangramento.
+	]]
 	["Slasher"] = {
 		Rarity = "Common",
 		Class = "Melee",
@@ -607,6 +626,7 @@ local UnitStats = {
 		AttackType = "MultiShot",
 		HitInterval = 0,
 		Hits = 1,
+		Bleed = { Damage = 1, Ticks = 5, Interval = 1 },
 		RangeStats = {
 			Increment = 1,
 			Max = 8,

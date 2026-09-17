@@ -82,6 +82,42 @@ function CmdrService:IsAdmin(Player : Player?) : boolean
 	return false
 end
 
+--[=[
+	Se o jogador pode rodar esse comando especifico: admin roda tudo, os outros so
+	o que o `COMMAND_PERMISSIONS` libera para o cargo deles.
+]=]
+function CmdrService:CanRun(Player : Player?, commandName : string) : boolean
+	if self:IsAdmin(Player) then
+		return true
+	end
+
+	local rule = CmdrConfig.COMMAND_PERMISSIONS[commandName]
+
+	return rule ~= nil and rankInGroup(Player :: Player, rule.groupId) >= rule.minRank
+end
+
+--[=[
+	Os nomes dos comandos que o jogador pode rodar. Admin recebe todos.
+
+	O cliente usa a lista para abrir o console (lista vazia = sem console) e para
+	tirar do `help` e do autocomplete o que ele nao pode rodar.
+]=]
+function CmdrService:GetAccessibleCommands(Player : Player) : { string }
+	if self:IsAdmin(Player) then
+		return Cmdr.Registry:GetCommandNames()
+	end
+
+	local commandNames = {}
+
+	for commandName, rule in CmdrConfig.COMMAND_PERMISSIONS do
+		if Cmdr.Registry:GetCommand(commandName) and rankInGroup(Player, rule.groupId) >= rule.minRank then
+			table.insert(commandNames, commandName)
+		end
+	end
+
+	return commandNames
+end
+
 function CmdrService:construct()
 	local definitions = ServerScriptService:WaitForChild("CmdrDefinitions")
 
@@ -91,7 +127,7 @@ function CmdrService:construct()
 	Cmdr:RegisterDefaultCommands(CmdrConfig.DEFAULT_COMMAND_GROUPS)
 
 	Cmdr.Registry:RegisterHook("BeforeRun", function(context)
-		if not self:IsAdmin(context.Executor) then
+		if not self:CanRun(context.Executor, context.Name) then
 			return "You do not have permission to run commands."
 		end
 
@@ -100,11 +136,11 @@ function CmdrService:construct()
 
 	--[=[
 		O CmdrController pergunta aqui em vez de ler a lista de admins, que nao e
-		mais replicada. A resposta so decide se o console aparece -- o BeforeRun
+		mais replicada. A resposta so decide o que o console mostra -- o BeforeRun
 		acima continua sendo quem de fato autoriza cada comando.
 	]=]
 	Framework:Listen("RequestCmdrAccess", function(player : Player)
-		Framework:Fire("CmdrAccess", player, self:IsAdmin(player))
+		Framework:Fire("CmdrAccess", player, self:GetAccessibleCommands(player))
 	end)
 end
 

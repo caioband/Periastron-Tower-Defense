@@ -36,13 +36,16 @@ local UNIT_ROOT_NAME = "HumanoidRootPart"
 local MONEY_VFX_FALLBACK = 3
 
 -- Os estados desenhados num modelo inteiro (`playModelStatus`): o congelamento --
--- do Frostione nos inimigos e do clima nas unidades -- e a queimadura do Pyre. O
--- asset em `Assets.VFX`, o nome do Highlight dele depois de mudar para o modelo, e
--- a faxina de quando o modulo `vfx` nao souber dizer quanto as particulas duram.
+-- do Frostione nos inimigos e do clima nas unidades --, a queimadura do Pyre e o
+-- sangramento do Slasher. O asset em `Assets.VFX`, o nome do Highlight dele depois
+-- de mudar para o modelo, e a faxina de quando o modulo `vfx` nao souber dizer
+-- quanto as particulas duram.
 local ICED_VFX_NAME = "IcedVFX"
 local ICED_HIGHLIGHT_NAME = "IcedHighlight"
 local BURNING_VFX_NAME = "BurningVFX"
 local BURNING_HIGHLIGHT_NAME = "BurningHighlight"
+local BLEED_VFX_NAME = "BleedVFX"
+local BLEED_HIGHLIGHT_NAME = "BleedHighlight"
 local STATUS_VFX_FALLBACK = 2
 
 --[=[
@@ -832,6 +835,11 @@ function VFXController:PlayBurning(mobId : string, duration : number?)
 	self:playMobStatus(mobId, BURNING_VFX_NAME, BURNING_HIGHLIGHT_NAME, duration)
 end
 
+-- O sangramento do Slasher (`BleedVFX`). Ver `playModelStatus`.
+function VFXController:PlayBleeding(mobId : string, duration : number?)
+	self:playMobStatus(mobId, BLEED_VFX_NAME, BLEED_HIGHLIGHT_NAME, duration)
+end
+
 -- Os dois ataques do Archmage que tem desenho: os assets em `Assets.VFX`, o
 -- Attachment da explosao dentro do meteoro, e a faxina de reserva.
 local METEOR_VFX_NAME = "Meteor"
@@ -1025,6 +1033,11 @@ function VFXController:construct()
 	-- em quem ja queimava (`MobService:ApplyBurn`).
 	Framework:Listen("MobBurning", function(mobId : string, duration : number)
 		self:PlayBurning(mobId, duration)
+	end)
+
+	-- O sangramento do Slasher, pelo mesmo motivo (`MobService:ApplyBleed`).
+	Framework:Listen("MobBleeding", function(mobId : string, duration : number)
+		self:PlayBleeding(mobId, duration)
 	end)
 
 	-- Os ataques do Archmage que tem desenho. Quem decide a mira e o tempo e o

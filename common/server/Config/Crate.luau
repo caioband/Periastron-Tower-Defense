@@ -50,8 +50,8 @@ module.EXCLUDED_UNITS = {
 
 	⚠️ Zero no pool não é "nunca": a comum e a rara podem **evoluir** até a épica
 	(ver UPGRADES), e aí o sorteio é o do pool épico. Por esse caminho elas também
-	entregam Cosmic, bem mais raro — e o `GetDisplayOdds` mostra isso nas odds
-	delas, porque a chance publicada é a chance real.
+	entregam Cosmic, bem mais raro. O `GetOdds` conta isso; a loja da Crate Of
+	Beginnings esconde a linha (ver `HIDDEN_DISPLAY_RARITIES`).
 ]]
 module.POOLS = {
 	["Common"] = {
@@ -87,6 +87,18 @@ module.POOLS = {
 		Legendary = 40,
 		Cosmic = 0,
 	},
+}
+
+--[[
+	Raridades que a LOJA não mostra nas odds de uma caixa. Só a exibição: o sorteio,
+	a evolução e a garantia (pity) continuam iguais.
+
+	A Crate Of Beginnings ainda pode entregar Cosmic evoluindo até a Fragmented Crate
+	(uns 0,03%). A linha só sai da tela; as outras raridades seguem com a chance real
+	delas, sem redistribuir o peso da escondida.
+]]
+module.HIDDEN_DISPLAY_RARITIES = {
+	["Common"] = { Cosmic = true },   -- Crate Of Beginnings
 }
 
 --[[
@@ -128,7 +140,7 @@ module.CHAIN_UPGRADES = true
 	que nao existe. Raridade com chance zero (a Cosmic, hoje) sai de fora: linha de
 	"0%" na loja e ruido.
 ]=]
-function module.GetDisplayOdds(crateRarity : string) : { [string]: number }?
+function module.GetOdds(crateRarity : string) : { [string]: number }?
 	local pool = module.POOLS[crateRarity]
 	if not pool then
 		return nil
@@ -174,6 +186,22 @@ function module.GetDisplayOdds(crateRarity : string) : { [string]: number }?
 end
 
 --[=[
+	O `GetOdds` sem as raridades de `HIDDEN_DISPLAY_RARITIES` -- e o que a loja mostra.
+]=]
+function module.GetDisplayOdds(crateRarity : string) : { [string]: number }?
+	local odds = module.GetOdds(crateRarity)
+	local hidden = module.HIDDEN_DISPLAY_RARITIES[crateRarity]
+
+	if odds and hidden then
+		for rarity in hidden do
+			odds[rarity] = nil
+		end
+	end
+
+	return odds
+end
+
+--[=[
 	A garantia (pity) das raridades altas: as que tem contador proprio por caixa, em
 	ordem de prioridade.
 
@@ -196,7 +224,7 @@ module.PITY_RARITIES = { "Cosmic", "Legendary" }
 	daquele tier. Nil quando a caixa nao tem chance nenhuma dela -- entao nao ha o
 	que garantir.
 
-	Sai sozinho da chance **publicada** (`GetDisplayOdds`, com a evolucao dentro, e sem
+	Sai sozinho da chance **real** (`GetOdds`, com a evolucao dentro, e sem
 	a sorte da gamepass): com 1%, cem aberturas sem ela garantem a centesima primeira.
 	Mexeu nos pools ou nas evolucoes, o limite acompanha sem tocar em mais nada.
 
@@ -207,7 +235,8 @@ module.PITY_RARITIES = { "Cosmic", "Legendary" }
 		| Legendary Crate     |         3 |      - |
 ]=]
 function module.GetPityThreshold(crateRarity : string, rarity : string) : number?
-	local odds = module.GetDisplayOdds(crateRarity)
+	-- A chance real, e nao a da loja: esconder a linha nao pode desligar a garantia.
+	local odds = module.GetOdds(crateRarity)
 	local chance = odds and odds[rarity]
 
 	if not chance or chance <= 0 then

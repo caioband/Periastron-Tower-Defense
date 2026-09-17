@@ -221,7 +221,11 @@ WeatherConfig.Thunder = {
 	},
 
 	--[[
-		O premio de levar um raio, para quem e do tipo `Electric`.
+		O premio de levar um raio, para quem e do tipo `Electric` -- no lugar do
+		atordoamento: Electric tocada pelo raio (ou pelo arco) nunca para.
+
+		`Damage` multiplica o dano (1.5 = +50%). `AttackSpeed` divide o cooldown, entao
+		2 e -50% de cooldown (o dobro de ataques), e nao 1.5.
 
 		Fora isso o Electric ja ganha um bonus passivo enquanto o clima durar, que
 		mora em `Effects.Thunder.Units.Electric` — este aqui e o temporario, que so
@@ -229,8 +233,8 @@ WeatherConfig.Thunder = {
 	]]
 	Charge = {
 		Damage = 1.5,
-		AttackSpeed = 1.5,
-		Duration = 10,
+		AttackSpeed = 2,
+		Duration = 4,
 	},
 }
 
@@ -492,8 +496,8 @@ WeatherConfig.Effects = {
 	--[[
 		Trovão: o raio atordoa quem acerta e salta para quem estiver perto (os
 		números estão em `WeatherConfig.Thunder.Stun`). Electric ganha um bônus
-		passivo enquanto o clima durar, e um bem maior e temporário quando leva o
-		raio (`WeatherConfig.Thunder.Charge`). Magic não é alvo.
+		passivo enquanto o clima durar, e quando leva o raio não é atordoada: ganha
+		um bem maior e temporário (`WeatherConfig.Thunder.Charge`). Magic não é alvo.
 	]]
 	Thunder = {
 		Immune = { Magic = true },
