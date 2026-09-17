@@ -217,6 +217,8 @@ tutorial [jogadores]                 manda a oferta de tutorial (não escreve no
                                      jogadores omitido = só quem rodou
 highlight [caminho] [jogadores]      escurece a tela menos o GuiObject do caminho
                                      ex.: highlight HUD.HUDLeft.Shop; sem caminho, apaga
+arrow [x,y,z] [jogadores]            aponta a seta de indicação naquela posição
+                                     sem posição, apaga
 ```
 
 **Quem pode rodar comando.** A permissão é do servidor: o hook `BeforeRun` chama
@@ -1499,6 +1501,51 @@ destaque o mandaria para trás do HUD.
 O servidor pede pelo `HighlightService`, por **caminho de nomes** a partir da
 `PlayerGui` (`"HUD.HUDLeft.Shop"`), que é a única forma de falar de uma tela que só
 existe no cliente — e é o que o `highlight` do Cmdr usa.
+
+## Seta de indicação (`ArrowController`)
+
+Aponta um lugar do mundo com o `Shared.Assets.VFX.IndicatorArrow`: a seta fica
+acima do alvo, girando em torno do próprio eixo e subindo e descendo.
+
+```lua
+local Arrow = Framework:Get("ArrowController")
+
+local seta = Arrow:Point(unidade.Position)
+seta:MoveTo(outraPosicao)
+seta:Destroy()
+
+Arrow:ClearAll()
+```
+
+**`Height` é a folga entre a ponta e o alvo**, em studs — não a altura do pivô. O
+controller mede uma vez, no molde, a distância do pivô até a ponta de baixo, e é essa
+medida que entra na conta. Isso é de propósito: o modelo é autorado no place, e o
+pivô é onde o designer o deixou. Hoje ele está na ponta (a medida dá -1.125); alguém
+definir um `PrimaryPart` amanhã moveria o pivô seis studs para o meio da peça, e a
+seta continuaria apontando o mesmo lugar. Escala menor encolhe a medida junto.
+
+**O molde é conferido, não consertado.** O modelo já vem do Studio ancorado, soldado
+e sem colisão, consulta ou toque. O controller reescreve essas propriedades **uma
+vez** num molde guardado fora da árvore — é barato e é a diferença entre "a seta
+funciona" e "a seta cai no chão" no dia em que uma cópia nova chegar sem elas.
+
+**Uma conexão para todas as setas**, ligada na primeira e desligada na última — não
+existe um `RenderStepped` por seta nem um rodando com a tela vazia. Cada seta nasce
+com meia volta de defasagem: duas subindo em sincronia parecem uma coisa só
+piscando.
+
+As setas moram numa pasta própria do `Workspace` (`Indicators`), **fora do
+`Workspace.Map`** que o `MapService` troca entre partidas. O `Highlight` que vem
+dentro do modelo tem `DepthMode = AlwaysOnTop`, então a seta aparece através da
+geometria — que é o que uma indicação quer.
+
+Números em `SharedConfig.IndicatorArrowConfig` (altura, voltas por segundo,
+amplitude e ciclos do sobe-desce, escala). **Não confundir com `ArrowConfig`**, que é
+a flecha do Archer — projétil, dano e velocidade de voo; esta aqui não acerta
+ninguém.
+
+Do servidor, `ArrowService:Point(players, position)` manda só o `Vector3` e cada
+cliente monta a sua — é o caminho do comando `arrow` do Cmdr.
 
 ## Unidades
 
