@@ -1,6 +1,34 @@
 local UnitStats = require(script.Parent.UnitStats)
 local WeatherConfig = require(script.Parent.WeatherConfig)
 
+--[[
+	Como cada unidade cresce de nivel em nivel.
+
+	O caminho normal e a formula: `BaseCost * CostMultiplier ^ nivel` para o preco,
+	`Damage * DamageMultiplier ^ nivel` para o dano, `Cooldown * CooldownMultiplier ^
+	nivel` para a cadencia. E o que a `Default` faz, e e o que a maioria das unidades
+	usa -- uma progressao geometrica cabe em tres numeros e nao tem como ficar
+	dessincronizada de si mesma.
+
+	Algumas unidades, porem, tem escadas **desenhadas na mao**, e progressao
+	geometrica nenhuma passa por todos os degraus delas. Para essas ha dois campos
+	opcionais:
+
+	| Campo | O que e |
+	| --- | --- |
+	| `Costs` | o preco de cada upgrade, um por nivel comprado (indice = nivel atual + 1). Manda no `BaseCost`/`CostMultiplier` |
+	| `Cooldowns` | o cooldown de cada nivel (indice = nivel + 1), do 0 ao maximo. Manda no `CooldownMultiplier`, e o item 1 tem que ser o `Cooldown` do `UnitStats` |
+
+	Hoje o Slasher, o Sword, o Slingshot e o Archer usam `Costs`, porque a escada de
+	preco deles foi desenhada por wave e nao por formula: os saltos sao desiguais de
+	proposito. `Cooldowns` so o Slingshot usa -- os 0,55s ate 0,32s dele nao sao
+	geometricos.
+
+	A regra para escolher e simples: **se a formula reproduz a tabela exatamente, use
+	a formula**. Ela documenta a intencao (o alvo do nivel maximo) e continua valendo
+	se o `MaxUpgrades` mudar; a lista nao. O alcance tem a mesma escolha, e ela mora
+	no `RangeStats` do `UnitStats`.
+]]
 local UnitUpgradeConfig = {
 	MaxUpgrades = 5,
 }
@@ -38,9 +66,17 @@ UnitUpgradeConfig.Units = {
 		CostMultiplier = 1.6,
 		DamageMultiplier = 1.25,
 	},
+	--[[
+		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Dano     | 35   | 44   | 55   | 68   | 85   | 107  |
+		| Cooldown | 2,00 | 1,80 | 1,62 | 1,46 | 1,31 | 1,18 |
+		| DPS      | 17,5 | 24,4 | 34,0 | 46,6 | 64,8 | 90,6 |
+
+		O dano e a cadencia saem da formula; so o preco e escada na mao (`Costs`).
+		Com os 200 de colocacao do `UnitStats`, leva-la ao maximo custa 2.090.
+	]]
 	["Sword"] = {
-		BaseCost = 100,
-		CostMultiplier = 1.6,
+		Costs = { 165, 250, 325, 450, 700 },
 		DamageMultiplier = 1.25,
 		CooldownMultiplier = 0.9,
 	},
@@ -64,24 +100,45 @@ UnitUpgradeConfig.Units = {
 		para o topo cair exatamente em 9 e continuar caindo se o teto de upgrades
 		mudar. A escada que sai disso, ja arredondada como o servidor arredonda:
 
-		| Nivel | 0 | 1 | 2 | 3 | 4 | 5 |
-		| Dano  | 5 | 6 | 6 | 7 | 8 | 9 |
+		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Dano     | 5    | 6    | 6    | 7    | 8    | 9    |
+		| Cooldown | 0,85 | 0,77 | 0,69 | 0,62 | 0,56 | 0,50 |
+		| DPS      | 5,9  | 7,8  | 8,7  | 11,3 | 14,3 | 17,9 |
 
 		**O nivel 2 repete o dano, e nao ha como nao repetir**: sao cinco degraus
 		para quatro pontos de dano. Ele nao e um nivel morto porque o
 		`CooldownMultiplier` corta 10% do intervalo em todo nivel -- o DPS sobe de
 		5,9 a 17,9 sem nenhum degrau parado.
+
+		So o preco e escada na mao (`Costs`). Com os 90 de colocacao do `UnitStats`,
+		leva-la ao maximo custa 1.534.
 	]]
 	["Slasher"] = {
-		BaseCost = 100,
-		CostMultiplier = 1.6,
+		Costs = { 100, 144, 230, 370, 600 },
 		DamageMultiplier = (9 / UnitStats.Slasher.Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 		CooldownMultiplier = 0.9,
 	},
+	--[=[
+		A unica unidade com `Cooldowns` na mao: os degraus dela nao sao geometricos, e
+		nenhum multiplicador unico passa pelos seis.
+
+		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Dano     | 4    | 5    | 6    | 7    | 9    | 10   |
+		| Cooldown | 0,55 | 0,52 | 0,46 | 0,41 | 0,35 | 0,32 |
+		| DPS      | 7,3  | 9,6  | 13,0 | 17,1 | 25,7 | 31,3 |
+
+		**`1.21` nao e o alvo do nivel maximo escrito como raiz**, ao contrario do
+		Slasher e do Frostione: `(10/4) ^ (1/5)` daria 1,2011 e o nivel 4 cairia em
+		8,3 -- um 8 onde a tabela pede 9. A faixa que arredonda para os seis numeros e
+		estreita (1,2075 a 1,2126), e 1,21 esta dentro dela. Mexeu qualquer degrau,
+		refaca a conta: nao ha folga aqui.
+
+		Com os 175 de colocacao do `UnitStats`, leva-la ao maximo custa 1.725.
+	]=]
 	["Slingshot"] = {
-		BaseCost = 100,
-		CostMultiplier = 1.6,
-		DamageMultiplier = 1.25,
+		Costs = { 130, 210, 285, 375, 550 },
+		DamageMultiplier = 1.21,
+		Cooldowns = { 0.55, 0.52, 0.46, 0.41, 0.35, 0.32 },
 	},
 	--[[
 		O dano do tiro vai de 15 a 25 no nivel maximo, pela mesma conta do Slasher: a
@@ -95,10 +152,22 @@ UnitUpgradeConfig.Units = {
 		CostMultiplier = 1.6,
 		DamageMultiplier = (25 / UnitStats["Pyre"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 	},
-	-- Mesma escada do Slingshot, que e a unidade de que ele e uma variacao.
+	--[[
+		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Dano     | 16   | 20   | 25   | 31   | 39   | 49   |
+		| Cooldown | 2,00 | 2,00 | 2,00 | 2,00 | 2,00 | 2,00 |
+		| DPS      | 8,0  | 10,0 | 12,5 | 15,5 | 19,5 | 24,5 |
+
+		Sem `CooldownMultiplier` de proposito, ao contrario do Slingshot de que ele e
+		uma variacao: os 2s sao a duracao da animacao `Attack` (ver o comentario dele
+		no `UnitStats`), e upgrade nele compra dano e alcance, nao cadencia. E o que
+		separa os dois agora -- um cutuca cada vez mais rapido, o outro bate cada vez
+		mais forte no mesmo ritmo.
+
+		Com os 150 de colocacao do `UnitStats`, leva-lo ao maximo custa 1.835.
+	]]
 	["Archer"] = {
-		BaseCost = 100,
-		CostMultiplier = 1.6,
+		Costs = { 125, 235, 300, 425, 600 },
 		DamageMultiplier = 1.25,
 	},
 	["Rocket"] = {
@@ -181,8 +250,23 @@ function UnitUpgradeConfig:GetUnitData(unitName)
 	return self.Units[unitName] or self.Default
 end
 
+--[=[
+	O que custa o **proximo** upgrade, saindo de `currentLevel`.
+
+	Com `Costs` na unidade, e o item `currentLevel + 1` da lista; sem ele, a formula
+	geometrica de sempre. Ver o cabecalho do arquivo para quando usar cada uma.
+]=]
 function UnitUpgradeConfig:GetCost(unitName, currentLevel)
 	local data = self:GetUnitData(unitName)
+	local ladder = data.Costs
+
+	if ladder then
+		-- O clamp existe para um nivel fora da lista nao devolver nil e virar erro de
+		-- aritmetica no card: quem chama aqui ja checou o `IsMaxed`, mas o preco de um
+		-- nivel que nao existe tem que ser um numero.
+		return ladder[math.clamp((currentLevel or 0) + 1, 1, #ladder)]
+	end
+
 	return math.floor(data.BaseCost * (data.CostMultiplier ^ currentLevel) + 0.5)
 end
 
@@ -225,7 +309,12 @@ function UnitUpgradeConfig:GetRange(unitName, level, weather)
 	local rangeStats = stats.RangeStats
 
 	local range = baseRange
-	if rangeStats then
+	if rangeStats and rangeStats.Levels then
+		-- Alcance por nivel, para as escadas que nao sao uma reta (ver o `RangeStats`
+		-- no cabecalho do `UnitStats`).
+		local levels = rangeStats.Levels
+		range = levels[math.clamp((level or 0) + 1, 1, #levels)]
+	elseif rangeStats then
 		local increased = baseRange + ((level or 0) * (rangeStats.Increment or 0))
 		range = math.min(increased, math.max(rangeStats.Max or increased, baseRange))
 	end
@@ -245,7 +334,14 @@ function UnitUpgradeConfig:GetCooldown(unitName, level, weather)
 	local stats = UnitStats[unitName]
 	local baseCooldown = stats and stats.Cooldown or 1
 	local data = self:GetUnitData(unitName)
-	local cooldown = baseCooldown * ((data.CooldownMultiplier or 1) ^ (level or 0))
+	local ladder = data.Cooldowns
+
+	local cooldown
+	if ladder then
+		cooldown = ladder[math.clamp((level or 0) + 1, 1, #ladder)]
+	else
+		cooldown = baseCooldown * ((data.CooldownMultiplier or 1) ^ (level or 0))
+	end
 
 	local attackSpeed = weatherMultiplier(weather, unitName, "AttackSpeed")
 	if attackSpeed <= 0 then return cooldown end

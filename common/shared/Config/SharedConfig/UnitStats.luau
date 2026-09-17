@@ -7,7 +7,7 @@
 	   pena, e o teto e 15 por 100 de caixa. O Slasher ficava em 26,7 — quase tres
 	   vezes o segundo colocado — e por isso encher o mapa de Slasher era a jogada
 	   otima em qualquer dificuldade. A escada por raridade nao vale mais: Slasher
-	   5,9 e Slingshot 5,2 contra Sword 10,0, Epic ~11 e Legendary 11 a 14.
+	   6,5 e Slingshot 4,2 contra Sword 8,8, Epic ~11 e Legendary 11 a 14.
 
 	2. Alcance como eixo de diferenciacao. Cinco das sete unidades tinham alcance
 	   3, o que tornava posicionamento irrelevante — todas precisavam colar no
@@ -15,6 +15,14 @@
 	   alcance longo e do Slingshot, que nao tem area nem dano alto.
 
 	DPS = Damage * Hits / Cooldown.
+
+	`RangeStats` e como o alcance cresce com o upgrade, e aceita duas formas. A reta
+	e `{ Increment, Max }`: soma `Increment` por nivel ate o teto. A outra e
+	`{ Levels = { ... } }`, um alcance por nivel (indice = nivel + 1), para as
+	unidades cujo alcance sobe em degraus desiguais -- o Sword fica em 4 ate o nivel
+	3 e so entao vai a 5, e isso nao cabe num incremento fixo. Com `Levels`, o
+	`Range` acima tem que ser o primeiro item da lista: e ele que o resto do codigo
+	le como alcance de nivel 0. Quem faz a conta e o `UnitUpgradeConfig:GetRange`.
 
 	`Class` e o tipo da unidade para efeito de clima: "Melee", "Ranged", "Magic",
 	"Fire", "Ice" ou "Electric" (a lista vive em `WeatherConfig.ClassList`). Aceita
@@ -476,22 +484,33 @@ local UnitStats = {
 
 	--[[ RARE ]]
 
-	-- O maior alcance da tabela e o que ela vende: um tiro a cada 1,6 s e o menor
-	-- dano por tiro, a 4,6 de DPS por 100 de caixa.
+	--[[
+		A metralhadora barata: o menor dano por tiro da tabela (4) na maior cadencia
+		dela (0,55 s), a 7,3 de DPS -- 4,2 por 100 de caixa, o pior da tabela e de
+		proposito. Ela nao mata nada sozinha; o que ela vende e cutucar sem parar de
+		longe, e no nivel maximo ela atira tres vezes por segundo.
+
+		**`Cooldown` e mais curto que o windup do tiro** (0,7 s no `UnitAttackConfig`),
+		e por isso o passo dela e escrito como `HitTimes` + `Duration`, e nao como
+		`HitTime`: as duas pontas espremem o instante junto com a animacao. Ver o
+		comentario dela la.
+
+		O alcance sobe em degraus ate 16 (`RangeStats.Levels`) -- a faixa longa da
+		regra 2, que ela divide com o Archer (12 na base tambem, 17 no maximo).
+	]]
 	["Slingshot"] = {
 		Rarity = "Rare",
 		Class = "Ranged",
-		Cost = 150,
-		Damage = 11,
+		Cost = 175,
+		Damage = 4,
 		Range = 12,
-		Cooldown = 1.4,
+		Cooldown = 0.55,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
 		Projectile = { Asset = "Bullet", Speed = 75 },
 		RangeStats = {
-			Increment = 1,
-			Max = 20,
+			Levels = { 12, 13, 14, 15, 15, 16 },
 		},
 	},
 
@@ -507,8 +526,9 @@ local UnitStats = {
 		  cooldown menor a unidade pediria um golpe novo antes de o boneco terminar o
 		  anterior, e o `playAttackVisual` nao reinicia uma track que ja esta tocando
 		  -- a flecha sairia sem o gesto acompanhar.
-		- 16 de dano em 2s da 8,0 de DPS, ou 5,3 por 100 de caixa: a mesma faixa do
-		  Slingshot (5,2), bem abaixo do teto de 15 da regra 1 la de cima.
+		- 16 de dano em 2s da 8,0 de DPS, ou 5,3 por 100 de caixa: acima do Slingshot
+		  (4,2), que e a outra Rare de tiro, e bem abaixo do teto de 15 da regra 1 la
+		  de cima.
 
 		**A flecha atravessa** (`Projectile.Subtype = "Piercing"`), e e isso que separa
 		o Archer do Slingshot agora que os dois tem o mesmo alcance: o tiro deixa de
@@ -541,7 +561,7 @@ local UnitStats = {
 		Projectile = { Asset = "Bullet", Speed = 75, Subtype = "Piercing", PierceFalloff = 0.1 },
 		RangeStats = {
 			Increment = 1,
-			Max = 20,
+			Max = 17,
 		},
 	},
 
@@ -583,33 +603,42 @@ local UnitStats = {
 
 	--[[ COMMON ]]
 
-	-- O golpe pesado e lento, contra o Slasher que e rapido e fraco.
+	--[[
+		O golpe pesado e lento, contra o Slasher que e rapido e fraco.
+
+		35 de dano a cada 2 s da 17,5 de DPS, ou 8,8 por 100 de caixa: o melhor
+		aproveitamento das duas Common, e o preco disso e o alcance -- ela so alcanca
+		4, e o upgrade so a leva a 5 (`RangeStats.Levels`), do nivel 3 para cima. E a
+		unidade que precisa colar no caminho mais que qualquer outra.
+	]]
 	["Sword"] = {
 		Rarity = "Common",
 		Class = "Melee",
-		Cost = 175,
+		Cost = 200,
 		Damage = 35,
 		Range = 4,
 		Cooldown = 2,
 		AttackType = "SingleShot",
 		HitInterval = 0,
-		Hits = 1
+		Hits = 1,
+		RangeStats = {
+			Levels = { 4, 4, 4, 5, 5, 5 },
+		},
 	},
 
 	--[[
-		A unidade de entrada: continua custando 100 porque e o que o jogador compra
-		na wave 1.
+		A unidade de entrada: 90 de caixa, o menor preco da tabela, porque e o que o
+		jogador compra na wave 1.
 
-		5 de dano a cada 0,85 s da 5,9 de DPS, ou 5,9 por 100 de caixa -- longe do
-		teto de 15 da regra 1, e agora **acima** do Slingshot (5,2) e do Archer (5,3),
-		que sao Rare e custam 150. A escada por raridade ja nao valia (ver a regra 1
-		la em cima), e o que separa os tres continua sendo o alcance: ela precisa
-		colar no caminho para bater, e eles nao.
+		5 de dano a cada 0,85 s da 5,9 de DPS, ou 6,5 por 100 de caixa -- longe do
+		teto de 15 da regra 1, e **acima** do Slingshot (4,2) e do Archer (5,3), que
+		sao Rare e custam mais. A escada por raridade ja nao valia (ver a regra 1 la
+		em cima), e o que separa os tres continua sendo o alcance: ela precisa colar
+		no caminho para bater, e eles nao.
 
-		O alcance sobe ate 8 com upgrade (`RangeStats`), e isso e o mais perto que
-		uma Melee chega da faixa media da regra 2. O teto e 8 de proposito: em 10 ela
-		alcancaria o mesmo que as unidades de tiro medio sem ter deixado de ser
-		corpo a corpo em nada.
+		O alcance sobe em degraus ate 6 (`RangeStats.Levels`), e para ai de proposito:
+		na faixa media ela alcancaria o mesmo que as unidades de tiro sem ter deixado
+		de ser corpo a corpo em nada.
 	]]
 	--[[
 		Cada golpe deixa o alvo sangrando: 1 de dano por segundo, 5 tiques. Como a
@@ -619,17 +648,16 @@ local UnitStats = {
 	["Slasher"] = {
 		Rarity = "Common",
 		Class = "Melee",
-		Cost = 100,
+		Cost = 90,
 		Damage = 5,
-		Range = 5,
+		Range = 4,
 		Cooldown = 0.85,
 		AttackType = "MultiShot",
 		HitInterval = 0,
 		Hits = 1,
 		Bleed = { Damage = 1, Ticks = 5, Interval = 1 },
 		RangeStats = {
-			Increment = 1,
-			Max = 8,
+			Levels = { 4, 5, 5, 5, 6, 6 },
 		},
 	},
 }

@@ -56,9 +56,21 @@ local UnitAttackConfig = {
 	},
 
 
+	--[[
+		Escrito como `HitTimes` + `Duration`, e nao como `HitTime`, pelo mesmo motivo
+		do Frostione la embaixo: o cooldown dela e **menor que o windup**. Sao 0,55s no
+		nivel 0 e 0,32s no maximo contra os 0,7s do tiro, e `HitTime` e uma espera fixa
+		que so o cliente encolhe junto com a track -- o tiro sairia depois de o golpe
+		seguinte ja ter comecado, e a unidade acertaria cada vez mais atrasada quanto
+		mais rapido ela ficasse. Com a lista, as duas pontas dividem pelo mesmo fator
+		(ver o `squeeze` do `UnitService` e o `fit` do `Unit:playAttackVisual`).
+
+		1,25s e a duracao da animacao `Attack`. Ela ja era maior que o cooldown antes
+		desta mudanca -- o que passou a nao caber foi o instante do tiro dentro dela.
+	]]
 	["Slingshot"] = {
 		AttackSequence = {
-			{ Animation = "Attack", HitTime = 0.7 },
+			{ Animation = "Attack", HitTimes = { 0.7 }, Duration = 1.25 },
 		},
 	},
 
