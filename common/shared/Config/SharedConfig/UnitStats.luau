@@ -442,17 +442,35 @@ local UnitStats = {
 		},
 	},
 
+	--[[
+		A unidade que nao ataca: ela paga caixa no fim de cada wave e faz quem esta
+		em volta render mais.
+
+		As duas coisas crescem com o upgrade, e por caminhos diferentes. A renda e
+		uma escada na mao (`Incomes`, no `UnitUpgradeConfig`) que dobra e sobra do
+		nivel 0 ao 5 -- 60 a 225 --, com um salto de 50% no ultimo degrau contra os
+		25% dos outros: o nivel maximo dela e o unico investimento de economia da
+		tabela. A aura sobe 5 pontos por nivel e **para em 30%** (`Aura.MaxBonus`),
+		entao os niveis 4 e 5 dao o mesmo bonus e o que o ultimo compra e a renda e
+		o raio.
+
+		O raio e o `Range` (ver o `Aura` abaixo), e vai de 4 a 8 em degraus
+		desiguais -- e a unica unidade cujo alcance dobra com o upgrade, porque nela
+		alcance nao e mira, e quantas torres cabem debaixo da aura.
+	]]
 	["Entrepreneur"] = {
 		Rarity = "Epic",
 		Class = "Melee",
 		Cost = 200,
 		Damage = 0,
-		Range = 6,
+		Range = 4,
 		Cooldown = 2,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
 		Farm = {
+			-- O do nivel 0; a escada inteira e o `Incomes` do `UnitUpgradeConfig`, e
+			-- quem faz a conta para os dois lados e o `GetIncome`.
 			Income = 60,
 
 			--[[
@@ -476,9 +494,24 @@ local UnitStats = {
 				e o card nunca discordarem.
 			]]
 			Aura = {
-				Bonus = 0.15,
+				Bonus = 0.10,
 				BonusPerUpgrade = 0.05,
+
+				--[[
+					O teto da aura, e o que faz os niveis 4 e 5 darem os mesmos 30%.
+
+					Sem ele a conta seguiria reta ate 35% no maximo, e duas farms
+					encostadas fechariam 70% em cima de cada torre -- o bonus e somavel
+					entre farms (ver o `Bonus` acima), entao o que limita o empilhamento
+					e este numero e nao o numero de farms. O ultimo upgrade nao fica
+					vazio por causa disso: ele compra o salto de renda (150 -> 225) e
+					mais um stud de raio.
+				]]
+				MaxBonus = 0.30,
 			},
+		},
+		RangeStats = {
+			Levels = { 4, 5, 5, 6, 7, 8 },
 		},
 	},
 

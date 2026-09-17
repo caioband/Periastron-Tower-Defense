@@ -432,9 +432,9 @@ local function formatDamageOrIncome(unitName : string, level : number, weather, 
 	cards = cards or NO_CARDS
 
 	if farm then
-		local income = math.floor((farm.Income or 0)
-			* upgradeConfig:GetDamageMultiplier(unitName, level)
-			* cards.Income + 0.5)
+		-- O `GetIncome` devolve o numero cru; a carta entra aqui e o arredondamento e
+		-- um so, o mesmo do `payFarmUnits`. Ver o comentario do getter.
+		local income = math.floor(upgradeConfig:GetIncome(unitName, level) * cards.Income + 0.5)
 
 		return "$" .. UIUtil.formatAbbreviated(income) .. " PER WAVE"
 	end

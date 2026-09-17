@@ -1527,8 +1527,7 @@ function UnitService:payFarmUnits()
 					A **carta**, essa sim, entra: o anel do Robux Royalty e uma carta de
 					economia, e recusa-la aqui seria recusar a coisa que ela faz.
 				]]
-				local income = (farm.Income or 0)
-					* SharedConfig.UnitUpgradeConfig:GetDamageMultiplier(entry.unitName, entry.upgrades or 0)
+				local income = SharedConfig.UnitUpgradeConfig:GetIncome(entry.unitName, entry.upgrades or 0)
 					* self:cardMultiplier(entry, "Income")
 
 				local amount = math.floor(income + 0.5)

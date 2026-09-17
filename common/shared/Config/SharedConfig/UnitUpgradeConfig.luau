@@ -18,11 +18,12 @@ local WeatherConfig = require(script.Parent.WeatherConfig)
 	| --- | --- |
 	| `Costs` | o preco de cada upgrade, um por nivel comprado (indice = nivel atual + 1). Manda no `BaseCost`/`CostMultiplier` |
 	| `Cooldowns` | o cooldown de cada nivel (indice = nivel + 1), do 0 ao maximo. Manda no `CooldownMultiplier`, e o item 1 tem que ser o `Cooldown` do `UnitStats` |
+	| `Incomes` | a renda por wave de uma farm em cada nivel (indice = nivel + 1). Manda no `Farm.Income` x `DamageMultiplier`, e o item 1 tem que ser o `Farm.Income` do `UnitStats` |
 
-	Hoje o Slasher, o Sword, o Slingshot e o Archer usam `Costs`, porque a escada de
-	preco deles foi desenhada por wave e nao por formula: os saltos sao desiguais de
-	proposito. `Cooldowns` so o Slingshot usa -- os 0,55s ate 0,32s dele nao sao
-	geometricos.
+	Hoje oito unidades usam `Costs`, porque a escada de preco delas foi desenhada
+	por wave e nao por formula: os saltos sao desiguais de proposito. `Cooldowns` so
+	o Slingshot usa -- os 0,55s ate 0,32s dele nao sao geometricos --, e `Incomes` so
+	o Entrepreneur, que e a unica farm.
 
 	A regra para escolher e simples: **se a formula reproduz a tabela exatamente, use
 	a formula**. Ela documenta a intencao (o alvo do nivel maximo) e continua valendo
@@ -56,14 +57,37 @@ UnitUpgradeConfig.Units = {
 		| Cooldown | 5  | 4,51 | 4,08 | 3,68 | 3,32 | 3  |
 	]]
 	["Subspace Tripminer"] = {
-		BaseCost = 100,
-		CostMultiplier = 1.6,
+		-- Com os 350 de colocacao do `UnitStats`, leva-la ao maximo custa 2.565.
+		Costs = { 225, 300, 425, 550, 715 },
 		DamageMultiplier = (115 / UnitStats["Subspace Tripminer"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 		CooldownMultiplier = (3 / UnitStats["Subspace Tripminer"].Cooldown) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 	},
+	--[=[
+		| Nivel   | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Renda   | 60   | 75   | 95   | 120  | 150  | 225  |
+		| Aura    | 10%  | 15%  | 20%  | 25%  | 30%  | 30%  |
+		| Alcance | 4    | 5    | 5    | 6    | 7    | 8    |
+
+		A renda e escada na mao (`Incomes`) porque os degraus dela nao sao uma razao
+		so: os quatro primeiros ficam perto de 1,25, e o ultimo e 1,5. Esse salto e o
+		ponto da unidade -- o nivel 5 dela custa 675 e devolve 75 a mais por wave, e e
+		a unica compra da tabela que se paga em nove waves em vez de matar alguma
+		coisa.
+
+		A aura e o alcance moram no `UnitStats` (`Farm.Aura` e `RangeStats.Levels`),
+		e nao aqui, porque sao numeros da unidade e nao da escada de upgrade.
+
+		Com os 200 de colocacao do `UnitStats`, leva-la ao maximo custa 2.050.
+	]=]
 	["Entrepreneur"] = {
-		BaseCost = 100,
-		CostMultiplier = 1.6,
+		Costs = { 150, 250, 325, 450, 675 },
+		Incomes = { 60, 75, 95, 120, 150, 225 },
+
+		--[[
+			Inerte, e mantido so porque o `GetDamageMultiplier` e chamado para toda
+			unidade: o `Damage` dela e 0, e a renda deixou de sair daqui quando ganhou
+			o `Incomes` acima. Mexer neste numero nao muda nada em jogo.
+		]]
 		DamageMultiplier = 1.25,
 	},
 	--[[
@@ -148,8 +172,8 @@ UnitUpgradeConfig.Units = {
 		| Dano  | 15 | 17 | 18 | 20 | 23 | 25 |
 	]]
 	["Pyre"] = {
-		BaseCost = 100,
-		CostMultiplier = 1.6,
+		-- Com os 150 de colocacao do `UnitStats`, leva-lo ao maximo custa 1.560.
+		Costs = { 100, 185, 250, 375, 500 },
 		DamageMultiplier = (25 / UnitStats["Pyre"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 	},
 	--[[
@@ -206,8 +230,8 @@ UnitUpgradeConfig.Units = {
 		| DPS      | 10,0 | 12,6 | 14,5 | 18,2 | 22,6 | 28,0 |
 	]]
 	["Frostione"] = {
-		BaseCost = 100,
-		CostMultiplier = 1.6,
+		-- Com os 200 de colocacao do `UnitStats`, leva-la ao maximo custa 2.015.
+		Costs = { 135, 250, 345, 470, 615 },
 		DamageMultiplier = (14 / UnitStats["Frostione"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 		CooldownMultiplier = (0.5 / UnitStats["Frostione"].Cooldown) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 	},
@@ -418,6 +442,10 @@ end
 	O bônus de caixa da aura de uma farm no nível dado, como fração somável: 0.15 é
 	"+15%". Unidade sem aura devolve 0.
 
+	`Aura.MaxBonus` é o teto, e ele existe porque o bônus **soma entre farms**: duas
+	cobrindo a mesma torre valem o dobro, então o que segura o empilhamento é este
+	número e não a quantidade de farms. Sem o campo, a conta sobe reta e não para.
+
 	Não aceita `weather` de propósito, ao contrário dos getters acima. O bônus é
 	economia, e economia não anda com o clima — é a mesma regra do `Farm.Income`,
 	que o `payFarmUnits` paga sem clima justamente para a seca não virar bônus de
@@ -432,7 +460,46 @@ function UnitUpgradeConfig:GetAuraBonus(unitName, level)
 		return 0
 	end
 
-	return (aura.Bonus or 0) + (aura.BonusPerUpgrade or 0) * (level or 0)
+	local bonus = (aura.Bonus or 0) + (aura.BonusPerUpgrade or 0) * (level or 0)
+
+	if aura.MaxBonus then
+		return math.min(bonus, aura.MaxBonus)
+	end
+
+	return bonus
+end
+
+--[=[
+	A renda por wave de uma farm no nível dado, **sem arredondar** e sem carta. Zero
+	para quem não é farm.
+
+	Devolver o número cru é de propósito: quem chama multiplica pela carta de
+	`Income` e arredonda uma vez só no fim (o `payFarmUnits` no servidor, o
+	`formatDamageOrIncome` no card). Arredondar aqui arredondaria duas vezes e o card
+	prometeria um caixa diferente do que cai na conta.
+
+	Com `Incomes` na unidade, é o item `level + 1` da lista; sem ele, é o
+	`Farm.Income` crescendo pelo `DamageMultiplier`, que era como a renda subia antes
+	de qualquer farm ter escada própria.
+
+	Sem `weather` pela mesma razão do `GetAuraBonus` logo acima: renda é economia, e
+	economia não anda com o clima.
+]=]
+function UnitUpgradeConfig:GetIncome(unitName, level)
+	local stats = UnitStats[unitName]
+	local farm = stats and stats.Farm
+
+	if not farm then
+		return 0
+	end
+
+	local ladder = self:GetUnitData(unitName).Incomes
+
+	if ladder then
+		return ladder[math.clamp((level or 0) + 1, 1, #ladder)]
+	end
+
+	return (farm.Income or 0) * self:GetDamageMultiplier(unitName, level or 0)
 end
 
 --[=[

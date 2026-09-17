@@ -134,8 +134,10 @@ Mexer nisso é mexer em `CASH_TIERS`, num lugar só.
 
 ## Entrepreneur: a farm com aura
 
-O Entrepreneur continua sendo a farm — não ataca, e paga `Farm.Income` **ao dono** no
-fim de cada wave. O que ele ganhou foi uma **aura**: toda unidade aliada dentro do
+O Entrepreneur continua sendo a farm — não ataca, e paga ao dono, no fim de cada
+wave, o que o `UnitUpgradeConfig:GetIncome` disser para o nível dela (o `Farm.Income`
+do `UnitStats` é o do nível 0; a escada inteira é o `Incomes` do `UnitUpgradeConfig`,
+e o getter é o que o servidor e o card leem, para não discordarem). O que ele ganhou foi uma **aura**: toda unidade aliada dentro do
 alcance dele leva uma % a mais de caixa em cima do que ela ganhar **por dano e por
 morte**. Vale para qualquer dono (a torre do vizinho também rende mais perto da minha
 farm), e quem recebe o bônus é o dono *daquela torre*, não o dono da farm.
@@ -151,13 +153,18 @@ inevitavelmente mentiria sobre o outro. Para abrir ou fechar a aura, muda-se o
 Só a porcentagem mora no config, em `UnitStats.Entrepreneur.Farm.Aura`:
 
 ```lua
-Aura = { Bonus = 0.15 },   -- +15%
+Aura = { Bonus = 0.10, BonusPerUpgrade = 0.05, MaxBonus = 0.30 },
 ```
 
-`Bonus` é fração somável, e **auras que se sobrepõem somam**: duas farms cobrindo a
-mesma torre valem 30%. `BonusPerUpgrade` é quanto cada nível soma — somado, e não
-multiplicado como a renda, porque porcentagem em passo redondo (15, 20, 25…) é o que
-o card mostra sem casa decimal.
+`Bonus` é fração somável, e **auras que se sobrepõem somam**: duas farms de nível 0
+cobrindo a mesma torre valem 20%. `BonusPerUpgrade` é quanto cada nível soma — somado,
+e não multiplicado, porque porcentagem em passo redondo (10, 15, 20…) é o que o card
+mostra sem casa decimal.
+
+`MaxBonus` é o teto, e é justamente porque o bônus soma entre farms que ele existe: o
+que segura o empilhamento é este número, e não a quantidade de farms que cabem em
+volta de uma torre. Ele é o motivo de os níveis 4 e 5 darem os mesmos 30% — o último
+upgrade da farm compra renda (150 → 225 por wave) e raio, não aura.
 
 A conta mora em `UnitUpgradeConfig:GetAuraBonus(unitName, level)`, e é ela que o
 servidor e o card leem — os dois nunca discordam sobre quanto a aura vale.
@@ -176,19 +183,25 @@ reaproveitado para a renda. Nenhuma mudança de GUI: o Entrepreneur mostra
 
 ```
 $60 PER WAVE          (DamagePerSecond)
-15% PER UNIT BONUS    (AttackSpeed)
-6 RANGE               (Range — o raio da aura)
+10% PER UNIT BONUS    (AttackSpeed)
+4 RANGE               (Range — o raio da aura)
 ```
 
 e a **prévia do próximo nível** vem de graça, porque ela usa os mesmos formatadores
-com `level + 1` (`20% PER UNIT BONUS` pairando sobre o custo de upgrade, ou sempre
-visível no celular). Por nível: 15 / 20 / 25 / 30 / 35 / 40%.
+com `level + 1` (`15% PER UNIT BONUS` pairando sobre o custo de upgrade, ou sempre
+visível no celular). Por nível:
+
+| Nível   | 0   | 1   | 2   | 3   | 4   | 5   |
+| ------- | --- | --- | --- | --- | --- | --- |
+| Renda   | 60  | 75  | 95  | 120 | 150 | 225 |
+| Aura    | 10% | 15% | 20% | 25% | 30% | 30% |
+| Alcance | 4   | 5   | 5   | 6   | 7   | 8   |
 
 Os dois textos dizem mais do que "INCOME" e "BONUS" diziam, e de propósito:
 **"PER WAVE"** porque a frequência é o que decide se a farm se paga (a renda cai no
 fim de cada wave, não do round), e **"PER UNIT"** porque o bônus não é um valor que a
 farm paga — é uma % em cima do que *cada* unidade dentro do raio já ganha por dano e
-por morte. Sem isso escrito, "15%" se lê como algo que sai da própria farm.
+por morte. Sem isso escrito, "10%" se lê como algo que sai da própria farm.
 
 Farm sem `Aura` no config volta a mostrar o cooldown — `formatCooldownOrBonus` decide
 pela presença do bônus, não pelo nome da unidade.
