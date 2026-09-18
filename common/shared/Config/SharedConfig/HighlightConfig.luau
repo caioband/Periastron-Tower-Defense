@@ -53,7 +53,9 @@ HighlightConfig.Gui = {
 	um contorno.
 
 	`Transparency` é o quanto do jogo continua aparecendo por baixo do escuro: 0 é
-	preto sólido, 1 é invisível.
+	preto sólido, 1 é invisível. Medido na tela do jogo: 0.45 escurece de leve
+	demais para um passo de tutorial — o olho não é puxado. 0.35 separa sem apagar o
+	cenário, e é o número a mexer se você quiser mais ou menos drama.
 ]=]
 HighlightConfig.Hole = {
 	Padding = { Fraction = 0.15, Min = 6, Max = 22 },
@@ -61,7 +63,7 @@ HighlightConfig.Hole = {
 
 	Thickness = 10000,
 	Color = Color3.fromRGB(0, 0, 0),
-	Transparency = 0.45,
+	Transparency = 0.35,
 }
 
 --[=[
@@ -82,17 +84,21 @@ HighlightConfig.Tween = {
 }
 
 --[=[
-	O bloqueio de clique.
+	O bloqueio de clique. **Desligado por padrão**, e isso é a parte importante.
 
-	O `UIStroke` **não recebe input** — ele é contorno, não superfície. Então o
-	escurecimento sozinho não impede o jogador de clicar no que está apagado, e um
-	tutorial que aponta o botão da loja não quer que se compre uma carta no escuro.
+	O `UIStroke` não recebe input — ele é contorno, não superfície. Quem bloqueia,
+	quando se pede bloqueio, são quatro frames invisíveis e `Active` que o controller
+	monta em volta do buraco: eles engolem o clique de fora e deixam o miolo livre.
 
-	Ligando `BlockInput`, o controller monta quatro frames invisíveis e `Active` em
-	volta do buraco — acima, abaixo, à esquerda e à direita. Eles engolem o clique
-	de fora e deixam o miolo livre, que é justamente o alvo. É a técnica das quatro
-	máscaras, usada aqui só para o que ela faz melhor que o stroke.
+	O padrão é `false` porque destaque não é modal. Um retângulo de luz em cima de
+	uma carta não deveria impedir o jogador de **girar a câmera** nem de clicar no
+	chão — e foi exatamente o que aconteceu quando o padrão era `true`: o passo que
+	manda colocar a unidade bloqueava o clique no mundo que ele mesmo pedia.
+
+	Quem quer o bloqueio pede por chamada — `Highlight:Show(alvo, { BlockInput = true })`
+	—, e isso só faz sentido quando o alvo é a **única** coisa clicável do passo: um
+	botão de UI, e nunca um lugar do mapa.
 ]=]
-HighlightConfig.BlockInput = true
+HighlightConfig.BlockInput = false
 
 return HighlightConfig

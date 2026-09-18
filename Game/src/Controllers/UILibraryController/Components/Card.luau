@@ -133,6 +133,14 @@ local RESTORE_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirect
 ]]
 local DIM_AMOUNT = 0.35
 
+--[[
+	O quanto uma carta **trancada** apaga. Mais forte que o `DIM_AMOUNT` de propósito:
+	apagar por não estar escolhida é dizer "essa não é a da vez"; apagar por estar
+	trancada é dizer "essa não dá para usar agora", e as duas não podem parecer a
+	mesma coisa.
+]]
+local LOCKED_AMOUNT = 0.6
+
 -- Sem dinheiro para o custo: carta em vermelho, mas sem apagar.
 local NO_CASH_COLOR = Color3.fromRGB(255, 70, 70)
 
@@ -736,7 +744,9 @@ end
 function module:_applyTransparency(entry)
 	entry.FadeMaid:DoCleaning()
 
-	local dim = if entry.Dimmed then DIM_AMOUNT else 0
+	-- Trancada manda em apagada: as duas são o mesmo canal, e a mais forte é a que
+	-- o jogador precisa entender primeiro.
+	local dim = if entry.Locked then LOCKED_AMOUNT elseif entry.Dimmed then DIM_AMOUNT else 0
 
 	for _, fade in entry.Fades do
 		local goal = {}
@@ -1136,6 +1146,71 @@ end
 	para a fila **depois** das de unidade: elas nao vem do deck, e a ordem dos
 	slots e a do deck.
 ]=]
+--[=[
+	Tranca a hotbar em algumas cartas.
+
+	`allowed` é `{ [unidade] = true }`; `nil` destranca tudo. A carta trancada fica
+	com `Active = false` (o clique não é aceito nem pelo botão) e apaga mais que uma
+	carta simplesmente não escolhida.
+
+	A lista fica **guardada no componente**, e não aplicada uma vez: a hotbar é
+	remontada a cada troca de deck e a cada recomeço de round, e a tranca tem de
+	sobreviver a isso — senão vencer a partida e jogar de novo devolveria todas as
+	cartas no primeiro passo do tutorial.
+]=]
+function module:setAllowed(allowed : { [string] : boolean }?)
+	self.allowed = allowed
+
+	for _, entry in self.entries do
+		self:_applyAllowed(entry)
+	end
+end
+
+--[=[
+	Aplica a tranca a uma carta. Carta de round (sem `Unit`) nunca é trancada por
+	aqui: quem cuida dela é o `TutorialStepController`, no pedido de uso.
+]=]
+function module:_applyAllowed(entry)
+	local allowed = self.allowed == nil
+		or entry.Unit == nil
+		or self.allowed[entry.Unit] == true
+
+	if entry.Locked == (not allowed) then
+		return
+	end
+
+	entry.Locked = not allowed
+
+	local card = entry.Card
+	if card then
+		card.Active = allowed
+
+		if card:IsA("GuiButton") then
+			card.AutoButtonColor = allowed
+			card.Selectable = allowed
+		end
+	end
+
+	self:_applyTransparency(entry)
+end
+
+--[=[
+	A carta desta unidade na hotbar, ou `nil` se ela não está lá agora.
+
+	Devolve a **carta**, e não o wrapper que a embala: o wrapper é a vaga no
+	`UIListLayout` — ele tem a folga do arco, o espaço do contador e o que mais o
+	layout precisar —, e um destaque desenhado em cima dele abraça esse vazio em vez
+	da arte. Quem aponta quer a carta.
+
+	Existe para quem precisa apontar uma carta e não desenhá-la: hoje o
+	`TutorialStepController`. É leitura — quem chama não mexe no que recebe.
+]=]
+function module:getCard(unitName : string) : GuiObject?
+	local entry = self.byUnit[unitName]
+
+	return entry and (entry.Card or entry.Wrapper)
+end
+
 function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ())
 	-- Primeira montagem nasce pronta; troca de deck com a hotbar ja na tela entra
 	-- animada, que e o unico momento em que uma carta e de fato posta ou tirada.
@@ -1165,6 +1240,7 @@ function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ()
 
 			self:_writeCount(entry, true)
 			self:_refreshDepth(entry)
+			self:_applyAllowed(entry)
 
 			-- A carta escolhida pode ter sobrevivido a troca de deck: os clones sao
 			-- novos, entao a escala e a apagada precisam ser reaplicadas aqui -- o

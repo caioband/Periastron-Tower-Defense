@@ -191,6 +191,7 @@ function ShopService:Purchase(Player : Player, itemId : string?) : (boolean, str
 	end
 
 	self.Signals.ItemPurchased:Fire(Player, item, remaining)
+
 	return true
 end
 

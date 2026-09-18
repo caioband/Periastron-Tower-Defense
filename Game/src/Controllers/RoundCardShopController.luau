@@ -128,6 +128,10 @@ local RoundCardShopController = {
 		UILibraryController = {},
 		VFXController = {},
 
+		-- Quem sabe se um passo do tutorial esta exigindo uma compra. Ver o
+		-- `_dismissShop` do clique fora.
+		TutorialStepController = {},
+
 		-- Quem sabe que torre esta debaixo do ponteiro, e quem tranca o clique no
 		-- mundo enquanto uma carta esta pedindo alvo. Ver `_beginTargeting`.
 		UnitPlacementController = {},
@@ -637,6 +641,11 @@ function RoundCardShopController:_openShop()
 		task.defer(function()
 			if input == self.CardInput then return end
 
+			-- O tutorial pode estar exigindo uma compra: enquanto exigir, clique fora
+			-- não fecha a loja.
+			local tutorial = self.Controllers.TutorialStepController
+			if tutorial and not tutorial:AllowsShopDismiss() then return end
+
 			self:_dismissShop()
 		end)
 	end))
@@ -822,6 +831,22 @@ end
 	pode esperar a rede. A carta, essa sim, so entra na hotbar quando o
 	`RoundCardBought` confirma: quem tem o estoque e o servidor.
 ]=]
+--[=[
+	A carta desta oferta na tela, ou `nil` se ela não está na mesa agora.
+
+	Os wrappers são nomeados pelo `Id` da carta quando a rotação é montada, então
+	achar é olhar dentro da fileira — não há registro a manter.
+
+	Existe para quem precisa **apontar** uma carta: hoje o `TutorialStepController`,
+	que pede ao destaque para abraçar a que o passo exige comprar.
+]=]
+function RoundCardShopController:GetOfferCard(cardId : string) : GuiObject?
+	local row = self.Row
+	local wrapper = row and row:FindFirstChild(cardId)
+
+	return if wrapper and wrapper:IsA("GuiObject") then wrapper else nil
+end
+
 function RoundCardShopController:_buy(cardId : string)
 	local offer = self.Offer
 	if not offer then return end
@@ -889,6 +914,13 @@ end
 	nao o botao de cancelar.
 ]=]
 function RoundCardShopController:_requestUse(uid : string, cardId : string)
+	-- O tutorial pode estar guardando esta carta para o passo dela. É educação de
+	-- interface: quem recusa de verdade é o `TutorialMatchService`.
+	local tutorial = self.Controllers.TutorialStepController
+	if tutorial and not tutorial:AllowsCardUse(cardId) then
+		return
+	end
+
 	if self.UsePending[uid] then return end
 
 	if self.Targeting and self.Targeting.Uid == uid then

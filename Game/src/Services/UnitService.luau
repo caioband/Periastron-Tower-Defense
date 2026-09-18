@@ -93,6 +93,7 @@ local UnitService = {
 		WaveService = {},
 		WeatherService = {},
 		CardModifierService = {},
+		TutorialMatchService = {},
 	},
 
 	Signals = {
@@ -182,13 +183,27 @@ function UnitService:initPlayerCards(player)
 		local cards = {}
 		local cardMax = {}
 
-		for unitName, amount in DeckConfig.tally(deck) do
+		-- O tutorial dá o deck dele: duas Archer e uma Slasher, uma carta por
+		-- `PlacementPoint` do mapa. O perfil não é tocado — quem entrou com um deck
+		-- montado o encontra intacto ao voltar ao lobby, e quem entrou sem nenhum
+		-- (o caso de quem o tutorial existe para atender) tem o que colocar.
+		local tutorial = self.Services.TutorialMatchService
+		local tutorialDeck = tutorial and tutorial:GetDeck()
+
+		for unitName, amount in (tutorialDeck or DeckConfig.tally(deck)) do
 			cards[unitName] = amount
 			cardMax[unitName] = amount
 		end
 
 		self.SessionCards[player.UserId] = cards
 		self.SessionCardMax[player.UserId] = cardMax
+
+		-- A hotbar do tutorial não vem do perfil, então ela precisa ser dita. Vai
+		-- **antes** das contagens: a lista é quem cria as cartas na tela, e um
+		-- contador de carta que ainda não existe não tem onde ser escrito.
+		if tutorialDeck and tutorial then
+			Framework:Fire("TutorialDeck", player, tutorial:GetDeckOrder())
+		end
 
 		for unitName, count in cards do
 			Framework:Fire("UpdateCardCounts", player, unitName, count)
@@ -764,6 +779,19 @@ function UnitService:construct()
 	Framework:Listen("UnitCleansed", function() end)
 	Framework:Listen("UpdateCardCounts", function() end)
 	Framework:Listen("RequestCardCounts", function(player)
+		--[[
+			A hotbar do tutorial vai junto das contagens, e pelo mesmo motivo que elas
+			são pedidas: o cliente pergunta quando **ele** está pronto. A primeira
+			remessa sai na abertura do perfil, que costuma acontecer antes de o
+			controller do outro lado ter registrado o `Listen` — e um evento do Warp
+			que chega antes do ouvinte não fica esperando, ele se perde.
+		]]
+		local tutorial = self.Services.TutorialMatchService
+		local order = tutorial and tutorial:GetDeckOrder()
+		if order then
+			Framework:Fire("TutorialDeck", player, order)
+		end
+
 		local cards = self.SessionCards[player.UserId]
 		if not cards then return end
 		for unitName, count in cards do
@@ -889,6 +917,15 @@ function UnitService:construct()
 		local stats = SharedConfig.UnitStats[unitName]
 		if not stats then
 			placementPrint(player.Name, unitName, "recusado: unidade sem stats no SharedConfig")
+			return
+		end
+
+		-- O tutorial manda enquanto um passo de colocação está aberto: carta errada ou
+		-- longe do ponto não entra. O cliente já apaga as outras cartas; isto aqui é o
+		-- que vale, porque cliente não se fiscaliza.
+		local tutorial = self.Services.TutorialMatchService
+		if tutorial and not tutorial:CanPlace(unitName, cf) then
+			placementPrint(player.Name, unitName, "recusado: fora do passo do tutorial")
 			return
 		end
 

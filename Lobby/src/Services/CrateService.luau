@@ -21,6 +21,9 @@ local GamepassConfig = SharedConfig.GamepassConfig
 
 local RANDOM = Random.new()
 
+local TutorialConfig = SharedConfig.TutorialConfig
+local UnitStats = SharedConfig.UnitStats
+
 local Framework = Me.new()
 
 local CrateService = {
@@ -173,7 +176,54 @@ end
 	continua sendo o pool cru, que e o que o jogador **sem** pass recebe. Uma pass que
 	melhora o que ela promete nao torna o numero da loja mentira.
 ]=]
+--[=[
+	A garantia de quem está começando: dentro das primeiras caixas da vida do
+	perfil, uma sai Epic ou melhor.
+
+	A conta é o `Stats.BoxesOpened`, que já existe e já conta abertura de verdade —
+	nenhuma chave nova. A garantia só entra na **última** das primeiras caixas
+	(a terceira, hoje) e só se nenhuma Epic tiver saído antes: quem teve sorte na
+	primeira não gasta a garantia, e quem não teve sai das três com uma.
+]=]
+function CrateService:_guaranteedRarity(profile : any) : string?
+	local guarantee = TutorialConfig.CrateGuarantee
+	if not guarantee then
+		return nil
+	end
+
+	local stats = typeof(profile) == "table" and profile.Stats or nil
+	local opened = (typeof(stats) == "table" and tonumber(stats.BoxesOpened)) or 0
+
+	-- Esta abertura é a de número `opened + 1`.
+	if opened + 1 ~= guarantee.Crates then
+		return nil
+	end
+
+	local units = typeof(profile) == "table" and profile.Units or nil
+	if typeof(units) == "table" then
+		local floor = table.find(RarityConfig.ORDER, guarantee.Rarity)
+
+		for unitName in units do
+			local rarity = UnitStats[unitName] and UnitStats[unitName].Rarity
+			local index = rarity and table.find(RarityConfig.ORDER, rarity)
+
+			if index and floor and index >= floor then
+				return nil
+			end
+		end
+	end
+
+	return guarantee.Rarity
+end
+
 function CrateService:_rollRarity(crateRarity : string, profile : any) : string?
+	local guaranteed = self:_guaranteedRarity(profile)
+	if guaranteed then
+		print(`[CrateService]: garantia de inicio: {guaranteed} nesta abertura.`)
+
+		return guaranteed
+	end
+
 	local pool = ServerConfig.Crate.POOLS[crateRarity]
 	if not pool then
 		warn(string.format("[CrateService]: crate %q has no pool in ServerConfig.Crate.", tostring(crateRarity)))

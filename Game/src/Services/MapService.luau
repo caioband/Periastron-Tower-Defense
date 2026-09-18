@@ -28,6 +28,7 @@ local SharedConfig = require(Configs.SharedConfig)
 local ServerConfig = require(ServerConfigs)
 
 local MapConfig = SharedConfig.MapConfig
+local TutorialConfig = SharedConfig.TutorialConfig
 
 local PathUtil = require(Shared.Util.PathUtil)
 
@@ -108,6 +109,27 @@ end
 	servidor carrega a mesma escolha. `resolveMap` valida contra o MapConfig e
 	normaliza a caixa; nome desconhecido volta nil e cai no sorteio.
 ]=]
+--[=[
+	O nome de mapa que este servidor aceita carregar.
+
+	É o `MapConfig.resolveMap` **mais** o mapa do tutorial, que fica de fora do
+	`MapConfig` de propósito: estando lá, ele entraria no sorteio de fim de partida e
+	na tela de escolha do lobby, e ninguém quer cair no mapa de tutorial por acaso.
+
+	Sem isto, tanto o atributo `StudioMap = "Tutorial"` quanto o TeleportData do
+	Lobby eram recusados como "nome desconhecido" e o servidor sorteava outro mapa —
+	com o tutorial rodando por cima de um mapa que não tem os `PlacementPoints` dele.
+]=]
+function ExampleService:resolveMapName(mapName : string?) : string?
+	local tutorialMap = TutorialConfig.Match.Map
+
+	if typeof(mapName) == "string" and string.lower(mapName) == string.lower(tutorialMap) then
+		return if Maps:FindFirstChild(tutorialMap) then tutorialMap else nil
+	end
+
+	return MapConfig.resolveMap(mapName)
+end
+
 function ExampleService:getTeleportedMap(player : Player) : string?
 	local success, joinData = pcall(function()
 		return player:GetJoinData()
@@ -122,7 +144,7 @@ function ExampleService:getTeleportedMap(player : Player) : string?
 		return nil
 	end
 
-	local resolved = MapConfig.resolveMap(teleportData.Map)
+	local resolved = self:resolveMapName(teleportData.Map)
 	if resolved and not Maps:FindFirstChild(resolved) then
 		warn(string.format("[MapService]: o Lobby pediu '%s', que o MapConfig conhece mas nao existe em ServerStorage.Maps.", resolved))
 		return nil
@@ -145,7 +167,7 @@ function ExampleService:getStudioMap() : string?
 		return nil
 	end
 
-	local resolved = MapConfig.resolveMap(requested)
+	local resolved = self:resolveMapName(requested)
 	if not resolved or not Maps:FindFirstChild(resolved) then
 		warn(string.format("[MapService]: o atributo %s pede '%s', que nao esta no MapConfig ou nao existe em ServerStorage.Maps; sorteando.",
 			STUDIO_MAP_ATTRIBUTE, requested))
@@ -227,6 +249,34 @@ function ExampleService:LoadMap(Name : string)
 			A aparencia fica a que veio autorada. Quem escreve o numero e o
 			`BaseHealthController`, no cliente.
 		]=]
+		--[=[
+			Os `PlacementPoints` são irmãos do Content, como a BoundingBox e a BaseHP, e
+			entram junto pelo mesmo motivo: quem os consome (o roteiro do tutorial, para
+			saber onde a unidade tem de entrar, e a seta que aponta o lugar) só enxerga
+			o que está em `workspace.Map`.
+
+			As parts entram inertes. Elas são marcas de chão, não cenário: colidir
+			empurraria o jogador, e `CanQuery` ligado as poria no raycast que valida o
+			posicionamento — a marca do lugar recusaria a unidade que ela mesma pede.
+
+			Mapa sem a pasta não avisa nada: só o do tutorial a tem.
+		]=]
+		local Points = MapInstance:FindFirstChild("PlacementPoints")
+		if Points then
+			local PointsClone = Points:Clone()
+
+			for _, part in PointsClone:GetDescendants() do
+				if part:IsA("BasePart") then
+					part.Anchored = true
+					part.CanCollide = false
+					part.CanQuery = false
+					part.CanTouch = false
+				end
+			end
+
+			PointsClone.Parent = Clone
+		end
+
 		local BaseHP = MapInstance:FindFirstChild(MapConfig.BASE_HEALTH_PART)
 		if BaseHP and BaseHP:IsA("BasePart") then
 			local BaseHPClone = BaseHP:Clone()

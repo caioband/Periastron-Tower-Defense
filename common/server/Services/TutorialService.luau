@@ -1,4 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -13,20 +14,28 @@ local Me = require(Vendor.Me)
 local Framework = Me.new()
 
 local PortalConfig = SharedConfig.PortalConfig
+local Config = SharedConfig.TutorialConfig
 
 --[[
 	Quem ainda não fez o tutorial recebe a oferta ao cair no lobby.
 
-	O perfil tem uma chave só: `Tutorial`. `false` é "ainda não fez" — e é o que
-	todo perfil novo traz, além de todo perfil antigo, que ganha a chave pelo
-	reconcile do `DataService`. Este service lê a chave quando o perfil carrega e,
-	sendo `false`, manda o `TutorialPrompt` para o cliente; o `TutorialController`
-	faz o resto.
+	O perfil guarda um booleano: `Tutorial`. `false` é a única coisa que faz a oferta
+	aparecer — este service lê a chave quando o perfil carrega e, sendo `false`,
+	manda o `TutorialPrompt` para o cliente; o `TutorialController` põe a fala na
+	tela.
 
-	**Recusar não escreve nada.** Quem disse "agora não" continua sem ter feito e
-	recebe a oferta de novo na próxima vez que entrar. Quem escreve `true` é o
-	`:Complete`, que existe e ainda não é chamado por ninguém: o tutorial em si
-	ainda não foi desenhado, e é ele que vai dizer quando acabou.
+	**As duas respostas encerram o assunto**, por caminhos diferentes:
+
+	  - **aceitar** teleporta o jogador sozinho para o mapa do tutorial (`:Start`), e
+	    a chave vira `true` quando ele vence as 5 waves, lá na outra place
+	    (`:Complete`);
+	  - **recusar** escreve `true` na hora. Recusa é resposta, não adiamento: quem
+	    disse "não" não é perguntado de novo a cada entrada no lobby.
+
+	**Abandonar a partida no meio deixa a chave em `false`** — quem aceitou e saiu
+	antes do fim é perguntado de novo e recomeça da wave 1. O estado de meia partida
+	não existe em lugar nenhum, e voltar para a wave 3 com o mapa vazio seria pior
+	que recomeçar.
 
 	**Só no lobby.** O service é `common/` porque o jogo é um universo só, mas
 	oferecer tutorial a quem acabou de cair no meio de uma partida seria pior que
@@ -51,6 +60,27 @@ local DATA_KEY = "Tutorial"
 --[[ INTERNAL ]]
 
 --[=[
+	O assunto "tutorial" já foi encerrado para este perfil?
+
+	Duas formas passam por aqui. A de hoje é o booleano. A outra é a tabela
+	`{ Match, Shop, Crates }`, que esta chave chegou a ser por algumas horas — e que
+	o reconcile do `DataService` **não** desfaz sozinho, porque ele só preenche o que
+	falta. Ela é lida como encerrada quando a partida tinha sido vencida.
+
+	Sem isto, um perfil daquelas horas seria lido como "já fez" só por a tabela ser
+	um valor verdadeiro, e nunca mais receberia a oferta.
+]=]
+local function isDone(data : any) : boolean
+	local stored = data and data[DATA_KEY]
+
+	if typeof(stored) == "table" then
+		return stored.Match == true
+	end
+
+	return stored == true
+end
+
+--[=[
 	Esta place é o lobby?
 ]=]
 function TutorialService:isLobby() : boolean
@@ -69,10 +99,56 @@ function TutorialService:offer(player : Player)
 	if not dataService then return end
 
 	dataService:Get(player, function(data)
-		if data[DATA_KEY] then return end
+		if isDone(data) then return end
 		if not player.Parent then return end
 
 		self:Prompt({ player })
+	end)
+end
+
+--[=[
+	Quem acabou de vencer o tutorial recebe o empurrãozinho da loja.
+
+	O sinal é o `TutorialDone` que o servidor da partida embarcou no teleporte de
+	volta — não o perfil. Ele vale para **esta** entrada no lobby e mais nada: sair
+	e voltar não traz o apontamento de novo, que é o certo para um empurrão.
+]=]
+function TutorialService:shopPrompt(player : Player)
+	if not self:isLobby() then return end
+
+	local success, joinData = pcall(function()
+		return player:GetJoinData()
+	end)
+
+	local teleportData = success and typeof(joinData) == "table" and joinData.TeleportData
+	if typeof(teleportData) ~= "table" or teleportData.TutorialDone ~= true then
+		return
+	end
+
+	Framework:Fire("TutorialShopPrompt", player)
+end
+
+--[=[
+	A caixa foi comprada: tira o apontamento da loja.
+
+	Ligado ao sinal `ItemPurchased` do `ShopService` — escutar em vez de enxertar
+	deixa a compra sem uma linha de tutorial no meio dela, do mesmo jeito que o
+	passo de colocação escuta o `UnitPlaced` em vez de morar dentro do `PlaceUnit`.
+]=]
+function TutorialService:watchShop()
+	if not self:isLobby() then return end
+
+	local shopService = Framework:Get("ShopService", false, false)
+	if not shopService or not shopService.Signals or not shopService.Signals.ItemPurchased then
+		warn("[TutorialService]: sem o sinal ItemPurchased; o passo da loja nao vai fechar sozinho.")
+
+		return
+	end
+
+	shopService.Signals.ItemPurchased:Connect(function(player : Player, item : any)
+		if not item or item.Id ~= Config.Shop.Item then return end
+
+		Framework:Fire("TutorialShopDone", player)
 	end)
 end
 
@@ -89,31 +165,62 @@ function TutorialService:Prompt(players : { Player })
 end
 
 --[=[
-	O tutorial começou.
+	O tutorial começou: manda o jogador para o mapa do tutorial.
 
-	Hoje só registra: os passos ainda não existem. É o gancho onde eles entram, e é
-	o que este service devolve ao `TutorialAnswered` do cliente quando o jogador
-	aceita — quem for escrever o tutorial não precisa mexer no diálogo nem no
-	controller, só aqui dentro.
+	O teleporte leva **duas** coisas: o mapa, que o `MapService` de lá já sabe ler, e
+	a flag `Tutorial`, que é o que faz o `TutorialMatchService` impor o preset e o
+	roteiro. As duas são necessárias e dizem coisas diferentes — carregar o mapa
+	Tutorial sem a flag é uma partida comum nele, que é como se testa o mapa.
+
+	Vai **sozinho**, e não pelo portal: o tutorial é uma partida de um jogador só,
+	guiada, e juntar alguém a ela atrapalharia os dois.
 ]=]
 function TutorialService:Start(player : Player)
-	print(`[TutorialService]: {player.Name} aceitou o tutorial (os passos ainda nao existem).`)
+	local match = Config.Match
+
+	local options = Instance.new("TeleportOptions")
+	options.ShouldReserveServer = true
+	options:SetTeleportData({
+		Map = match.Map,
+		Tutorial = true,
+	})
+
+	local success, result = pcall(function()
+		return TeleportService:TeleportAsync(PortalConfig.GAME_PLACE_ID, { player }, options)
+	end)
+
+	if not success then
+		warn(`[TutorialService]: nao consegui teleportar {player.Name} para o tutorial: {result}`)
+
+		return false
+	end
+
+	return true
 end
 
 --[=[
-	O tutorial acabou: escreve `true` no perfil e a oferta não volta.
+	Encerra o assunto: a oferta não volta mais para este jogador.
 
-	Ninguém chama isto ainda, de propósito — quem termina um tutorial é o tutorial,
-	e ele está por fazer. Está escrito agora para a forma da chave e o caminho da
-	escrita nascerem junto com a leitura, em vez de serem reinventados depois.
+	Os dois caminhos que chamam isto dizem coisas diferentes para o jogador e a
+	mesma coisa para o perfil — venceu as 5 waves, ou respondeu que não quer. A
+	chave não guarda **qual** dos dois foi, de propósito: nada no jogo pergunta isso,
+	e uma chave que responde mais do que se pergunta é uma chave que vai ficar
+	errada.
 ]=]
-function TutorialService:Complete(player : Player)
+function TutorialService:MarkDone(player : Player)
 	local dataService = self.Services.DataService
 	if not dataService then return end
 
 	dataService:Update(player, DATA_KEY, function()
 		return true
 	end)
+end
+
+--[=[
+	A partida de tutorial foi vencida. Chamado da outra place, no fim das 5 waves.
+]=]
+function TutorialService:Complete(player : Player)
+	self:MarkDone(player)
 end
 
 --[[ CICLO DE VIDA ]]
@@ -124,10 +231,14 @@ function TutorialService:construct()
 	-- registrou — e levaria junto o resto do `construct` dele. Vale nas duas places,
 	-- inclusive na que não oferece tutorial nenhum, porque o controller é comum.
 	Framework:Listen("TutorialPrompt", function() end)
+	Framework:Listen("TutorialShopPrompt", function() end)
+	Framework:Listen("TutorialShopDone", function() end)
 
 	Framework:Listen("TutorialAnswered", function(player : Player, accepted : any)
 		if accepted ~= true then
-			print(`[TutorialService]: {player.Name} recusou o tutorial.`)
+			-- Recusar é resposta, e resposta encerra: quem disse "não" não é
+			-- perguntado de novo toda vez que entra no lobby.
+			self:MarkDone(player)
 
 			return
 		end
@@ -136,6 +247,8 @@ function TutorialService:construct()
 	end)
 
 	if not self:isLobby() then return end
+
+	self:watchShop()
 
 	local dataService = self.Services.DataService
 	if not dataService then
@@ -146,11 +259,13 @@ function TutorialService:construct()
 
 	dataService.Signals.PlayerDataLoaded:Connect(function(player : Player)
 		self:offer(player)
+		self:shopPrompt(player)
 	end)
 
 	-- Quem carregou antes deste service subir: o sinal deles já passou.
 	for _, player in Players:GetPlayers() do
 		self:offer(player)
+		self:shopPrompt(player)
 	end
 end
 

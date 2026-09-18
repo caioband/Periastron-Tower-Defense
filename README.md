@@ -1454,11 +1454,16 @@ efeito: um frame transparente com um `UIStroke` de dez mil pixels pinta tudo o q
 está **fora** dele. O frame é o buraco, o stroke é o escuro, o `UICorner` arredonda
 — uma instância, sem imagem, sem máscara de quatro partes para manter alinhada.
 
-**O clique é outro assunto.** Stroke não recebe input: ele é contorno, não
-superfície. Para o jogador não comprar uma carta no escuro enquanto o tutorial
-aponta a loja, entram quatro frames `Active` em volta do buraco
-(`HighlightConfig.BlockInput`) — a técnica das quatro máscaras, usada só onde ela
-ganha do stroke.
+**O clique é outro assunto, e por padrão o destaque não se mete nele.** Stroke não
+recebe input (é contorno, não superfície), e o bloqueio — quatro frames `Active` em
+volta do buraco, a técnica das quatro máscaras — só entra quando quem chama pede:
+`Show(alvo, { BlockInput = true })`.
+
+O padrão é **não** bloquear, e isso custou um bug para ficar claro: com o bloqueio
+ligado, o passo que manda colocar a unidade engolia o clique no mundo que ele mesmo
+pedia — e junto a rotação da câmera. Destaque não é modal; bloquear só faz sentido
+quando o alvo é a única coisa clicável do passo, ou seja, um botão de UI e nunca um
+lugar do mapa.
 
 **O alinhamento é medido, não calculado.** `AbsolutePosition` vive no espaço com a
 inset da topbar: numa `ScreenGui` com `IgnoreGuiInset = true` — o caso desta, para o

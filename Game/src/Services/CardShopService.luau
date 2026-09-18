@@ -660,6 +660,7 @@ end
 	Devolve true quando pelo menos um jogador recebeu oferta.
 ]=]
 function CardShopService:Open(players : { Player }?, waveNumber : number?)
+	local tutorialService = Framework:Get("TutorialMatchService", false, false)
 	local pool = self:_pool()
 	if #pool == 0 then
 		warn("[CardShopService]: nenhuma carta com efeito registrado; a loja nao abriu.")
@@ -688,6 +689,18 @@ function CardShopService:Open(players : { Player }?, waveNumber : number?)
 		local cards = {}
 		for _, card in drawn do
 			table.insert(cards, card.Id)
+		end
+
+		--[[
+			O tutorial planta a carta do passo na rotação.
+
+			Ela **substitui** a primeira sorteada em vez de somar uma quarta: a oferta
+			tem três vagas na tela, e uma quarta carta ficaria fora do desenho. Estando
+			ela já sorteada, nada muda.
+		]]
+		local forcedCard = tutorialService and tutorialService:ForcedCard(wave)
+		if forcedCard and not table.find(cards, forcedCard) then
+			cards[1] = forcedCard
 		end
 
 		self.Offers[player.UserId] = {
@@ -733,6 +746,12 @@ function CardShopService:Buy(player : Player, token : any, cardId : any)
 		return nil, "carta desconhecida"
 	end
 
+	-- Com um passo de compra aberto, o tutorial só deixa passar a carta dele.
+	local tutorialService = Framework:Get("TutorialMatchService", false, false)
+	if tutorialService and not tutorialService:CanBuy(cardId) then
+		return nil, "fora do passo do tutorial"
+	end
+
 	local mobService = self.Services.MobService
 	if not mobService then
 		return nil, "sem MobService"
@@ -744,6 +763,10 @@ function CardShopService:Buy(player : Player, token : any, cardId : any)
 	end
 
 	mobService:spendCash(player, price)
+
+	if tutorialService then
+		tutorialService:NoteBuy(cardId)
+	end
 
 	local uid = HttpService:GenerateGUID(false)
 	local owned = self.Owned[player.UserId]
@@ -792,6 +815,7 @@ end
 	Devolve a carta usada, ou nil e o motivo.
 ]=]
 function CardShopService:Use(player : Player, uid : any, target : any)
+	local tutorialService = Framework:Get("TutorialMatchService", false, false)
 	local owned = self.Owned[player.UserId]
 	local cardId = owned and owned[uid]
 
@@ -810,6 +834,11 @@ function CardShopService:Use(player : Player, uid : any, target : any)
 		return nil, "carta sem efeito"
 	end
 
+	-- O tutorial tranca a carta dele até o passo que a pede abrir.
+	if tutorialService and not tutorialService:CanUse(cardId) then
+		return nil, "a carta ainda nao pode ser usada no tutorial"
+	end
+
 	--[[
 		O alvo e conferido **antes** de a carta sair da mao. Errar o lugar -- clicar
 		no ceu, escolher uma torre que acabou de ser vendida -- devolve a mira ao
@@ -825,6 +854,12 @@ function CardShopService:Use(player : Player, uid : any, target : any)
 	end
 
 	owned[uid] = nil
+
+	-- O passo do tutorial que pedia esta carta fecha aqui: a carta saiu da mão com
+	-- alvo aceito, que é o que "usar" quer dizer.
+	if tutorialService then
+		tutorialService:NoteUse(cardId)
+	end
 
 	--[[
 		A carta de prazo sai do sorteio dele por uma abertura, e e aqui que isso e
@@ -1022,6 +1057,8 @@ function CardShopService:_auditVisualDelays()
 end
 
 function CardShopService:construct()
+	local tutorial = Framework:Get("TutorialMatchService", false, false)
+
 	-- Num fio proprio: ele baixa as animacoes das cartas, e a loja nao tem por que
 	-- esperar isso para existir.
 	task.spawn(function()
@@ -1032,7 +1069,11 @@ function CardShopService:construct()
 
 	if waveService and waveService.Signals and waveService.Signals.WaveStarted then
 		waveService.Signals.WaveStarted:Connect(function(waveNumber, preset)
-			if not RoundCardConfig.IsShopWave(waveNumber, preset and preset.Name) then return end
+			-- O tutorial abre a loja na wave que o roteiro dele mandar, por cima do
+			-- calendário normal: o passo da wave 2 é justamente aprender a comprar.
+			local forced = tutorial and tutorial:ShouldOpenShop(waveNumber)
+
+			if not forced and not RoundCardConfig.IsShopWave(waveNumber, preset and preset.Name) then return end
 
 			self:Open(nil, waveNumber)
 		end)

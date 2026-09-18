@@ -38,11 +38,15 @@ local CardController = {
 		MusicController = {},
 		UnitPlacementController = {},
 		UILibraryController = {},
+		TutorialStepController = {},
 	},
 
 	CardCounts = {},
 	Cash = 0,
 	Equipped = nil,
+
+	-- A hotbar imposta pelo tutorial, quando há uma. Nil numa partida comum.
+	TutorialDeck = nil,
 }
 
 --[[ INTERNAL ]]
@@ -96,6 +100,13 @@ function CardController:_onCardActivated(unitName : string)
 		return
 	end
 
+	-- O tutorial pede uma carta específica em alguns passos. Aqui é só educação de
+	-- interface: quem recusa de verdade é o `TutorialMatchService`, no servidor.
+	local tutorial = self.Controllers.TutorialStepController
+	if tutorial and not tutorial:AllowsCard(unitName) then
+		return
+	end
+
 	if self.Equipped == unitName then
 		self:_setEquipped(nil)
 		self.Controllers.UnitPlacementController:unequip()
@@ -127,7 +138,8 @@ function CardController:_render()
 		return
 	end
 
-	local hotbar = DeckConfig.unitList(DeckConfig.resolve(profile))
+	-- No tutorial as cartas não saem do perfil: elas são as que o servidor mandou.
+	local hotbar = self.TutorialDeck or DeckConfig.unitList(DeckConfig.resolve(profile))
 
 	self:_component("set", hotbar, self.CardCounts, function(unitName : string)
 		self:_onCardActivated(unitName)
@@ -161,6 +173,18 @@ function CardController:construct()
 			self:_render()
 		end)
 	end
+
+	--[[
+		O deck do tutorial chega pelo servidor, e não pelo perfil — ele é da partida,
+		não do jogador. Chegando, a hotbar é redesenhada com ele; o `_render` de
+		sempre passa a usá-lo no lugar da leitura do perfil.
+	]]
+	Framework:Listen("TutorialDeck", function(units : any)
+		if type(units) ~= "table" then return end
+
+		self.TutorialDeck = units
+		self:_render()
+	end)
 
 	Framework:Listen("UpdateCardCounts", function(unitName : string, count : number)
 		self.CardCounts[unitName] = count

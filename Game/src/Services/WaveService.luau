@@ -23,6 +23,8 @@ local WaveConfig = ServerConfig.Wave
 local GamepassConfig = SharedConfig.GamepassConfig
 local UnlockConfig = SharedConfig.DifficultyUnlockConfig
 
+local TutorialConfig = SharedConfig.TutorialConfig
+
 local Framework = Me.new()
 
 local DataConfig = ServerConfig.Data
@@ -65,7 +67,8 @@ local WaveService = {
 		DataService = {},
 		WeatherRoundService = {},
 		SpeedService = {},
-		CardShopService = {}
+		CardShopService = {},
+		TutorialMatchService = {}
 	},
 	Signals = {
 		Ended = Signal.new(),
@@ -415,6 +418,17 @@ function WaveService:onRoundEnded(won : boolean)
 		self:grantReward(player, playerRewards)
 
 		if won then
+			-- O tutorial vencido encerra o assunto no perfil. O `TutorialService` é
+			-- comum às duas places, então quem escreve aqui é o mesmo que lê no lobby.
+			local tutorialMatch = self.Services.TutorialMatchService
+			if tutorialMatch and tutorialMatch:IsTutorial() then
+				local tutorialService = Framework:Get("TutorialService", false, false)
+
+				if tutorialService then
+					tutorialService:Complete(player)
+				end
+			end
+
 			--[[
 				A vitoria no perfil. E o unico lugar que escreve `Stats.Wins` -- a coluna
 				"Wins" do leaderstats da Lobby le exatamente esta chave, e sem isto ela
@@ -529,9 +543,22 @@ function WaveService:runRound(generation : number)
 	self:waitForAllPlayers()
 	if not self:isCurrent(generation) then return end
 
-	local preset = self.Services.DifficultyService:RunSelection(SELECTION_TIME)
+	-- O tutorial não vota: a partida dele é desenhada para ser vencida, e escolher
+	-- `Nightmare` nela seria escolher perder. Recebendo um preset do
+	-- `TutorialMatchService`, a votação nem abre — e o cliente, que só mostra a tela
+	-- quando o servidor a anuncia, não mostra nada.
+	local tutorial = self.Services.TutorialMatchService
+	local forced = tutorial and tutorial:GetForcedPreset()
+
+	local preset = forced or self.Services.DifficultyService:RunSelection(SELECTION_TIME)
 	if not self:isCurrent(generation) then return end
 	self.Difficulty = preset
+
+	-- Pular a votação não pode significar "ninguém decidiu nada": é o estado de
+	-- dificuldade decidida que faz a hotbar aparecer na tela.
+	if forced then
+		self.Services.DifficultyService:Force(TutorialConfig.Match.Difficulty)
+	end
 
 	self:runIntermission(preset.IntermissionTime or INTERMISSION_TIME)
 	if not self:isCurrent(generation) then return end
@@ -539,6 +566,16 @@ function WaveService:runRound(generation : number)
 	local won = false
 	while not self.GameOver do
 		self:setWave((self.WaveCount or 0) + 1)
+
+		-- O roteiro do tutorial abre **antes** de os mobs nascerem, e pode segurar a
+		-- wave enquanto o passo não for cumprido (a wave 1 não nasce com o mapa
+		-- vazio). Fora do tutorial as duas chamadas não fazem nada.
+		if tutorial then
+			tutorial:BeginStep(self.WaveCount)
+			tutorial:AwaitStep(self.WaveCount)
+
+			if not self:isCurrent(generation) then return end
+		end
 
 		--[[
 			Tempo real de proposito, mesmo acelerado: esta espera existe para as setas do
@@ -832,8 +869,23 @@ function WaveService:sendToLobby(player : Player)
 		dataService:Save(player)
 	end
 
+	--[[
+		A volta do tutorial leva um bilhete: `TutorialDone`.
+
+		É com ele que o lobby sabe apontar a loja assim que o jogador cai lá — e é
+		**só** um bilhete, nada é gravado no perfil. Empurrãozinho que acontece uma
+		vez, logo depois da partida, e não um marco que sobrevive a um logout.
+	]]
+	local tutorialMatch = self.Services.TutorialMatchService
+	local options = nil
+
+	if tutorialMatch and tutorialMatch:IsTutorial() then
+		options = Instance.new("TeleportOptions")
+		options:SetTeleportData({ TutorialDone = true })
+	end
+
 	local success, err = pcall(function()
-		TeleportService:TeleportAsync(PortalConfig.LOBBY_PLACE_ID, { player })
+		TeleportService:TeleportAsync(PortalConfig.LOBBY_PLACE_ID, { player }, options)
 	end)
 
 	if not success then

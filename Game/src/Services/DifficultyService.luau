@@ -157,6 +157,24 @@ function DifficultyService:syncPlayer(player : Player)
 	Framework:Fire("DifficultySelection", player, self:stateFor(player, self:timeLeft()))
 end
 
+--[=[
+	Impõe uma dificuldade sem votação e anuncia como decidida.
+
+	É o que o tutorial usa. O anúncio não é detalhe: o `locked` deste estado é o que
+	faz a **hotbar aparecer** no cliente (`DifficultyController:setHotbarVisible`) —
+	sem partida decidida não há onde pôr carta, e a hotbar nasce escondida. Pulando a
+	votação sem dizer isto a ninguém, a tela ficava sem cartas a partida inteira.
+
+	Quem entrar depois recebe o mesmo estado pelo `syncPlayer`, que já existe para
+	quem cai num round começado.
+]=]
+function DifficultyService:Force(name : string)
+	self.Selected = name
+	self.SelectionActive = false
+
+	self:broadcastSelectionState(0)
+end
+
 function DifficultyService:RunSelection(duration)
 	self.Votes = {}
 	self.Selected = nil

@@ -1146,6 +1146,9 @@ function MobService:SpawnWave(waveNumber)
 
 	self.AllMobsSpawned = false
 
+	print(string.format("[DEBUG/SpawnWave] wave=%d preset=%s spawns=%d base=%d rotas=%d clock=%s",
+		waveNumber, tostring(preset.Name), #spawnList, self.BaseHealth, #routes, tostring(GameClock.GetScale and GameClock.GetScale() or "?")))
+
 	--[[
 		A contagem **nao** e zerada aqui: uma wave pulada (`WaveService:SkipWave`)
 		nasce por cima dos mobs da anterior, e zerar faria os que sobraram
@@ -1161,7 +1164,19 @@ function MobService:SpawnWave(waveNumber)
 				-- Sem o clima: ele entra em `computeSpeed`, para poder sair depois sem
 				-- levar junto o que os gimmicks somaram.
 				local baseSpeed = mobConfig.BaseSpeed * (entityDefinition.SpeedMultiplier or 1) * speedScale
-				local maxHealth = math.max(1, math.floor(((entityDefinition.Health or 10) * healthScale) + 0.5))
+
+				--[[
+					O chefe pode ter uma escala só dele (`BossHealthMultiplier`), por cima
+					da escala da dificuldade. É o que permite ao tutorial ter um chefe de
+					verdade — com o gimmick dele, a lentidão dele, a barra dele — sem que
+					ele seja a parede de novecentos de vida que ele é numa partida real.
+				]]
+				local entityScale = healthScale
+				if WaveConfig.IsBoss(spawnEntry.Entity) then
+					entityScale *= (preset.BossHealthMultiplier or 1)
+				end
+
+				local maxHealth = math.max(1, math.floor(((entityDefinition.Health or 10) * entityScale) + 0.5))
 
 				for i = 1, (spawnEntry.Amount or 1) do
 					if self.BaseHealth <= 0 then break end

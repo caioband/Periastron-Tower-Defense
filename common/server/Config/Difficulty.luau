@@ -66,6 +66,76 @@ Difficulty.Order = {
 }
 
 Difficulty.Presets = {
+	--[[
+		O tutorial.
+
+		**Fora do `Order` de propósito**: ele não é uma dificuldade que se vota, é a
+		que a partida de tutorial impõe. O `Difficulty.Get` acha qualquer preset da
+		tabela, então ficar fora da lista de votação não o torna inalcançável.
+
+		Os números são de uma partida que o jogador **tem** de ganhar: mob com um
+		terço da vida, metade da quantidade, base com 500 de vida e dano de mob em 5
+		— perder aqui exigiria esforço. `StartingCash` cobre o deck inteiro do
+		tutorial (Archer 150 x2 + Slasher 90 = 390) com folga, porque o jogador
+		coloca uma unidade na wave 1 e as outras duas na wave 5, e ficar sem dinheiro
+		no meio de um roteiro é o único jeito de ele travar.
+
+		`WeatherChance = 0` porque o clima do tutorial é roteirizado: quem o liga, na
+		wave 3, é o `TutorialMatchService` — não o sorteio.
+
+		`WinCash`/`WinShards` são o prêmio da run completa, e a conta do
+		`computeReward` chega neles inteiros quando as 5 waves são vencidas: 50 coins
+		e 1 shard, como pedido.
+	]]
+	Tutorial = {
+		--[[
+			As cinco waves são as cinco **primeiras** linhas da tabela, e não a tabela
+			inteira comprimida em cinco — ver `TableRows` no `Config.Wave`. Sem isto a
+			wave 2 do tutorial vinha com doze inimigos, incluindo Guard e Pawn.
+		]]
+		TableRows = 5,
+
+		--[[
+			A wave 5 é só o chefe, e um chefe fraco.
+
+			`BossWaveOnly` tira a escolta (ver `Config.Wave.GetSpawns`): a primeira vez
+			que alguém vê um chefe não deve ser no meio de dez inimigos comuns.
+
+			`BossHealthMultiplier` é por cima do `HealthMultiplier`, e o número é
+			pequeno de propósito: 900 de vida do Champion × 0.35 da dificuldade × 0.15
+			daqui dá cerca de 47, que três torres derrubam. O chefe continua sendo ele
+			— mesma lentidão, mesmo gimmick, mesma barra —, só não é uma parede.
+		]]
+		BossWaveOnly = true,
+		BossHealthMultiplier = 0.15,
+
+		--[[
+			A wave 3 é a do clima: ela chega com o céu virado e o jogador aprendendo a
+			usar a carta que o limpa. Metade dos inimigos, porque a lição já é duas.
+		]]
+		WaveAmountScale = { [3] = 0.5 },
+
+		WeatherChance = 0,
+		HealthMultiplier = 0.35,
+		HealthGrowth = 1.01,
+		SpeedMultiplier = 0.85,
+		SpeedGrowth = 1,
+		SpeedGrowthCap = 1,
+		AmountMultiplier = 0.5,
+		BossAmountMultiplier = 1,
+		RewardMultiplier = 1.5,
+		WinCash = 50,
+		WinShards = 1,
+		WinXpMultiplier = 0.5,
+		SpawnDelayMultiplier = 1.4,
+		StartingCash = 500,
+		BaseHealth = 500,
+		MobDamage = 5,
+		IntermissionTime = 45,
+		WaveInterval = 1.5,
+		MaxWaves = 5,
+	},
+
 	Easy = {
 		WeatherChance = 0.10,
 		HealthMultiplier = 0.5,

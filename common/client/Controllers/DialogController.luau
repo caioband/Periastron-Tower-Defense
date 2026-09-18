@@ -122,6 +122,9 @@ DialogController.Session = 0
 
 DialogController.LastAdvance = 0
 DialogController.Listeners = {}
+
+-- Quem quer saber quando a caixa fechou. Ver `:OnClosed`.
+DialogController.ClosedListeners = {}
 DialogController.Warned = false
 
 -- [índice] = { Instance, Label, OnClick }. Preenchido na primeira vez que o botão
@@ -803,10 +806,32 @@ function DialogController:Close()
 	self:ClearButtons()
 	self:releaseBackground()
 	self:setVisible(false)
+
+	for _, listener in self.ClosedListeners do
+		task.spawn(listener)
+	end
 end
 
 function DialogController:IsOpen() : boolean
 	return self.Open
+end
+
+--[=[
+	Chama de volta quando a caixa fecha — por gesto do jogador, por botão ou pelo
+	fim de uma fala automática. Devolve a função que desinscreve.
+
+	É o que permite encadear: quem quiser mostrar alguma coisa **depois** da fala
+	espera aqui em vez de chutar um `task.wait`.
+]=]
+function DialogController:OnClosed(callback : () -> ()) : () -> ()
+	table.insert(self.ClosedListeners, callback)
+
+	return function()
+		local index = table.find(self.ClosedListeners, callback)
+		if index then
+			table.remove(self.ClosedListeners, index)
+		end
+	end
 end
 
 --[=[

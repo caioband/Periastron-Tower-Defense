@@ -34,11 +34,15 @@ local Config = SharedConfig.HighlightConfig
 	partes nem `EditableImage` para manter alinhada. É a solução que o DevForum
 	converge para este efeito, e a mais barata de todas — uma instância.
 
-	**O clique é outro assunto.** Stroke não recebe input: ele é contorno, não
-	superfície. Então o escurecimento sozinho deixaria o jogador comprar uma carta
-	no escuro enquanto o tutorial aponta a loja. Para isso, e só para isso, entram
-	quatro frames `Active` em volta do buraco (`HighlightConfig.BlockInput`) — a
-	técnica das quatro máscaras, usada onde ela ganha do stroke.
+	**O clique é outro assunto, e por padrão o destaque não se mete nele.** Stroke não
+	recebe input (é contorno, não superfície), e o bloqueio — quatro frames `Active`
+	em volta do buraco, a técnica das quatro máscaras — só entra quando quem chama
+	pede: `Show(alvo, { BlockInput = true })`.
+
+	O padrão é não bloquear porque destaque não é modal: apontar uma carta não pode
+	impedir o jogador de girar a câmera nem de clicar no chão. Bloquear só faz
+	sentido quando o alvo é a única coisa clicável do passo — um botão de UI, nunca
+	um lugar do mapa.
 
 	**O alinhamento é medido, não calculado.** `AbsolutePosition` vive no espaço com
 	a inset da topbar: numa `ScreenGui` com `IgnoreGuiInset = true` — que é o caso
@@ -548,18 +552,41 @@ end
 	nenhum dos dois precisar de uma referência à instância.
 ]=]
 function HighlightController:Find(path : string) : GuiObject?
-	local current : Instance = PlayerGui
-
+	local names = {}
 	for name in string.gmatch(path, "[^%.]+") do
-		local found = current:FindFirstChild(name)
-		if not found then
-			return nil
-		end
-
-		current = found
+		table.insert(names, name)
 	end
 
-	return if current:IsA("GuiObject") then current else nil
+	--[[
+		Busca em profundidade, e não um `FindFirstChild` por degrau.
+
+		O HUD tem **vários** irmãos chamados `Wrapper`, um por botão: pegar o primeiro
+		e seguir dali acharia o wrapper da mochila e desistiria no `Shop`. Tentando
+		cada irmão de mesmo nome até o resto do caminho fechar, `HUDFrame.Wrapper.Shop`
+		encontra o wrapper que de fato tem o Shop dentro.
+	]]
+	local function walk(parent : Instance, index : number) : Instance?
+		local name = names[index]
+		if not name then
+			return parent
+		end
+
+		for _, child in parent:GetChildren() do
+			if child.Name == name then
+				local found = walk(child, index + 1)
+
+				if found then
+					return found
+				end
+			end
+		end
+
+		return nil
+	end
+
+	local found = walk(PlayerGui, 1)
+
+	return if found and found:IsA("GuiObject") then found else nil
 end
 
 --[[ CICLO DE VIDA ]]

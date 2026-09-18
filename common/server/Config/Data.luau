@@ -189,17 +189,23 @@ return {
 		CardLimit = DeckConfig.DEFAULT_CARD_LIMIT,
 
 		--[[
-			O tutorial já foi feito? `false` é "ainda não", e é o que faz o
-			`TutorialService` oferecer a fala de boas-vindas quando o jogador cai no
-			lobby. Quem escreve `true` é o `TutorialService:Complete`.
+			O assunto "tutorial" está encerrado para este jogador?
 
-			**Recusar o tutorial não escreve nada aqui**: quem disse "agora não"
-			continua sem ter feito, e é oferecido de novo na próxima vez. Mudar isso é
-			trocar uma linha no `TutorialService`, não a forma da chave.
+			`false` é a única coisa que faz a oferta aparecer no lobby, e ela some por
+			**dois** caminhos: vencendo as 5 waves do mapa Tutorial, ou **recusando** a
+			oferta. Recusar é uma resposta, não um adiamento — quem disse "não" não é
+			perguntado de novo a cada entrada.
+
+			Por consequência, **abandonar a partida no meio deixa a chave em `false`**:
+			quem aceitou e saiu antes do fim é perguntado de novo e recomeça da wave 1.
+			É de propósito: o estado de meia partida (unidades no mapa, carta comprada,
+			clima ativo) não existe em lugar nenhum, e voltar para a wave 3 com o mapa
+			vazio seria pior que recomeçar.
 
 			Perfil antigo ganha a chave pelo reconcile do DataService — e ganha
 			`false`, porque não há como saber quem já passou por um tutorial que não
-			existia. Quem já joga há meses vai receber a oferta uma vez.
+			existia. Quem já joga há meses recebe a oferta uma vez, e a primeira
+			resposta encerra.
 		]]
 		Tutorial = false,
 	},

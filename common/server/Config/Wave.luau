@@ -154,21 +154,37 @@ function Wave.GetWaveCash(waveNumber : number?) : number
 	return total
 end
 
+--[=[
+	Onde esta wave cai na tabela de composição.
+
+	A conta normal espalha as waves do preset pela tabela **inteira**: a wave 1 é a
+	primeira linha e a última wave é a última linha, com o meio interpolado. É o que
+	faz o Easy (15 waves) e o Nightmare (35) percorrerem a mesma curva em ritmos
+	diferentes.
+
+	`TableRows` encurta o trecho usado. É para preset curto que **não** é um jogo
+	inteiro acelerado: o tutorial tem 5 waves, e sem isto a wave 2 dele já caía na
+	linha 7 da tabela — doze inimigos com Guard e Pawn no segundo minuto de quem
+	nunca jogou. Com `TableRows = 5`, as cinco waves são as cinco primeiras linhas,
+	na ordem, que é a rampa que a tabela foi desenhada para ter.
+]=]
 local function tablePosition(waveNumber : number, preset)
 	local total = preset.MaxWaves or TABLE_LENGTH
+	local rows = math.clamp(preset.TableRows or TABLE_LENGTH, 1, TABLE_LENGTH)
+
 	if total <= 1 then
-		return TABLE_LENGTH
+		return rows
 	end
 
 	local clamped = math.clamp(waveNumber, 1, total)
-	return 1 + ((clamped - 1) / (total - 1)) * (TABLE_LENGTH - 1)
+	return 1 + ((clamped - 1) / (total - 1)) * (rows - 1)
 end
 
 --[=[
 	Quantos inimigos deste tipo a wave traz, interpolando entre as duas linhas
 	vizinhas da tabela. Zero significa que o tipo nao aparece nesta wave.
 ]=]
-local function amountAt(entity : string, position : number, preset) : number
+local function amountAt(entity : string, position : number, preset, scale : number?) : number
 	local lower = math.clamp(math.floor(position), 1, TABLE_LENGTH)
 	local upper = math.min(lower + 1, TABLE_LENGTH)
 	local alpha = position - lower
@@ -177,7 +193,7 @@ local function amountAt(entity : string, position : number, preset) : number
 	local to = WAVE_TABLE[upper][entity] or 0
 	local interpolated = from + ((to - from) * alpha)
 
-	return math.max(0, math.floor((interpolated * (preset.AmountMultiplier or 1)) + 0.5))
+	return math.max(0, math.floor((interpolated * (preset.AmountMultiplier or 1) * (scale or 1)) + 0.5))
 end
 
 local function buildSpawnEntry(entity : string, amount : number, preset)
@@ -214,14 +230,33 @@ function Wave.GetSpawns(waveNumber : number, difficultyName : string?)
 	local position = tablePosition(waveNumber, preset)
 	local spawns = {}
 
-	for _, entity in SPAWN_ORDER do
-		if entity == BOSS_ENTITY then
-			continue
-		end
+	--[[
+		`BossWaveOnly` deixa a wave do chefe **só** com ele.
 
-		local amount = amountAt(entity, position, preset)
-		if amount > 0 then
-			table.insert(spawns, buildSpawnEntry(entity, amount, preset))
+		É para o tutorial: a última wave dele é a primeira vez que o jogador vê um
+		chefe, e ensinar isso no meio de dez inimigos comuns é ensinar duas coisas ao
+		mesmo tempo. Nos presets normais a escolta faz parte do desafio, e por isso a
+		chave é opcional em vez de virar regra.
+	]]
+	local bossOnly = preset.BossWaveOnly == true and Wave.HasBoss(waveNumber, difficultyName)
+
+	if not bossOnly then
+		for _, entity in SPAWN_ORDER do
+			if entity == BOSS_ENTITY then
+				continue
+			end
+
+			--[[
+				`WaveAmountScale` é o peso de **uma** wave, por cima da curva. Existe para
+				wave roteirizada: a 3 do tutorial cai junto com o primeiro clima da vida
+				do jogador, e a conta da curva mais o debuff do clima fazia dela a mais
+				dura das cinco.
+			]]
+			local scale = preset.WaveAmountScale and preset.WaveAmountScale[waveNumber]
+			local amount = amountAt(entity, position, preset, scale)
+			if amount > 0 then
+				table.insert(spawns, buildSpawnEntry(entity, amount, preset))
+			end
 		end
 	end
 

@@ -337,6 +337,10 @@ function MobController:getRoutes()
 		local complete = PathUtil.WaitForNodes(nodesFolder)
 		local routes = PathUtil.BuildRoutes(nodesFolder)
 
+		print(string.format("[DEBUG/MobClient] montando rotas: completo=%s nodes=%d (esperado=%s) rotas=%d",
+			tostring(complete), #nodesFolder:GetChildren(),
+			tostring(nodesFolder:GetAttribute("NodeCount") or nodesFolder:GetAttribute("Nodes") or "?"), #routes))
+
 		if not complete then
 			return routes
 		end
@@ -413,6 +417,27 @@ function MobController:createEntity(entityData)
 	-- exatamente pela mesma polilinha, senao as duas simulacoes divergem.
 	local routes = self:getRoutes()
 	local route = routes[entityData.Route or 1] or routes[1]
+
+	print(string.format("[DEBUG/MobClient] '%s': %d rota(s) montada(s), pedida a %s -> %s | nodes na pasta: %d",
+		mobName, #routes, tostring(entityData.Route), route and "achou" or "NAO ACHOU",
+		#workspace.PathScriptable.Nodes:GetChildren()))
+
+	--[[
+		Sem rota não há por onde andar, e o que vinha depois (`route.smooth`)
+		estourava no meio da montagem: o modelo já estava clonado e no Workspace, mas
+		sem posição nem movimento — mob invisível para o jogador e vivo para o
+		servidor, que continuava mandando as torres atirarem nele.
+	]]
+	if not route then
+		warn(string.format("[MobController]: mob '%s' sem rota (%d montadas, %d nodes na pasta); nao vou desenhar.",
+			mobName, #routes, #workspace.PathScriptable.Nodes:GetChildren()))
+
+		mobClone:Destroy()
+		self.SpawnedMobs[mobId] = nil
+
+		return
+	end
+
 	local smooth = route.smooth
 	local startPosition = smooth.points[1]
 
@@ -658,6 +683,9 @@ end
 
 function MobController:construct()
 	Framework:Listen("SpawnClientMob", function(entityData)
+		print(string.format("[DEBUG/MobClient] recebi mob '%s' id=%s rota=%s",
+			tostring(entityData and entityData.Name), tostring(entityData and entityData.Id), tostring(entityData and entityData.Route)))
+
 		self:createEntity(entityData)
 	end)
 
