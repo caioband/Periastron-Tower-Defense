@@ -72,4 +72,23 @@ module.GATE_NAME = "PlayerGate"
 module.BILLBOARD_NAME = "Billboard"
 module.CUTSCENE_REFERENCE_NAME = "CutsceneReferenceCFrame"
 
+--[[ BOTÃO DE PLAY ]]
+
+--[=[
+	Onde o botão de jogar do HUD (`HUD.HUDMiddle.PlayButton`) larga o jogador: um
+	marcador na entrada dos portais, procurado em profundidade sob `Workspace.Map` como
+	os marcadores das lojas.
+
+	**O portal mais perto fica a 25,3 studs daqui, portanto fora do `PROXIMITY_RADIUS`
+	acima.** É de propósito: o botão leva o jogador até a área, e escolher um portal
+	continua sendo andar até ele — é a chegada a pé que abre o painel de mapas, e o
+	botão não decide mapa nenhum por ele. Ver `PlayButtonController:TeleportToPortals`.
+]=]
+module.PLAY_TELEPORT_PART_NAME = "PortalsTpPart"
+
+-- Studs acima do topo do marcador, para o personagem pousar em pé em cima dele em vez
+-- de meio enterrado. Mesma folga das lojas — o marcador é autorado igual aos dois
+-- delas: mesma peça de 0,75 x 0,5 x 0,75, no ar acima do chão do pátio.
+module.PLAY_TELEPORT_HEIGHT_OFFSET = 3
+
 return module
