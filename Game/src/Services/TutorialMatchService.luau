@@ -26,6 +26,16 @@ local DifficultyConfig = ServerConfig.Difficulty
 local STUDIO_MAP_ATTRIBUTE = "StudioMap"
 
 --[[
+	A "wave" do intervalo: o passo do botão de Ready, que acontece **antes** de a
+	primeira nascer.
+
+	O roteiro é indexado por wave, e o intervalo não tem número — então ele fica com
+	o zero, que é o que a partida tem em `WaveCount` enquanto a contagem corre. Ver
+	`BeginIntermission`.
+]]
+local INTERMISSION_WAVE = 0
+
+--[[
 	A partida de tutorial: quem diz que **esta** partida é o tutorial, e o que ela
 	impõe por ser isso.
 
@@ -287,7 +297,42 @@ function TutorialMatchService:BeginStep(wave : number)
 	-- nova não começa por cima de uma tarefa que ficou pendente.
 	self:awaitPending()
 
-	local step = self:StepFor(wave)
+	self:openStep(self:StepFor(wave))
+end
+
+--[=[
+	Abre o passo que o roteiro guarda para o fim da partida — o da tela de
+	resultado, que não pertence a wave nenhuma.
+
+	Quem chama é o `onRoundEnded`, no mesmo instante em que a tela é mandada. Não
+	espera passo pendente: a partida acabou, e o que ficou por fazer ficou.
+]=]
+function TutorialMatchService:BeginFinal()
+	if not self:IsTutorial() then return end
+
+	self:openStep(self:finalStep())
+end
+
+--[=[
+	O passo de fim de partida, se o roteiro tiver um.
+]=]
+function TutorialMatchService:finalStep() : any
+	for _, step in Config.Match.Steps do
+		if step.Kind == "Lobby" then
+			return step
+		end
+	end
+
+	return nil
+end
+
+--[=[
+	Põe um passo no ar: guarda-o, aplica o que ele impõe e manda o cliente desenhar.
+
+	É o corpo que o `BeginStep` e o `BeginFinal` dividem — os dois só diferem em
+	**qual** passo procurar.
+]=]
+function TutorialMatchService:openStep(step : any)
 	if not step then
 		self.Step = nil
 
@@ -320,8 +365,11 @@ function TutorialMatchService:BeginStep(wave : number)
 		end
 	end
 
-	print(string.format("[DEBUG/Tutorial] abrindo passo '%s' (wave %d, %s)%s",
-		step.Id, wave, step.Kind, step.Hold and " — segurando a wave" or ""))
+	print(string.format("[DEBUG/Tutorial] abrindo passo '%s' (%s, %s)%s",
+		step.Id,
+		if step.Wave then `wave {step.Wave}` else "fim de partida",
+		step.Kind,
+		step.Hold and " — segurando a wave" or ""))
 
 	-- As cartas que o roteiro ainda tranca, para a mão do cliente não aceitar o
 	-- clique de uma que o servidor recusaria.
@@ -339,12 +387,48 @@ function TutorialMatchService:BeginStep(wave : number)
 			Unit = step.Unit,
 			Card = step.Card,
 			Highlight = step.Highlight,
+			HighlightWait = step.HighlightWait,
 			Position = point and point.Position or nil,
 			Positions = positions,
 			Lines = step.Lines,
+
+			-- O que o passo faz com a hotbar: `Deck` enquanto ele corre, `HidesDeck`
+			-- quando ele fecha. Os dois viajam porque quem desenha a mão é o cliente.
+			Deck = step.Deck,
+			HidesDeck = step.HidesDeck,
 			Locked = locked,
 			AllowedUnits = self:allowedUnits(),
 		})
+	end
+end
+
+--[=[
+	Abre o passo do intervalo — o primeiro do roteiro, o do botão de Ready.
+
+	Quem chama é o `WaveService`, **antes** de a contagem começar: a fala entra
+	enquanto o relógio ainda está cheio, e quando ela fecha o botão já está na tela
+	para o destaque abraçar.
+
+	Fora de partida de tutorial, e no roteiro que não tiver um passo para a wave
+	zero, não faz nada — como toda a API daqui.
+]=]
+function TutorialMatchService:BeginIntermission()
+	self:BeginStep(INTERMISSION_WAVE)
+end
+
+--[=[
+	A contagem do intervalo terminou: fecha o passo do Ready.
+
+	"Terminou" é o fim do `runIntermission`, e ele vem dos dois jeitos — o relógio
+	zerou, ou todo mundo ficou pronto antes dele, que numa partida de tutorial é o
+	clique do jogador no botão que o passo acabou de apontar. Os dois querem dizer a
+	mesma coisa para o roteiro: a wave 1 vem aí, e o passo dela é o próximo.
+]=]
+function TutorialMatchService:NoteIntermissionEnd()
+	local step = self.Step
+
+	if step and step.Kind == "Ready" then
+		self:CompleteStep()
 	end
 end
 

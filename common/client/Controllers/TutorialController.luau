@@ -135,11 +135,10 @@ function TutorialController:Prompt() : boolean
 		end,
 	}
 
-	local options = table.clone(Config.Text)
-	options.Buttons = buttons
-	options.ButtonsAtEnd = true
-
-	return dialog:Play(self:lines(), options)
+	return dialog:Play(self:lines(), Config.Speech({
+		Buttons = buttons,
+		ButtonsAtEnd = true,
+	}))
 end
 
 --[=[

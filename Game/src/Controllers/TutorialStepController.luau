@@ -7,9 +7,15 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
+local Configs = Shared:WaitForChild("Config")
+
+local SharedConfig = require(Configs.SharedConfig)
+
 local Me = require(Vendor.Me)
 
 local Framework = Me.new()
+
+local Config = SharedConfig.TutorialConfig
 
 --[[
 	O roteiro do tutorial na tela do jogador.
@@ -32,9 +38,10 @@ local Framework = Me.new()
 	Fica na Game: o roteiro é da partida, e partida só existe aqui.
 ]]
 
--- Quanto esperar a carta do passo aparecer na tela, em décimos de segundo. Ver
--- `awaitCard`.
-local CARD_WAIT_FRAMES = 50
+-- Quanto esperar uma peça de tela do passo aparecer, em décimos de segundo: a
+-- carta (`awaitCard`) e o botão que o passo aponta (`awaitHighlight`). O passo pode
+-- pedir mais com `HighlightWait`, em segundos — ver o passo da tela de resultado.
+local UI_WAIT_FRAMES = 50
 
 local TutorialStepController = {
 	Controllers = {
@@ -46,6 +53,20 @@ local TutorialStepController = {
 }
 
 TutorialStepController.Step = nil :: any
+
+--[[
+	Esta partida é o tutorial?
+
+	Vira `true` no primeiro passo que chegar e nunca mais volta: o roteiro abre o
+	passo do Ready antes de qualquer outra coisa, então quando a loja de cartas
+	aparece (wave 2) a resposta já está aqui. É o que permite ao tutorial valer
+	**entre** os passos — o clique fora da loja, por exemplo, não fecha a loja em
+	nenhum momento da partida, e não só enquanto um passo de compra está aberto.
+]]
+TutorialStepController.InTutorial = false
+
+-- A mão está fora da tela por ordem do roteiro? Ver `setCardsHidden` e `WantsDeck`.
+TutorialStepController.DeckHidden = false
 
 -- As cartas que o roteiro tranca até o passo delas: `{ [Id] = true }`. O servidor
 -- manda a lista junto do passo de compra, e é ela que a mão consulta.
@@ -92,6 +113,10 @@ end
 	continua apagada, em vez de acender junto.
 ]=]
 function TutorialStepController:setCardsHidden(hidden : boolean)
+	-- Guardado porque a pergunta sobrevive ao passo: entre um passo e outro é este
+	-- valor que responde ao `WantsDeck`, e não o passo aberto (que não há).
+	self.DeckHidden = hidden == true
+
 	local component = self:cardComponent()
 	local setter = component and component.setHidden
 
@@ -166,22 +191,26 @@ function TutorialStepController:show(step : any)
 				disconnect()
 			end
 
-			self:setCardsHidden(false)
-
-			-- Outro passo pode ter aberto enquanto a fala corria.
+			--[[
+				Outro passo pode ter aberto enquanto a fala corria, e aí quem manda na
+				hotbar é ele. Devolvê-la daqui a acenderia por cima da fala nova; quem a
+				devolve quando não sobra passo nenhum é o `clear`.
+			]]
 			if self.Step ~= step then return end
 
 			print(`[DEBUG/Tutorial] passo "{step.Id}": fala fechou, mostrando destaque e seta.`)
 			self:showVisuals(step)
 		end)
 
-		dialog:Play(step.Lines, {
+		-- A fonte e o tamanho saem do `Speech`: a fala do passo é a mesma voz da
+		-- oferta que trouxe o jogador até aqui.
+		dialog:Play(step.Lines, Config.Speech({
 			-- A UI fica: o passo pede para usar o HUD.
 			HideUI = false,
 			Blur = false,
 			Duck = false,
 			Auto = true,
-		})
+		}))
 
 		return
 	end
@@ -194,6 +223,10 @@ end
 	da fala, e não junto dela.
 ]=]
 function TutorialStepController:showVisuals(step : any)
+	-- A mão volta (ou fica fora) conforme o passo: é aqui, e não no fim da fala,
+	-- porque passo sem fala nenhuma chega direto neste ponto.
+	self:setCardsHidden(not self:needsDeck(step))
+
 	self:setAllowedCards(self:allowedOf(step))
 
 	--[[
@@ -209,8 +242,15 @@ function TutorialStepController:showVisuals(step : any)
 			target = highlight:Find(step.Highlight)
 		end
 
-		if target then
-			highlight:Show(target)
+		--[[
+			O alvo pode ainda não estar de pé quando o passo abre: o botão de Ready só
+			fica visível quando a contagem do intervalo começa, e o passo dele abre um
+			instante antes disso. `Show` recusa alvo invisível — e recusar calado
+			deixaria o passo sem destaque nenhum —, então o caminho é **esperado** em vez
+			de procurado uma vez só.
+		]]
+		if not (target and highlight:Show(target)) and step.Highlight then
+			self:awaitHighlight(step)
 		end
 	end
 
@@ -237,6 +277,19 @@ function TutorialStepController:showVisuals(step : any)
 end
 
 --[=[
+	Este passo precisa da hotbar na tela?
+
+	`Deck = false` no config diz que não — o botão de Ready, a compra na loja e o 2x
+	não pedem carta nenhuma, e a mão acesa embaixo deles só disputa o olho de quem
+	está aprendendo onde clicar.
+
+	O padrão é `true`: passo que não declara nada segue com o deck na tela.
+]=]
+function TutorialStepController:needsDeck(step : any) : boolean
+	return not (step and step.Deck == false)
+end
+
+--[=[
 	Espera a carta do passo aparecer na tela e a destaca.
 
 	Passo de **compra** aponta a carta na mesa da loja; passo de **uso** aponta a
@@ -250,7 +303,7 @@ function TutorialStepController:awaitCard(step : any)
 	if not highlight or not step.Card then return end
 
 	task.spawn(function()
-		for _ = 1, CARD_WAIT_FRAMES do
+		for _ = 1, UI_WAIT_FRAMES do
 			if self.Step ~= step then return end
 
 			local target = if step.Kind == "Buy"
@@ -265,6 +318,40 @@ function TutorialStepController:awaitCard(step : any)
 
 			task.wait(0.1)
 		end
+	end)
+end
+
+--[=[
+	Espera o botão que o passo aponta aparecer na tela e o destaca.
+
+	É o irmão do `awaitCard` para caminho de tela. Desiste calada pelo mesmo motivo:
+	o passo continua valendo com a fala, e um destaque que nunca chegou é melhor que
+	um laço que nunca morre.
+]=]
+function TutorialStepController:awaitHighlight(step : any)
+	local highlight = self.Controllers.HighlightController
+	if not highlight or not step.Highlight then return end
+
+	-- Alvo que nasce no fim de uma animação longa (o botão da tela de resultado)
+	-- pede mais tempo que um botão de HUD, que já está lá.
+	local frames = if typeof(step.HighlightWait) == "number"
+		then math.max(1, math.round(step.HighlightWait * 10))
+		else UI_WAIT_FRAMES
+
+	task.spawn(function()
+		for _ = 1, frames do
+			if self.Step ~= step then return end
+
+			local target = highlight:Find(step.Highlight)
+
+			if target and highlight:Show(target) then
+				return
+			end
+
+			task.wait(0.1)
+		end
+
+		warn(`[TutorialStepController]: o passo "{step.Id}" pede o destaque em "{step.Highlight}", que nao apareceu na tela.`)
 	end)
 end
 
@@ -313,13 +400,20 @@ end
 	Tira o passo da tela. Chamado quando ele é cumprido e quando outro abre por
 	cima — um passo por vez, como no servidor.
 ]=]
-function TutorialStepController:clear()
+function TutorialStepController:clear(deckHidden : boolean?)
 	self.Step = nil
 
-	-- Passo que morre com a fala ainda aberta não pode levar a hotbar junto. A
-	-- **trança do deck**, ao contrário, fica: ela é da partida e não do passo, e
-	-- destravar aqui devolveria as cartas no intervalo entre uma wave e outra.
-	self:setCardsHidden(false)
+	--[[
+		A hotbar tem um dono por vez, e `nil` quer dizer "não mexa": é o que o passo
+		**novo** passa, porque ele decide a mão um instante depois e devolvê-la aqui
+		só para escondê-la de novo a faria piscar entre um passo e outro.
+
+		A **trava do deck**, ao contrário, fica: ela é da partida e não do passo, e
+		destravar aqui devolveria as cartas no intervalo entre uma wave e outra.
+	]]
+	if deckHidden ~= nil then
+		self:setCardsHidden(deckHidden)
+	end
 
 	local highlight = self.Controllers.HighlightController
 	if highlight then
@@ -369,13 +463,57 @@ function TutorialStepController:AllowsCardUse(cardId : string) : boolean
 end
 
 --[=[
+	Esta partida é o tutorial?
+
+	Quem pergunta é quem tem de se comportar diferente nela e não faz parte do
+	roteiro — hoje o `ResultController`, que tranca o "PLAY AGAIN" da tela de fim.
+
+	A resposta só é confiável depois do primeiro passo, que chega no intervalo antes
+	da wave 1: qualquer tela de partida é bem depois disso.
+]=]
+function TutorialStepController:IsTutorial() : boolean
+	return self.InTutorial == true
+end
+
+--[=[
+	A hotbar pode estar na tela agora?
+
+	Quem pergunta é o `RoundCardShopController`, ao fechar a loja: ele devolve a mão
+	que escondeu ao abrir, e sem esta pergunta a devolveria por cima de um passo que
+	a quer fora da tela — o da compra, justamente o passo em que a loja abre e fecha.
+
+	A resposta é o último estado que o roteiro pediu, e não o passo aberto: entre
+	um passo e outro não há passo nenhum, e a mão que a Slingshot levou embora
+	(`HidesDeck`) não pode voltar só porque a loja fechou no meio do caminho.
+
+	Fora do tutorial, sempre sim — lá a hotbar não é assunto nosso.
+]=]
+function TutorialStepController:WantsDeck() : boolean
+	if not self.InTutorial then
+		return true
+	end
+
+	return not self.DeckHidden
+end
+
+--[=[
 	A loja de cartas de round pode ser fechada com um clique fora agora?
 
-	Não, enquanto o passo pede uma compra: o `RoundCardShopController` pergunta isto
-	antes de dispensar a loja. É a mesma divisão de sempre — aqui é educação de
-	interface, e quem recusa a compra errada é o servidor.
+	**Na partida de tutorial, nunca.** O `RoundCardShopController` pergunta isto
+	antes de dispensar a loja, e quem está aprendendo o que é a loja clica na mesa,
+	no fundo e no que estiver por perto antes de escolher uma carta — fechar no
+	primeiro desses cliques tira da tela justamente o que o passo mandou ler.
+
+	A saída continua existindo e é a de sempre: o botão que abriu a loja a fecha.
+	O que sai é só o "clicou em qualquer lugar, fechou".
+
+	Fora do tutorial nada muda — a loja se dispensa como sempre se dispensou.
 ]=]
 function TutorialStepController:AllowsShopDismiss() : boolean
+	if self.InTutorial then
+		return false
+	end
+
 	local step = self.Step
 
 	return not (step and step.Kind == "Buy")
@@ -394,6 +532,8 @@ function TutorialStepController:construct()
 	Framework:Listen("TutorialStep", function(step : any)
 		if type(step) ~= "table" then return end
 
+		self.InTutorial = true
+
 		if type(step.Locked) == "table" then
 			self.LockedCards = step.Locked
 		end
@@ -403,14 +543,41 @@ function TutorialStepController:construct()
 	end)
 
 	Framework:Listen("TutorialStepDone", function(id : any)
+		local step = self.Step
+
+		--[=[
+			O fim de **um** passo não pode apagar o seguinte.
+
+			Os dois avisos saem do servidor com microssegundos de diferença — o passo do
+			Ready fecha quando a contagem acaba, e a wave 1 abre o passo do Slingshot no
+			quadro seguinte — e eles viajam em **eventos diferentes**, que o `Me` (Warp)
+			enfileira separados: a ordem de chegada no cliente não é garantida.
+
+			Sem conferir o id, o "acabou o Ready" chegando atrasado limpava o passo que
+			já estava aberto: `self.Step` virava `nil`, e quando a fala do Slingshot
+			fechava o `show` desistia sozinho — fala na tela, nenhum destaque, nenhuma
+			seta e a hotbar sem a trava do passo.
+		]=]
+		if step and id ~= nil and step.Id ~= id then
+			print(`[DEBUG/Tutorial] "{id}" terminou depois de "{step.Id}" abrir; o passo aberto fica.`)
+
+			return
+		end
+
 		-- Passo cumprido destranca a carta dele: daí para a frente ela é uma carta
 		-- como outra qualquer.
-		local step = self.Step
 		if step and step.Kind == "Use" and step.Card then
 			self.LockedCards[step.Card] = nil
 		end
 
-		self:clear()
+		--[[
+			Passo cumprido pode levar a mão embora: `HidesDeck` é o que a Slingshot
+			colocada faz. A carta saiu para o mapa, não sobrou nada para arrastar até a
+			wave seguinte, e a hotbar vazia no canto só continuaria pedindo clique.
+
+			Ela volta sozinha no próximo passo que precisar dela.
+		]]
+		self:clear(step ~= nil and step.HidesDeck == true)
 	end)
 end
 

@@ -477,6 +477,19 @@ function WaveService:onRoundEnded(won : boolean)
 		})
 	end
 
+	--[[
+		O fecho do roteiro do tutorial: a tela de resultado é a última coisa que ele
+		aponta, e o passo abre junto dela. Quem espera a tela terminar de se revelar
+		para acender o holofote é o cliente — daqui não dá para saber em que ponto da
+		animação ela está.
+
+		Fora do tutorial não faz nada.
+	]]
+	local tutorial = self.Services.TutorialMatchService
+	if tutorial then
+		tutorial:BeginFinal()
+	end
+
 	self.Signals.MatchFinished:Fire(won, preset)
 end
 
@@ -560,8 +573,24 @@ function WaveService:runRound(generation : number)
 		self.Services.DifficultyService:Force(TutorialConfig.Match.Difficulty)
 	end
 
+	--[[
+		O primeiro passo do tutorial acontece **aqui**, no intervalo, e não numa wave:
+		ele aponta o botão de Ready e fecha quando a contagem termina — no tempo dela
+		ou antes, se o jogador clicar. Ele abre antes da contagem de propósito, para a
+		fala correr com o relógio ainda cheio.
+
+		Fora do tutorial as duas chamadas não fazem nada.
+	]]
+	if tutorial then
+		tutorial:BeginIntermission()
+	end
+
 	self:runIntermission(preset.IntermissionTime or INTERMISSION_TIME)
 	if not self:isCurrent(generation) then return end
+
+	if tutorial then
+		tutorial:NoteIntermissionEnd()
+	end
 
 	local won = false
 	while not self.GameOver do

@@ -15,7 +15,8 @@ local Me = require(Vendor.Me)
 
 local Framework = Me.new()
 
-local Config = SharedConfig.TutorialConfig.Lobby
+local TutorialConfig = SharedConfig.TutorialConfig
+local Config = TutorialConfig.Lobby
 
 --[[
 	A segunda metade do tutorial, no lobby, depois da vitória.
@@ -255,13 +256,13 @@ function TutorialShopController:say(session : number, lines : { string }?) : boo
 		closed = true
 	end)
 
-	dialog:Play(lines, {
+	dialog:Play(lines, TutorialConfig.Speech({
 		-- O HUD fica: o passo seguinte aponta um botão dele.
 		HideUI = false,
 		Blur = false,
 		Duck = false,
 		Auto = true,
-	})
+	}))
 
 	return self:await(session, nil, function()
 		return closed

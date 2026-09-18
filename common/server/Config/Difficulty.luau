@@ -130,7 +130,22 @@ Difficulty.Presets = {
 		SpawnDelayMultiplier = 1.4,
 		StartingCash = 500,
 		BaseHealth = 500,
-		MobDamage = 5,
+
+		--[[
+			A base do tutorial não morre.
+
+			Zero dano por inimigo que escapa é o jeito de dizer "vida infinita" que
+			deixa a barra **cheia** na tela, e não um número absurdo escrito nela: quem
+			está aprendendo a colocar a primeira torre não deve descobrir o que é perder
+			antes de descobrir o que é jogar.
+
+			É zero, e não um `BaseHealth` gigante, porque a conta é a mesma de sempre
+			(`MobService:mobEscaped`) e continua valendo — nenhum caminho novo, nenhuma
+			exceção espalhada pelo código. O `or` que lê este campo trata o zero como
+			valor, e não como ausência, então ele chega inteiro lá.
+		]]
+		MobDamage = 0,
+
 		IntermissionTime = 45,
 		WaveInterval = 1.5,
 		MaxWaves = 5,

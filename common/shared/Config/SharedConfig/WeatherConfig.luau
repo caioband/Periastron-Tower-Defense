@@ -307,6 +307,143 @@ WeatherConfig.Warning = {
 	DisplayNames = {},
 }
 
+--[=[
+	O indicador de clima do HUD: o ícone no canto e a caixa de detalhes.
+
+	São duas coisas na mesma peça de tela (`Interface.WeatherIndicator`):
+
+	  1. o **ícone**, no botão `Details`, que é sempre o clima que está no ar agora —
+	     ou o de "sem clima", que também é um ícone e não um botão apagado;
+	  2. os **detalhes**, que o jogador pede clicando: uma frase curta sobre o clima,
+	     escrita letra a letra dentro do próprio frame, que some sozinha.
+
+	**A caixa é pequena de propósito** (o frame tem cerca de 11% da largura da tela),
+	e por isso as descrições são de uma linha e meia. Descrição que não couber vira
+	texto cortado, e não caixa maior: o tamanho é do designer, no Studio.
+
+	`Size` é a altura da linha na caixa **do tamanho em que ela estava quando o texto
+	entrou** — a mesma regra do preset `Dialogue` do `RichTextConfig`. A Press Start
+	2P é quase monoespaçada e ocupa perto do dobro da largura por caractere de uma
+	fonte comum, então o número aqui é bem menor que o de uma caixa de fala.
+]=]
+WeatherConfig.Indicator = {
+	--[[
+		Os nomes na árvore, a partir da `PlayerGui`.
+
+		`Text` é o único que não vem do Studio: é a caixa que o controller cria dentro
+		do frame para escrever (ver `WeatherIndicatorController:bind`). Está aqui para
+		quem abrir a tela no Studio e encontrar um filho que não desenhou saber de
+		onde ele veio.
+	]]
+	Gui = {
+		Screen = "Interface",
+		Frame = "WeatherIndicator",
+		Button = "Details",
+		Text = "DetailsText",
+	},
+
+	--[[
+		O ícone de cada clima, e o de quando não há nenhum.
+
+		A chave é o nome do clima como o resto do jogo o escreve (o Model em
+		`Assets.Weathers`, o `WeatherConfig.Effects`), e não o nome comercial: o
+		"blizzard" do desenho é o `Snow` do código.
+	]]
+	Icons = {
+		Rain = "rbxassetid://137668421407555",
+		Wind = "rbxassetid://131735996975678",
+		Thunder = "rbxassetid://111534699707977",
+		Sandstorm = "rbxassetid://112048992160649",
+		Snow = "rbxassetid://138661703410675",
+		Fog = "rbxassetid://86004956830955",
+		Drought = "rbxassetid://128162722232087",
+	},
+
+	-- O ícone de céu limpo. Fora de `Icons` porque "sem clima" não é um clima.
+	NoneIcon = "rbxassetid://91172779242291",
+
+	--[[
+		Como o texto é escrito. Vai inteiro para o `RichTextController`, então
+		qualquer opção dele cabe aqui.
+	]]
+	Text = {
+		Font = "rbxasset://fonts/families/PressStart2P.json",
+		Size = 13,
+		Speed = 45,
+		Anim = "slide",
+		AnimDuration = 0.2,
+		Align = Enum.HorizontalAlignment.Center,
+		VerticalAlign = Enum.VerticalAlignment.Center,
+		Stroke = { Thickness = 0.06, Color = Color3.new(0, 0, 0) },
+	},
+
+	--[=[
+		O compasso do botão depois do clique.
+
+		O botão fica `Active = false` da hora do clique até o fim de tudo: a escrita
+		(que dura o que durar — texto mais longo demora mais), mais `Hold` de leitura,
+		mais o `FadeOut` da saída. Só então ele volta a aceitar clique, com a caixa já
+		vazia.
+
+		`Hold` é o tempo de **ler**, e conta a partir do fim da escrita: a frase já está
+		inteira na tela quando ele começa. Cinco segundos é folgado de propósito — a
+		caixa é pequena e a Press Start 2P é lenta de ler, e quem terminou antes não
+		fica esperando por nada, porque não há o que fazer com o botão enquanto a
+		resposta dele está na tela.
+
+		`FadeIn` é a entrada da caixa, e é curta: ela existe para o texto não aparecer
+		de estalo por baixo da primeira letra, não para ser uma animação.
+	]=]
+	Hold = 5,
+	FadeOut = 0.5,
+	FadeIn = 0.12,
+
+	--[=[
+		Quanto esperar a escrita terminar antes de desistir dela.
+
+		Rede de segurança: o aviso de fim de escrita vem do renderizador, e se ele
+		nunca chegar (texto vazio, backend de reserva, container que sumiu no meio) o
+		botão ficaria trancado para sempre. Passado o prazo, a saída acontece do mesmo
+		jeito.
+	]=]
+	WriteTimeout = 12,
+
+	--[=[
+		A descrição de cada clima: o que ele faz, em uma linha e meia.
+
+		É o resumo do que está em `WeatherConfig.Effects` — quem mexer nos números de
+		lá mexe na frase daqui também, porque não há como derivar uma da outra sem
+		virar uma tabela de multiplicadores na cara do jogador.
+	]=]
+	Descriptions = {
+		Fog = "Tower range drops 30%. Magic suffers the most.",
+		Wind = "Enemies move 30% faster. Melee towers swing quicker.",
+		Drought = "Enemies 40% tougher. Fire thrives, Ice barely works.",
+		Snow = "Towers attack 25% slower, and one freezes at a time.",
+		Thunder = "Lightning stuns your towers. Electric ones charge up.",
+		Rain = "Fire towers shut down. Everyone else attacks slower.",
+		Sandstorm = "Damage and range drop 30%. Magic sees right through.",
+	},
+
+	-- Clima sem descrição escrita ainda: melhor uma linha honesta que um vazio.
+	UnknownDescription = "No details on this one yet.",
+
+	-- Céu limpo.
+	NoneTitle = "CLEAR SKIES",
+	NoneDescription = "No weather in play right now.",
+
+	--[=[
+		As frases montadas.
+
+		`Title` é o nome do clima em destaque; `Warning` é a linha do que vem por aí,
+		e `WarningOne` existe pelo mesmo motivo do `Warning.TextOne` — para não
+		escrever "1 ROUNDS".
+	]=]
+	Title = "[gradient=orange]%s[/gradient]",
+	Warning = "[color=yellow]%s in %d rounds[/color]",
+	WarningOne = "[color=yellow]%s next round[/color]",
+}
+
 --[[
 	O que o clima mostra em cima da unidade afetada.
 

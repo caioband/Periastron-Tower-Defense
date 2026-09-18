@@ -163,8 +163,18 @@ end
 	diferente do que o servidor vai cumprir.
 ]=]
 function WeatherRoundService:broadcastWarning(weatherName : string, wavesAhead : number)
+	--[[
+		A wave-alvo vai junto do "faltam quantas".
+
+		O aviso na tela usa o número pronto, e é por isso que ele existe; o indicador
+		do HUD, que responde a um clique **depois** — uma, duas waves depois —, precisa
+		refazer a conta com a wave de agora, e para isso ele precisa do alvo. Contar
+		sozinho a partir do `wavesAhead` daria errado justamente quando importa: este
+		aviso e o `SetWave` da mesma wave saem em eventos diferentes, e a ordem em que
+		eles chegam ao cliente não é garantida.
+	]]
 	for _, player in Players:GetPlayers() do
-		Framework:Fire("WeatherWarning", player, weatherName, wavesAhead)
+		Framework:Fire("WeatherWarning", player, weatherName, wavesAhead, self.ScheduledWave)
 	end
 end
 
@@ -382,7 +392,7 @@ function WeatherRoundService:construct()
 		local wavesAhead = self.ScheduledWave - current
 		if wavesAhead <= 0 then return end
 
-		Framework:Fire("WeatherWarning", player, self.Scheduled, wavesAhead)
+		Framework:Fire("WeatherWarning", player, self.Scheduled, wavesAhead, self.ScheduledWave)
 	end)
 end
 

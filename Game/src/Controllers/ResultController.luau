@@ -141,6 +141,9 @@ local ResultController = {
 	Controllers = {
 		UnitPlacementController = {},
 		DataController = {},
+
+		-- Quem sabe se esta partida e a do tutorial. Ver `bindButtons`.
+		TutorialStepController = {},
 	},
 	connections = {},
 	tweens = {},
@@ -743,6 +746,19 @@ function ResultController:applyPlayAgainState()
 	self:setButtonText(PLAY_AGAIN_NAME, string.format(PLAY_AGAIN_TEXT, state.votes or 0, state.total or 0))
 end
 
+--[=[
+	Tranca (ou destranca) um botao da tela.
+
+	`Active = false` e o que de fato recusa o clique; o resto e para ele **parecer**
+	trancado, em vez de parecer quebrado -- botao que acende ao passar o mouse e nao
+	responde e pior que botao apagado.
+]=]
+function ResultController:setButtonEnabled(button : GuiButton, enabled : boolean)
+	button.Active = enabled
+	button.AutoButtonColor = enabled
+	button.Selectable = enabled
+end
+
 -- Reconectados a cada Show porque a ResultScreen e recriada no respawn.
 function ResultController:bindButtons()
 	for _, connection in self.connections do
@@ -750,11 +766,25 @@ function ResultController:bindButtons()
 	end
 	table.clear(self.connections)
 
+	--[[
+		O tutorial nao se joga duas vezes: a partida dele e desenhada para ser vencida
+		uma vez e terminar no lobby, onde a segunda metade do roteiro espera. O
+		"PLAY AGAIN" fica trancado, e o passo do tutorial acende o "BACK TO LOBBY" ao
+		lado -- e por isso que o botao continua na tela em vez de sumir: ele mostra
+		que existe um caminho e que hoje nao e por ali.
+	]]
+	local tutorial = self.Controllers.TutorialStepController
+	local isTutorial = tutorial ~= nil and tutorial:IsTutorial()
+
 	local playAgain = self:findButton(PLAY_AGAIN_NAME)
 	if playAgain then
-		table.insert(self.connections, playAgain.MouseButton1Click:Connect(function()
-			Framework:Fire("VotePlayAgain")
-		end))
+		self:setButtonEnabled(playAgain, not isTutorial)
+
+		if not isTutorial then
+			table.insert(self.connections, playAgain.MouseButton1Click:Connect(function()
+				Framework:Fire("VotePlayAgain")
+			end))
+		end
 	end
 
 	local lobby = self:findButton(LOBBY_NAME)

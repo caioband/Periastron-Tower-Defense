@@ -35,6 +35,32 @@ TutorialConfig.Text = {
 	Size = 20,
 }
 
+--[=[
+	As opções de **qualquer** fala do tutorial: a fonte e o tamanho de `Text`, mais o
+	que a conversa daquele momento pedir (esconder ou não a UI, os botões da
+	escolha, o modo automático).
+
+	Existe porque a fonte é a mesma nos três lugares que falam pelo tutorial — a
+	oferta no lobby (`TutorialController`), os passos da partida
+	(`TutorialStepController`) e a volta depois da vitória (`TutorialShopController`)
+	— e eles vivem em places diferentes. Sem isto, trocar a fonte do tutorial seria
+	trocá-la em três arquivos e esquecer um.
+
+		dialog:Play(lines, TutorialConfig.Speech({ Auto = true, Blur = false }))
+
+	O que quem chama passa **ganha** do que está em `Text`: a fala que quiser outro
+	tamanho pede e recebe.
+]=]
+function TutorialConfig.Speech(options : { [string] : any }?) : { [string] : any }
+	local resolved = table.clone(TutorialConfig.Text)
+
+	for key, value in (options or {}) do
+		resolved[key] = value
+	end
+
+	return resolved
+end
+
 --[[
 	Quanto esperar, depois de o servidor mandar, antes de falar.
 
@@ -122,10 +148,12 @@ TutorialConfig.Match = {
 		O roteiro, um passo por wave.
 
 		  - `Wave`   — em qual wave o passo acontece. O servidor o abre **antes** de a
-		               wave nascer.
-		  - `Kind`   — o que o jogador tem de fazer. Hoje só `"Place"`; as próximas
-		               fatias trazem `"Buy"` (a carta do RCS), `"Speed"` (o 2x) e o
-		               fecho da wave 5.
+		               wave nascer. **Zero é o intervalo**, o tempo de preparo que
+		               corre antes da wave 1: é onde mora o passo do botão de Ready,
+		               e é a única wave do roteiro que não nasce ninguém.
+		  - `Kind`   — o que o jogador tem de fazer: `"Ready"` (o botão do intervalo),
+		               `"Place"`, `"Buy"` (a carta do RCS), `"Use"`, `"Speed"` (o 2x) e
+		               `"PlaceRest"`, o fecho da wave 5.
 		  - `Hold`   — `true` segura a wave até o passo ser cumprido. É o que impede a
 		               wave 1 de nascer com o mapa vazio.
 		  - `Unit`   — a única carta que a mão aceita enquanto o passo está aberto. As
@@ -139,18 +167,75 @@ TutorialConfig.Match = {
 		               passava como se fosse o 1 — o passo pedia um lugar e aceitava
 		               outro.
 		  - `Lines`  — o que a caixa de fala diz ao abrir o passo, com a marcação de
-		               sempre.
+		               sempre. Passo sem fala nenhuma vai direto ao destaque.
+		  - `Deck`   — `false` tira a **hotbar** da tela enquanto o passo corre. É para
+		               o passo que não pede carta nenhuma: o botão de Ready, a compra
+		               na loja, o 2x. Carta acesa embaixo de um passo que aponta outro
+		               canto da tela é convite a clicar no lugar errado.
+
+		               O padrão é a mão na tela — passo que não declara nada segue
+		               como sempre —, e quem a devolve é o fim do passo.
+		  - `HidesDeck` — `true` leva a hotbar embora **quando o passo é cumprido**, em
+		               vez de devolvê-la. É o par do `Deck` para o passo que precisa da
+		               mão para ser feito e não precisa mais dela depois: a Slingshot
+		               que foi para o mapa não deixou nada para arrastar, e a hotbar
+		               vazia no canto só continuaria pedindo clique.
+
+		               Ela volta sozinha no próximo passo que a pedir.
 
 		A wave 1 pede a **Slingshot**, e ela é a única carta liberada até a wave 5
 		(ver `AllowedUnits`): o tutorial ensina clima, loja e velocidade com uma torre
 		só na tela, em vez de com um deck que o jogador ainda não sabe montar.
 	]=]
 	Steps = {
+		--[[
+			O primeiro passo de todos, e o único que acontece fora de uma wave.
+
+			O intervalo antes da wave 1 já existe para todo mundo — é o tempo de
+			preparo, com a contagem e o botão de Ready no canto. O tutorial só o aponta:
+			a fala explica o botão, o destaque o abraça (`Interface.ReadyWave`, o
+			`ImageButton` que o `ReadyController` monta) e o passo fecha **quando a
+			contagem termina** — no tempo dela ou antes, porque todo mundo ficou pronto,
+			que numa partida de tutorial é o primeiro clique do jogador.
+
+			Sem `Hold`: quem segura aqui é a própria contagem do intervalo, e o passo
+			não tem o que esperar depois dela. Sem `BlockInput` também, como os outros
+			passos da partida — apontar o botão não pode tirar do jogador a câmera nem o
+			resto do HUD que ele está vendo pela primeira vez.
+		]]
+		{
+			Id = "ClickReady",
+			Wave = 0,
+			Kind = "Ready",
+
+			--[[
+				A mão fica fora da tela: a lição é o botão do canto, e o mapa ainda nem
+				tem wave para ele defender.
+
+				`HidesDeck` para ela não voltar no instante em que este passo fecha: o
+				passo do Slingshot abre no mesmo quadro e a esconderia de novo, e o que
+				o jogador veria seria a hotbar piscando. Quem a traz é a fala que manda
+				arrastar.
+			]]
+			Deck = false,
+			HidesDeck = true,
+
+			Highlight = "Interface.ReadyWave",
+
+			Lines = {
+				"[color=white]Take your time to look around.[/color][pause=0.4] When you're set, hit [gradient=green]READY[/gradient][color=white] — the wave starts when the timer runs out.[/color]",
+			},
+		},
+
 		{
 			Id = "PlaceFirst",
 			Wave = 1,
 			Kind = "Place",
 			Hold = true,
+
+			-- A mão está na tela para o arrasto acontecer, e sai junto com ele: a
+			-- Slingshot era a única carta liberada, e o que sobra é uma hotbar vazia.
+			HidesDeck = true,
 
 			Unit = "Slingshot",
 			Point = "1",
@@ -184,6 +269,10 @@ TutorialConfig.Match = {
 			Wave = 2,
 			Kind = "Buy",
 			Hold = true,
+
+			-- A compra acontece na mesa da loja, que vem por cima da hotbar. A mão só
+			-- volta quando a carta comprada tiver um lugar nela.
+			Deck = false,
 
 			OpenShop = true,
 			Card = "WeatherReport",
@@ -247,6 +336,12 @@ TutorialConfig.Match = {
 			Kind = "Speed",
 			Hold = true,
 
+			-- Nada a colocar nesta wave: a Slingshot já está no mapa e o resto do deck
+			-- só destranca na 5. A mão sai para o olho ir ao botão, e continua fora
+			-- depois — quem a traz de volta é o passo do fecho, que precisa dela.
+			Deck = false,
+			HidesDeck = true,
+
 			Index = 2,
 			Highlight = "Interface.Speed",
 
@@ -286,6 +381,38 @@ TutorialConfig.Match = {
 				"[color=white]Last wave — and it brings a[/color] [gradient=orange]boss[/gradient][color=white].[/color]",
 				"[color=white]Put the rest of your deck on the open spots.[/color]",
 			},
+		},
+
+		--[=[
+			O fecho do fecho: a tela de resultado.
+
+			Não tem `Wave` porque não acontece em wave nenhuma — quem o abre é o
+			`onRoundEnded`, pelo `BeginFinal`, no mesmo instante em que a tela de
+			resultado é mandada. É o único passo do roteiro que vive depois da partida.
+
+			**Sem `Lines`**: a tela de resultado é o que o jogador tem de ler agora, e
+			uma caixa de fala por cima dela estaria cobrindo justamente o prêmio que ele
+			acabou de ganhar. O passo é só o holofote.
+
+			`HighlightWait` é maior que o padrão porque o botão nasce escondido e entra
+			no fim de uma coreografia longa (backdrop, painel, recompensas, barra de XP
+			— ver `ResultController`), e o destaque recusa alvo que ainda não está na
+			tela. O orçamento é generoso de propósito: errar para mais custa uma espera
+			que ninguém vê, e errar para menos custa o passo inteiro.
+
+			Quem tranca o "PLAY AGAIN" ao lado é o `ResultController`: botão é assunto
+			de quem é dono da tela, e o tutorial só é perguntado se esta partida é a
+			dele.
+		]=]
+		{
+			Id = "BackToLobby",
+			Kind = "Lobby",
+
+			-- A partida acabou: não há mais nada para colocar no mapa.
+			Deck = false,
+
+			Highlight = "ResultScreen.MainScreen.Lobby",
+			HighlightWait = 20,
 		},
 	},
 }
