@@ -125,7 +125,7 @@ function TutorialService:shopPrompt(player : Player)
 		return
 	end
 
-	Framework:Fire("TutorialShopPrompt", player)
+	self:PromptShop({ player })
 end
 
 --[=[
@@ -146,7 +146,7 @@ function TutorialService:watchShop()
 	end
 
 	shopService.Signals.ItemPurchased:Connect(function(player : Player, item : any)
-		if not item or item.Id ~= Config.Shop.Item then return end
+		if not item or item.Id ~= Config.Lobby.Item then return end
 
 		Framework:Fire("TutorialShopDone", player)
 	end)
@@ -193,6 +193,59 @@ function TutorialService:Start(player : Player)
 		warn(`[TutorialService]: nao consegui teleportar {player.Name} para o tutorial: {result}`)
 
 		return false
+	end
+
+	return true
+end
+
+--[=[
+	Abre a **segunda parte** — a que acontece no lobby depois da partida: a fala e o
+	destaque no botão da loja, que fecham quando a caixa é comprada.
+
+	Normalmente quem a dispara é o bilhete `TutorialDone` do teleporte de volta (ver
+	`shopPrompt`). Por aqui ela abre sem bilhete nenhum, que é o que o comando
+	`tutorialshop` precisa: testar esse passo sem ter de vencer as cinco waves antes.
+]=]
+function TutorialService:PromptShop(players : { Player })
+	local crateService = Framework:Get("CrateService", false, false)
+	local guarantee = Config.CrateGuarantee
+
+	for _, player in players do
+		--[[
+			A caixa que o fluxo manda comprar vem com unit épica garantida. A marca é
+			posta **aqui**, no servidor, quando o passo abre: o cliente nunca pede
+			raridade, então não há como forjar uma abrindo outra caixa.
+		]]
+		if crateService and crateService.ForceRarity and guarantee then
+			crateService:ForceRarity(player, guarantee.Rarity)
+		end
+
+		Framework:Fire("TutorialShopPrompt", player)
+	end
+end
+
+--[=[
+	Devolve o jogador ao estado de quem nunca viu o tutorial.
+
+	É ferramenta de teste: o assunto se encerra na primeira resposta — vencer **ou**
+	recusar —, e sem isto conferir a oferta uma segunda vez exigiria apagar o perfil.
+
+	Reabre a fala na hora quando ele está no lobby, que é o que quem está testando
+	quer ver e é o que o `PlayerDataLoaded` faria na próxima entrada. Não mexe em
+	mais nada: unidades, coins e crates continuam onde estavam.
+]=]
+function TutorialService:Reset(player : Player)
+	local dataService = self.Services.DataService
+	if not dataService then
+		return false
+	end
+
+	dataService:Update(player, DATA_KEY, function()
+		return false
+	end)
+
+	if self:isLobby() then
+		self:Prompt({ player })
 	end
 
 	return true

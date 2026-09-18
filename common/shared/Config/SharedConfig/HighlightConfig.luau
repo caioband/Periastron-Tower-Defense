@@ -29,6 +29,19 @@ HighlightConfig.Gui = {
 	Name = "Highlight",
 	DisplayOrder = 5,
 	IgnoreGuiInset = true,
+
+	--[[
+		O atributo que o `InterfaceController` lê para **nunca** esconder uma tela.
+
+		Sem ele o destaque some justamente quando é mais necessário: a loja e os
+		painéis de proximidade pedem "some com o resto" ao abrir, e o resto inclui
+		esta tela. O efeito era exatamente invertido — loja fechada, destaque na
+		tela; loja aberta, destaque nenhum.
+
+		O nome é o mesmo que o `InterfaceController` declara; ele mora aqui para
+		quem lê o config saber que a marca existe.
+	]]
+	IgnoreHideAttribute = "IgnoreInterfaceHide",
 }
 
 --[=[

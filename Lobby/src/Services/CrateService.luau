@@ -177,6 +177,36 @@ end
 	melhora o que ela promete nao torna o numero da loja mentira.
 ]=]
 --[=[
+	Marca a próxima caixa deste jogador com uma raridade.
+
+	É de uso único e não é acumulável: marcar duas vezes continua valendo para uma
+	caixa só. Vale enquanto ele estiver no servidor — não é gravada no perfil,
+	porque ela é de um passo de tutorial e não de uma promessa do jogo.
+]=]
+function CrateService:ForceRarity(Player : Player, rarity : string)
+	local resolved = RarityConfig.resolveRarity and RarityConfig.resolveRarity(rarity) or rarity
+	if not resolved then return end
+
+	self.ForcedRarity = self.ForcedRarity or {}
+	self.ForcedRarity[Player.UserId] = resolved
+
+	print(`[CrateService]: proxima caixa de {Player.Name} vem {resolved} (tutorial).`)
+end
+
+--[=[
+	Lê e apaga a marca da próxima caixa, se houver.
+]=]
+function CrateService:ConsumeForcedRarity(Player : Player) : string?
+	local forced = self.ForcedRarity and self.ForcedRarity[Player.UserId]
+
+	if forced and self.ForcedRarity then
+		self.ForcedRarity[Player.UserId] = nil
+	end
+
+	return forced
+end
+
+--[=[
 	A garantia de quem está começando: dentro das primeiras caixas da vida do
 	perfil, uma sai Epic ou melhor.
 
@@ -524,7 +554,14 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 		seguidos nao leem a mesma conta antes de ela andar.
 	]]
 	local profile = self:_profileOf(Player)
-	local dueRarity = self:_dueRarity(resolvedRarity, profile)
+
+	--[[
+		A raridade que o tutorial deixou marcada para a próxima caixa deste jogador
+		passa na frente da garantia normal, e é **consumida** aqui: uma marca, uma
+		caixa. Quem a põe é o `TutorialService`, no servidor, quando abre o passo do
+		lobby — o cliente não pede raridade nenhuma, e por isso não há o que forjar.
+	]]
+	local dueRarity = self:ConsumeForcedRarity(Player) or self:_dueRarity(resolvedRarity, profile)
 
 	local result = self:RollCrate(resolvedRarity, profile, dueRarity)
 	if not result then

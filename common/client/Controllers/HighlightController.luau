@@ -44,6 +44,12 @@ local Config = SharedConfig.HighlightConfig
 	sentido quando o alvo é a única coisa clicável do passo — um botão de UI, nunca
 	um lugar do mapa.
 
+	**Ele não some com o "esconda o resto".** A tela nasce com a marca
+	`IgnoreInterfaceHide`, que o `InterfaceController` respeita: painel de
+	proximidade e loja escondem o HUD ao abrir, e um destaque que sumisse junto
+	apontaria só o que já estava na tela — nunca o que está dentro do painel que
+	acabou de abrir.
+
 	**O alinhamento é medido, não calculado.** `AbsolutePosition` vive no espaço com
 	a inset da topbar: numa `ScreenGui` com `IgnoreGuiInset = true` — que é o caso
 	desta, para o escuro cobrir a faixa de cima —, um frame no canto superior
@@ -131,6 +137,18 @@ function HighlightController:build()
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 		Enabled = false,
 	}, PlayerGui)
+
+	--[[
+		O destaque não some com os pedidos de "esconda o resto".
+
+		A loja e os painéis de proximidade fazem esse pedido ao abrir, e sem esta
+		marca o efeito ficava invertido: com a loja fechada o destaque aparecia, e
+		com ela aberta — a hora em que ele precisa apontar o botão de comprar —
+		sumia junto com o HUD.
+	]]
+	if Config.Gui.IgnoreHideAttribute then
+		gui:SetAttribute(Config.Gui.IgnoreHideAttribute, true)
+	end
 
 	-- A sonda: tamanho zero, posição zero, invisível. Ela não desenha nada — existe
 	-- só para o `AbsolutePosition` dela dizer onde fica a origem desta tela no

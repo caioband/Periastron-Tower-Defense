@@ -291,23 +291,88 @@ TutorialConfig.Match = {
 }
 
 --[=[
-	O passo que acontece **no lobby**, depois da vitória.
+	A segunda metade do tutorial: a que acontece **no lobby**, depois da vitória.
 
-	Ele não é gravado em lugar nenhum: o servidor do tutorial embarca `TutorialDone`
-	no teleporte de volta, e o lobby aponta a loja naquela sessão. Acontece uma vez,
-	logo depois da partida, e some se o jogador sair — que é o comportamento certo
-	para um empurrãozinho, não para um marco.
+	Ela não é gravada em lugar nenhum — o servidor da partida embarca `TutorialDone`
+	no teleporte de volta, e o lobby a roda naquela sessão. Acontece uma vez, logo
+	depois da partida, e some se o jogador sair. É um empurrãozinho, não um marco.
 
-	`Item` é o id do `ShopConfig`: a caixa mais barata. `Highlight` é o caminho do
-	botão na `PlayerGui`.
+	**É um fluxo fechado**: cada passo aponta a única coisa clicável do momento, e o
+	destaque entra com `BlockInput` — os quatro frames em volta do buraco engolem
+	tudo o que estiver fora dele. Quem está aprendendo não tem como se perder no meio
+	do caminho, e não existe passo esperando por um clique que o jogador já deu em
+	outro lugar.
+
+	Os caminhos são de nome, a partir da `PlayerGui`, e o `HighlightController:Find`
+	anda em profundidade — por isso `HUDFrame.Wrapper.Shop` acha o wrapper certo
+	entre os vários irmãos de mesmo nome.
 ]=]
-TutorialConfig.Shop = {
-	Highlight = "HUD.HUDFrame.Wrapper.Shop",
-	Item = "CrateOfBeginnings",
-
+TutorialConfig.Lobby = {
 	Lines = {
-		"[color=white]Nice work![/color][pause=0.4] Spend your coins on a [gold]Crate of Beginnings[/gold] over here.",
+		"[color=white]Nice work![/color][pause=0.4] Let's spend those coins — open the [gold]Shop[/gold].",
 	},
+
+	-- Passo 1: o botão da loja no HUD.
+	ShopButton = "HUD.HUDFrame.Wrapper.Shop",
+
+	-- Passo 2: a caixa a comprar e o botão de compra **dentro** do container dela.
+	Item = "CrateOfBeginnings",
+	BuyButton = "Buy",
+
+	-- Passo 3: a mochila, e a lista de caixas dentro dela. A caixa apontada é a
+	-- primeira da lista — é a que o jogador acabou de comprar.
+	BackpackButton = "HUD.HUDFrame.Wrapper.Backpack",
+
+	--[[
+		O **wrapper** das caixas, e não o `scrollcrates` que o embala: é ele que o
+		`CrateController` enche com uma entrada por raridade, clonadas do
+		`cratetemplate` — que fica ali dentro, escondido, para o designer poder
+		continuar editando.
+
+		Apontar o scroll pegava o molde escondido em vez da caixa do jogador: um
+		destaque em cima de algo invisível parece destaque nenhum.
+	]]
+	CrateList = "crateui.Rectangle.scrollcrates.CrateWrapper",
+
+	--[[
+		O prefixo das entradas de verdade (`Crate_Common`, `Crate_Rare`, ...), que o
+		`CrateController` usa ao clonar o molde. Preferir o prefixo é o que separa a
+		caixa do jogador do molde, mesmo no quadro em que o molde ainda não foi
+		escondido — o `CrateController` o esconde no bind, e o fluxo pode chegar lá
+		antes.
+	]]
+	CratePrefix = "Crate_",
+
+	-- A fala do fim, depois de o unboxing terminar.
+	ClosingLines = {
+		"[color=white]That's a[/color] [gradient=green]new unit[/gradient][color=white] for your deck.[/color][pause=0.4] You're ready — good luck out there!",
+	},
+
+	--[[
+		De quanto em quanto tempo o fluxo confere se o jogador fez o que o passo
+		pedia (a loja abriu, a mochila abriu). É espera de gente clicando, não de
+		animação: um quinto de segundo é imperceptível para ele e não custa nada.
+	]]
+	PollInterval = 0.2,
+
+	--[[
+		Quanto esperar por uma peça de tela que ainda não existe — o botão de comprar
+		aparece quando a loja monta a lista, a caixa aparece quando a mochila abre.
+		Estourando, o passo segue sem destaque em vez de travar o jogador.
+	]]
+	WaitForUi = 5,
+
+	--[=[
+		Quantos segundos de espera **sem nada acontecer** antes de o fluxo soltar a
+		trava dos botões.
+
+		É a rede de segurança do "não deixe clicar em nada fora do passo": se o passo
+		não reconhecer o que o jogador fez — a loja que abriu por um caminho que o
+		fluxo não esperava, uma tela que mudou de nome —, a trava viraria um jogo
+		morto, com o botão certo desligado e ninguém para religá-lo. Passado o prazo,
+		os botões voltam (o destaque fica) e o jogador segue a vida.
+	]=]
+	StallRelease = 25,
 }
 
 --[=[
