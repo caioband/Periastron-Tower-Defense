@@ -50,6 +50,9 @@ local GUI = {
 	Paper = "TaskPaper",
 	Rewards = "RewardsContainer",
 
+	-- O carimbo do `TaskPaper`, escondido ate o slot ser resgatado.
+	Claimed = "Claimed",
+
 	Coin = "CoinAmount",
 	CoinText = "CoinAmountText",
 	Shard = "ShardAmount",
@@ -59,6 +62,22 @@ local GUI = {
 	-- por caixa: o autorado leva a primeira, e clones dele levam as outras.
 	Other = "OtherReward",
 }
+
+--[=[
+	O botao da HUD que leva o jogador ate o quadro: `HUD.HUDLeft.Wrapper.Contracts`,
+	a coluna da esquerda. O nome e procurado em profundidade dentro da coluna, como
+	nas lojas, entao mexer nos wrappers no Studio nao quebra o bind.
+
+	Aqui mora so o clique. O crescer e o afundar do botao sao do `HUDButtonController`,
+	que anima todo `GuiButton` das duas colunas.
+]=]
+local HUD_UI_NAME = "HUD"
+local HUD_FRAME_NAME = "HUDLeft"
+local HUD_BUTTON_NAME = "Contracts"
+
+local CHARACTER_ROOT = "HumanoidRootPart"
+
+local WAIT_TIMEOUT = 10
 
 local ROW_PREFIX = "Contract_"
 local OTHER_CLONE_PREFIX = "OtherReward_"
@@ -225,6 +244,10 @@ local function writeClaim(entry, complete : boolean, claimed : boolean)
 		label.Text = if claimed then CLAIMED_TEXT else CLAIM_TEXT
 		label.TextTransparency = if canClaim then entry.ClaimText else DISABLED_TRANSPARENCY
 	end
+
+	if entry.ClaimedFrame then
+		entry.ClaimedFrame.Visible = claimed
+	end
 end
 
 --[=[
@@ -253,11 +276,16 @@ function ContractController:_renderSection(kind : string)
 			local claim = row:FindFirstChild(GUI.Claim, true)
 			local claimLabel = claim and claim:FindFirstChildWhichIsA("TextLabel")
 
+			-- O carimbo mora no `TaskPaper`, mas a busca e pela linha inteira: cada
+			-- secao aninha o papel do jeito dela.
+			local claimedFrame = row:FindFirstChild(GUI.Claimed, true)
+
 			entry = {
 				Row = row,
 				Task = row:FindFirstChild(GUI.Task, true),
 				Claim = claim,
 				ClaimLabel = claimLabel,
+				ClaimedFrame = claimedFrame and claimedFrame:IsA("GuiObject") and claimedFrame or nil,
 				ClaimImage = claim and claim:IsA("ImageButton") and claim.ImageTransparency or 0,
 				ClaimImageId = claim and claim:IsA("ImageButton") and claim.Image or "",
 				ClaimText = claimLabel and claimLabel.TextTransparency or 0,
@@ -401,6 +429,49 @@ function ContractController:_onBind(panel : GuiObject)
 	self:_updateTimers()
 end
 
+--[=[
+	Liga o botao da HUD, que leva o jogador ate o quadro.
+
+	Maid proprio: a `HUD` e a `Contracts` sao `ScreenGui` diferentes e a engine as
+	refaz em momentos diferentes (a HUD a cada respawn), entao o bind de uma nao pode
+	desconectar o da outra -- a `Contracts` e seguida pelo `ProximityPanel`.
+]=]
+function ContractController:_bindHud(screenGui : ScreenGui)
+	local hudFrame = screenGui:WaitForChild(HUD_FRAME_NAME, WAIT_TIMEOUT)
+	local button = hudFrame and UIUtil.waitForDescendant(hudFrame, HUD_BUTTON_NAME, WAIT_TIMEOUT)
+
+	if not button or not button:IsA("GuiButton") then
+		if not self.WarnedButton then
+			self.WarnedButton = true
+			warn(`[ContractController]: nao achei {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
+		end
+
+		return
+	end
+
+	self.HudMaid:DoCleaning()
+	self.HudMaid:GiveTask(button.Activated:Connect(function()
+		self:TeleportToBoard()
+	end))
+end
+
+--- A HUD, pelo botao que leva ate o quadro.
+function ContractController:_observeUI()
+	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+	local function onChild(child : Instance)
+		if child:IsA("ScreenGui") and child.Name == HUD_UI_NAME then
+			self:_bindHud(child)
+		end
+	end
+
+	self.Maid:GiveTask(playerGui.ChildAdded:Connect(onChild))
+
+	for _, child in playerGui:GetChildren() do
+		task.spawn(onChild, child)
+	end
+end
+
 function ContractController:_watchProfile()
 	task.spawn(function()
 		local replica = self.Controllers.DataController:GetReplica()
@@ -459,6 +530,42 @@ function ContractController:Toggle()
 	end
 end
 
+--[=[
+	Larga o jogador em cima da `TargetPart` do quadro.
+
+	O cliente e dono do proprio personagem, entao mover aqui basta: o servidor ve a
+	posicao nova pela replicacao de sempre.
+
+	O pouso e **dentro** do raio, porque a peca do pouso e a propria referencia. Ainda
+	assim a abertura e na mao, pelo `EnterRange`: a medida so roda a cada
+	`ProximityInterval`, e assim o quadro abre junto com o teleporte -- com a entrada
+	marcada, para andar embora fechar do mesmo jeito.
+]=]
+function ContractController:TeleportToBoard() : boolean
+	local character = Players.LocalPlayer.Character
+	local root = character and character:FindFirstChild(CHARACTER_ROOT)
+
+	if not root then
+		return false
+	end
+
+	local target = self:_board()
+	if not target then
+		return false
+	end
+
+	character:PivotTo(target.CFrame * CFrame.new(0, target.Size.Y / 2 + BOARD.TeleportHeightOffset, 0))
+
+	-- Sem isto o jogador mantem a velocidade que tinha e escorrega para fora do quadro.
+	root.AssemblyLinearVelocity = Vector3.zero
+
+	if self.Proximity then
+		self.Proximity:EnterRange()
+	end
+
+	return true
+end
+
 function ContractController:construct()
 	Framework:Listen("ContractClaimResult", function(_kind, _index, success : boolean, reason : string?)
 		if success then
@@ -507,6 +614,7 @@ function ContractController:construct()
 
 	self.Proximity:Start()
 
+	self:_observeUI()
 	self:_watchProfile()
 	self:_watchTimers()
 end
@@ -529,9 +637,14 @@ function ContractController:init()
 	-- [kind] = { Frame, Template, Timer, Rows = { { Row, Task, Claim, ... } } }
 	self.Sections = {}
 
+	-- O clique do botao da HUD, que a engine refaz a cada respawn.
+	self.HudMaid = Maid.new()
+	self.Maid:GiveTask(self.HudMaid)
+
 	self.Replica = nil
 	self.Proximity = nil
 	self.WarnedBoard = false
+	self.WarnedButton = false
 end
 
 return ContractController

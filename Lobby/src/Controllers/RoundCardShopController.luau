@@ -119,10 +119,10 @@ local HUD_BUTTON_NAME = "CardShop"
 	publicos, entao qualquer outra coisa (um comando do Cmdr, por exemplo) move o mesmo
 	painel.
 
-	**A `ShopUI` e dividida com a loja de caixas.** As duas sao irmas dentro dela, e
-	nenhuma manda no `Enabled` sozinha: quem diz qual painel esta na tela e o `Visible`
-	do wrapper de cada uma. O painel (moldura, animacao, borrao, proximidade) e do
-	`ProximityPanel`; ver o `CanDisable` no `construct`.
+	**A `ShopUI` e dividida com a loja de caixas e a de Robux.** As tres sao irmas
+	dentro dela, e nenhuma manda no `Enabled` sozinha: quem diz qual painel esta na
+	tela e o `Visible` do wrapper de cada uma. O painel (moldura, animacao, borrao,
+	proximidade) e do `ProximityPanel`; ver o `CanDisable` no `construct`.
 ]=]
 local RoundCardShopController = {
 	Controllers = {
@@ -130,9 +130,10 @@ local RoundCardShopController = {
 		InterfaceController = {},
 		MusicController = {},
 
-		-- A outra loja da mesma `ScreenGui`. So para saber se ela esta aberta antes de
-		-- apagar a ScreenGui das duas -- ver o `CanDisable` no `construct`.
+		-- As outras lojas da mesma `ScreenGui`. So para saber se alguma esta aberta
+		-- antes de apagar a ScreenGui das tres -- ver o `CanDisable` no `construct`.
 		ShopController = {},
+		RobuxShopController = {},
 	},
 
 	Signals = {
@@ -934,11 +935,13 @@ function RoundCardShopController:construct()
 		Interval = RoundCardShopConfig.PROXIMITY_INTERVAL,
 		InterfaceController = self.Controllers.InterfaceController,
 
-		-- A `ShopUI` e dividida com a loja de caixas: fechar esta com a outra aberta
-		-- nao pode apagar a ScreenGui das duas.
+		-- A `ShopUI` e dividida com a loja de caixas e a de Robux: fechar esta com
+		-- uma delas aberta nao pode apagar a ScreenGui das tres.
 		CanDisable = function()
 			local crateShop = self.Controllers.ShopController
-			return not (crateShop and crateShop:IsOpen())
+			local robuxShop = self.Controllers.RobuxShopController
+
+			return not ((crateShop and crateShop:IsOpen()) or (robuxShop and robuxShop:IsOpen()))
 		end,
 
 		OnBind = function(_screenGui, _wrapper, panel, maid)

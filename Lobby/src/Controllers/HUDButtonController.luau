@@ -12,14 +12,22 @@ local Framework = Me.new()
 
 --[[ CONSTANTS ]]
 local HUD_UI_NAME = "HUD"
-local HUD_FRAME_NAME = "HUDFrame"
 
 local WAIT_TIMEOUT = 10
 
--- O hover joga o botão para `X.Scale = 0.3` — com AnchorPoint 0.5 dentro do wrapper,
--- é um quinto da largura para fora da coluna do HUD. O Y e os offsets ficam como
--- estão.
-local HOVER_X_SCALE = 0.3
+--[=[
+	As duas colunas do HUD e para onde o hover empurra o botão de cada uma. Com
+	AnchorPoint 0.5 dentro do wrapper (e `X.Scale = 0.5` em repouso), 0.3 é um quinto
+	da largura para o lado; o Y e os offsets ficam como estão.
+
+	As duas colunas têm a mesma estrutura, e o que muda é só a direção: a da direita
+	desliza para a esquerda (0.3) e a da esquerda faz o espelho (0.7) — o botão sempre
+	sai **para dentro** da tela, e não pela borda.
+]=]
+local HUD_FRAMES = {
+	{ Name = "HUDFrame", HoverX = 0.3 },
+	{ Name = "HUDLeft", HoverX = 0.7 },
+}
 
 local SLIDE_INFO = TweenInfo.new(0.28, Enum.EasingStyle.Circular, Enum.EasingDirection.Out)
 local PRESS_INFO = TweenInfo.new(0.08, Enum.EasingStyle.Circular, Enum.EasingDirection.Out)
@@ -31,16 +39,16 @@ local HOVER_SOUND = "UIHover"
 local CLICK_SOUND = "UIClick"
 
 --[=[
-	O feedback dos botões do `StarterGui.HUD.HUDFrame` (Loja, Backpack e Deck): o
-	botão desliza para fora da coluna quando o mouse entra, volta quando sai, e
-	encolhe enquanto está apertado.
+	O feedback dos botões das colunas do `StarterGui.HUD` (`HUDFrame` à direita e
+	`HUDLeft` à esquerda): o botão desliza para fora da coluna quando o mouse entra,
+	volta quando sai, e encolhe enquanto está apertado.
 
 	Só a parte visual e o som moram aqui. Quem abre a loja, a mochila e o deck
 	continua sendo o controller de cada painel, pelo `Activated` do mesmo botão —
 	por isso a animação de clique é `MouseButton1Down`/`Up`, que não consome o
 	clique de ninguém.
 
-	Pega qualquer `GuiButton` dentro do `HUDFrame`, em qualquer profundidade: cada
+	Pega qualquer `GuiButton` dentro de cada coluna, em qualquer profundidade: cada
 	botão hoje está dentro de um `Wrapper`, e um botão novo entra na animação só de
 	nascer ali. O HUD tem `ResetOnSpawn` ligado, então o bind roda de novo a cada
 	cópia nova que a engine coloca na PlayerGui.
@@ -76,7 +84,7 @@ function HUDButtonController:_tween(maid, object : Instance, info : TweenInfo, g
 	tween:Play()
 end
 
-function HUDButtonController:_bindButton(button : GuiButton)
+function HUDButtonController:_bindButton(button : GuiButton, hoverX : number)
 	if self.Bound[button] then
 		return
 	end
@@ -90,7 +98,7 @@ function HUDButtonController:_bindButton(button : GuiButton)
 	-- A posição autorada é lida uma vez, antes de qualquer tween: é para ela que o
 	-- MouseLeave volta.
 	local home = button.Position
-	local hovered = UDim2.new(HOVER_X_SCALE, home.X.Offset, home.Y.Scale, home.Y.Offset)
+	local hovered = UDim2.new(hoverX, home.X.Offset, home.Y.Scale, home.Y.Offset)
 
 	local maid = Maid.new()
 	self.Bound[button] = maid
@@ -137,29 +145,39 @@ function HUDButtonController:_bindButton(button : GuiButton)
 end
 
 --[=[
-	Liga a uma cópia do HUD. O `DescendantAdded` fica ligado porque a GUI chega em
-	pedaços: varrer uma vez só pegaria os botões que já tivessem replicado.
+	Liga uma coluna. O `DescendantAdded` fica ligado porque a GUI chega em pedaços:
+	varrer uma vez só pegaria os botões que já tivessem replicado.
 ]=]
-function HUDButtonController:_bindHud(screenGui : ScreenGui)
-	local hudFrame = screenGui:WaitForChild(HUD_FRAME_NAME, WAIT_TIMEOUT)
-
-	if not hudFrame then
-		warn(`[HUDButtonController]: não achei {HUD_UI_NAME}.{HUD_FRAME_NAME}.`)
-		return
-	end
-
-	self.HudMaid:DoCleaning()
-	self.Bound = {}
-
+function HUDButtonController:_bindFrame(hudFrame : Instance, hoverX : number)
 	self.HudMaid:GiveTask(hudFrame.DescendantAdded:Connect(function(descendant : Instance)
 		if descendant:IsA("GuiButton") then
-			self:_bindButton(descendant)
+			self:_bindButton(descendant, hoverX)
 		end
 	end))
 
 	for _, descendant in hudFrame:GetDescendants() do
 		if descendant:IsA("GuiButton") then
-			self:_bindButton(descendant)
+			self:_bindButton(descendant, hoverX)
+		end
+	end
+end
+
+--[=[
+	Liga a uma cópia do HUD: as duas colunas, cada uma com a direção dela. Uma coluna
+	que não existe nessa cópia só fica de fora — as outras continuam animando.
+]=]
+function HUDButtonController:_bindHud(screenGui : ScreenGui)
+	self.HudMaid:DoCleaning()
+	self.Bound = {}
+
+	for _, column in HUD_FRAMES do
+		local hudFrame = screenGui:WaitForChild(column.Name, WAIT_TIMEOUT)
+
+		if hudFrame then
+			self:_bindFrame(hudFrame, column.HoverX)
+		elseif not self.Warned[column.Name] then
+			self.Warned[column.Name] = true
+			warn(`[HUDButtonController]: não achei {HUD_UI_NAME}.{column.Name}.`)
 		end
 	end
 end
@@ -194,6 +212,10 @@ function HUDButtonController:init()
 	self.Maid = Maid.new()
 	self.HudMaid = Maid.new()
 	self.Bound = {}
+
+	-- O aviso de coluna que falta é por nome, e não por cópia do HUD: o HUD nasce de
+	-- novo a cada respawn, e o output encheria.
+	self.Warned = {}
 
 	self.Maid:GiveTask(self.HudMaid)
 end

@@ -2775,8 +2775,10 @@ self.Proximity:Start()
 
 ## Contratos (`StarterGui.Contracts`, Lobby)
 
-O quadro abre na `Workspace.ContractsBoard.TargetPart` (`ContractConfig.Board`).
-Tem três seções, cada uma com a contagem até a virada:
+O quadro abre na `Workspace.ContractsBoard.TargetPart` (`ContractConfig.Board`), por
+proximidade (6 studs) ou pelo botão `Contracts` da coluna esquerda da HUD
+(`HUD.HUDLeft.Wrapper.Contracts`), que leva o jogador até lá. Tem três seções, cada
+uma com a contagem até a virada:
 
 | Período | Contratos | Vira em (UTC) |
 | --- | --- | --- |
@@ -2795,7 +2797,7 @@ progresso no fim: `Win 4 games in Volcano on Hard (1/4)`.
 | `ContractService` | common | sorteia na virada, anota o progresso, escreve em lote, resgata e paga |
 | `ContractTrackerService` | Game | transforma a partida em eventos (`Record`) |
 | `CrateService` | Lobby | o evento `Unbox`, com a raridade da unidade que saiu |
-| `ContractController` | Lobby | desenha o quadro a partir da replica e manda o CLAIM |
+| `ContractController` | Lobby | desenha o quadro a partir da replica, leva o jogador até ele e manda o CLAIM |
 
 O perfil guarda `Data.Contracts = { Hourly|Daily|Weekly = { Period, Slots } }`.
 Cada slot tem `{ Id, Params, Progress, Claimed }`, e `Seen` para o login.
@@ -2849,6 +2851,25 @@ cliques não pagam duas vezes. A recompensa soma `Cash` (e `CoinsEarned`),
 
 Na UI, coin e shard usam as linhas autoradas do `RewardsContainer`, e cada caixa
 vira um texto `8x Fragmented Crate` na `OtherReward`, clonada quando há mais de uma.
+
+O slot já pago também acende o `Claimed` do `TaskPaper` — o carimbo autorado dentro
+da linha, procurado pela linha inteira porque cada seção aninha o papel do jeito
+dela. Ele segue o `slot.Claimed` da replica: aparece no resgate e some na virada,
+junto com o botão que volta a `CLAIM`.
+
+### O botão da HUD
+
+`Contracts`, na coluna esquerda (`HUD.HUDLeft.Wrapper.Contracts`), larga o jogador
+**em cima da própria `TargetPart`** — ela é o centro do raio, e não um marcador de
+pouso à parte como o das lojas —, a `TeleportHeightOffset` (3 studs) do topo dela, e
+zera a velocidade para ele não escorregar. O pouso é dentro do raio, mas o quadro
+ainda assim abre na mão, pelo `EnterRange`: a medida da distância só roda a cada
+`ProximityInterval` (0,2s), e assim o painel entra junto com o teleporte, com a
+entrada marcada para andar embora fechar do mesmo jeito.
+
+O `ContractController` liga só o clique, num maid próprio (`HudMaid`) porque a `HUD`
+nasce de novo a cada respawn e a `Contracts` não. **A animação do botão é do
+`HUDButtonController`**, que anima as duas colunas — ver `Lobby/README.md`.
 
 ### Reroll pago
 

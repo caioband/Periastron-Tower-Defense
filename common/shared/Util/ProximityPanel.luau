@@ -30,6 +30,12 @@ local LightingUtil = require(script.Parent.LightingUtil)
 	(o teleporte da HUD): marca a entrada e abre, senao a saida nunca aconteceria e o
 	painel ficaria pendurado na tela.
 
+	**Sem ponto no mapa tambem serve.** Painel que nao tem lugar no mundo (a loja de
+	Robux, que e so um botao da HUD) entra sem `GetReference`: a medida da distancia
+	nem liga, e ele vive do `Open`/`Close`/`Toggle` e do X. Todo o resto -- a moldura,
+	a animacao, o borrao, o pedido de tela, a ScreenGui dividida e a copia nova a cada
+	respawn -- continua igual, que e o motivo de ele passar por aqui.
+
 	**A moldura de fora (`Wrapper`) e quem vai e vem**, e nao a ScreenGui: a `ShopUI`
 	carrega duas lojas, e cada uma acende a sua moldura. O painel de dentro sobe
 	aceso e fica assim -- a `OpenShop` cuida da entrada dele pela escala e pela
@@ -76,9 +82,10 @@ export type Options = {
 	-- faria um devolver a tela que o outro pediu.
 	HideReason : string,
 
-	-- O centro do raio, relido a cada medida (o mapa pode trocar a peca).
-	GetReference : () -> Vector3?,
-	Radius : number,
+	-- O centro do raio, relido a cada medida (o mapa pode trocar a peca). Ausente e
+	-- "este painel nao tem lugar no mundo": ninguem mede nada, e ele so abre na mao.
+	GetReference : (() -> Vector3?)?,
+	Radius : number?,
 	Interval : number?,
 
 	InterfaceController : any?,
@@ -298,11 +305,11 @@ end
 function ProximityPanel:_updateProximity()
 	local character = Players.LocalPlayer.Character
 	local root = character and character:FindFirstChild(CHARACTER_ROOT)
-	local position = root and self.Options.GetReference()
+	local position = root and self.Options.GetReference and self.Options.GetReference()
 
 	local inRange = false
 	if position and root then
-		inRange = (root.Position - position).Magnitude <= self.Options.Radius
+		inRange = (root.Position - position).Magnitude <= (self.Options.Radius or 0)
 	end
 
 	if inRange == self.InRange then
@@ -335,6 +342,12 @@ function ProximityPanel:Start()
 
 	for _, child in playerGui:GetChildren() do
 		task.spawn(onChild, child)
+	end
+
+	-- Painel sem ponto no mapa nao mede distancia nenhuma: sem isto, o Heartbeat
+	-- rodaria a cada quadro para descobrir todo tick que nao ha o que medir.
+	if not self.Options.GetReference then
+		return
 	end
 
 	local interval = self.Options.Interval or DEFAULT_INTERVAL

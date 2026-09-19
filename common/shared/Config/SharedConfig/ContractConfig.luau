@@ -85,6 +85,11 @@ ContractConfig.Board = {
 	OpenRadius = 6,
 	ProximityInterval = 0.2,
 	Animation = "OpenShop",
+
+	-- O botao da HUD larga o jogador **em cima** da propria `TargetPart` -- que e o
+	-- centro do raio, e nao um marcador de pouso a parte como o das lojas. A altura e
+	-- a mesma que elas usam, contada a partir do topo da peca.
+	TeleportHeightOffset = 3,
 }
 
 --[[
