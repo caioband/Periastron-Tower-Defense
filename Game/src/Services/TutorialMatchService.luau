@@ -703,6 +703,41 @@ function TutorialMatchService:NoteUse(cardId : string)
 end
 
 --[=[
+	Melhorar uma unidade é permitido agora?
+
+	**Na partida de tutorial, nunca** — e não só enquanto um passo está aberto.
+
+	Duas razões, e as duas valem a partida inteira: o dinheiro está contado para o
+	deck (`StartingCash` cobre as três torres, e um upgrade no meio do caminho deixa
+	o passo do fecho sem com que comprar as outras duas), e o roteiro já ensina
+	quatro coisas — colocar, comprar, usar carta e acelerar. Melhorar torre é a
+	lição da primeira partida de verdade.
+
+	O botão continua na tela, trancado (`ToggleTower`): o jogador vê que existe.
+	Aqui é quem recusa, porque cliente não se fiscaliza.
+
+	Fora de partida de tutorial devolve `true` — o jogo normal não tranca nada.
+]=]
+function TutorialMatchService:CanUpgrade() : boolean
+	return not self:IsTutorial()
+end
+
+--[=[
+	Vender uma unidade é permitido agora?
+
+	**Na partida de tutorial, nunca**, pelo mesmo motivo do `CanUpgrade` e por um
+	que é só dela: vender desfaz um passo que o roteiro já deu por cumprido. A
+	Slingshot da wave 1 é a torre com que o jogador aprende clima, loja e velocidade
+	— sem ela no chão, as três lições seguintes acontecem num mapa vazio, e a carta
+	que volta para a mão não tem passo que a peça de novo.
+
+	O botão continua na tela, trancado (`ToggleTower`). Aqui é quem recusa.
+]=]
+function TutorialMatchService:CanSell() : boolean
+	return not self:IsTutorial()
+end
+
+--[=[
 	Esta colocação é permitida agora?
 
 	`true` quando não há passo de colocação aberto — fora do roteiro, o tutorial não

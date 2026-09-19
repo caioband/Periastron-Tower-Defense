@@ -72,6 +72,11 @@ TutorialStepController.DeckHidden = false
 -- manda a lista junto do passo de compra, e é ela que a mão consulta.
 TutorialStepController.LockedCards = {}
 
+-- As unidades que a mão aceita agora: `{ [nome] = true }`, ou `nil` com o deck
+-- solto. É o último pedido do roteiro (ver `setAllowedCards`), e vale **entre** os
+-- passos — quem pergunta é o `AllowsCard`.
+TutorialStepController.AllowedUnits = nil :: { [string] : boolean }?
+
 -- As setas do passo. São várias no fecho, que aponta os dois pontos livres.
 TutorialStepController.Arrows = {}
 
@@ -133,6 +138,11 @@ end
 	venceu e foi jogar de novo.
 ]=]
 function TutorialStepController:setAllowedCards(allowed : { [string] : boolean }?)
+	-- Guardado aqui também: a hotbar recusa o clique sozinha (`Active = false`), mas
+	-- quem responde ao `CardController` é o `AllowsCard`, e as duas respostas têm de
+	-- sair da mesma lista para não discordarem uma da outra.
+	self.AllowedUnits = allowed
+
 	local component = self:cardComponent()
 	local setter = component and component.setAllowed
 
@@ -436,6 +446,16 @@ end
 	um passo de colocação aberto, só a carta dele.
 ]=]
 function TutorialStepController:AllowsCard(unitName : string) : boolean
+	--[[
+		A trava do deck vem antes do passo e sobrevive a ele: entre a wave 1 e a 5 não
+		há passo de colocação nenhum, e sem esta pergunta a carta trancada voltaria a
+		ser equipável no intervalo. É a mesma conta do `CanPlace` no servidor.
+	]]
+	local allowed = self.AllowedUnits
+	if allowed and not allowed[unitName] then
+		return false
+	end
+
 	local step = self.Step
 
 	if not step or step.Kind ~= "Place" or not step.Unit then

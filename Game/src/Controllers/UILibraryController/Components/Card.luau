@@ -1181,14 +1181,45 @@ function module:_applyAllowed(entry)
 
 	entry.Locked = not allowed
 
-	local card = entry.Card
-	if card then
-		card.Active = allowed
+	--[[
+		A tranca cai na carta **e** no botão dela.
 
-		if card:IsA("GuiButton") then
-			card.AutoButtonColor = allowed
-			card.Selectable = allowed
+		A carta de unidade é só a arte: quem recebe o clique é o `Button` dentro dela
+		(ver `_buildEntry`). Desligar apenas a arte deixava a carta apagada e clicável
+		— a unidade trancada do tutorial equipava normalmente, e o jogador só descobria
+		a tranca quando o servidor recusasse a colocação (`CanPlace`), com o fantasma
+		já na mão.
+
+		Na carta de round os dois são o mesmo objeto, e aí a volta escreve duas vezes
+		no mesmo lugar — o que não custa nada e evita um caso especial.
+
+		`Interactable` entra junto do `Active` porque os botões da hotbar têm
+		`InputSink` em `Activate`, e escrever no `Active` não escreve no `InputSink`:
+		é o `Interactable` que garante que a carta trancada não responda a clique
+		nenhum. O `CardController` ainda pergunta ao `AllowsCard` antes de equipar —
+		trancar a tela é educação, e a regra não pode depender só dela.
+	]]
+	for _, object in { entry.Card, entry.Button } do
+		if not object:IsA("GuiObject") then
+			continue
 		end
+
+		object.Active = allowed
+
+		if object:IsA("GuiButton") then
+			object.AutoButtonColor = allowed
+			object.Selectable = allowed
+			object.Interactable = allowed
+		end
+	end
+
+	--[[
+		Carta que trancou com o ponteiro em cima não recebe mais o `MouseLeave` — ele
+		morre junto com a interação —, e ficaria crescida no arco para sempre. A saída
+		é dada aqui, na hora de trancar.
+	]]
+	if not allowed and entry.Hovered then
+		self:_setHovered(entry, false)
 	end
 
 	self:_applyTransparency(entry)
@@ -1280,7 +1311,13 @@ function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ()
 		local index = KEYBINDS[input.KeyCode.Name]
 		local entry = index and self:_liveEntries()[index]
 
-		if entry then
+		--[[
+			Carta trancada não responde à tecla, do mesmo jeito que não responde ao
+			clique: o `Active = false` do `_applyAllowed` segura o dedo, mas nunca
+			segurou o teclado — o atalho falava direto com o `Activate`, e no tutorial
+			era o caminho aberto para equipar justamente a unidade que o passo tranca.
+		]]
+		if entry and not entry.Locked then
 			entry.Activate()
 		end
 	end))

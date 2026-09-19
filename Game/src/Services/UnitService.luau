@@ -812,6 +812,13 @@ function UnitService:construct()
 	Framework:Listen("ArchmageLightning", function() end)
 
 	Framework:Listen("SellUnit", function(player, unitId)
+		-- A partida de tutorial nao vende torre (`CanSell`): a Slingshot da wave 1 e a
+		-- torre com que o roteiro ensina clima, loja e velocidade, e devolve-la para a
+		-- mao desfaz um passo ja cumprido. O cliente ja tranca o botao; isto aqui e o
+		-- que vale.
+		local tutorial = self.Services.TutorialMatchService
+		if tutorial and not tutorial:CanSell() then return end
+
 		local foundIndex = nil
 		for i, entry in ipairs(self.PlacedUnits) do
 			if entry.unitId == unitId and entry.ownerUserId == player.UserId then
@@ -839,6 +846,12 @@ function UnitService:construct()
 	Framework:Listen("UpgradeUnit", function(player, unitId)
 		local entry = self.UnitsById[unitId]
 		if not entry or entry.ownerUserId ~= player.UserId then return end
+
+		-- A partida de tutorial nao vende upgrade (`CanUpgrade`): o dinheiro dela esta
+		-- contado para o deck, e a licao de melhorar torre e a da primeira partida de
+		-- verdade. O cliente ja tranca o botao; isto aqui e o que vale.
+		local tutorial = self.Services.TutorialMatchService
+		if tutorial and not tutorial:CanUpgrade() then return end
 
 		local currentLevel = entry.upgrades or 0
 		if SharedConfig.UnitUpgradeConfig:IsMaxed(currentLevel) then return end

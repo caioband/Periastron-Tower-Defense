@@ -276,6 +276,11 @@ local Framework = Me.new()
 local module = {}
 module.currentUnit = nil
 
+-- Os botoes de melhorar e vender estao trancados (partida de tutorial)? Escrito
+-- pelo `refreshTutorialLock` e lido pelo texto dos dois botoes e pela previa do
+-- proximo nivel.
+module.tutorialLocked = false
+
 --[[
 	Os atalhos de teclado do card, e o que sai escrito no botao de cada um.
 
@@ -360,6 +365,28 @@ local function hidePreviewLabels()
 			label.Visible = false
 		end
 	end
+end
+
+--[=[
+	A partida de hoje e o tutorial?
+
+	No tutorial a torre colocada nao sobe de nivel **nem e vendida**: o roteiro
+	ensina colocar, comprar, usar carta e acelerar, e o dinheiro da partida esta
+	contado para o deck -- gastar num upgrade no meio do caminho e chegar no passo
+	do fecho sem com que comprar as outras torres, e vender a Slingshot da wave 1 e
+	desfazer o passo que o roteiro acabou de dar por cumprido.
+
+	Quem recusa de verdade e o `TutorialMatchService`, no servidor (`CanUpgrade` e
+	`CanSell`); daqui sai so o que o jogador ve: os botoes trancados e as teclas
+	mudas.
+
+	Sem o controller na mao a resposta e nao -- partida comum e o caso de sempre, e
+	trancar o upgrade de quem nao esta no tutorial seria o erro mais caro dos dois.
+]=]
+local function inTutorial() : boolean
+	local tutorial = Framework:Get("TutorialStepController", false, false)
+
+	return tutorial ~= nil and tutorial:IsTutorial() == true
 end
 
 --[[
@@ -522,6 +549,11 @@ function module:create(unitModel, ...)
 	local function doSell()
 		if not unitModel then return end
 
+		-- A torre do tutorial nao se vende (ver `inTutorial`), pelo mesmo caminho do
+		-- upgrade: botao trancado, tecla recusada pelo `isButtonActive`, e esta
+		-- conferencia como fecho.
+		if inTutorial() then return end
+
 		local unitId = unitModel:GetAttribute("UnitID")
 		Framework:Fire("SellUnit", unitId)
 		self:destroy()
@@ -529,6 +561,11 @@ function module:create(unitModel, ...)
 
 	local function doUpgrade()
 		if not unitModel then return end
+
+		-- O tutorial nao vende upgrade (ver `inTutorial`). O botao ja esta trancado e
+		-- a tecla ja e recusada pelo `isButtonActive`; isto aqui e o fecho do caminho,
+		-- para nenhum atalho novo passar por cima da regra sem querer.
+		if inTutorial() then return end
 
 		local level = unitModel:GetAttribute("Upgrades") or 0
 		if SharedConfig.UnitUpgradeConfig:IsMaxed(level) then return end
@@ -654,10 +691,17 @@ function module:create(unitModel, ...)
 		no chat nao pode vender a unidade selecionada.
 	]]
 	local function isButtonActive(button : Instance?) : boolean
+		--[[
+			`Active` entra junto do `Visible` pelo mesmo motivo que o `Visible` estava
+			aqui: a tecla nunca pode fazer o que o botao ao lado dela nao faria. Botao
+			trancado (o upgrade no tutorial, ver `refreshOwnership`) recusa o clique por
+			`Active = false`, e sem esta linha o atalho seria a porta dos fundos dele.
+		]]
 		return CardUpgrade.Visible
 			and button ~= nil
 			and button:IsA("GuiObject")
 			and button.Visible
+			and button.Active
 	end
 
 	self.maid:GiveTask(UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -858,6 +902,54 @@ function module:refreshOwnership()
 			button.Visible = owned
 		end
 	end
+
+	self:refreshTutorialLock()
+end
+
+--[=[
+	Tranca o que a partida de tutorial nao deixa fazer com a torre no chao:
+	**melhorar e vender**.
+
+	Os dois botoes ficam na tela, e nao saem dela: o jogador precisa **ver** que
+	melhorar e vender existem -- o card e onde ele vai procurar as duas coisas na
+	primeira partida de verdade --, so nao pode faze-las aqui (ver `inTutorial`).
+
+	`Active = false` e o que o resto do jogo usa para recusar clique (ver o
+	`ResultController` e o cadeado das dificuldades), e ele vem junto -- mas quem
+	fecha a porta aqui e o `Interactable`: os botoes do card tem `InputSink` em
+	`Activate`, e mexer no `Active` **nao** mexe no `InputSink`. `AutoButtonColor` e
+	`Selectable` sao para o botao parecer trancado em vez de parecer quebrado.
+
+	As teclas caem junto pelo `isButtonActive`, que le o `Active` do proprio botao,
+	e o `doUpgrade`/`doSell` ainda conferem por conta propria: tres portas para a
+	mesma regra, porque nenhuma delas e da nossa UI sozinha.
+
+	O `Priority` fica de fora: trocar o alvo da torre nao gasta nada, nao desfaz
+	passo nenhum e e justamente o tipo de coisa que se aprende brincando.
+
+	Fora do tutorial isto devolve os botoes ao normal toda vez, e nao so quando algo
+	muda: o card e um so para o jogo inteiro, e um `Active` esquecido em `false`
+	sobreviveria a partida de tutorial.
+]=]
+function module:refreshTutorialLock()
+	local locked = inTutorial()
+
+	self.tutorialLocked = locked
+
+	for _, name in { "UpgradeCost", "Sell" } do
+		local button = CardUpgrade:FindFirstChild(name)
+		if not button or not button:IsA("GuiObject") then
+			continue
+		end
+
+		button.Active = not locked
+		button.Selectable = not locked
+
+		if button:IsA("GuiButton") then
+			button.AutoButtonColor = not locked
+			button.Interactable = not locked
+		end
+	end
 end
 
 --[=[
@@ -896,10 +988,12 @@ function module:refresh()
 		if upgradeConfig:IsMaxed(level) then
 			upgradeLabel.Text = "MAX"
 		else
-			upgradeLabel.Text = withBind(
-				"$" .. UIUtil.formatAbbreviated(upgradeConfig:GetCost(unitName, level)),
-				KEYBINDS.Upgrade
-			)
+			local cost = "$" .. UIUtil.formatAbbreviated(upgradeConfig:GetCost(unitName, level))
+
+			-- Botao trancado nao anuncia atalho, pela mesma razao do nivel maximo: a
+			-- tecla nao faz nada ali, e convidar para uma que nao responde e pior do
+			-- que nao convidar para nenhuma.
+			upgradeLabel.Text = if self.tutorialLocked then cost else withBind(cost, KEYBINDS.Upgrade)
 		end
 	end
 
@@ -907,7 +1001,10 @@ function module:refresh()
 	if sellLabel then
 		local invested = upgradeConfig:GetInvested(unitName, level)
 		local refund = math.floor(invested * SharedConfig.SellRefundRatio)
-		sellLabel.Text = withBind("SELL $" .. UIUtil.formatAbbreviated(refund), KEYBINDS.Sell)
+		local text = "SELL $" .. UIUtil.formatAbbreviated(refund)
+
+		-- Botao trancado nao anuncia atalho, como o upgrade logo acima.
+		sellLabel.Text = if self.tutorialLocked then text else withBind(text, KEYBINDS.Sell)
 	end
 
 	--[[
@@ -955,6 +1052,12 @@ function module:refreshPreview()
 		que nao existe mais no card.
 	]]
 	if not isOwnedByMe(unitModel) then
+		shouldShow = false
+	end
+
+	-- Upgrade trancado nao tem proximo nivel para prometer: no tutorial a previa
+	-- seria a propaganda de um botao que nao responde.
+	if self.tutorialLocked then
 		shouldShow = false
 	end
 

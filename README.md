@@ -1114,6 +1114,35 @@ ao replicar a unidade — o mesmo caminho do nível e da prioridade, então o ca
 precisa perguntar a controller nenhuma quem é o dono. Sem o atributo a resposta é
 não, de propósito.
 
+**Na partida de tutorial não se melhora nem se vende torre.** O `UpgradeCost` e o
+`Sell` continuam na tela — o jogador precisa ver que as duas coisas existem, e o card
+é onde ele vai procurá-las na primeira partida de verdade —, só que trancados:
+`Interactable = false` é o que fecha a porta, `Active = false` vai junto (é o que o
+resto do jogo usa), e `AutoButtonColor`/`Selectable` caem para eles parecerem
+trancados em vez de parecerem quebrados. Os textos perdem o `[E]` e o `[X]` pela mesma
+razão do nível máximo — atalho anunciado que não responde é pior que atalho nenhum —,
+e a prévia do próximo nível some junto. Os atalhos caem **sozinhos**: a pergunta que
+libera cada tecla (`isButtonActive`) passou a ler o `Active` do próprio botão além do
+`Visible`, então a tecla continua fazendo exatamente o que o botão ao lado dela faria.
+O `Priority` fica de fora da trava: trocar o alvo não gasta nada e não desfaz passo
+nenhum.
+
+> **`Active` não é mais o interruptor sozinho.** Os botões do `CardUpgrade` (e os da
+> hotbar) vêm com `InputSink = Enum.InputSink.Activate`, e escrever no `Active` **não**
+> escreve no `InputSink` — dá para conferir num `Instance.new("ImageButton")`. Onde a
+> trava precisa valer, o `Interactable` vai junto, e a regra também é conferida em
+> código (`doUpgrade`, `doSell`, `AllowsCard`), em vez de morar só numa propriedade
+> da UI.
+
+O motivo é de partida, e não de tela. O `StartingCash` do tutorial está contado para
+as três torres do deck, e um upgrade no meio do caminho deixaria o passo do fecho sem
+com que comprar as outras duas. Vender é pior: devolve para a mão justamente a
+Slingshot com que o roteiro ensina clima, loja e velocidade, desfazendo um passo que
+ele já deu por cumprido — e nenhum passo a pede de novo. Os dois seriam o jeito de
+travar um roteiro que existe para ser vencido. Quem recusa de verdade é o
+`TutorialMatchService` (`CanUpgrade()` e `CanSell()`), conferido no `UnitService`
+antes de cobrar e antes de devolver a carta: cliente não se fiscaliza.
+
 ### Quem some da tela, e quando
 
 Quatro situações pedem a tela para si: o painel de mapas, que quer o lobby só para

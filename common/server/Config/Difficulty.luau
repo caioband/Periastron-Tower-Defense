@@ -102,12 +102,18 @@ Difficulty.Presets = {
 			que alguém vê um chefe não deve ser no meio de dez inimigos comuns.
 
 			`BossHealthMultiplier` é por cima do `HealthMultiplier`, e o número é
-			pequeno de propósito: 900 de vida do Champion × 0.35 da dificuldade × 0.15
-			daqui dá cerca de 47, que três torres derrubam. O chefe continua sendo ele
+			pequeno de propósito: 900 de vida do Champion × 0.35 da dificuldade × 0.18
+			daqui dá cerca de 57, que três torres derrubam. O chefe continua sendo ele
 			— mesma lentidão, mesmo gimmick, mesma barra —, só não é uma parede.
+
+			Os 0.18 são os 0.15 de antes com 20% a mais: o chefe estava caindo rápido
+			demais para o fecho do roteiro, que existe justamente para o jogador ver as
+			três torres trabalhando juntas. Vinte por cento é o passo que engorda a luta
+			sem chegar perto de ameaçar a base — que no tutorial nem toma dano
+			(`MobDamage = 0`).
 		]]
 		BossWaveOnly = true,
-		BossHealthMultiplier = 0.15,
+		BossHealthMultiplier = 0.18,
 
 		--[[
 			A wave 3 é a do clima: ela chega com o céu virado e o jogador aprendendo a
