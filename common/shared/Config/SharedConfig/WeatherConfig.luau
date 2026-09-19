@@ -224,8 +224,10 @@ WeatherConfig.Thunder = {
 		O premio de levar um raio, para quem e do tipo `Electric` -- no lugar do
 		atordoamento: Electric tocada pelo raio (ou pelo arco) nunca para.
 
-		`Damage` multiplica o dano (1.5 = +50%). `AttackSpeed` divide o cooldown, entao
-		2 e -50% de cooldown (o dobro de ataques), e nao 1.5.
+		`Damage` multiplica o dano e `AttackSpeed` a cadencia: 1.5 nos dois e o "+50%
+		DMG / +50% SPD (WHEN STRUCK)" que o painel do indicador mostra. Quem divide o
+		cooldown pela cadencia e o `UnitUpgradeConfig:GetCooldown`, entao 1.5 aqui e um
+		terco de recarga a menos, e nao metade.
 
 		Fora isso o Electric ja ganha um bonus passivo enquanto o clima durar, que
 		mora em `Effects.Thunder.Units.Electric` — este aqui e o temporario, que so
@@ -233,7 +235,7 @@ WeatherConfig.Thunder = {
 	]]
 	Charge = {
 		Damage = 1.5,
-		AttackSpeed = 2,
+		AttackSpeed = 1.5,
 		Duration = 4,
 	},
 }
@@ -304,50 +306,76 @@ WeatherConfig.Round = {
 WeatherConfig.Warning = {
 	Text = "WARNING! %s COMING IN %d ROUNDS",
 	TextOne = "WARNING! %s COMING NEXT ROUND",
-	DisplayNames = {},
+
+	--[[
+		O `Snow` do código é a "BLIZZARD" do jogo, e é este o nome que o jogador lê no
+		aviso e no painel do indicador. O nome do Model não muda: renomeá-lo levaria
+		junto o pool de cada mapa, o comando `weather` e as tabelas de efeito, para o
+		jogador ler a mesma palavra que já lia.
+	]]
+	DisplayNames = {
+		Snow = "BLIZZARD",
+	},
 }
 
 --[=[
-	O indicador de clima do HUD: o ícone no canto e a caixa de detalhes.
+	O indicador de clima do HUD: o botão no canto e o painel que ele abre.
 
-	São duas coisas na mesma peça de tela (`Interface.WeatherIndicator`):
+	São duas peças **irmãs** na `Interface`, e não uma dentro da outra:
 
-	  1. o **ícone**, no botão `Details`, que é sempre o clima que está no ar agora —
-	     ou o de "sem clima", que também é um ícone e não um botão apagado;
-	  2. os **detalhes**, que o jogador pede clicando: uma frase curta sobre o clima,
-	     escrita letra a letra dentro do próprio frame, que some sozinha.
+		Interface
+		├── WeatherButton        (ImageButton — o ícone do clima, e o interruptor)
+		└── IndicatorWeather     (o painel, com um UIScale)
+			├── WeatherImg       (ImageLabel — o mesmo ícone do botão)
+			├── WeatherName      (TextLabel  — o nome do clima)
+			├── Duration         (TextLabel  — "WEATHER ENDS IN 3 WAVES")
+			└── Container        (UIListLayout — uma linha por efeito)
 
-	**A caixa é pequena de propósito** (o frame tem cerca de 11% da largura da tela),
-	e por isso as descrições são de uma linha e meia. Descrição que não couber vira
-	texto cortado, e não caixa maior: o tamanho é do designer, no Studio.
+	O botão é um **interruptor**: aperta e o painel entra crescendo o `UIScale`,
+	aperta de novo e ele sai encolhendo. Nenhum tempo de leitura é contado por nós —
+	quem fecha é o jogador, quando terminou de ler.
 
-	`Size` é a altura da linha na caixa **do tamanho em que ela estava quando o texto
-	entrou** — a mesma regra do preset `Dialogue` do `RichTextConfig`. A Press Start
-	2P é quase monoespaçada e ocupa perto do dobro da largura por caractere de uma
-	fonte comum, então o número aqui é bem menor que o de uma caixa de fala.
+	**Sem clima no ar não há indicador**: o botão some e o painel fecha, mesmo aberto.
+	"Céu limpo" não é informação que valha um canto da tela ocupado — o indicador
+	existe para as waves em que há o que ler nele.
+
+	As linhas do `Container` são escritas pelo `RichTextController`, uma depois da
+	outra (ver `Line.Stagger`), e a cor dentro delas é automática: o número entra na
+	cor do que ele faz com o jogador, e o tipo de unidade na cor do tipo. Ver `Colors`
+	e `Details`.
 ]=]
 WeatherConfig.Indicator = {
 	--[[
 		Os nomes na árvore, a partir da `PlayerGui`.
 
-		`Text` é o único que não vem do Studio: é a caixa que o controller cria dentro
-		do frame para escrever (ver `WeatherIndicatorController:bind`). Está aqui para
-		quem abrir a tela no Studio e encontrar um filho que não desenhou saber de
-		onde ele veio.
+		`Line` é o **molde opcional** de uma linha: existindo dentro do `Container`, ele
+		é clonado uma vez por efeito e nunca aparece ele mesmo, e é dele que saem o
+		tamanho e as margens que o designer desenhou. Não existindo, o controller cria
+		um Frame de `Line.HeightScale` da altura do `Container`.
+
+		A tipografia **não** sai do molde em nenhum dos dois casos: ela é do `Text`
+		aqui embaixo, porque quem desenha as letras é o renderizador de texto rico, e
+		não o TextLabel.
 	]]
 	Gui = {
 		Screen = "Interface",
-		Frame = "WeatherIndicator",
-		Button = "Details",
-		Text = "DetailsText",
+		Frame = "IndicatorWeather",
+		Button = "WeatherButton",
+		Image = "WeatherImg",
+		Name = "WeatherName",
+		Duration = "Duration",
+		Container = "Container",
+		Line = "Line",
 	},
 
 	--[[
-		O ícone de cada clima, e o de quando não há nenhum.
+		O ícone de cada clima, no botão e no painel.
 
 		A chave é o nome do clima como o resto do jogo o escreve (o Model em
 		`Assets.Weathers`, o `WeatherConfig.Effects`), e não o nome comercial: o
-		"blizzard" do desenho é o `Snow` do código.
+		"blizzard" do desenho é o `Snow` do código — ver `Warning.DisplayNames`.
+
+		Não há ícone de "sem clima" aqui de propósito: sem clima, o botão some.
 	]]
 	Icons = {
 		Rain = "rbxassetid://137668421407555",
@@ -359,89 +387,307 @@ WeatherConfig.Indicator = {
 		Drought = "rbxassetid://128162722232087",
 	},
 
-	-- O ícone de céu limpo. Fora de `Icons` porque "sem clima" não é um clima.
-	NoneIcon = "rbxassetid://91172779242291",
+	--[=[
+		A entrada e a saída do painel, escritas no `UIScale` dele.
 
-	--[[
-		Como o texto é escrito. Vai inteiro para o `RichTextController`, então
+		O `UIScale` é o autorado, quando existe; sem ele o controller cria um. A
+		animação é de escala, e não de posição, justamente por isso: ela funciona em
+		qualquer canto em que o painel esteja ancorado, sem o controller ter de saber
+		de onde ele deveria vir.
+
+		A entrada passa do ponto e volta (`Back`) e a saída não (`Quad`): o mesmo
+		exagero na volta faria o painel parecer que quicou para fora em vez de ter
+		sido fechado. A saída também é mais curta — fechar é resposta a um clique, e
+		clique esperando animação parece travamento.
+
+		`Open` é o **plano B** da escala de repouso: quem manda é a escala autorada no
+		`UIScale` do painel, lida antes de a animação escrever nele. Painel desenhado em
+		0.8 abre em 0.8, e não estufa para 1 porque o controller achou que 1 fosse o
+		tamanho certo. Este valor cobre o `UIScale` que nasce em zero e o que o
+		controller cria.
+
+		**A lista de efeitos não é escrita durante a entrada**, e isso é parte do
+		contrato desta animação: o texto rico se dimensiona pelo tamanho que a caixa
+		tinha no instante em que ele entrou, e caixa medida no meio do crescimento dá
+		linha gigante — ou linha nenhuma, medindo zero. Quem trocar esta animação por
+		outra tem de manter isso: ver `writeLinesWhenSettled` no controller.
+	]=]
+	Scale = {
+		Open = 1,
+		Closed = 0,
+		OpenInfo = TweenInfo.new(0.24, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		CloseInfo = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+	},
+
+	--[=[
+		Quanto o painel cresce com a tela.
+
+		O tamanho do painel é do designer, e o que está desenhado é em pixels: o mesmo
+		painel numa tela de 1080 e numa de 1440 ocupa a mesma quantidade de pixels, e por
+		isso **parece menor** na maior — ela tem mais pixels para a mesma área de visão. A
+		letra, que sai da caixa medida (ver `Line.TextRatio`), encolhe na mesma proporção.
+
+		A correção é um fator na escala de repouso do `UIScale`:
+
+			fator = clamp(alturaDaTela / ReferenceHeight, Min, Max)
+
+		Tudo dentro do painel cresce junto — a arte, o ícone, os labels e a letra das
+		linhas, que é medida da caixa depois de o fator já estar aplicado.
+
+		`Min = 1` é o que segura o celular no lugar: tela menor que a referência **não
+		encolhe** o painel, porque lá ele já ocupa a fração certa da tela e encolher o
+		deixaria ilegível. `Max` existe porque o fator não pode crescer para sempre: numa
+		tela de 4K o painel dobraria de tamanho e passaria a competir com o jogo.
+
+		`ReferenceHeight` é a **altura** da tela em que o painel foi desenhado, em pixels —
+		1080 para um monitor 1080p, e não 1920, que é a largura dele. É o erro fácil de
+		cometer aqui, e ele é silencioso: referência grande demais joga o fator abaixo de 1
+		em qualquer tela, o `Min` o prende em 1, e os dois números param de fazer efeito.
+
+		O valor certo é a altura da tela em que o painel **já está do tamanho que você
+		quer**. Se o celular está bom e o monitor está pequeno, a referência é a altura do
+		celular — é daí para cima que o painel cresce. O print do Studio (ver
+		`indicatorPrint` no controller) mostra a altura de cada tela e o fator que saiu
+		dela, que é o jeito de descobrir os dois números em vez de tentar.
+
+		O **botão** não entra nesta conta de propósito: o `UIScale` dele é onde o
+		`AnimatedButton` do `UILibraryController` escreve o hover e o aperto, e dois donos
+		na mesma propriedade dariam um botão que volta do hover no tamanho errado. Botão
+		que precise crescer com a tela cresce pelo `Size` dele, no Studio.
+	]=]
+	Responsive = {
+		ReferenceHeight = 720,
+
+		--[[
+			**Hoje desligado** (`Min` e `Max` iguais a 1): o painel está do tamanho certo em
+			todas as telas, e o que estava pequeno era a letra dentro dele — que tem a conta
+			dela em `Line`. Isto aqui fica como o botão para o dia em que for o painel que
+			estiver errado: `Max = 1.5` o deixa crescer até uma vez e meia acima da
+			referência.
+		]]
+		Min = 1,
+		Max = 1,
+	},
+
+	--[=[
+		As linhas do `Container`.
+
+		`Height` é a altura de uma linha em pixels, e vale só para o Frame que o
+		controller cria quando não há molde no Studio — com molde, a altura é a dele. O
+		espaço entre uma e outra é do `UIListLayout`, que é do designer nos dois casos.
+
+		`Stagger` é o atraso entre o começo de uma linha e o da seguinte. É curto de
+		propósito: a lista inteira tem de estar escrita em menos de um segundo, senão
+		quem abriu o painel para conferir um número fica esperando a animação em vez de
+		lendo.
+	]=]
+	Line = {
+		Stagger = 0.06,
+
+		--[=[
+			A altura de uma linha como **fração da altura do `Container`**, e não em pixels:
+			vale só para o Frame que o controller cria quando não há molde no Studio, e é
+			assim porque pixel não é responsivo — 22px num monitor é um quinto do painel, e
+			no celular é metade dele.
+
+			0.2 dá cinco linhas enchendo a caixa, que é o maior clima de hoje (Drought e
+			Blizzard). Clima de duas linhas ocupa 40% e o resto sobra, que é o certo: a
+			altura de uma linha não pode depender de quantas linhas o clima tem, senão a
+			letra muda de tamanho de clima para clima.
+		]=]
+		HeightScale = 0.2,
+
+		--[=[
+			Quanto se espera uma peça ter tamanho **estável** na tela antes de escrever
+			nela de qualquer jeito.
+
+			Peça criada agora só mede depois da passada de layout, e escrever antes disso
+			é o que fazia a primeira linha sair do tamanho errado. Esgotado o prazo, a
+			escrita acontece e o renderizador reclama no output — é a pista de que a peça
+			tem tamanho zero autorado ou um pai apagado.
+		]=]
+		MeasureTimeout = 1,
+
+		--[=[
+			O tamanho da letra sai da **caixa medida**, e não de um número de pixels: é o
+			que faz a lista se parecer a mesma no monitor e no celular, onde o painel tem
+			uma fração dos pixels e uma letra de 12px ocuparia o dobro do espaço relativo.
+
+			`TextRatio` é a altura da letra como fração da altura da linha — o que sobra é a
+			folga em volta. `MinTextSize` é o piso: abaixo dele não se lê, e é melhor a linha
+			estourar a caixa (e alguém ver o problema) que virar uma tarja cinza.
+
+			`MaxRows` é quantas fileiras uma linha pode ocupar. É o que impede a frase longa
+			de ficar minúscula: `+50% ELEC UNIT DMG (WHEN STRUCK)` numa caixa estreita cabe
+			em uma fileira só com uma letra que não se lê, e em duas fileiras com o dobro da
+			largura disponível — o controller experimenta de 1 a `MaxRows` e fica com a que
+			der a **letra maior**. Caixa larga e baixa continua escolhendo uma fileira
+			sozinha, porque ali a altura é que limita.
+
+			`WidthPerChar` é o **plano B**: a largura da frase é medida de verdade
+			(`TextService`), e esta estimativa por caractere só entra quando a medida falha.
+			1 é a medida da Press Start 2P, que é quase monoespaçada.
+
+			A conta vale para a lista inteira, e não por linha: a linha mais comprida manda
+			no tamanho de todas, porque lista com uma tipografia por linha parece defeito.
+		]=]
+		TextRatio = 0.9,
+		MaxRows = 2,
+		MinTextSize = 6,
+		WidthPerChar = 1,
+
+		--[[
+			Quanto se espera a tela parar de mudar antes de reescrever a lista na medida
+			nova (rotação do celular, arraste da janela). Sem esta pausa, um arraste
+			recomeçaria a animação de digitação a cada quadro.
+		]]
+		ResizeDebounce = 0.2,
+	},
+
+	--[=[
+		Como as linhas são escritas. Vai inteiro para o `RichTextController`, então
 		qualquer opção dele cabe aqui.
-	]]
+
+		**`Size` não está aqui de propósito**: o tamanho da letra é medido da caixa a
+		cada escrita (ver `Line.TextRatio`), e um número fixo aqui seria o mesmo pixel no
+		monitor e no celular. Quem quiser letra maior ou menor mexe na proporção, não
+		aqui.
+	]=]
 	Text = {
 		Font = "rbxasset://fonts/families/PressStart2P.json",
-		Size = 13,
-		Speed = 45,
+		Speed = 60,
 		Anim = "slide",
-		AnimDuration = 0.2,
-		Align = Enum.HorizontalAlignment.Center,
+		AnimDuration = 0.18,
+		Align = Enum.HorizontalAlignment.Left,
 		VerticalAlign = Enum.VerticalAlignment.Center,
 		Stroke = { Thickness = 0.06, Color = Color3.new(0, 0, 0) },
 	},
 
 	--[=[
-		O compasso do botão depois do clique.
+		Os dois labels do topo do painel: o nome do clima e o prazo.
 
-		O botão fica `Active = false` da hora do clique até o fim de tudo: a escrita
-		(que dura o que durar — texto mais longo demora mais), mais `Hold` de leitura,
-		mais o `FadeOut` da saída. Só então ele volta a aceitar clique, com a caixa já
-		vazia.
+		Eles são texto comum, e a tipografia deles é do designer — este controller só
+		escreve a frase. O que ele faz por responsividade é ligar o `TextScaled` deles e
+		**travar o teto no tamanho autorado**, com um `UITextSizeConstraint`: no monitor a
+		letra fica do tamanho que foi desenhada, e no celular ela encolhe com o label em
+		vez de estourar a caixa.
 
-		`Hold` é o tempo de **ler**, e conta a partir do fim da escrita: a frase já está
-		inteira na tela quando ele começa. Cinco segundos é folgado de propósito — a
-		caixa é pequena e a Press Start 2P é lenta de ler, e quem terminou antes não
-		fica esperando por nada, porque não há o que fazer com o botão enquanto a
-		resposta dele está na tela.
+		Label que já venha com `TextScaled` ligado do Studio não é tocado: aí o designer
+		já resolveu o tamanho dele, e o `TextSize` autorado não quer dizer mais nada —
+		usá-lo de teto cravaria a letra no 14 que ninguém escolheu.
 
-		`FadeIn` é a entrada da caixa, e é curta: ela existe para o texto não aparecer
-		de estalo por baixo da primeira letra, não para ser uma animação.
+		`Scale = false` devolve os dois ao que o Studio disser, para o dia em que a arte
+		quiser mandar sozinha.
 	]=]
-	Hold = 5,
-	FadeOut = 0.5,
-	FadeIn = 0.12,
-
-	--[=[
-		Quanto esperar a escrita terminar antes de desistir dela.
-
-		Rede de segurança: o aviso de fim de escrita vem do renderizador, e se ele
-		nunca chegar (texto vazio, backend de reserva, container que sumiu no meio) o
-		botão ficaria trancado para sempre. Passado o prazo, a saída acontece do mesmo
-		jeito.
-	]=]
-	WriteTimeout = 12,
-
-	--[=[
-		A descrição de cada clima: o que ele faz, em uma linha e meia.
-
-		É o resumo do que está em `WeatherConfig.Effects` — quem mexer nos números de
-		lá mexe na frase daqui também, porque não há como derivar uma da outra sem
-		virar uma tabela de multiplicadores na cara do jogador.
-	]=]
-	Descriptions = {
-		Fog = "Tower range drops 30%. Magic suffers the most.",
-		Wind = "Enemies move 30% faster. Melee towers swing quicker.",
-		Drought = "Enemies 40% tougher. Fire thrives, Ice barely works.",
-		Snow = "Towers attack 25% slower, and one freezes at a time.",
-		Thunder = "Lightning stuns your towers. Electric ones charge up.",
-		Rain = "Fire towers shut down. Everyone else attacks slower.",
-		Sandstorm = "Damage and range drop 30%. Magic sees right through.",
+	Labels = {
+		Scale = true,
+		MinTextSize = 6,
 	},
 
-	-- Clima sem descrição escrita ainda: melhor uma linha honesta que um vazio.
-	UnknownDescription = "No details on this one yet.",
+	--[[
+		A linha do `Duration`: quantas waves o clima ainda vale, contando a que está
+		rodando. `EndsOne` existe pelo mesmo motivo do `Warning.TextOne` — para não
+		escrever "1 WAVES".
 
-	-- Céu limpo.
-	NoneTitle = "CLEAR SKIES",
-	NoneDescription = "No weather in play right now.",
+		Clima ligado na mão (o comando `weather`) não tem prazo nenhum, e aí o label
+		simplesmente não aparece: melhor um painel sem a linha que uma promessa de fim
+		que ninguém vai cumprir.
+	]]
+	Ends = "WEATHER ENDS IN %d WAVES",
+	EndsOne = "WEATHER ENDS IN 1 WAVE",
 
 	--[=[
-		As frases montadas.
+		As cores dentro de uma linha, em `r,g,b` — o formato que o `[color=...]` do
+		texto rico entende.
 
-		`Title` é o nome do clima em destaque; `Warning` é a linha do que vem por aí,
-		e `WarningOne` existe pelo mesmo motivo do `Warning.TextOne` — para não
-		escrever "1 ROUNDS".
+		`Buff` e `Debuff` pintam **o número**, e não a linha: a frase continua na cor do
+		label e só o "+40%" muda de cor, que é o que faz a lista ser lida de relance.
+		Quem escolhe entre as duas é o sinal do número, com a exceção que mora no `Kind`
+		de `Details`.
+
+		`Classes` pinta a palavra do tipo de unidade, para o jogador achar o que é dele
+		na lista sem ler a linha inteira. A chave é a palavra como ela aparece escrita —
+		`ELEC`, e não `Electric`.
 	]=]
-	Title = "[gradient=orange]%s[/gradient]",
-	Warning = "[color=yellow]%s in %d rounds[/color]",
-	WarningOne = "[color=yellow]%s next round[/color]",
+	Colors = {
+		Buff = "85,170,255",
+		Debuff = "255,80,80",
+
+		Classes = {
+			FIRE = "255,125,60",
+			ICE = "135,220,255",
+			ELEC = "255,225,95",
+			MAGIC = "200,130,255",
+			MELEE = "255,180,95",
+			RANGED = "150,230,140",
+		},
+	},
+
+	--[=[
+		O que cada clima faz, uma linha por efeito, na ordem em que o painel as mostra.
+
+		É o resumo do que está em `WeatherConfig.Effects` — quem mexer nos números de lá
+		mexe na linha daqui também, porque não há como derivar uma da outra sem virar
+		uma tabela de multiplicadores na cara do jogador. E nem tudo o que o clima faz
+		está aqui, de propósito: a imunidade do Magic ao raio, por exemplo, não é uma
+		linha — o painel é o que o jogador precisa saber para jogar a wave, e não a
+		documentação do clima.
+
+		Cada linha é uma string, ou uma tabela `{ Text = ..., Kind = ... }` quando o
+		sinal engana. `Kind` é "Buff" ou "Debuff" e manda na cor de todos os números da
+		linha: `+40% ENEMY HP` é um "+" péssimo para o jogador, e pintá-lo de azul
+		porque o número cresce seria mentir na única coisa que a cor diz. Número sem
+		sinal nenhum (`20s UNIT STUN`) é debuff — é o que os stuns de hoje são.
+	]=]
+	Details = {
+		Rain = {
+			"DISABLES FIRE UNITS",
+			"-35% UNIT SPD",
+			"-25% ICE UNIT COST",
+		},
+
+		Thunder = {
+			"20s UNIT STUN",
+			"+10% ELEC UNIT DMG",
+			"+50% ELEC UNIT DMG (WHEN STRUCK)",
+			"+50% ELEC UNIT SPD (WHEN STRUCK)",
+		},
+
+		Drought = {
+			{ Text = "+40% ENEMY HP", Kind = "Debuff" },
+			"+30% FIRE UNIT DMG",
+			"+20% FIRE UNIT SPD",
+			"-60% ICE UNIT DMG",
+			"-60% ICE UNIT SPD",
+		},
+
+		Snow = {
+			"-10s UNIT STUN",
+			"-40% UNIT SPD",
+			"+25% ICE UNIT DMG",
+			"+25% ICE UNIT SPD",
+			"MAGIC UNITS ARE IMMUNE",
+		},
+
+		Sandstorm = {
+			"-30% UNIT DMG",
+			"-30% UNIT SPD",
+			"MAGIC UNITS ARE IMMUNE",
+		},
+
+		Wind = {
+			{ Text = "+30% ENEMY SPD", Kind = "Debuff" },
+			"+30% MELEE SPD",
+		},
+
+		Fog = {
+			"-30% UNIT RNG",
+			"-45% MAGIC RNG",
+		},
+	},
+
+	-- Clima sem lista escrita ainda: melhor uma linha honesta que um painel vazio.
+	UnknownDetails = { "NO DETAILS ON THIS ONE YET" },
 }
 
 --[[
@@ -601,14 +847,19 @@ WeatherConfig.Effects = {
 	},
 
 	--[[
-		Neve: além do corte de cadência, congela uma unidade sorteada de tempos em
-		tempos (o `SnowService` cuida do compasso). Magic passa ileso pelos dois.
+		Nevasca (a "BLIZZARD" da tela): além do corte de cadência, congela uma unidade
+		sorteada de tempos em tempos (o `SnowService` cuida do compasso). Magic passa
+		ileso pelos dois.
+
+		Ice é a única que sai ganhando, e nas duas pontas — 25% de dano e 25% de
+		cadência. Como a substituição é por estatística, o `1.25` dela cobre o `0.6`
+		do `All`, e a unidade de gelo atira mais rápido na nevasca em vez de menos.
 	]]
 	Snow = {
 		Immune = { Magic = true },
 		Units = {
-			All = { AttackSpeed = 0.75 },
-			Ice = { AttackSpeed = 1.25 },
+			All = { AttackSpeed = 0.6 },
+			Ice = { Damage = 1.25, AttackSpeed = 1.25 },
 		},
 		Freeze = {
 			Interval = 30,
@@ -666,13 +917,13 @@ WeatherConfig.Effects = {
 	},
 
 	--[[
-		Tempestade de areia: menos dano e menos alcance para quem depende de ver.
-		Magic não depende, e passa ileso.
+		Tempestade de areia: menos dano, menos cadência e menos alcance para quem
+		depende de ver. Magic não depende, e passa ileso.
 	]]
 	Sandstorm = {
 		Immune = { Magic = true },
 		Units = {
-			All = { Damage = 0.7, Range = 0.7 },
+			All = { Damage = 0.7, AttackSpeed = 0.7, Range = 0.7 },
 		},
 	},
 }

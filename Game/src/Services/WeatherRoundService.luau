@@ -178,6 +178,38 @@ function WeatherRoundService:broadcastWarning(weatherName : string, wavesAhead :
 	end
 end
 
+--[=[
+	Diz aos clientes ate que wave o clima de agora vale.
+
+	`ActiveUntilWave` e uma wave-alvo, e e ela que viaja — nao o "faltam quantas". O
+	painel do indicador e aberto **depois**, uma ou duas waves depois, e refaz a conta
+	com a wave de agora; mandar o numero pronto daria um painel dizendo "ENDS IN 4
+	WAVES" na ultima wave do clima.
+
+	O **nome vai junto** porque este aviso e o `WeatherChanged` sao eventos diferentes
+	e a ordem entre eles nao e garantida: e o nome que diz ao cliente se o prazo que
+	chegou e do clima que ele esta vendo.
+
+	Ceu limpo manda os dois `nil`, para o cliente nao ficar com o prazo do clima que
+	acabou de sair.
+
+	`player` restringe a um jogador so — e o que o pedido de quem entra no meio da
+	partida precisa.
+]=]
+function WeatherRoundService:broadcastDuration(player : Player?)
+	local weatherName = self.Active
+	local untilWave = weatherName and self.ActiveUntilWave or nil
+
+	if player then
+		Framework:Fire("WeatherDuration", player, weatherName, untilWave)
+		return
+	end
+
+	for _, target in Players:GetPlayers() do
+		Framework:Fire("WeatherDuration", target, weatherName, untilWave)
+	end
+end
+
 --[[ CICLO ]]
 
 --[=[
@@ -197,6 +229,8 @@ function WeatherRoundService:ClearActive()
 	if weatherService then
 		weatherService:Clear(RoundConfig.TransitionTime)
 	end
+
+	self:broadcastDuration()
 
 	roundPrint(string.format("'%s' saiu.", previous))
 end
@@ -219,6 +253,8 @@ function WeatherRoundService:applyScheduled(waveNumber : number)
 
 	self.Active = weatherName
 	self.ActiveUntilWave = waveNumber + math.max(1, RoundConfig.Duration or 1) - 1
+
+	self:broadcastDuration()
 
 	roundPrint(string.format("'%s' entrou na wave %d, ate a %d.", weatherName, waveNumber, self.ActiveUntilWave))
 
@@ -246,8 +282,11 @@ function WeatherRoundService:resumeActive(waveNumber : number)
 
 		self.Active = nil
 		self.ActiveUntilWave = nil
+		self:broadcastDuration()
 		return
 	end
+
+	self:broadcastDuration()
 
 	roundPrint(string.format("'%s' voltou na wave %d, ate a %d.", weatherName, waveNumber, self.ActiveUntilWave or waveNumber))
 end
@@ -394,6 +433,12 @@ function WeatherRoundService:construct()
 
 		Framework:Fire("WeatherWarning", player, self.Scheduled, wavesAhead, self.ScheduledWave)
 	end)
+
+	-- Quem entra no meio de uma tempestade precisa do prazo dela. Ceu limpo responde
+	-- com `nil`, que e a resposta certa e nao um silencio.
+	Framework:Listen("RequestWeatherDuration", function(player : Player)
+		self:broadcastDuration(player)
+	end)
 end
 
 function WeatherRoundService:start()
@@ -406,6 +451,7 @@ end
 
 function WeatherRoundService:init()
 	Framework:Listen("WeatherWarning", function() end)
+	Framework:Listen("WeatherDuration", function() end)
 end
 
 return WeatherRoundService

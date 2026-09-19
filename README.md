@@ -466,11 +466,117 @@ que o anterior saiu.
 jogado com o céu livre, o número não é "quantas waves têm clima": é a pressa com que
 o próximo aparece depois que o anterior sai.
 
+O nome que o jogador lê sai de `WeatherConfig.Warning.DisplayNames`, e hoje ele tem
+uma entrada: o `Snow` do código é a **BLIZZARD** da tela. O nome do Model não muda —
+renomeá-lo levaria junto o pool de cada mapa, o comando `weather` e as tabelas de
+efeito, tudo para o jogador ler a mesma palavra que já lia.
+
 **O aviso na tela** é `StarterGui.Interface.WeatherWarning`, um TextLabel com um
 UIStroke. O `WeatherWarningController` só monta a frase; quem a anima é o
 `WarningController` (ver [Aviso de restart do servidor](#aviso-de-restart-do-servidor),
 que divide o mesmo label). Quem entra no meio da partida pede o aviso pendente com
 `RequestWeatherWarning`.
+
+#### O indicador de clima (Game)
+
+Duas peças **irmãs** em `StarterGui.Interface`, e quem as liga é o
+`WeatherIndicatorController` (`Game/src/Controllers`):
+
+```
+Interface
+├── WeatherButton        (ImageButton — o ícone do clima, e o interruptor)
+└── IndicatorWeather     (o painel; o UIScale dele é a animação)
+    ├── WeatherImg       (ImageLabel — o mesmo ícone)
+    ├── WeatherName      (TextLabel  — "BLIZZARD")
+    ├── Duration         (TextLabel  — "WEATHER ENDS IN 3 WAVES")
+    └── Container        (UIListLayout — uma linha por efeito)
+```
+
+O botão é um **interruptor**: aperta e o painel entra crescendo o `UIScale`, aperta de
+novo e ele sai encolhendo. Nenhum tempo de leitura é contado — quem fecha é o jogador.
+Hover e aperto do botão saem da tag `AnimatedButton`, que o `UILibraryController`
+observa, e não do controller: quem desenhar um botão novo marca a tag no Studio.
+
+**Sem clima no ar não há indicador**: o botão some e o painel fecha, mesmo aberto.
+"Céu limpo" não é um estado que valha um canto da tela ocupado.
+
+As linhas do `Container` vêm de `WeatherConfig.Indicator.Details` — uma por efeito,
+escritas pelo `RichTextController` uma depois da outra (`Line.Stagger`). A cor dentro
+delas é montada pelo controller e pinta **pedaços**, não a linha: o número entra em
+azul (`Colors.Buff`) ou vermelho (`Colors.Debuff`) e o tipo de unidade na cor do tipo
+(`Colors.Classes`, de `FIRE` a `RANGED`).
+
+Quem escolhe entre azul e vermelho é o sinal do número, e `Kind` na linha manda quando
+o sinal engana: `+40% ENEMY HP` cresce e é péssimo para o jogador. Número sem sinal
+(`20s UNIT STUN`) é debuff.
+
+**As linhas só são escritas com o painel na escala de repouso** — nunca durante a
+entrada. O texto rico guarda o tamanho da caixa no instante do render e escala o texto
+pela razão entre o tamanho de agora e aquele, e o `AbsoluteSize` de um filho já vem
+multiplicado pelo `UIScale` do painel: escrever no meio do crescimento memoriza uma
+caixa quase fechada e a linha termina do tamanho da tela — ou não aparece, se a escala
+ainda estava em zero, porque render em caixa que mede zero é descartado. Quem mexer na
+animação mantém isso; o portão é o `writeLinesWhenSettled`, e a escala de chegada é a
+autorada no `UIScale` (painel desenhado em 0.8 abre em 0.8).
+
+**O tamanho da letra é medido da caixa, não escrito em pixels** — é o que faz o painel
+funcionar no celular. O renderizador escreve em pixels, e pixel não se traduz entre
+telas: 12px são um quinto da linha num monitor e metade dela num celular, onde o painel
+tem uma fração dos pixels. Então a letra sai de duas paredes, a **altura** da caixa
+(`TextRatio` dela) e a **largura** contra a largura real da frase mais comprida, medida
+pelo `TextService` e guardada em cache (`WidthPerChar` é só o plano B de quando a medida
+falha).
+
+As **fileiras** entram na mesma conta, e é o que impede a frase longa de ficar minúscula:
+`+50% ELEC UNIT DMG (WHEN STRUCK)` numa caixa estreita cabe em uma fileira só com uma
+letra ilegível, e em duas com o dobro da largura disponível. O controller experimenta de 1
+a `MaxRows` e fica com a que der a letra **maior** — caixa larga e baixa escolhe uma
+fileira sozinha, porque ali é a altura que limita. A conta usa a frase mais comprida e o
+tamanho vale para todas as linhas: tipografia por linha pareceria defeito. A altura da
+linha de reserva também é fração (`HeightScale`, 0.2 = cinco linhas enchem o `Container`,
+que é o maior clima de hoje), e girar o celular reescreve a lista na medida nova
+(`ResizeDebounce`).
+
+**O painel pode crescer com a tela**, e hoje não cresce: `clamp(alturaDaTela /
+Responsive.ReferenceHeight, Min, Max)` na escala de repouso do `UIScale`, com `Min` e
+`Max` em 1 — o painel está do tamanho certo em todas as telas, e o que estava pequeno era
+a letra dentro dele. O mecanismo fica para o dia em que for o painel que estiver errado. `ReferenceHeight` é uma **altura** de
+tela em pixels (1080 num monitor 1080p, não 1920) — referência alta demais joga o fator
+abaixo de 1 em toda tela, o `Min` o prende em 1 e os números param de fazer efeito sem
+nenhum erro aparecer. O valor certo é a altura da tela em que o painel já está do tamanho
+desejado: se o celular está bom e o monitor pequeno, a referência é a altura do celular. O desenho é em
+pixels, e pixel não cresce com a tela: o mesmo painel ocupa a mesma área de pixels num
+monitor de 1440 e num de 1080, e por isso parece menor no maior. `Min = 1` é o que
+segura o celular no lugar — tela menor que a referência não encolhe o painel —, e `Max`
+impede que um 4K dobre o painel e o faça competir com o jogo. Tudo dentro dele vem
+junto, inclusive a letra das linhas, que é medida da caixa depois do fator. O **botão**
+fica fora da conta: o `UIScale` dele é onde o `AnimatedButton` escreve o hover, e dois
+donos na mesma propriedade dariam um botão que volta do hover no tamanho errado.
+
+Os labels `WeatherName` e `Duration` são texto comum e a tipografia deles é do designer.
+O controller liga o `TextScaled` deles **travando o teto no tamanho autorado** com um
+`UITextSizeConstraint`: no monitor a letra fica como foi desenhada, no celular encolhe
+com o label. Label que já venha com `TextScaled` ligado não é tocado, e
+`Indicator.Labels.Scale = false` desliga o comportamento inteiro.
+
+Há um molde de linha opcional: um filho do `Container` chamado `Line`. Existindo, ele é
+clonado por efeito (e nunca aparece ele mesmo) e dá o tamanho e as margens que o
+designer desenhou; sem ele, o controller cria um Frame de `Line.Height` pixels. A
+tipografia sai de `Indicator.Text` nos dois casos, porque quem desenha as letras é o
+renderizador de texto rico.
+
+**O prazo** é o `WeatherDuration`, que o `WeatherRoundService` manda com o nome do
+clima e a **wave-alvo** (`ActiveUntilWave`) — não o "faltam quantas". O painel é aberto
+waves depois e refaz a conta com a wave de agora (`SetWave`), contando a que está
+rodando: um clima de 4 waves que acabou de entrar diz "ENDS IN 4 WAVES" e o último diz
+"ENDS IN 1 WAVE". O nome viaja junto porque este aviso e o `WeatherChanged` são eventos
+diferentes e a ordem entre eles não é garantida — é o nome que diz se o prazo é do
+clima que está na tela. Clima ligado na mão pelo comando `weather` não tem prazo, e o
+label simplesmente não aparece. Quem entra no meio de uma tempestade pede o prazo com
+`RequestWeatherDuration`.
+
+A lista **não é a documentação do clima**: ela é o que o jogador precisa para jogar a
+wave. A imunidade do Magic ao raio, por exemplo, existe em `Effects` e não é uma linha.
 
 #### Classes e efeitos de clima
 
@@ -500,9 +606,9 @@ nível 0 e numa de nível 5.
 | **Fog** | alcance de todas as unidades × 0.7. Magic sofre 1.5x mais o mesmo corte (45%), então × 0.55 |
 | **Wind** | velocidade dos inimigos × 1.3; velocidade de ataque de Melee × 1.3 |
 | **Drought** | vida dos inimigos × 1.4; Fire ganha 30% de dano e 20% de cadência; Ice perde 60% de dano, cadência e alcance |
-| **Snow** | cadência de todas × 0.75 (Ice × 1.25) e uma unidade congelada por 10s a cada 30s. Magic é imune |
+| **Snow** (lida "BLIZZARD") | cadência de todas × 0.6; Ice × 1.25 de dano **e** de cadência; uma unidade congelada por 10s a cada 30s. Magic é imune |
 | **Thunder** | o raio atordoa; Electric ganha 10% de dano passivo e carga ao ser atingido. Magic é imune |
-| **Sandstorm** | dano e alcance de todas × 0.7. Magic é imune |
+| **Sandstorm** | dano, cadência e alcance de todas × 0.7. Magic é imune |
 | **Rain** | **desliga** todas as unidades Fire; cadência de todas × 0.65 (Magic × 0.475). Colocar uma unidade Ice custa 25% menos |
 
 Duas regras de precedência valem a pena guardar. **`Units.<Classe>` substitui
@@ -702,8 +808,9 @@ teto por camada; cada unidade é tocada uma vez só por descarga.
 
 `Electric` é a exceção que faz o clima valer a pena para alguém: além dos 10% de
 dano passivos enquanto o trovão durar, levar o raio (ou o salto) **não a atordoa** —
-a **carrega** com +50% de dano (`Charge.Damage = 1.5`) e −50% de cooldown
-(`Charge.AttackSpeed = 2`, que divide o cooldown) por `Charge.Duration` (4s). Ela
+a **carrega** com +50% de dano (`Charge.Damage = 1.5`) e +50% de cadência
+(`Charge.AttackSpeed = 1.5`, que divide o cooldown — um terço de recarga a menos) por
+`Charge.Duration` (4s). Ela
 continua servindo de ponte para o salto. O buff temporário mora
 em `entry.Charge`, por fora do `UnitUpgradeConfig` — o config só conhece números que
 valem para todo mundo, e a carga é estado de partida de uma unidade específica.
