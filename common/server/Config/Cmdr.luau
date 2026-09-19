@@ -50,6 +50,7 @@ return {
 	COMMAND_PERMISSIONS = {
 		units = { groupId = 660345753, minRank = 3 },   -- Tester ou acima
 		help  = { groupId = 660345753, minRank = 3 },   -- lista só o que a pessoa pode rodar
+		richtext = { groupId = 660345753, minRank = 3 }, -- bancada de rich text
 	} :: { [string]: { groupId: number, minRank: number } },
 
 	-- Anyone testing in Studio counts as an admin.

@@ -127,6 +127,9 @@ local SETTLE_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Sine, Enum.EasingDirect
 -- fraction of one entry's width.
 local OVERSHOOT_FRACTION = 0.08
 
+-- Tocado cada vez que uma carta cruza o Clipper (SoundService, via MusicController).
+local REEL_TICK_SOUND = "UIHover"
+
 -- Beat between a reel landing on an upgrade and the next one starting, so the crate
 -- evolving in front of the player reads.
 local UPGRADE_PAUSE = 0.6
@@ -148,6 +151,8 @@ local UnboxingController = {
 	Controllers = {
 		-- O Index do jogador (quais units ele ja descobriu) mora no perfil.
 		DataController = {},
+		-- O tick de cada carta que passa pelo Clipper.
+		MusicController = {},
 	},
 
 	--[[
@@ -1028,15 +1033,54 @@ function UnboxingController:_buildReel(session, crateRarity : string, winnerFace
 		return targetCenter + anchorX * frameWidth - offset
 	end
 
+	--[=[
+		O inverso de `positionFor`: qual carta esta sob o Clipper com o frame em `x`.
+		Troca na borda entre duas cartas, que e o instante em que o tick soa.
+	]=]
+	local function indexAt(x : number) : number
+		local offset = (targetCenter + anchorX * frameWidth - x) / frameWidth
+		return math.floor(offset / step) + 1
+	end
+
 	return {
 		ScrollingFrame = scrollingFrame,
 		Entries = entries,
 		EntryWidth = entryWidth * frameWidth,
 		PositionFor = positionFor,
+		IndexAt = indexAt,
 	}
 end
 
-function UnboxingController:_spin(reel, sessionMaid, onFinished : (GuiObject) -> ())
+--[=[
+	O tick do carretel: um som por carta que cruza o Clipper, do giro ao assentar.
+
+	Uma vez por frame no maximo -- no comeco do giro passam varias cartas num frame
+	so, e empilhar um som por carta viraria ruido. So na tela de quem abriu: nas
+	outras o carretel gira atras de um billboard desligado.
+]=]
+function UnboxingController:_trackReelTicks(reel, maid)
+	local scrollingFrame = reel.ScrollingFrame
+	local lastIndex = reel.IndexAt(scrollingFrame.Position.X.Scale)
+
+	local connection = RunService.RenderStepped:Connect(function()
+		local index = reel.IndexAt(scrollingFrame.Position.X.Scale)
+		if index == lastIndex then
+			return
+		end
+
+		lastIndex = index
+
+		local music = self.Controllers.MusicController
+		if music then
+			music:PlaySFX(REEL_TICK_SOUND)
+		end
+	end)
+
+	maid:GiveTask(connection)
+	return connection
+end
+
+function UnboxingController:_spin(reel, sessionMaid, onFinished : (GuiObject) -> (), withTicks : boolean?)
 	local scrollingFrame = reel.ScrollingFrame
 	local basePosition = scrollingFrame.Position
 
@@ -1072,7 +1116,15 @@ function UnboxingController:_spin(reel, sessionMaid, onFinished : (GuiObject) ->
 		settle:Play()
 	end)
 
+	-- Comeca depois do reposicionamento na primeira carta, para o salto ate ela
+	-- nao contar como carta passando.
+	local ticks = withTicks and self:_trackReelTicks(reel, sessionMaid)
+
 	settle.Completed:Once(function(state : Enum.PlaybackState)
+		if ticks then
+			ticks:Disconnect()
+		end
+
 		if state ~= Enum.PlaybackState.Completed then
 			return
 		end
@@ -1215,7 +1267,7 @@ function UnboxingController:_playStage(session, result : UnboxingResult, stages,
 			self.Signals.CrateUpgraded:Fire(result, stage.Crate, stage.Face.Upgrade, session.Crate, session.Owner)
 			self:_playStage(session, result, stages, index + 1)
 		end)
-	end)
+	end, session.IsOwner)
 end
 
 --[=[
