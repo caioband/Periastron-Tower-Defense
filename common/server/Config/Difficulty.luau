@@ -158,6 +158,15 @@ Difficulty.Presets = {
 	},
 
 	Easy = {
+		--[[
+			O elenco Astral, em vez dos Redcliff (ver `SharedConfig.Mob.ModelSets`).
+
+			E so o boneco: a wave, a vida e os gimmicks sao os mesmos que qualquer
+			outro preset le da mesma tabela de entidades. Os presets sem esta chave
+			usam o `Hard`, que e o fallback.
+		]]
+		ModelSet = "Easy",
+
 		WeatherChance = 0.10,
 		HealthMultiplier = 0.5,
 		HealthGrowth = 1.015,

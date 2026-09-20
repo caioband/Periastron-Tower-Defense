@@ -22,8 +22,16 @@ local UnitVFXConfig = {
 	["Berserker"] = { PLACEMENT_EFFECT },
 	["Slingshot"] = { PLACEMENT_EFFECT },
 	["Archer"] = { PLACEMENT_EFFECT },
-	-- A queimadura nao entra aqui: so o servidor sabe se o alvo ja queimava, e o
-	-- desenho chega pelo evento `MobBurning` (`VFXController:PlayBurning`).
+	--[[
+		Nem a queimadura nem o estouro entram aqui, e por motivos diferentes.
+
+		A queimadura porque so o servidor sabe se o alvo ja queimava: o desenho chega
+		pelo evento `MobBurning` (`VFXController:PlayBurning`).
+
+		O estouro porque ele mora no proprio projetil -- o attachment `Explosion` do
+		`PyreProjectile`, que o `ProjectileController` dispara quando o tiro chega.
+		Repetir aqui daria duas explosoes na mesma bolinha.
+	]]
 	["Pyre"] = { PLACEMENT_EFFECT },
 	["Subspace Tripminer"] = { PLACEMENT_EFFECT },
 	["Entrepreneur"] = { PLACEMENT_EFFECT },

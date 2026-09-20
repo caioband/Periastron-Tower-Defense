@@ -23,6 +23,23 @@ local PIERCE_DISTANCE = 24
 --- O valor de `Projectile.Subtype` que faz o projetil atravessar.
 local PIERCING = "Piercing"
 
+--[[
+	O attachment que um projetil pode trazer com o estouro dele dentro.
+
+	E opcional e e do **asset**, nao de config: o projetil que tiver um attachment
+	com este nome estoura ao chegar, e o que nao tiver some como sempre. O
+	`PyreProjectile` tem dois attachments -- o `Ball`, com os emitters ligados que
+	fazem o rastro, e o `Explosion`, com os desligados que so saem no impacto.
+
+	Emitter desligado nao aparece sozinho: quem o faz aparecer e o `Emit`, e por
+	isso o artista pode deixar os dois grupos pendurados na mesma part sem um
+	atrapalhar o outro.
+]]
+local IMPACT_ATTACHMENT = "Explosion"
+
+--- Quantas particulas por emitter quando o asset nao disser. O mesmo do `VFXController`.
+local DEFAULT_EMIT_COUNT = 25
+
 local ProjectileController = {}
 ProjectileController.Library = {}
 
@@ -43,6 +60,90 @@ local function setCFrame(instance, cf)
 	else
 		instance.CFrame = cf
 	end
+end
+
+--[=[
+	Estoura o projetil onde ele parou, em vez de o apagar na hora.
+
+	Tres coisas ao mesmo tempo: o rastro para de emitir, o estouro sai, e a casca
+	some deixando so as particulas no ar. Sem apagar o rastro o projetil continuaria
+	cuspindo fogo parado no lugar pelo tempo do estouro; sem sumir a casca ficaria a
+	bolinha pairando no meio da explosao.
+
+	Devolve por quanto tempo as particulas ainda vivem, para quem chamou saber
+	quando pode destruir de verdade -- destruir junto com o `Emit` mata as
+	particulas antes de elas nascerem. Devolve `nil` quando o projetil nao tem
+	estouro nenhum, e ai o caminho e o de sempre.
+
+	O prazo e de **tela**, e nao de partida: `ParticleEmitter` nao conhece o
+	`GameClock`, entao as particulas duram os mesmos 2 segundos reais no 1x e no 2x
+	e o `task.delay` e que acerta com elas.
+]=]
+local function burstImpact(instance) : number?
+	local burst = instance:FindFirstChild(IMPACT_ATTACHMENT, true)
+	if not (burst and burst:IsA("Attachment")) then return nil end
+
+	local linger = 0
+
+	for _, descendant in instance:GetDescendants() do
+		local inBurst = descendant:IsDescendantOf(burst)
+
+		if descendant:IsA("ParticleEmitter") then
+			if inBurst then
+				descendant:Emit(descendant:GetAttribute("EmitCount")
+					or burst:GetAttribute("EmitCount")
+					or DEFAULT_EMIT_COUNT)
+				linger = math.max(linger, descendant.Lifetime.Max)
+			else
+				descendant.Enabled = false
+			end
+		elseif descendant:IsA("Light") and not inBurst then
+			descendant.Enabled = false
+		end
+	end
+
+	--[[
+		A casca sai de cena, e nao o attachment: as particulas ja emitidas vivem
+		presas a ele, e destruir a part agora levaria o estouro junto.
+
+		`Anchored` porque o laco de voo acabou de soltar o projetil -- o template vem
+		com `Anchored = false` e `CanCollide = true`, e sem isto a bolinha invisivel
+		cairia (e esbarraria) durante os dois segundos do estouro.
+	]]
+	local function hide(part)
+		part.Transparency = 1
+		part.CanCollide = false
+		part.Anchored = true
+	end
+
+	if instance:IsA("BasePart") then
+		hide(instance)
+	end
+	for _, descendant in instance:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			hide(descendant)
+		end
+	end
+
+	return linger
+end
+
+--[=[
+	Tira o projetil de cena: com estouro, ele fica ate as particulas morrerem; sem
+	estouro, some agora.
+]=]
+local function retire(instance)
+	local linger = burstImpact(instance)
+	if not linger then
+		instance:Destroy()
+		return
+	end
+
+	task.delay(linger, function()
+		if instance and instance.Parent then
+			instance:Destroy()
+		end
+	end)
 end
 
 local function targetPosition(targetModel, fallback)
@@ -162,9 +263,22 @@ function ProjectileController:Fire(startPos, targetModel, config, onArrive, fall
 		local distance = toGoal.Magnitude
 		local step = speed * dt
 
-		if distance <= math.max(step, ARRIVE_DISTANCE) or elapsed >= MAX_FLIGHT_TIME then
+		--[[
+			Chegar e bater; estourar o prazo e desistir. Sao coisas diferentes, e so a
+			primeira merece o estouro -- um projetil que passou 3 segundos no ar sem
+			alcancar ninguem nao explodiu em cima de nada.
+		]]
+		local arrived = distance <= math.max(step, ARRIVE_DISTANCE)
+
+		if arrived or elapsed >= MAX_FLIGHT_TIME then
 			conn:Disconnect()
-			if projectile then projectile:Destroy() end
+			if projectile then
+				if arrived then
+					retire(projectile)
+				else
+					projectile:Destroy()
+				end
+			end
 			finish(goal)
 			return
 		end

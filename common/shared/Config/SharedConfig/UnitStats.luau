@@ -627,6 +627,23 @@ local UnitStats = {
 		HitInterval = 0,
 		Hits = 1,
 		Projectile = { Asset = "PyreProjectile", Speed = 60 },
+
+		--[[
+			O tiro estoura onde cai: quem estiver a 3 studs da mira leva o dano cheio
+			**e** pega fogo, porque a queimadura sai do `creditDamage` e ele roda uma
+			vez por alvo atingido.
+
+			E o que separa o Pyre do Rocket, que tem area de 2 e nao deixa nada: aqui a
+			area nao e o golpe, e o que espalha a queimadura. Numa fila apertada um tiro
+			so acende quatro inimigos, e cada um queima por conta propria pelos 10s --
+			o `BurningUntil` e por mob, e a regra de nao acumular continua valendo por
+			inimigo, nao por tiro.
+
+			Sem queda por alvo, de proposito: a area e pequena (3 contra os 6 da
+			tripmine) e o cooldown e longo. Se precisar segurar, o lugar e o raio.
+		]]
+		AOE = { Radius = 3 },
+
 		Burn = { Damage = 3, Ticks = 20, Interval = 0.5 },
 		RangeStats = {
 			Increment = 1,

@@ -58,6 +58,10 @@ end
 	lentidoes tem donos diferentes: `CardSpeedScale` e da sala (o Staff of Azure
 	Ever Ice, que pega todo mundo de uma vez) e `SlowScale` e do mob (a lentidao que
 	uma unidade de gelo deixou naquele inimigo). Uma nao pode apagar a outra.
+
+	`RushScale` e o arranque que o proprio inimigo se da (o `HealthThresholdRush` do
+	Astral Sentinel). Fator separado pela mesma razao: ele dura tres segundos e tem
+	de sumir sozinho sem levar junto a lentidao do gelo que entrou no meio dele.
 ]=]
 local function computeSpeed(self, mob)
 	return mob.BaseSpeed
@@ -65,6 +69,23 @@ local function computeSpeed(self, mob)
 		* (self.WeatherSpeedScale or 1)
 		* (self.CardSpeedScale or 1)
 		* (mob.SlowScale or 1)
+		* (mob.RushScale or 1)
+end
+
+--[=[
+	Manda a velocidade de agora deste mob para todo mundo.
+
+	Mob parado fica de fora: para ele o cliente ja recebeu zero, e quem o solta
+	(`StunMob`, `FreezeAll`, o gimmick do chefe) reenvia a velocidade certa na
+	hora de soltar. Mandar aqui faria o boneco voltar a andar na tela com o
+	servidor ainda segurando o inimigo no lugar.
+]=]
+local function broadcastSpeed(self, mobId, mob)
+	if (mob.StunnedUntil or 0) > GameClock.Now() then return end
+
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("UpdateMobSpeed", player, mobId, mob.CurrentSpeed)
+	end
 end
 
 local GimmickHandlers = {
@@ -83,6 +104,55 @@ local GimmickHandlers = {
 			for _, player in Players:GetPlayers() do
 				Framework:Fire("UpdateMobSpeed", player, mobId, mob.CurrentSpeed)
 			end
+		end,
+	},
+
+	--[=[
+		O arranque na metade da vida: toca a animacao e, quando ela chega no
+		marcador, o inimigo acelera por um tempo.
+
+		O marcador **nao** e escutado no cliente. Quem conta e o servidor, com o
+		`MarkerTime` que a config traz medido do asset, pelo mesmo motivo que o
+		`AnimTime` do gimmick do Champion aqui embaixo: a velocidade e estado de
+		partida, e estado de partida nao pode nascer de um aviso de cliente -- seriam
+		N avisos numa sala de N jogadores, cada um no seu ping, e um deles bastaria
+		para acelerar o chefe de todo mundo.
+
+		Os dois prazos correm no relogio da partida, entao no 2x o arranque chega na
+		metade do tempo -- e a animacao no cliente tambem, que roda em `TimeScale`.
+	]=]
+	HealthThresholdRush = {
+		OnDamage = function(self, mobId, mob, gimmick)
+			if gimmick.Once and mob.GimmickState[gimmick] then return end
+			if mob.Health > mob.MaxHealth * (gimmick.Threshold or 0.5) then return end
+
+			mob.GimmickState[gimmick] = true
+
+			local animation = gimmick.Animation or "Rush"
+			for _, player in Players:GetPlayers() do
+				Framework:Fire("MobPlayAnim", player, mobId, animation)
+			end
+
+			-- Um token por arranque: com `Once` so existe um, mas sem ele um segundo
+			-- arranque teria o fim do primeiro apagando o dele no meio.
+			mob.RushToken = (mob.RushToken or 0) + 1
+			local token = mob.RushToken
+
+			GameClock.Delay(math.max(0, gimmick.MarkerTime or 0), function()
+				if self.ActiveMobs[mobId] ~= mob or mob.RushToken ~= token then return end
+
+				mob.RushScale = 1 + (gimmick.Amount or 0)
+				mob.CurrentSpeed = computeSpeed(self, mob)
+				broadcastSpeed(self, mobId, mob)
+
+				GameClock.Delay(math.max(0, gimmick.Duration or 0), function()
+					if self.ActiveMobs[mobId] ~= mob or mob.RushToken ~= token then return end
+
+					mob.RushScale = 1
+					mob.CurrentSpeed = computeSpeed(self, mob)
+					broadcastSpeed(self, mobId, mob)
+				end)
+			end)
 		end,
 	},
 
@@ -1113,6 +1183,7 @@ function MobService:SpawnWave(waveNumber)
 	local mobConfig = SharedConfig.Mob
 	local preset = self:getDifficulty()
 	local spawnList = WaveConfig.GetSpawns(waveNumber, preset.Name)
+	local modelSet = preset.ModelSet or mobConfig.DefaultModelSet
 	local healthScale = preset.HealthMultiplier * (preset.HealthGrowth ^ (waveNumber - 1))
 
 	--[[
@@ -1161,6 +1232,9 @@ function MobService:SpawnWave(waveNumber)
 		for _, spawnEntry in spawnList do
 			local entityDefinition = mobConfig.Entities[spawnEntry.Entity]
 			if entityDefinition then
+				-- Uma vez por entrada da wave, e nao por mob: a lista e a mesma para
+				-- todos deste tipo, e o que e por mob (`GimmickState`) e a outra tabela.
+				local gimmicks = mobConfig.GetGimmicks(modelSet, spawnEntry.Entity)
 				-- Sem o clima: ele entra em `computeSpeed`, para poder sair depois sem
 				-- levar junto o que os gimmicks somaram.
 				local baseSpeed = mobConfig.BaseSpeed * (entityDefinition.SpeedMultiplier or 1) * speedScale
@@ -1210,7 +1284,7 @@ function MobService:SpawnWave(waveNumber)
 						PathLength = route.smooth.length,
 						TurnDistances = route.turnDistances,
 						NextTurnIndex = 1,
-						Gimmicks = entityDefinition.Gimmicks or {},
+						Gimmicks = gimmicks,
 						GimmickState = {},
 						Reward = spawnEntry.Reward,
 					}
@@ -1223,6 +1297,18 @@ function MobService:SpawnWave(waveNumber)
 							Speed = if frozenUntil > GameClock.Now() then 0 else spawnSpeed,
 							MaxHealth = maxHealth,
 							Route = routeIndex,
+
+							--[[
+								De que pasta de `Assets.Entities.Difficulties` o cliente tira o
+								boneco. O nome da entidade continua sendo o mesmo em toda
+								dificuldade — e ele que carrega vida, velocidade e gimmick —, e so
+								a roupa muda.
+
+								Vai no payload em vez de o cliente perguntar a dificuldade porque
+								`Config.Difficulty` e de servidor: o que atravessa e o apelido do
+								conjunto, que e o nome de uma pasta que o cliente ja enxerga.
+							]]
+							ModelSet = modelSet,
 						})
 					end
 					GameClock.Wait(spawnEntry.SpawnDelay or 1)
@@ -1607,6 +1693,7 @@ function MobService:construct()
 	Framework:Listen("HitClientMob", function() end)
 	Framework:Listen("AttackVisual", function() end)
 	Framework:Listen("MobPlayAttack", function() end)
+	Framework:Listen("MobPlayAnim", function() end)
 	Framework:Listen("UpdateBaseHealth", function() end)
 
 	--[=[

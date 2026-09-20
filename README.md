@@ -1688,6 +1688,159 @@ ninguém.
 Do servidor, `ArrowService:Point(players, position)` manda só o `Vector3` e cada
 cliente monta a sua — é o caminho do comando `arrow` do Cmdr.
 
+## Inimigos
+
+### O elenco muda com a dificuldade, a partida não
+
+Os modelos dos inimigos vivem em `ReplicatedStorage.Shared.Assets.Entities.Difficulties.<conjunto>`,
+um conjunto por pasta. Hoje são dois: `Hard`, com os nove Redcliff, e `Easy`, com oito
+Astral.
+
+**É reskin por slot.** As nove entidades de `SharedConfig.Mob.Entities` continuam sendo
+a verdade da partida — vida, velocidade e gimmicks saem dali em qualquer dificuldade —, e
+o conjunto só diz que boneco desenhar no lugar de cada uma. É o que permite um segundo
+tema visual sem tocar na planilha de waves, no balanceamento nem no `IsBoss`.
+
+A única fresta nessa regra é o `ModelSet` de um gimmick — ver *O gimmick que só um
+conjunto tem*, mais abaixo.
+
+Quem traduz é `SharedConfig.Mob.ModelSets`, uma tabela `entidade -> modelo` por conjunto.
+Entidade que não está na tabela usa o próprio nome, que é o caso de oito dos nove no
+`Hard` — a exceção é o `WingedSquire`, que se chama `WingedRedcliff` como modelo desde
+que veio da planilha. Enquanto os dois nomes existirem, é essa linha que os liga.
+
+| Slot (`SPAWN_ORDER`) | Hard | Easy |
+| --- | --- | --- |
+| 1 | Traveler | AstralInitiate |
+| 2 | RedcliffPawn | AstralWizard |
+| 3 | RedcliffSquire | AstralKnight |
+| 4 | RedcliffGuard | AstralGuardia |
+| 5 | WallSmasher | AstralNecromancer |
+| 6 | CourageBearer | AstralSentry |
+| 7 | WingedSquire | AstralAdventurer |
+| 8 | RedcliffEnforcer | AstralAdventurer |
+| 9 | RedcliffChampion | AstralSentinel |
+
+A ordem do Easy saiu da régua que as parts `Workspace.Weakest` e `Workspace.Strongest`
+desenham: os oito modelos estão enfileirados entre elas, do mais fraco ao mais forte, e a
+fila casa degrau por degrau com o `SPAWN_ORDER`. **A régua é documentação de arte, e nada
+a lê em runtime** — quem quiser reordenar o elenco mexe na tabela acima, não nas parts.
+
+São oito modelos para nove slots, então um repete, e quem repete é o `AstralAdventurer`,
+no Enforcer. A conta é de leitura de tela: o Enforcer e o Champion aparecem juntos na
+última wave, então dar o modelo do chefe ao Enforcer tiraria do chefe o único momento em
+que ele tem que ser inconfundível. Repetir o degrau de baixo custa dois elites parecidos;
+repetir o de cima custaria o chefe.
+
+### Quem escolhe o conjunto, e por onde ele viaja
+
+O preset diz o seu em `Difficulty.ModelSet` (só o `Easy` tem um hoje; os outros caem no
+`Mob.DefaultModelSet`, que é o `Hard`). O `MobService:SpawnWave` lê isso uma vez por wave
+e manda o apelido do conjunto no payload do `SpawnClientMob`, junto do nome da entidade.
+
+O apelido atravessa em vez de o cliente perguntar a dificuldade porque `Config.Difficulty`
+é config de servidor: o que passa é o nome de uma pasta que o cliente já enxerga, e não a
+tabela de multiplicadores. E é o **apelido**, e não o nome do modelo já resolvido, para
+que o `Name` que chega ao cliente continue sendo o da entidade — `getAverageSpeed` e todo
+o resto do `MobController` falam dela, não do boneco.
+
+`MobController.resolveMobModel` desce uma escada de três degraus: conjunto pedido,
+conjunto padrão, `EnemyRig`. Conjunto incompleto é erro de arte, e a resposta certa para
+ele é o inimigo aparecer vestido de outro com um aviso no console — e não a partida parar.
+Era exatamente isso que o `or Mobs.CourageBearer` de antes não fazia: quando os modelos
+desceram uma pasta, ele passou a estourar (`CourageBearer is not a valid member of
+Folder`) em vez de cair no fallback, e **nenhum** inimigo nascia.
+
+### O gimmick que só um conjunto tem
+
+Um gimmick pode trazer um `ModelSet`, e aí ele só sai naquele conjunto. Sem a chave, ele
+vale em todo lugar. Quem filtra é `Mob.GetGimmicks(conjunto, entidade)`, chamada pelo
+`SpawnWave` **uma vez por entrada da wave**: a lista é a mesma para todos os mobs daquele
+tipo, e o que é por mob é o `GimmickState`, que continua sendo chaveado pela tabela do
+gimmick.
+
+É o que deixa **cada inimigo de cada elenco ter o seu golpe**. Vale para qualquer um dos
+nove slots, e não só para o chefe: um gimmick `Easy` no `WallSmasher` faz o Astral
+Necromancer ter algo que o Wall Smasher não tem. A fresta existe porque a roupa às vezes
+traz coisa junto — o Astral Sentinel tem uma animação `Rush` que o Redcliff Champion não
+tem. A exceção mora numa chave visível na entidade, e não num `if` dentro de um handler,
+justamente para que quem lê a entidade veja quais gimmicks não valem em todo lugar.
+
+Duas coisas que o nome não diz sozinho:
+
+- **O filtro é por elenco, não por dificuldade.** `ModelSet = "Hard"` alcança Medium,
+  Hard, Impossible, Nightmare e o Tutorial — todos os presets que vestem o Redcliff.
+- **Escopar um lado não desescopa o outro.** Um gimmick `Easy` novo *convive* com um
+  gimmick sem `ModelSet`, em vez de substituí-lo. Para um inimigo **trocar** de golpe
+  entre os elencos, os dois precisam de `ModelSet` — é o que os dois do chefe fazem.
+
+Hoje o quadro é este:
+
+| Entidade | Elenco Redcliff | Elenco Astral |
+| --- | --- | --- |
+| WallSmasher | `PerTurnSpeedMultiplier` | idem (sem escopo) |
+| CourageBearer | `PerTurnSpeedMultiplier` | idem (sem escopo) |
+| RedcliffChampion | `HealthThresholdStunRandomUnit` | `HealthThresholdRush` |
+
+#### `HealthThresholdRush` (o arranque do Astral Sentinel)
+
+Na metade da vida o chefe do `Easy` toca o `Rush` e dispara: **velocidade dobrada por 3
+segundos**, começando no marcador `Action` da animação. O campo é `Amount`, e ele entra
+como `RushScale = 1 + Amount` — então `1` é o dobro, e não `2`.
+
+O marcador **não é escutado no cliente**. Quem conta o tempo é o servidor, com o
+`MarkerTime` que a config traz medido do asset — 0,5667s dos 3,25s de
+`rbxassetid://98921075157550`. É o mesmo desenho do `AnimTime = 1.3` do gimmick de
+atordoamento do Champion, e pela mesma razão: velocidade é estado de partida, e estado de
+partida não nasce de um aviso de cliente. Numa sala de N jogadores seriam N avisos, cada
+um no seu ping, e bastaria um cliente adulterado para acelerar o chefe de todo mundo. O
+cliente toca a mesma animação no mesmo instante, então o arranque cai no quadro certo na
+tela sem nunca ter mandado nada de volta.
+
+> **Se o `Rush` for reexportado, o `MarkerTime` tem de ser remedido.** É o único lugar do
+> código que sabe de cor um número que mora dentro de um asset. Para remedir:
+> `KeyframeSequenceProvider:GetKeyframeSequenceAsync(id)` e procurar o `KeyframeMarker`
+> chamado `Action`.
+
+O arranque entra no `computeSpeed` como `mob.RushScale`, **fator próprio**, e não
+multiplicando o `SpeedScale` dos acúmulos nem o `CurrentSpeed` corrente. Pela regra de
+sempre: ele tem de sumir sozinho depois dos 3 segundos sem levar junto a lentidão de gelo
+que tenha entrado no meio dele.
+
+A animação avulsa chega ao cliente pelo evento `MobPlayAnim(mobId, nome)`, que substitui o
+`playAttackAnimation` hardcoded por um `playOneShotAnimation(mobId, nome)` — uma faixa por
+nome, guardada em `movement.oneShotTracks`, e o `applyTimeScale` alcança todas elas. Sem
+isso o `Rush` tocaria em ritmo de tela no 2x enquanto o servidor já teria dado o arranque.
+
+**Um chefe, um golpe.** O `HealthThresholdStunRandomUnit` do Champion dispara no mesmo
+50%, e por isso ele também é escopado — `ModelSet = "Hard"`. Sem isso o Sentinel tocava
+`Attack` e `Rush` ao mesmo tempo e ficava parado 1,3s (o `AnimTime` do atordoamento) logo
+quando o arranque começava, comendo ~0,73s dos 3 segundos. Hoje o Redcliff atordoa uma
+torre e o Astral dispara, e nenhum dos dois faz o do outro.
+
+### Contrato de um modelo novo
+
+Um modelo que entre em qualquer conjunto precisa de:
+
+- **Rig R6** com os nomes de parte de sempre (`Head`, `Torso`, `Left Arm`…) e
+  `HumanoidRootPart` como `PrimaryPart`. O `createEntity` desancora tudo menos a raiz,
+  joga o `Humanoid` fora e move o modelo pelo pivô.
+- **Uma animação de caminhada**: ou o par `SlowWalk` + `FastWalk` (o que faz o
+  `updateWalkAnimation` trocar de passada conforme a velocidade, como no Wall Smasher e no
+  Courage Bearer), ou um `Walk` sozinho. Sem nenhum dos dois, entra o `Entities.Walk`
+  genérico — os rigs são todos R6, então uma animação serve em qualquer um. O fallback
+  existe para o pior desfecho possível: o inimigo deslizando pelo mapa em T-pose.
+- **`Attack`**, se o slot tiver gimmick que toque ataque (hoje só o Champion).
+- **Caixa delimitadora compatível.** A altura pode variar à vontade (o `PathOffsetY` é
+  calculado em runtime a partir dela), mas modelo largo demais é apagado pelo
+  `checkIsOnGrid` no laço de movimento.
+
+> **Pendente no `Easy`:** sete dos oito Astral têm só o `KeyframeSequence` do Moon
+> Animator no `AnimSaves` e nenhum `Animation` publicado — estão todos no fallback
+> genérico. Só o `AstralSentinel` tem `Walk` próprio. Publicar as sete e pendurar o
+> `Animation` no modelo é trabalho de arte, e nada no código precisa mudar quando isso
+> acontecer: o `or` já prefere a do modelo.
+
 ## Unidades
 
 ### O golpe em quatro tempos (Berserker)
@@ -1797,6 +1950,47 @@ Highlight dele para a raiz do modelo — o mesmo caminho do congelamento do Fros
 Cada tique avisa a tela pelo `MobDamageTick` (número de dano e barra de vida no
 `MobController`): o `DamageMob` não fala com o cliente, e sem esse evento o fogo tirava
 vida sem nada aparecer.
+
+#### O tiro estoura onde cai
+
+`AOE = { Radius = 3 }`: o tiro cobra dos inimigos a até 3 studs da mira, pelo mesmo
+`elseif aoe` do `executeAttack` que o Rocket e a tripmine já usam — o centro é a posição
+prevista do alvo, que é onde o projétil vai bater.
+
+**A área espalha a queimadura, e não só o dano.** Quem acende o fogo é o `creditDamage`, e
+ele roda uma vez por alvo atingido, então numa fila apertada um tiro só põe quatro
+inimigos para queimar. Cada um queima por conta própria pelos 10 s: o `BurningUntil` é por
+mob, e a regra de não acumular continua valendo por inimigo, não por tiro. É a diferença
+real entre isto e a área do Rocket, que tem raio 2 e não deixa nada no alvo.
+
+Sem queda por alvo, de propósito — o raio é pequeno (3 contra os 6 da tripmine) e o
+cooldown é longo. Se precisar segurar, o lugar é o raio.
+
+#### O estouro mora no projétil, não no config
+
+O `PyreProjectile` traz dois attachments: o `Ball`, com os emitters **ligados** que fazem o
+rastro, e o `Explosion`, com os **desligados** que só saem no impacto. Emitter desligado
+não aparece sozinho — quem o faz aparecer é o `Emit` —, e é isso que deixa os dois grupos
+conviverem pendurados na mesma part.
+
+Quem dispara é o `ProjectileController`, no instante em que o tiro chega: um projétil que
+tenha um attachment chamado `Explosion` estoura ao aterrissar, e o que não tiver some como
+sempre. É do asset, e não de config: pendurar o attachment num projétil novo basta.
+
+Três coisas acontecem juntas — o rastro para de emitir, o estouro sai, e a casca fica
+invisível e ancorada. Sem apagar o rastro o projétil continuaria cuspindo fogo parado no
+lugar; sem sumir a casca a bolinha ficaria pairando no meio da explosão; sem ancorar ela
+cairia, porque o template vem com `Anchored = false` e o laço de voo acabou de soltá-la.
+
+A part só é destruída depois do maior `Lifetime` dos emitters do estouro — destruir junto
+com o `Emit` mataria as partículas antes de elas nascerem. Esse prazo é de **tela** e usa
+`task.delay`, e não o `GameClock`: `ParticleEmitter` não conhece a escala da partida, então
+o estouro dura os mesmos 2 s reais no 1x e no 2x.
+
+> **Chegar e bater não é a mesma coisa que estourar o prazo.** Só a chegada estoura; um
+> projétil que passou os 3 s de `MAX_FLIGHT_TIME` no ar sem alcançar ninguém some calado. E
+> o caminho de quem **atravessa** (`_flyThrough`) não estoura de jeito nenhum — ele não tem
+> um impacto só, tem uma linha.
 
 Custo (150), alcance (10) e cooldown (2,1s, logo acima da animação de 2,033s) são
 provisórios. A queimadura não cresce com upgrade nem clima; só a carta Fire Hazard

@@ -11,6 +11,7 @@ local Configs = Shared:WaitForChild("Config")
 local Assets = Shared:WaitForChild("Assets")
 
 local Mobs = Assets:WaitForChild("Entities")
+local MobSets = Mobs:WaitForChild("Difficulties")
 
 local SharedConfig = require(Configs.SharedConfig)
 local ClientConfig = require(Configs.Client)
@@ -63,6 +64,42 @@ local function shakeScreen()
 		)
 		camera.CFrame = camera.CFrame * CFrame.new(offset)
 	end)
+end
+
+--[=[
+	O modelo que este inimigo veste nesta partida.
+
+	Duas perguntas em uma: **de que pasta** (o conjunto que o servidor mandou, ou o
+	padrao) e **com que nome** (o `ModelSets` traduz o nome da entidade para o do
+	modelo -- ver `SharedConfig.Mob`). O nome da entidade nao muda por dificuldade,
+	entao tudo o mais no cliente continua falando dele.
+
+	Desce a escada ate achar alguma coisa: conjunto pedido, conjunto padrao,
+	`EnemyRig`. Um conjunto incompleto e um erro de arte, e a resposta certa para ele
+	e o inimigo aparecer vestido de outro com um aviso no console -- e nao a partida
+	parar. Era exatamente isso que o `or Mobs.CourageBearer` antigo nao fazia: com os
+	modelos uma pasta abaixo, ele estourava no lugar de cair no fallback.
+]=]
+local function resolveMobModel(setName : string?, entityName : string) : Instance?
+	local requested = setName and MobSets:FindFirstChild(setName) or nil
+	local fallback = MobSets:FindFirstChild(MobConfig.DefaultModelSet)
+
+	if requested then
+		local model = requested:FindFirstChild(MobConfig.GetModelName(requested.Name, entityName))
+		if model then return model end
+
+		warn(string.format("[MobController]: '%s' nao tem modelo no conjunto '%s'; usando o '%s'.",
+			entityName, requested.Name, MobConfig.DefaultModelSet))
+	end
+
+	if fallback then
+		local model = fallback:FindFirstChild(MobConfig.GetModelName(fallback.Name, entityName))
+		if model then return model end
+	end
+
+	warn(string.format("[MobController]: '%s' nao tem modelo em conjunto nenhum; usando o EnemyRig.", entityName))
+
+	return Mobs:FindFirstChild("EnemyRig")
 end
 
 local function getAverageSpeed(mobName)
@@ -376,8 +413,11 @@ function MobController:createEntity(entityData)
 	local speed = entityData.Speed or 6
 	local mobId = entityData.Id
 
-	local mobModel = Mobs:FindFirstChild(mobName) or Mobs.CourageBearer
-	if not mobModel then mobModel = Mobs.EnemyRig end
+	local mobModel = resolveMobModel(entityData.ModelSet, mobName)
+	if not mobModel then
+		warn(string.format("[MobController]: sem modelo nenhum para '%s'; nao vou desenhar.", mobName))
+		return
+	end
 
 	local mobClone = mobModel:Clone()
 	mobClone:SetAttribute("MobID", mobId)
@@ -474,7 +514,16 @@ function MobController:createEntity(entityData)
 
 	local slowWalk = mobModel:FindFirstChild("SlowWalk")
 	local fastWalk = mobModel:FindFirstChild("FastWalk")
-	local walkAnim = mobModel:FindFirstChild("Walk")
+	--[[
+		A caminhada generica de `Assets.Entities.Walk` fecha a escada.
+
+		Os rigs sao todos R6 com os mesmos nomes de parte, entao uma animacao serve
+		em qualquer um deles. O que ela evita e o pior desfecho possivel para um
+		modelo cuja animacao ainda nao foi publicada: o inimigo **deslizando** pelo
+		mapa em T-pose. Metade do elenco Astral esta nesse estado hoje -- tem o
+		`KeyframeSequence` no `AnimSaves` do Moon Animator e nenhum `Animation`.
+	]]
+	local walkAnim = mobModel:FindFirstChild("Walk") or Mobs:FindFirstChild("Walk")
 
 	local animationController = mobClone:FindFirstChild("AnimationController") or Instance.new("AnimationController", mobClone)
 	local animator = animationController:FindFirstChildOfClass("Animator") or Instance.new("Animator", animationController)
@@ -510,22 +559,45 @@ function MobController:updateWalkAnimation(mobId)
 	targetTrack:AdjustSpeed(self.TimeScale or 1)
 end
 
-function MobController:playAttackAnimation(mobId)
+--[=[
+	Toca uma animacao avulsa do modelo, pelo nome, por cima da caminhada.
+
+	Uma so por nome, guardada em `oneShotTracks` e recarregada nunca: quem pede duas
+	vezes toca a mesma faixa de novo, e nao duas faixas sobrepostas.
+
+	Modelo sem a animacao sai calado. E o caso normal, e nao um erro: o gimmick que
+	pede o `Rush` so vale no conjunto que tem a animacao (ver `Mob.GetGimmicks`), e
+	quem chega aqui sem ela ja e o caminho de quem misturou conjunto com gimmick. O
+	`IsA` esta ai porque o `FindFirstChild` casa por nome, e uma Part chamada `Rush`
+	passaria direto ate estourar no `LoadAnimation`.
+]=]
+function MobController:playOneShotAnimation(mobId : string, animationName : string)
 	local movement = self.MobMovement[mobId]
 	local mob = movement and movement.model
 	if not mob or not mob.Parent then return end
 
-	if not movement.attackTrack then
-		local attackAnim = mob:FindFirstChild("Attack")
+	movement.oneShotTracks = movement.oneShotTracks or {}
+	local track = movement.oneShotTracks[animationName]
+
+	if not track then
+		local animation = mob:FindFirstChild(animationName)
+		if not (animation and animation:IsA("Animation")) then return end
+
 		local animationController = mob:FindFirstChild("AnimationController")
 		local animator = animationController and animationController:FindFirstChildOfClass("Animator")
-		if not attackAnim or not animator then return end
-		movement.attackTrack = animator:LoadAnimation(attackAnim)
-		movement.attackTrack.Priority = Enum.AnimationPriority.Action
+		if not animator then return end
+
+		track = animator:LoadAnimation(animation)
+		track.Priority = Enum.AnimationPriority.Action
+		movement.oneShotTracks[animationName] = track
 	end
 
-	movement.attackTrack:Play(0.1)
-	movement.attackTrack:AdjustSpeed(self.TimeScale or 1)
+	track:Play(0.1)
+	track:AdjustSpeed(self.TimeScale or 1)
+end
+
+function MobController:playAttackAnimation(mobId)
+	self:playOneShotAnimation(mobId, "Attack")
 end
 
 --[=[
@@ -537,11 +609,18 @@ end
 ]=]
 function MobController:applyTimeScale(scale : number)
 	for _, data in self.MobMovement do
-		for _, key in { "slowTrack", "fastTrack", "walkTrack", "attackTrack" } do
+		for _, key in { "slowTrack", "fastTrack", "walkTrack" } do
 			local track = data[key]
 			if track then
 				track:AdjustSpeed(scale)
 			end
+		end
+
+		-- As avulsas entram aqui pelo mesmo motivo das de caminhada: o `Rush` dura
+		-- 3,25s de partida, e no 2x ele tem de caber em 1,6s de tela -- senao o
+		-- arranque que o servidor ja deu sai antes de a animacao chegar nele.
+		for _, track in data.oneShotTracks or {} do
+			track:AdjustSpeed(scale)
 		end
 	end
 end
@@ -729,6 +808,10 @@ function MobController:construct()
 
 	Framework:Listen("MobPlayAttack", function(mobId)
 		self:playAttackAnimation(mobId)
+	end)
+
+	Framework:Listen("MobPlayAnim", function(mobId, animationName)
+		self:playOneShotAnimation(mobId, animationName)
 	end)
 
 	Framework:Listen("KillClientMob", function(mobId)
