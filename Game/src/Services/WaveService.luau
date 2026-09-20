@@ -427,6 +427,16 @@ function WaveService:onRoundEnded(won : boolean)
 				if tutorialService then
 					tutorialService:Complete(player)
 				end
+
+				-- A vitoria tambem e o passo 10 do funil de onboarding, e e ela que diz
+				-- ao `TutorialMatchService` que a saida deste jogador nao e abandono.
+				tutorialMatch:NoteWon()
+
+				local analytics = Framework:Get("AnalyticsService", false, false)
+
+				if analytics then
+					analytics:LogFunnelStep(player, "MatchWon")
+				end
 			end
 
 			--[[

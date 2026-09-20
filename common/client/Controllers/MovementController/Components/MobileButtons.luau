@@ -33,6 +33,22 @@ local Player = Players.LocalPlayer
 	ScreenGuis de insets diferentes nao atrapalham a conta: o `AbsolutePosition` de
 	todos ja sai no mesmo espaco (o inset entra no da propria ScreenGui), e e nesse
 	espaco que o `GetGuiObjectsAtPosition` responde.
+
+	---
+
+	**O cluster nao e mais so do movimento.** Correr e dash sao dois inquilinos entre
+	outros: qualquer controller registra um botao aqui com `:register(nome, config)` e
+	o tira com `:unregister(nome)`. Quem faz isso hoje, alem do `MovementController`,
+	e o `UnitPlacementController` -- `ROTATE` e `LOCK` aparecem junto dos outros dois
+	enquanto ha uma unidade em mao no celular.
+
+	A razao de eles morarem aqui, e nao numa GUI propria, e o solucionador de vagas:
+	quatro circulos em volta do mesmo polegar tem de dividir as seis vagas sem se
+	sobrepor nem cair embaixo da HUD, e isso e uma conta so. Duas GUIs independentes
+	se resolveriam cada uma por si e se encontrariam na tela.
+
+	Como o `Me` registra **todo** ModuleScript sob `Controllers`, chega-se aqui por
+	`Framework:Get("MobileButtons")` de qualquer lugar das duas places.
 ]=]
 local module = {}
 
@@ -62,7 +78,15 @@ local ACTIVE_COLOR = Color3.fromRGB(255, 200, 60)
 --[[ STATE ]]
 local gui : ScreenGui? = nil
 local buttons = {}
+
+-- As do movimento (Run.Changed), soltas pelo `stop`.
 local connections = {}
+
+-- As do cluster (o laco de layout), soltas quando o ultimo botao sai.
+local loopConnections = {}
+
+-- Declaradas aqui porque `register` as chama antes de elas serem definidas.
+local ensureLoop, stopLoop
 
 --[[ HELPERS ]]
 
@@ -210,35 +234,35 @@ local function ensureGui() : ScreenGui?
 	gui.ScreenInsets = Enum.ScreenInsets.None
 	gui.Enabled = false
 
-	buttons.Dash = { instance = createButton("Dash", "DASH"), action = function() Dash:tryDash() end }
-	buttons.Run = { instance = createButton("Run", "RUN"), action = function() Run:toggle() end }
-
-	for _, entry in buttons do
-		entry.instance.Parent = gui
-	end
-
 	gui.Parent = playerGui
 
 	return gui
 end
 
-local function setRunVisual(running : boolean)
-	local entry = buttons.Run
+--[=[
+	O realce de "este botao esta ligado": a mesma cor e o mesmo peso que o `RUN`
+	aceso sempre teve, agora disponivel a qualquer registro.
+
+	Quem usa hoje e o `RUN` (correndo) e o `LOCK` (fantasma travado). Sao os dois
+	botoes de estado do cluster; `DASH` e `ROTATE` disparam e voltam.
+]=]
+function module:setActive(name : string, active : boolean)
+	local entry = buttons[name]
 	if not entry then return end
 
 	local button = entry.instance
-	local color = running and ACTIVE_COLOR or IDLE_COLOR
+	local color = active and ACTIVE_COLOR or IDLE_COLOR
 
-	button.Circle.BackgroundTransparency = running and 0.3 or 0.55
+	button.Circle.BackgroundTransparency = active and 0.3 or 0.55
 	button.Circle.UIStroke.Color = color
-	button.Circle.UIStroke.Transparency = running and 0 or 0.35
+	button.Circle.UIStroke.Transparency = active and 0 or 0.35
 	button.Label.TextColor3 = color
 end
 
 local lastCooldown = -1
 local function updateDashCooldown()
 	local entry = buttons.Dash
-	if not entry then return end
+	if not entry or not entry.instance.Parent then return end
 
 	local alpha = Dash:getCooldownAlpha()
 	if math.abs(alpha - lastCooldown) < 0.01 and not (alpha == 0 and lastCooldown ~= 0) then return end
@@ -315,11 +339,14 @@ local function isAreaFree(rect, memo) : boolean
 	return true
 end
 
--- As vagas em volta do pulo, em ordem de preferencia de cada botao.
-local SLOT_ORDER = {
-	Dash = { "Left", "Up", "Diagonal", "FarLeft", "FarUp", "LeftUp" },
-	Run = { "Up", "Diagonal", "Left", "FarUp", "LeftUp", "FarLeft" },
-}
+--[[
+	As vagas em volta do pulo, em ordem de preferencia de cada botao.
+
+	Cada registro traz a sua; esta e a ordem de quem nao trouxer. As listas dos
+	quatro botoes de hoje comecam em vagas diferentes de proposito -- assim o caso
+	comum se resolve sem o solucionador ter de desempatar nada.
+]]
+local DEFAULT_SLOT_ORDER = { "Left", "Up", "Diagonal", "FarLeft", "FarUp", "LeftUp" }
 
 local function buildSlots(jumpCenter : Vector2, jumpSize : number, size : number, gap : number)
 	local reach = jumpSize / 2 + gap + size / 2
@@ -371,11 +398,23 @@ local function applyPlacement(name : string, center : Vector2?)
 end
 
 --[=[
-	Acha a melhor dupla de vagas: o dash tem prioridade (e o botao de reflexo), e
-	para cada vaga dele a corrida pega a primeira livre que nao encoste nele. Sem
-	dupla, fica o que couber.
+	Distribui os botoes registrados pelas vagas livres.
+
+	Busca em profundidade, e nao ganancia. A diferenca aparece justamente no caso
+	apertado: a primeira vaga da lista do dash pode ser a unica que serve ao `RUN`,
+	e um laco ganancioso a tomaria e deixaria o outro botao fora da tela. A busca
+	desiste dessa vaga e tenta a seguinte quando isso rende **mais** botoes na tela.
+
+	Cada nivel tem tambem o ramo de **nao** colocar aquele botao -- e o que permite
+	uma solucao parcial quando a HUD nao deixa espaco para todos. Como so se troca o
+	melhor por um estritamente maior, a primeira solucao encontrada com aquele numero
+	e a que vence, e ela e a que respeita a ordem de prioridade e a lista de vagas de
+	cada um.
+
+	O espaco e minusculo (seis vagas, um punhado de botoes) e o `free` e memoizado,
+	entao a conta inteira custa menos que a medida de tela que a alimenta.
 ]=]
-local function solve(jumpCenter : Vector2, jumpSize : number, slots)
+local function solve(jumpCenter : Vector2, jumpSize : number, slots, order : { string })
 	local memo = {}
 	local freeCache = {}
 
@@ -390,42 +429,81 @@ local function solve(jumpCenter : Vector2, jumpSize : number, slots)
 		return result
 	end
 
-	local function apart(a : string, b : string) : boolean
-		return not circlesTouch(slots[a], layout.size, slots[b], layout.size, layout.gap / 2)
-	end
+	local taken = {}        -- [vaga] = nome
+	local chosen = {}       -- [nome] = vaga
+	local best, bestCount = nil, -1
 
-	local dashOnly, runOnly = nil, nil
-
-	for _, dashSlot in SLOT_ORDER.Dash do
-		if not free(dashSlot) then continue end
-		dashOnly = dashOnly or dashSlot
-
-		for _, runSlot in SLOT_ORDER.Run do
-			if runSlot ~= dashSlot and free(runSlot) and apart(dashSlot, runSlot) then
-				return slots[dashSlot], slots[runSlot]
+	local function conflicts(slotName : string) : boolean
+		for otherSlot in taken do
+			if circlesTouch(slots[slotName], layout.size, slots[otherSlot], layout.size, layout.gap / 2) then
+				return true
 			end
 		end
+		return false
 	end
 
-	if dashOnly then
-		return slots[dashOnly], nil
-	end
+	local function search(index : number, placed : number)
+		-- Todos couberam: nao ha nada melhor a procurar.
+		if bestCount == #order then return end
 
-	for _, runSlot in SLOT_ORDER.Run do
-		if free(runSlot) then
-			runOnly = runSlot
-			break
+		if index > #order then
+			if placed > bestCount then
+				best, bestCount = table.clone(chosen), placed
+			end
+			return
 		end
+
+		local name = order[index]
+		local entry = buttons[name]
+		local preference = (entry and entry.slots) or DEFAULT_SLOT_ORDER
+
+		for _, slotName in preference do
+			if slots[slotName] and not taken[slotName] and free(slotName) and not conflicts(slotName) then
+				taken[slotName] = name
+				chosen[name] = slotName
+
+				search(index + 1, placed + 1)
+
+				taken[slotName] = nil
+				chosen[name] = nil
+
+				if bestCount == #order then return end
+			end
+		end
+
+		-- Este fica de fora; talvez os de baixo caibam.
+		search(index + 1, placed)
 	end
 
-	return nil, runOnly and slots[runOnly] or nil
+	search(1, 0)
+
+	return best or {}
+end
+
+--- Os nomes registrados, do mais importante para o menos. Empate cai no nome, para
+--- a ordem nao depender da iteracao de uma tabela com chave.
+local function registeredOrder() : { string }
+	local order = {}
+	for name in buttons do
+		table.insert(order, name)
+	end
+
+	table.sort(order, function(a, b)
+		local pa, pb = buttons[a].priority, buttons[b].priority
+		if pa ~= pb then return pa < pb end
+		return a < b
+	end)
+
+	return order
 end
 
 local function refreshLayout(force : boolean?)
 	if not gui then return end
 
+	local order = registeredOrder()
+
 	local jump = findJumpButton()
-	if not jump or not isShown(jump) or not Run.humanoid then
+	if #order == 0 or not jump or not isShown(jump) then
 		gui.Enabled = false
 		hideAll()
 		layout.key = nil
@@ -436,14 +514,27 @@ local function refreshLayout(force : boolean?)
 
 	local jumpSize = math.min(jump.AbsoluteSize.X, jump.AbsoluteSize.Y)
 	local jumpCenter = jump.AbsolutePosition + jump.AbsoluteSize / 2
-	local key = `{math.round(jumpCenter.X)}:{math.round(jumpCenter.Y)}:{jumpSize}:{gui.AbsoluteSize.X}:{gui.AbsoluteSize.Y}`
+	local key = `{math.round(jumpCenter.X)}:{math.round(jumpCenter.Y)}:{jumpSize}:{gui.AbsoluteSize.X}:{gui.AbsoluteSize.Y}:{#order}`
 
 	layout.size = math.round(jumpSize * BUTTON_SCALE)
 	layout.gap = math.max(MIN_GAP, math.round(jumpSize * GAP_SCALE))
 
-	-- Nada mudou de tamanho: se as vagas atuais continuam livres, fica tudo onde esta,
-	-- sem o botao pular de lugar a toa.
-	if not force and key == layout.key and layout.placed.Dash and layout.placed.Run then
+	--[[
+		Nada mudou de tamanho e todo mundo esta na tela: se as vagas de agora
+		continuam livres, fica tudo onde esta, sem o botao pular de lugar a toa.
+
+		A contagem entra na chave porque registrar ou tirar um botao muda o problema
+		mesmo com a tela igual -- sem ela, o `ROTATE` entrando nao redistribuiria nada.
+	]]
+	local allPlaced = true
+	for _, name in order do
+		if not layout.placed[name] then
+			allPlaced = false
+			break
+		end
+	end
+
+	if not force and key == layout.key and allPlaced then
 		local memo = {}
 		local stillFree = true
 		for _, center in layout.placed do
@@ -457,53 +548,169 @@ local function refreshLayout(force : boolean?)
 
 	layout.key = key
 
-	local dashCenter, runCenter = solve(jumpCenter, jumpSize, buildSlots(jumpCenter, jumpSize, layout.size, layout.gap))
-	applyPlacement("Dash", dashCenter)
-	applyPlacement("Run", runCenter)
+	local slots = buildSlots(jumpCenter, jumpSize, layout.size, layout.gap)
+	local assignment = solve(jumpCenter, jumpSize, slots, order)
+
+	for _, name in order do
+		local slotName = assignment[name]
+		applyPlacement(name, slotName and slots[slotName] or nil)
+	end
+end
+
+--[[ REGISTRO ]]
+
+--[=[
+	Poe um botao no cluster.
+
+	`config`:
+	  - `Text`        rotulo, em caixa alta (`DASH`, `LOCK`)
+	  - `OnActivate`  chamada no **toque**, e nao no soltar
+	  - `Priority`    menor escolhe vaga primeiro
+	  - `Slots`       ordem de preferencia de vagas; sem isto, a padrao
+	  - `OnHeartbeat` opcional, por quadro, para quem desenha estado continuo
+
+	Registrar o mesmo nome duas vezes substitui o anterior, o que faz de `register`
+	a chamada segura de repetir num `begin` que roda a cada respawn.
+]=]
+function module:register(name : string, config)
+	if not UserInputService.TouchEnabled then return end
+	if not ensureGui() then return end
+
+	self:unregister(name)
+
+	local instance = createButton(name, config.Text or name:upper())
+	instance.Parent = gui
+
+	buttons[name] = {
+		instance = instance,
+		action = config.OnActivate,
+		priority = config.Priority or 100,
+		slots = config.Slots,
+		heartbeat = config.OnHeartbeat,
+	}
+
+	ensureLoop()
+	refreshLayout(true)
+end
+
+function module:unregister(name : string)
+	local entry = buttons[name]
+	if not entry then return end
+
+	buttons[name] = nil
+	layout.placed[name] = nil
+	entry.instance:Destroy()
+
+	--[[
+		Sai da tela **e** devolve a vaga. Sem o `force` o atalho acima veria a chave
+		mudada e redistribuiria mesmo assim, mas por um motivo lateral; aqui e
+		explicito porque tirar um botao e justamente quando os outros podem subir
+		para uma vaga melhor.
+	]]
+	refreshLayout(true)
+
+	if next(buttons) == nil then
+		stopLoop()
+		if gui then gui.Enabled = false end
+	end
 end
 
 --[[ LIFECYCLE ]]
 
-function module:begin(character)
-	-- Aparelho sem toque nunca tem botao de pulo; nao ha o que montar.
-	if not UserInputService.TouchEnabled then return end
+--[=[
+	O laco do cluster: pertence a ele, e nao a quem registrou.
 
-	self:stop()
-
-	if not ensureGui() then return end
-
-	setRunVisual(Run.isRunning)
-	table.insert(connections, Run.Changed.Event:Connect(setRunVisual))
+	Enquanto houver um botao registrado ele remede a tela de tempos em tempos -- e o
+	que faz o botao fugir de um painel que abriu por cima da vaga dele. Liga no
+	primeiro registro e desliga no ultimo.
+]=]
+function ensureLoop()
+	if loopConnections[1] then return end
 
 	local elapsed = math.huge
-	table.insert(connections, RunService.Heartbeat:Connect(function(dt)
-		updateDashCooldown()
+	table.insert(loopConnections, RunService.Heartbeat:Connect(function(dt)
+		for _, entry in buttons do
+			if entry.heartbeat then
+				entry.heartbeat()
+			end
+		end
 
 		elapsed += dt
-		local interval = (layout.placed.Dash and layout.placed.Run) and CHECK_INTERVAL or HIDDEN_CHECK_INTERVAL
-		if elapsed < interval then return end
+
+		local everyonePlaced = true
+		for name in buttons do
+			if not layout.placed[name] then
+				everyonePlaced = false
+				break
+			end
+		end
+
+		if elapsed < (everyonePlaced and CHECK_INTERVAL or HIDDEN_CHECK_INTERVAL) then return end
 		elapsed = 0
 
 		refreshLayout()
 	end))
 
 	-- Girar a tela ou trocar o tamanho do pulo pede a busca na hora.
-	table.insert(connections, gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		refreshLayout(true)
+	if gui then
+		table.insert(loopConnections, gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+			refreshLayout(true)
+		end))
+	end
+end
+
+function stopLoop()
+	for _, connection in loopConnections do
+		connection:Disconnect()
+	end
+	table.clear(loopConnections)
+end
+
+--[=[
+	Os dois botoes do movimento entram aqui, e nao no `register` de fora, porque sao
+	os unicos que dependem do personagem: eles nascem com ele e morrem com ele.
+]=]
+function module:begin(character)
+	-- Aparelho sem toque nunca tem botao de pulo; nao ha o que montar.
+	if not UserInputService.TouchEnabled then return end
+
+	self:stop()
+
+	self:register("Dash", {
+		Text = "DASH",
+		Priority = 1,
+		Slots = { "Left", "Up", "Diagonal", "FarLeft", "FarUp", "LeftUp" },
+		OnActivate = function() Dash:tryDash() end,
+		OnHeartbeat = updateDashCooldown,
+	})
+
+	self:register("Run", {
+		Text = "RUN",
+		Priority = 2,
+		Slots = { "Up", "Diagonal", "Left", "FarUp", "LeftUp", "FarLeft" },
+		OnActivate = function() Run:toggle() end,
+	})
+
+	self:setActive("Run", Run.isRunning)
+	table.insert(connections, Run.Changed.Event:Connect(function(running)
+		self:setActive("Run", running)
 	end))
 end
 
+--[=[
+	Tira o movimento do cluster. O que outros controllers registraram **fica**: um
+	respawn no meio de um posicionamento nao deve levar o `ROTATE` junto.
+]=]
 function module:stop()
 	for _, connection in connections do
 		connection:Disconnect()
 	end
 	table.clear(connections)
 
-	if gui then
-		gui.Enabled = false
-		hideAll()
-		layout.key = nil
-	end
+	self:unregister("Dash")
+	self:unregister("Run")
+
+	lastCooldown = -1
 end
 
 return module

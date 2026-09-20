@@ -83,6 +83,22 @@ local function toViewportPoint(position : Vector2) : Vector2
 	return position - getViewportOriginOffset()
 end
 
+--[=[
+	A posicao de um `InputObject` no espaco que o raio da camera espera.
+
+	Publica porque nem todo mundo consome toque pelo `onPointerAction`: o
+	posicionamento no celular escuta o toque cru pelo `ContextActionService` (ele
+	precisa do arrasto, e nao so do tap) e precisa da mesma conversao para mirar no
+	lugar certo.
+
+	Cuidado ao misturar os dois espacos: `Camera:WorldToViewportPoint` responde
+	**neste** espaco, e `PlayerGui:GetGuiObjectsAtPosition` responde no **outro**, o
+	da interface -- que e o de `InputObject.Position`, antes desta conversao.
+]=]
+function PointerUtil.toViewportPoint(position : Vector2) : Vector2
+	return toViewportPoint(position)
+end
+
 --[[
 	Um toque so vira "acao" se o dedo mal andou e saiu rapido. Arrastar a tela e
 	como o jogador gira a camera no celular, e um arrasto nao pode virar um clique

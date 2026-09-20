@@ -3,6 +3,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
 local PhysicsService = game:GetService("PhysicsService")
 
@@ -437,135 +438,73 @@ end
 	de tamanho existem so para os extremos -- um alvo de toque nao pode encolher
 	abaixo do dedo nem virar um cartaz numa tela grande.
 ]]
-local TOUCH_PANEL_SIZE = UDim2.fromScale(0.2, 0.46)
-local TOUCH_PANEL_POSITION = UDim2.fromScale(0.98, 0.78)
--- O minimo sai de tras para frente: 190px de altura e o que faz cada botao passar
--- de ~49px, que e o alvo de toque confortavel numa tela de celular deitado.
-local TOUCH_PANEL_MIN_SIZE = Vector2.new(140, 190)
-local TOUCH_PANEL_MAX_SIZE = Vector2.new(280, 320)
+--[[ POSICIONAMENTO NO CELULAR ]]
 
-local TOUCH_BUTTON_SIZE = UDim2.fromScale(1, 0.26)
-local TOUCH_BUTTON_MAX_TEXT = 22
-local TOUCH_HINT_SIZE = UDim2.fromScale(1, 0.16)
-local TOUCH_HINT_MAX_TEXT = 15
+--[[
+	O painel `ROTATE`/`PLACE`/`CANCEL` que ficava no canto direito saiu.
 
-local TOUCH_CONFIRM_COLOR = Color3.fromRGB(60, 175, 85)
-local TOUCH_CONFIRM_BLOCKED_COLOR = Color3.fromRGB(95, 100, 105)
-local TOUCH_ROTATE_COLOR = Color3.fromRGB(55, 105, 190)
-local TOUCH_CANCEL_COLOR = Color3.fromRGB(185, 60, 60)
+	Ele custava caro em tela -- um retangulo de ~190px de altura em cima do mapa,
+	justamente onde o jogador precisa enxergar o fantasma e o circulo de alcance --
+	e falava um idioma que nao era o do resto dos controles de toque do jogo. No
+	lugar dele ficaram dois circulos no mesmo cluster do `DASH` e do `RUN`
+	(`MobileButtons`), e a confirmacao virou um gesto.
 
-local function createTouchButton(text : string, color : Color3, order : number)
-	local button = Instance.new("TextButton")
-	button.Name = text
-	button.Size = TOUCH_BUTTON_SIZE
-	button.BackgroundColor3 = color
-	button.BorderSizePixel = 0
-	button.AutoButtonColor = true
-	button.Text = text
-	button.TextColor3 = Color3.fromRGB(255, 255, 255)
-	button.TextScaled = true
-	button.Font = Enum.Font.GothamBold
-	button.LayoutOrder = order
+	| antes | agora |
+	| `ROTATE` no painel | botao `ROTATE` no cluster |
+	| `PLACE` no painel | dois toques no fantasma |
+	| `CANCEL` no painel | tocar de novo a carta equipada |
+	| (nao existia) | botao `LOCK` |
 
-	-- TextScaled sozinho estica a fonte ate encostar nas bordas; o teto segura o
-	-- texto num tamanho de leitura e deixa a sobra virar respiro.
-	local textSize = Instance.new("UITextSizeConstraint")
-	textSize.MaxTextSize = TOUCH_BUTTON_MAX_TEXT
-	textSize.Parent = button
+	O aviso de "nao da para colocar aqui" era a cor do botao `PLACE`; agora e so o
+	Highlight do fantasma, que ja pintava de verde e vermelho o tempo todo.
+]]
 
-	local padding = Instance.new("UIPadding")
-	padding.PaddingLeft = UDim.new(0.08, 0)
-	padding.PaddingRight = UDim.new(0.08, 0)
-	padding.Parent = button
+--- Nomes no cluster. Constantes porque registrar e desregistrar sao dois lugares.
+local ROTATE_BUTTON = "Rotate"
+local LOCK_BUTTON = "Lock"
 
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0.18, 0)
-	corner.Parent = button
+--- A acao do `ContextActionService` que toma o arrasto da camera.
+local TOUCH_ACTION = "UnitPlacementTouch"
 
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(15, 15, 20)
-	stroke.Thickness = 2
-	stroke.Transparency = 0.35
-	stroke.Parent = button
+--[[
+	Acima da camera.
 
-	return button
-end
+	O pan de toque da camera padrao e ligado pelo `PlayerModule` por
+	`ContextActionService`, entao ganhar dela e uma questao de prioridade -- e nao
+	de desligar modulo nenhum, que quebraria o dia em que a Roblox trocar o
+	`PlayerModule` por baixo.
+]]
+local TOUCH_ACTION_PRIORITY = Enum.ContextActionPriority.High.Value
 
---[=[
-	Monta o painel e devolve a ScreenGui junto do botao de confirmar, que o loop de
-	posicionamento apaga e acende conforme o lugar aceita a unidade ou nao.
+--[[
+	Um toque so vira "tap" se o dedo mal andou e saiu rapido -- os mesmos numeros do
+	`PointerUtil`, repetidos aqui porque la eles sao locais e a conta de double tap
+	e feita neste arquivo.
+]]
+local TAP_MAX_MOVEMENT = 20
+local TAP_MAX_DURATION = 0.6
 
-	`confirmText` existe para o Zippers: la o botao nao esta colocando nada, e
-	"PLACE" num movimento diria ao jogador que ele vai gastar uma unidade nova.
-]=]
-local function createTouchControls(onRotate : () -> (), onConfirm : () -> (), onCancel : () -> (), confirmText : string?)
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "UnitPlacementTouch"
-	screenGui.ResetOnSpawn = false
-	screenGui.IgnoreGuiInset = true
-	-- Acima da HUD: o painel so existe enquanto ha unidade em mao, e nesse momento
-	-- ele e o que o jogador precisa alcancar.
-	screenGui.DisplayOrder = 100
-	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+--[[
+	O que separa dois toques de um double tap: tem de ser rapido e no mesmo lugar.
 
-	local container = Instance.new("Frame")
-	container.Name = "Buttons"
-	container.AnchorPoint = Vector2.new(1, 1)
-	container.Position = TOUCH_PANEL_POSITION
-	container.Size = TOUCH_PANEL_SIZE
-	container.BackgroundTransparency = 1
-	container.Parent = screenGui
+	`DOUBLE_TAP_RADIUS` e o que impede o jogador de colocar a unidade sem querer
+	enquanto so reposiciona. Destravado, o primeiro toque ja leva o fantasma para
+	onde o dedo encostou -- entao "os dois toques perto um do outro" e exatamente a
+	mesma coisa que "os dois toques no fantasma", so que medida sem depender de o
+	fantasma ja ter chegado la (ele persegue o alvo por lerp, e no quadro do toque
+	ainda esta a caminho).
+]]
+local DOUBLE_TAP_WINDOW = 0.45
+local DOUBLE_TAP_RADIUS = 55
 
-	local sizeLimits = Instance.new("UISizeConstraint")
-	sizeLimits.MinSize = TOUCH_PANEL_MIN_SIZE
-	sizeLimits.MaxSize = TOUCH_PANEL_MAX_SIZE
-	sizeLimits.Parent = container
+--[[
+	Quao perto do fantasma um toque tem de cair para contar como "nele", em pixels.
 
-	local layout = Instance.new("UIListLayout")
-	layout.FillDirection = Enum.FillDirection.Vertical
-	layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
-	layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0.02, 0)
-	layout.Parent = container
-
-	local hint = Instance.new("TextLabel")
-	hint.Name = "Hint"
-	hint.Size = TOUCH_HINT_SIZE
-	hint.BackgroundTransparency = 1
-	hint.Text = "Tap the map\nto move"
-	hint.TextColor3 = Color3.fromRGB(255, 255, 255)
-	hint.TextScaled = true
-	hint.Font = Enum.Font.GothamMedium
-	hint.LayoutOrder = 0
-	hint.Parent = container
-
-	local hintTextSize = Instance.new("UITextSizeConstraint")
-	hintTextSize.MaxTextSize = TOUCH_HINT_MAX_TEXT
-	hintTextSize.Parent = hint
-
-	local hintStroke = Instance.new("UIStroke")
-	hintStroke.Color = Color3.fromRGB(0, 0, 0)
-	hintStroke.Thickness = 2
-	hintStroke.Transparency = 0.2
-	hintStroke.Parent = hint
-
-	local rotateButton = createTouchButton("ROTATE", TOUCH_ROTATE_COLOR, 1)
-	rotateButton.Parent = container
-	rotateButton.Activated:Connect(onRotate)
-
-	local confirmButton = createTouchButton(confirmText or "PLACE", TOUCH_CONFIRM_COLOR, 2)
-	confirmButton.Parent = container
-	confirmButton.Activated:Connect(onConfirm)
-
-	local cancelButton = createTouchButton("CANCEL", TOUCH_CANCEL_COLOR, 3)
-	cancelButton.Parent = container
-	cancelButton.Activated:Connect(onCancel)
-
-	screenGui.Parent = Player:WaitForChild("PlayerGui")
-
-	return screenGui, confirmButton
-end
+	So vale travado, que e quando o toque nao move mais nada e o double tap precisa
+	mesmo mirar. A medida sai do tamanho do fantasma na tela (ele muda com a
+	distancia da camera), com um piso confortavel para o dedo.
+]]
+local GHOST_TAP_MIN_RADIUS = 60
 
 local UnitPlacementController = {
 	Controllers = {
@@ -999,7 +938,6 @@ end
 	| `IgnoreModel` | a torre que esta sendo movida: ela sai do raycast, da obstrucao e da distancia minima, senao o destino seria recusado por ela mesma |
 	| `Range` | alcance do anel; sem isto e o da tabela, sem upgrade nem carta |
 	| `Rotation` | giro inicial do fantasma, em graus |
-	| `ConfirmText` | rotulo do botao de confirmar no toque; sem isto, `PLACE` |
 	| `OnConfirm(cf)` | roda no lugar do `PlaceUnit`, com o fantasma ja recolhido |
 	| `OnCancel()` | roda no lugar do desequipar da hotbar de unidades |
 
@@ -1047,8 +985,9 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	local groundInstance : Instance? = nil
 
 	--[[
-		No toque o fantasma nao segue o dedo: ele fica no ultimo ponto tocado e so
-		sai dali no proximo toque, e quem confirma e o botao do painel.
+		No toque o fantasma segue o dedo enquanto ele estiver na tela, e fica onde
+		parou quando ele sai. Destravado, arrastar posiciona; travado, arrastar volta
+		a ser da camera e o fantasma nao sai do lugar.
 
 		Ele nasce no centro da tela porque e para la que a camera esta olhando -- o
 		jogador ve a unidade e o circulo de alcance de cara, em vez de um fantasma
@@ -1056,7 +995,16 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	]]
 	local isTouch = PointerUtil.isTouchOnly()
 	local touchTarget : Vector2? = if isTouch then workspace.CurrentCamera.ViewportSize / 2 else nil
-	local touchConfirmButton : TextButton? = nil
+
+	--[[
+		O `LOCK`. Comeca solto: a primeira coisa que o jogador faz e escolher o lugar,
+		e travar antes disso seria pedir um toque a mais para comecar.
+
+		`lockedPosition` e o que o `LOCK` de fato congela: a posicao no **mundo**, e
+		nao o ponto da tela. Enquanto ela existir o fantasma nao e remirado.
+	]]
+	local ghostLocked = false
+	local lockedPosition : Vector3? = nil
 
 	local scale = ghost:GetScale()
 	ghost:ScaleTo(scale * 0.8)
@@ -1239,18 +1187,36 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		-- por ultimo, que so muda quando o jogador toca de novo.
 		local pointerPosition = if isTouch then touchTarget else PointerUtil.getScreenPosition()
 
+		--[=[
+			Travado, o fantasma deixa de ser remirado: a posicao dele vira uma ancora no
+			**mundo**.
+
+			A mira e um ponto de **tela**, e o raio sai da camera -- que anda com o
+			jogador. Sem esta guarda, travar so parava o dedo: bastava o jogador dar dois
+			passos para o mesmo ponto da tela cair noutro lugar do mapa, e a unidade
+			escorregava junto -- exatamente o que o `LOCK` existe para impedir.
+
+			A validacao continua rodando sobre a ancora, e nao e desperdicio: o mundo
+			muda debaixo de um fantasma parado (outra torre nasce ao lado, alguem para em
+			cima do lugar) e o Highlight tem de acompanhar. O giro tambem continua
+			valendo, porque o `targetCF` e remontado a cada quadro a partir da ancora
+			mais o `currentRotation`.
+		]=]
 		local raycastResult = nil
-		if pointerPosition then
+		if not lockedPosition and pointerPosition then
 			local pointerRay = workspace.CurrentCamera:ViewportPointToRay(pointerPosition.X, pointerPosition.Y)
 			raycastResult = workspace:Raycast(pointerRay.Origin, pointerRay.Direction * 1000, raycastParams)
 		end
 
+		local placedPosition = lockedPosition
 		if raycastResult then
 			local position = raycastResult.Position
 			currentGroundY = position.Y
 			groundInstance = raycastResult.Instance
-			local placedPosition = Vector3.new(position.X, position.Y + halfHeight, position.Z)
+			placedPosition = Vector3.new(position.X, position.Y + halfHeight, position.Z)
+		end
 
+		if placedPosition then
 			targetCF = CFrame.new(placedPosition) * CFrame.Angles(0, math.rad(currentRotation), 0)
 
 			overlapCheckElapsed += dt
@@ -1347,15 +1313,6 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		currentColor = currentColor:Lerp(targetColor, math.min(1, dt * COLOR_LERP_SPEED))
 		highlight.FillColor = currentColor
 		highlight.OutlineColor = currentColor
-
-		-- No toque o botao segue a cor do fantasma: sem cursor pairando sobre o
-		-- mapa, ele e o unico aviso de que ali nao da para colocar.
-		if touchConfirmButton then
-			local buttonColor = canPlace and TOUCH_CONFIRM_COLOR or TOUCH_CONFIRM_BLOCKED_COLOR
-			if touchConfirmButton.BackgroundColor3 ~= buttonColor then
-				touchConfirmButton.BackgroundColor3 = buttonColor
-			end
-		end
 
 		local alpha = math.min(1, dt * LERP_SPEED)
 		ghostCF = ghostCF:Lerp(targetCF, alpha)
@@ -1472,19 +1429,201 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	end))
 
 	if isTouch then
-		-- O toque no mapa so reposiciona: quem confirma e o botao, senao o dedo
-		-- taparia a unidade no exato momento de decidir se ela pode ficar ali.
-		maid:GiveTask(PointerUtil.onPointerAction(function(screenPosition)
-			touchTarget = screenPosition
-		end))
+		local mobileButtons = Framework:Get("MobileButtons")
 
-		local touchControls, confirmButton = createTouchControls(rotateGhost, confirmPlacement, cancelPlacement,
-			options.ConfirmText)
-		touchConfirmButton = confirmButton
+		--[=[
+			Se o toque comecou em cima de alguma interface.
+
+			O `ContextActionService` entrega o toque mesmo quando ele caiu num botao,
+			entao a pergunta tem de ser feita na mao -- sem isto, apertar `ROTATE`
+			teleportaria o fantasma para debaixo do proprio botao.
+
+			A posicao vai **crua**: `GetGuiObjectsAtPosition` responde no espaco da
+			interface, que e o de `InputObject.Position`. Converter aqui erraria por uma
+			GuiInset. `GuiButton` cobre os botoes e `Active` cobre o resto que intercepta
+			toque (o direcional do Roblox, o card de upgrade).
+		]=]
+		local function isOverInterface(rawPosition : Vector2) : boolean
+			local playerGui = Player:FindFirstChildOfClass("PlayerGui")
+			if not playerGui then return false end
+
+			for _, object in playerGui:GetGuiObjectsAtPosition(rawPosition.X, rawPosition.Y) do
+				if object:IsA("GuiButton") or object.Active then
+					return true
+				end
+			end
+
+			return false
+		end
+
+		--[=[
+			Se um toque caiu em cima do fantasma.
+
+			So e perguntado com o fantasma travado -- destravado, o primeiro toque do par
+			ja levou o fantasma para la e a proximidade entre os dois toques responde a
+			mesma pergunta sem depender do lerp.
+
+			O raio acompanha o tamanho do fantasma na tela: a mesma unidade ocupa muito
+			mais pixels com a camera perto, e um raio fixo seria generoso de longe e
+			apertado de perto. A medida sai da altura da caixa dele projetada.
+		]=]
+		local function tapHitsGhost(rawPosition : Vector2) : boolean
+			if not ghost or not ghost.Parent then return false end
+
+			local camera = workspace.CurrentCamera
+			local center, onScreen = camera:WorldToViewportPoint(ghostCF.Position)
+			if not onScreen then return false end
+
+			local top = camera:WorldToViewportPoint(ghostCF.Position + Vector3.new(0, ghost:GetExtentsSize().Y / 2, 0))
+			local radius = math.max(GHOST_TAP_MIN_RADIUS, (Vector2.new(top.X, top.Y) - Vector2.new(center.X, center.Y)).Magnitude)
+
+			local point = PointerUtil.toViewportPoint(rawPosition)
+			return (point - Vector2.new(center.X, center.Y)).Magnitude <= radius
+		end
+
+		local lastTapClock = 0
+		local lastTapPosition : Vector2? = nil
+
+		--[=[
+			Fecha (ou comeca) um par de toques.
+
+			O segundo toque so coloca a unidade se veio rapido, no mesmo lugar do
+			primeiro, e -- travado -- em cima do fantasma. Depois de colocar, o par e
+			esquecido: sem isso um terceiro toque emendaria num quarto e o gesto
+			continuaria valendo depois de a unidade ja ter nascido.
+		]=]
+		local function registerTap(rawPosition : Vector2)
+			local now = os.clock()
+			local previous = lastTapPosition
+
+			local isSecond = previous ~= nil
+				and (now - lastTapClock) <= DOUBLE_TAP_WINDOW
+				and (rawPosition - previous).Magnitude <= DOUBLE_TAP_RADIUS
+
+			if isSecond and (not ghostLocked or tapHitsGhost(rawPosition)) then
+				lastTapPosition = nil
+				confirmPlacement()
+				return
+			end
+
+			lastTapClock = now
+			lastTapPosition = rawPosition
+		end
+
+		--[[
+			O dedo que esta mandando agora. Guardado por identidade para um segundo
+			dedo na tela nao sequestrar o arrasto no meio -- o mesmo cuidado que o
+			arrasto do card de upgrade toma.
+		]]
+		local activeInput : InputObject? = nil
+		local startPosition = Vector2.zero
+		local startClock = 0
+		local maxMovement = 0
+
+		local function handleTouch(_actionName, state : Enum.UserInputState, input : InputObject)
+			if input.UserInputType ~= Enum.UserInputType.Touch then
+				return Enum.ContextActionResult.Pass
+			end
+
+			local raw = Vector2.new(input.Position.X, input.Position.Y)
+
+			if state == Enum.UserInputState.Begin then
+				-- Ja ha um dedo no comando, ou este comecou num botao: nao e nosso.
+				if activeInput or isOverInterface(raw) then
+					return Enum.ContextActionResult.Pass
+				end
+
+				activeInput = input
+				startPosition = raw
+				startClock = os.clock()
+				maxMovement = 0
+
+				if not ghostLocked then
+					touchTarget = PointerUtil.toViewportPoint(raw)
+					return Enum.ContextActionResult.Sink
+				end
+
+				return Enum.ContextActionResult.Pass
+			end
+
+			if input ~= activeInput then
+				return Enum.ContextActionResult.Pass
+			end
+
+			if state == Enum.UserInputState.Change then
+				maxMovement = math.max(maxMovement, (raw - startPosition).Magnitude)
+
+				if not ghostLocked then
+					touchTarget = PointerUtil.toViewportPoint(raw)
+					return Enum.ContextActionResult.Sink
+				end
+
+				return Enum.ContextActionResult.Pass
+			end
+
+			-- End / Cancel
+			activeInput = nil
+
+			--[[
+				Arrasto nao e toque. Quem arrastou ja disse o que queria enquanto
+				arrastava (o fantasma seguiu o dedo), e deixar isso contar como tap faria
+				um arrasto de ida e volta virar meio double tap.
+			]]
+			local wasTap = maxMovement <= TAP_MAX_MOVEMENT
+				and (os.clock() - startClock) <= TAP_MAX_DURATION
+
+			if wasTap then
+				registerTap(raw)
+			end
+
+			return ghostLocked and Enum.ContextActionResult.Pass or Enum.ContextActionResult.Sink
+		end
+
+		ContextActionService:BindActionAtPriority(
+			TOUCH_ACTION, handleTouch, false, TOUCH_ACTION_PRIORITY, Enum.UserInputType.Touch
+		)
 		maid:GiveTask(function()
-			touchConfirmButton = nil
-			touchControls:Destroy()
+			ContextActionService:UnbindAction(TOUCH_ACTION)
 		end)
+
+		if mobileButtons then
+			mobileButtons:register(ROTATE_BUTTON, {
+				Text = "ROTATE",
+				Priority = 3,
+				Slots = { "Diagonal", "FarUp", "LeftUp", "Up", "FarLeft", "Left" },
+				OnActivate = rotateGhost,
+			})
+
+			mobileButtons:register(LOCK_BUTTON, {
+				Text = "LOCK",
+				Priority = 4,
+				Slots = { "LeftUp", "FarLeft", "FarUp", "Diagonal", "Left", "Up" },
+				OnActivate = function()
+					ghostLocked = not ghostLocked
+					mobileButtons:setActive(LOCK_BUTTON, ghostLocked)
+
+					--[[
+						Trava onde o fantasma **ja foi validado**, e nao onde o dedo esta: o
+						`targetCF` e o que passou pelos testes de caminho e de sobreposicao e
+						o que seria enviado ao servidor. Congelar a mira em vez dele deixaria
+						a ancora um lerp atras do que o jogador ve.
+					]]
+					lockedPosition = if ghostLocked then targetCF.Position else nil
+
+					--[[
+						Travar no meio de um arrasto solta o dedo que estava mandando: sem
+						isso o `Change` seguinte ainda cairia no ramo de quem tem o comando e
+						o jogador teria de levantar o dedo para a trava valer.
+					]]
+					activeInput = nil
+				end,
+			})
+
+			maid:GiveTask(function()
+				mobileButtons:unregister(ROTATE_BUTTON)
+				mobileButtons:unregister(LOCK_BUTTON)
+			end)
+		end
 	end
 
 	maid:GiveTask(function()

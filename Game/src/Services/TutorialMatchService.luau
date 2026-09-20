@@ -20,6 +20,7 @@ local Framework = Me.new()
 local Config = SharedConfig.TutorialConfig
 local RoundCardConfig = SharedConfig.RoundCardConfig
 local DifficultyConfig = ServerConfig.Difficulty
+local AnalyticsConfig = ServerConfig.Analytics
 
 -- O mesmo atributo que o `MapService` lê para escolher o mapa no Studio. Ele é a
 -- segunda porta do tutorial: ver `resolve`.
@@ -74,6 +75,7 @@ local TutorialMatchService = {
 		SpeedService = {},
 		WeatherRoundService = {},
 		MobService = {},
+		AnalyticsService = {},
 	}
 }
 
@@ -92,6 +94,18 @@ TutorialMatchService.Completed = {}
 
 -- `nil` enquanto ninguém perguntou; `true`/`false` depois da primeira resposta.
 TutorialMatchService.Tutorial = nil :: boolean?
+
+--[[
+	A partida foi vencida?
+
+	Só existe para a telemetria: o teleporte de volta e o jogador que desiste saem
+	os dois pelo `PlayerRemoving`, e é este booleano que os separa. Ver `NoteWon`.
+]]
+TutorialMatchService.Won = false
+
+-- A wave do último passo aberto. É o número que o evento de abandono leva, e sai
+-- daqui em vez do `WaveService` para não pendurar uma dependência a mais.
+TutorialMatchService.LastWave = nil :: number?
 
 --[[ INTERNAL ]]
 
@@ -341,6 +355,7 @@ function TutorialMatchService:openStep(step : any)
 
 	self.Step = step
 	self.Done = false
+	self.LastWave = step.Wave or self.LastWave
 
 	if step.UnlocksDeck then
 		self.DeckUnlocked = true
@@ -566,7 +581,22 @@ function TutorialMatchService:CompleteStep()
 
 	print(`[DEBUG/Tutorial] passo "{step.Id}" cumprido; a wave esta liberada.`)
 
+	local analytics = self.Services.AnalyticsService
+
 	for _, player in Players:GetPlayers() do
+		--[[
+			O funil de onboarding usa **o `Id` do passo** como nome, e por isso o
+			roteiro e a lista de `ServerConfig.Analytics` não precisam de uma tabela de
+			tradução entre elas.
+
+			O passo do fim de partida fica de fora: ele não é uma tarefa que o jogador
+			cumpre, e quem registra a volta ao lobby é o lobby, pelo bilhete do
+			teleporte.
+		]]
+		if analytics and step.Kind ~= "Lobby" then
+			analytics:LogFunnelStep(player, step.Id)
+		end
+
 		Framework:Fire("TutorialStepDone", player, step.Id)
 	end
 end
@@ -703,6 +733,17 @@ function TutorialMatchService:NoteUse(cardId : string)
 end
 
 --[=[
+	A partida de tutorial foi vencida.
+
+	Quem chama é o `WaveService`, no mesmo ramo que escreve a vitória no perfil. É
+	só para a telemetria: sem isto, o teleporte de volta pareceria um jogador
+	desistindo — os dois saem pelo `PlayerRemoving`.
+]=]
+function TutorialMatchService:NoteWon()
+	self.Won = true
+end
+
+--[=[
 	Melhorar uma unidade é permitido agora?
 
 	**Na partida de tutorial, nunca** — e não só enquanto um passo está aberto.
@@ -793,6 +834,51 @@ function TutorialMatchService:CanPlace(unitName : string, cf : CFrame) : boolean
 	return (cf.Position - point.Position).Magnitude <= (step.Radius or 10)
 end
 
+--[[ TELEMETRIA ]]
+
+--[=[
+	Quem entrou na partida de tutorial, e quem saiu dela antes de vencer.
+
+	Ligado uma vez, e **só** quando o servidor se resolveu como tutorial (ver
+	`construct`): partida comum não paga por esta escuta.
+
+	O servidor é reservado e a partida é de um jogador só, mas o passo é por
+	jogador — quem chegar aqui por um caminho que não seja o teleporte da oferta
+	entra no funil do mesmo jeito.
+]=]
+function TutorialMatchService:watchPlayers()
+	local analytics = self.Services.AnalyticsService
+	if not analytics then return end
+
+	local function joined(player : Player)
+		analytics:LogFunnelStep(player, "MatchJoined")
+	end
+
+	for _, player in Players:GetPlayers() do
+		joined(player)
+	end
+
+	Players.PlayerAdded:Connect(joined)
+
+	--[[
+		Sair sem ter vencido é o abandono — e é justamente o que o funil não conta:
+		quem desiste na wave 3 e quem cai por internet param no mesmo passo, e nenhum
+		dos dois deixa rastro no perfil (a chave fica em `false`, de propósito).
+
+		O teleporte de volta depois da vitória também sai por aqui; quem os separa é
+		o `Won`.
+	]]
+	Players.PlayerRemoving:Connect(function(player : Player)
+		if self.Won then return end
+
+		local step = self.Step
+
+		analytics:LogEvent(player, AnalyticsConfig.Events.Abandoned, self.LastWave or 0, {
+			step and step.Id or "None",
+		})
+	end)
+end
+
 --[[ CICLO DE VIDA ]]
 
 function TutorialMatchService:construct()
@@ -805,7 +891,9 @@ function TutorialMatchService:construct()
 	-- Resolve fora do caminho do primeiro round: a espera pelo primeiro jogador
 	-- acontece aqui, numa thread própria, e não dentro do `runRound`.
 	task.spawn(function()
-		self:resolve()
+		if not self:resolve() then return end
+
+		self:watchPlayers()
 	end)
 
 	local unitService = self.Services.UnitService

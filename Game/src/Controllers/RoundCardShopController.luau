@@ -1684,7 +1684,6 @@ function RoundCardShopController:_beginMovePlacement(unitModel : Model, unitId :
 		IgnoreModel = unitModel,
 		Range = placement:getUnitRange(unitName, unitModel:GetAttribute("Upgrades") or 0, pivot.Position, unitId),
 		Rotation = math.deg(yaw),
-		ConfirmText = "MOVE",
 
 		--[[
 			Vai o CFrame que o fantasma validou, aberto em ponto e angulo.

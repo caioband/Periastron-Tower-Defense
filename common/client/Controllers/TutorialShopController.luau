@@ -528,9 +528,21 @@ function TutorialShopController:run(session : number)
 	end
 
 	-- 7. o unboxing termina e a fala de despedida fecha o tutorial
-	self:await(session, nil, function()
+	local unboxed = self:await(session, nil, function()
 		return self.Unboxed == true
 	end, "o unboxing terminar")
+
+	--[[
+		O último passo do funil de onboarding sai daqui, e não do `:finish()`: aquele
+		roda também quando o fluxo aborta (`:Stop`, ou um `await` que voltou falso), e
+		"abriu a caixa" tem de querer dizer que a caixa abriu.
+
+		Quem confere se este jogador é um que terminou o tutorial de verdade — e não
+		alguém rodando o `tutorialshop` do Cmdr — é o servidor.
+	]]
+	if unboxed then
+		Framework:Fire("TutorialShopFinished")
+	end
 
 	self:say(session, Config.ClosingLines)
 	self:finish()

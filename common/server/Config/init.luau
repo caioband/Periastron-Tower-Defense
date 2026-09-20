@@ -3,7 +3,8 @@
 
 	Monta em `ServerScriptService.Config` — NUNCA na ReplicatedStorage. Nada aqui
 	é replicado para o cliente: chave de DataStore, template de perfil, tabelas de
-	wave, odds de summon, pools das crates e a lista de admins do Cmdr.
+	wave, odds de summon, pools das crates, a lista de admins do Cmdr e a
+	numeração do funil de analytics.
 
 	Dado que o cliente precisa legitimamente ver vive em
 	`ReplicatedStorage.Shared.Config.SharedConfig`.
@@ -17,6 +18,7 @@ type ServerConfig = {
 	Crate : typeof(require(script.Crate)),
 	Cmdr : typeof(require(script.Cmdr)),
 	Leaderboard : typeof(require(script.Leaderboard)),
+	Analytics : typeof(require(script.Analytics)),
 }
 
 local ServerConfig : ServerConfig = {}

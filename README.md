@@ -915,23 +915,134 @@ virar um clique no mundo. PC com tela sensível ao toque continua contando como 
 O fluxo de posicionamento diverge de propósito entre os dois:
 
 - **PC** — igual a sempre: o fantasma segue o cursor, `R` gira, clique confirma.
-- **Celular** — o toque no mapa só **move** o fantasma; quem confirma é um painel
-  (`ROTATE` / `PLACE` / `CANCEL`) que o `UnitPlacementController` monta em código
-  no canto direito. Confirmar no próprio toque seria pior que não ter nada: o dedo
-  tapa justamente o ponto onde a unidade vai nascer, e a torre sairia sem o jogador
-  ver o círculo de alcance nem a cor do fantasma. O botão `COLOCAR` acompanha a cor
-  do fantasma (verde/cinza), porque sem cursor pairando ele é o único aviso de que
-  ali não dá.
+- **Celular** — o dedo arrasta o fantasma pelo mapa, dois botões no cluster do
+  `DASH`/`RUN` fazem `ROTATE` e `LOCK`, e **dois toques colocam**.
 
-O painel é criado só quando `PointerUtil.isTouchOnly()` e morre junto com o Maid do
-posicionamento, pelos dois caminhos de saída (confirmar e cancelar). O canto
-escolhido é o direito: o inferior-esquerdo é o direcional de movimento do Roblox e
-o centro de baixo é a barra de cartas.
+#### O celular: arrastar posiciona, dois toques colocam
 
-As medidas são todas em escala, com `UISizeConstraint` e `UITextSizeConstraint` só
-para os extremos: a mesma medida em offset que dá um botão confortável num tablet
-vira um alvo minúsculo num celular estreito. O piso de 190px de altura no painel é o
-que garante ~49px por botão, que é o alvo de toque confortável numa tela deitada.
+O painel `ROTATE`/`PLACE`/`CANCEL` no canto direito **saiu**. Ele custava um retângulo
+de ~190px de altura em cima do mapa, justamente onde o jogador precisa enxergar o
+fantasma e o círculo de alcance, e falava um idioma que não era o do resto dos
+controles de toque do jogo.
+
+| antes | agora |
+| --- | --- |
+| `ROTATE` no painel | botão `ROTATE` no cluster |
+| `PLACE` no painel | dois toques no fantasma |
+| `CANCEL` no painel | tocar de novo a carta equipada |
+| (não existia) | botão `LOCK` |
+
+**O `LOCK` é o interruptor entre dois modos**, e é ele que justifica o arrasto
+posicionar:
+
+| | destravado | travado |
+| --- | --- | --- |
+| arrastar | move o fantasma | gira a câmera |
+| tocar | move o fantasma | nada |
+| dois toques | coloca | coloca (no fantasma) |
+
+Destravado, a tela inteira é um tapete de posicionamento e a câmera não gira. Travado,
+o fantasma congela onde está e o arrasto volta a ser da câmera — que é exatamente o
+caso que o botão existe para resolver: olhar em volta sem empurrar a unidade sem
+querer.
+
+**Travar congela uma posição do mundo, e não um ponto da tela.** A mira é uma
+coordenada de tela e o raio sai da câmera, que anda com o jogador — então parar de
+atualizar a mira não basta: bastavam dois passos para o mesmo ponto da tela cair noutro
+lugar do mapa e a unidade escorregar junto. Enquanto `lockedPosition` existir o loop
+**não refaz o raycast**; ele monta o `targetCF` a partir da âncora mais o
+`currentRotation`, e por isso o `ROTATE` continua valendo travado.
+
+A âncora é o `targetCF`, e não a mira: é ele que passou pelos testes de caminho e de
+sobreposição e é ele que seria enviado ao servidor. Congelar a mira deixaria a âncora um
+lerp atrás do que o jogador está vendo.
+
+A validação continua rodando sobre a âncora a cada `OVERLAP_CHECK_INTERVAL`, e não é
+desperdício: o mundo muda debaixo de um fantasma parado — outra torre nasce ao lado,
+alguém para em cima do lugar — e o Highlight tem de acompanhar.
+
+**Quem tira o arrasto da câmera é a prioridade, e não um módulo desligado.** O pan de
+toque da câmera padrão é ligado pelo `PlayerModule` via `ContextActionService`, então
+o posicionamento liga a ação dele por cima
+(`BindActionAtPriority`, `Enum.ContextActionPriority.High`) e devolve `Sink` enquanto
+estiver destravado. Travado ele devolve `Pass` — continua vendo os toques (precisa
+deles para o double tap) sem tirá-los de ninguém. Nada do `PlayerModule` é tocado, que
+é o que faz isso sobreviver ao dia em que a Roblox trocá-lo.
+
+**O `ContextActionService` entrega o toque mesmo quando ele caiu num botão**, então
+`isOverInterface` faz essa pergunta na mão com `GetGuiObjectsAtPosition` — sem ela,
+apertar `ROTATE` teleportaria o fantasma para debaixo do próprio botão. A posição vai
+crua: essa chamada responde no espaço da interface, e não no do raio da câmera.
+
+**O double tap não coloca por acidente.** Os dois toques têm que vir em até 0,45s e a
+no máximo 55px um do outro, e arrasto não conta como toque — quem arrastou já disse o
+que queria enquanto arrastava. Travado, o segundo toque ainda tem que cair **no
+fantasma**, num raio que acompanha o tamanho dele na tela (a mesma unidade ocupa muito
+mais pixels com a câmera perto). Destravado esse teste é dispensado de propósito: o
+primeiro toque já levou o fantasma para lá, então "os dois toques perto um do outro" é
+a mesma pergunta — só que medida sem depender de o fantasma já ter chegado, já que ele
+persegue o alvo por lerp e no quadro do toque ainda está a caminho.
+
+**O aviso de "aqui não dá" é o Highlight do fantasma**, que já pintava de verde e
+vermelho o tempo todo. Era o que a cor do botão `PLACE` duplicava.
+
+Cancelar é tocar de novo na carta equipada, igual ao PC. O Zippers continua saindo pelo
+`OnCancel` dele.
+
+#### O cluster de botões do polegar (`MobileButtons`)
+
+Os círculos escuros de borda branca em volta do botão de pulo — `DASH`, `RUN` e agora
+`ROTATE` e `LOCK` — são **um cluster só**, em
+`common/client/Controllers/MovementController/Components/MobileButtons.luau`.
+
+**Tudo sai do botão de pulo do Roblox**: o tamanho é uma fração do dele e a posição é
+contada a partir do centro dele, então quando a engine troca o pulo de 70 para 120
+pixels numa tela maior, todos crescem e se afastam junto. Sem pulo na tela (PC,
+controle, ou alguém o escondeu) o cluster inteiro sai.
+
+**As vagas são disputadas, não fixas.** Há seis em volta do pulo (`Left`, `Up`,
+`Diagonal`, e uma segunda fileira de cada), e livre é medido na tela de verdade com
+`GetGuiObjectsAtPosition` numa grade de pontos — vale para qualquer UI das duas places,
+inclusive as que ainda não existem, sem lista de nomes para manter. Um painel que abre
+por cima de uma vaga empurra o botão para a seguinte.
+
+A distribuição é **busca em profundidade, e não ganância**, e a diferença aparece no
+caso apertado: a primeira vaga da lista do `DASH` pode ser a única que serve ao `RUN`, e
+um laço ganancioso a tomaria deixando o outro fora da tela. Cada nível tem também o ramo
+de *não* colocar aquele botão, que é o que permite uma solução parcial quando não cabem
+todos. Como só se troca o melhor por um estritamente maior, a primeira solução com
+aquele número vence — e ela é a que respeita a prioridade e a lista de vagas de cada um.
+
+Qualquer controller entra no cluster:
+
+```lua
+local mobileButtons = Framework:Get("MobileButtons")
+
+mobileButtons:register("Lock", {
+    Text = "LOCK",
+    Priority = 4,
+    Slots = { "LeftUp", "FarLeft", "FarUp", "Diagonal", "Left", "Up" },
+    OnActivate = function() ... end,
+})
+mobileButtons:setActive("Lock", true)   -- o realce âmbar de "ligado", igual ao RUN
+mobileButtons:unregister("Lock")
+```
+
+Chega-se lá por `Framework:Get` porque o `Me` registra **todo** ModuleScript sob
+`Controllers`, e não só os controllers de verdade.
+
+Dois detalhes de ciclo de vida que importam:
+
+- **O laço de layout é do cluster**, não de quem registrou: liga no primeiro registro e
+  desliga no último. É ele que remede a tela a cada 0,25s e faz o botão fugir de um
+  painel que abriu por cima.
+- **`MovementController:stop()` não leva o resto junto.** Ele desregistra só `DASH` e
+  `RUN`, que são os que dependem do personagem. Um respawn no meio de um posicionamento
+  não pode levar o `ROTATE` embora.
+
+O contador de botões entra na chave de cache do layout, senão registrar o `ROTATE` no
+meio da partida não redistribuiria nada — a tela não mudou de tamanho, mas o problema
+mudou.
 
 #### Precisão do toque
 
@@ -947,14 +1058,16 @@ corrigidas:
   `PointerUtil` **mede**: uma moldura de tamanho zero num `ScreenGui` com
   `IgnoreGuiInset` fica no canto de cima da janela inteira, e a `AbsolutePosition`
   dela é a origem do espaço do raio. Funciona sem depender de qual convenção a
-  engine usa.
+  engine usa. A conversão é pública (`PointerUtil.toViewportPoint`) porque o
+  posicionamento escuta o toque cru pelo `ContextActionService` — ele precisa do
+  arrasto, e não só do tap que o `onPointerAction` entrega.
 - **O lerp do fantasma.** O que ia ao servidor era o `ghostCF`, que persegue a mira
   por interpolação e quase nunca está exatamente onde ela aponta. Quem passou pelo
   teste de caminho e de sobreposição foi o **alvo** (`targetCF`), e agora é ele que
   é enviado — o lerp fica só na aparência. No mouse a diferença era invisível (o
-  cursor fica parado e o fantasma alcança antes do clique); no toque o jogador toca
-  e já aperta `COLOCAR`, com o fantasma ainda a caminho, e a unidade nascia no meio
-  do trajeto.
+  cursor fica parado e o fantasma alcança antes do clique); no toque o jogador
+  levanta o dedo e já dá o segundo toque, com o fantasma ainda a caminho, e a unidade
+  nascia no meio do trajeto.
 
 Duas armadilhas de UI que o toque expõe e que foram corrigidas junto:
 
@@ -1541,10 +1654,11 @@ e `NO THANKS` à esquerda. Tudo em Press Start 2P, pela caixa de fala de sempre.
 novo traz — e todo perfil antigo, que a ganha pelo reconcile do `DataService`. Quem
 já joga há meses recebe a oferta uma vez.
 
-**Recusar não escreve nada.** Quem disse "agora não" continua sem ter feito e é
-perguntado de novo na próxima vez que entrar. Quem escreve `true` é
-`TutorialService:Complete(player)`, que existe e **ainda não é chamado por ninguém**:
-quem termina um tutorial é o tutorial, e ele está por fazer.
+**Recusar escreve `true` na hora** — recusa é resposta, não adiamento, e quem disse
+"não" não é perguntado de novo a cada entrada no lobby. O outro caminho que escreve é
+`TutorialService:Complete(player)`, chamado da **outra place** pelo `WaveService`
+quando as 5 waves caem (`onRoundEnded`, no ramo da vitória). A chave não guarda qual
+dos dois foi, de propósito.
 
 | Peça | Onde | O que faz |
 |---|---|---|
@@ -1560,8 +1674,9 @@ fala existe o `tutorial` do Cmdr, que entra pelo mesmo `:Prompt` e não escreve 
 
 **Onde o tutorial de verdade entra.** No cliente, `TutorialController:OnAnswer(fn)`
 — chamado com `true` ou `false` e devolvendo a função que desinscreve. No servidor,
-`TutorialService:Start(player)`, que hoje só registra no output. Os passos se
-penduram num dos dois e esta fala não muda de linha.
+`TutorialService:Start(player)`, que teleporta sozinho para o mapa do tutorial com a
+flag `Tutorial` no `TeleportData`. De lá em diante quem manda é o
+`TutorialMatchService`, e o roteiro está em `TutorialConfig.Match.Steps`.
 
 **A resposta é do botão.** Enquanto a escolha está no ar, clicar no vazio não fecha
 a caixa (`DialogController:hasChoice`) — sem isso a pergunta morreria no primeiro
@@ -1571,6 +1686,73 @@ clique distraído no cenário.
 > caractere da fonte padrão do renderizador, então `TutorialConfig.Text.Size` é 20 e
 > não os 24 do preset `Dialogue`. Mexer na fonte da oferta é mexer nesses dois
 > números juntos.
+
+### O funil do tutorial (`AnalyticsService`)
+
+O caminho do jogador novo é medido como o **funil de onboarding da Roblox**, 13 passos
+da oferta no lobby até a caixa aberta na volta. É o que responde "em que passo ele
+desiste" — se é na fala, na primeira torre, na compra da Weather Report ou na caixa.
+
+| # | Passo | Quem manda |
+|---|---|---|
+| 1 | `PromptShown` | `TutorialService:offer` (a oferta saiu) |
+| 2 | `Accepted` | `TutorialService`, no `TutorialAnswered` |
+| 3 | `MatchJoined` | `TutorialMatchService:watchPlayers` |
+| 4-9 | `ClickReady`, `PlaceFirst`, `BuyReport`, `UseReport`, `UseSpeed`, `PlaceRest` | `TutorialMatchService:CompleteStep` |
+| 10 | `MatchWon` | `WaveService:onRoundEnded` |
+| 11 | `BackToLobby` | `TutorialService:shopPrompt` (o bilhete do teleporte) |
+| 12 | `CrateBought` | `TutorialService:watchShop` |
+| 13 | `CrateOpened` | o cliente, pelo `TutorialShopFinished` |
+
+**Os nomes dos passos 4 a 9 são os `Id` do roteiro.** `LogFunnelStep` recebe
+`step.Id` direto do `TutorialConfig.Match.Steps` — sem uma tabela de tradução no meio,
+que é a coisa que ficaria para trás no dia em que um passo mudar de nome. A numeração
+mora em `ServerConfig.Analytics.Funnel.Onboarding`, e **a ordem da lista é o número**:
+passo novo entra no fim, ou o painel passa a comparar números que querem dizer outra
+coisa do que queriam ontem.
+
+**Por que onboarding e não funil com sessão.** O onboarding funnel não pede
+`funnelSessionId`, e é isso que o deixa atravessar Lobby → Game → Lobby sem um id
+viajando no `TeleportData` de ida e no de volta. Ele conta só a primeira vez de cada
+passo por usuário, que é exatamente o que a chave `Tutorial` do perfil já diz — e o
+que faz o `tutorialreset` não inflar o painel.
+
+**Duas coisas o funil não sabe dizer, e por isso são eventos** (`LogCustomEvent`):
+`TutorialDeclined`, porque "clicou NO THANKS" e "ignorou a caixa de fala" param os
+dois no passo 1; e `TutorialAbandoned`, a partida largada no meio, que deixa a chave
+em `false` e não tinha registro em lugar nenhum. O valor do evento é a wave, e o `Id`
+do passo aberto vai no `CustomField01`. Quem separa o abandono do teleporte de volta
+— os dois saem pelo `PlayerRemoving` — é o `TutorialMatchService.Won`, posto pelo
+`NoteWon()` na vitória.
+
+| Peça | Onde | O que faz |
+|---|---|---|
+| `AnalyticsService` | `common/server/Services` | o único lugar que fala com a `AnalyticsService` da Roblox: `:LogFunnelStep` e `:LogEvent` |
+| `Analytics` | `ServerConfig` | a lista ordenada dos passos e os nomes dos eventos |
+
+**Nada sai do Studio, e nada sai do cliente** — é regra da Roblox, não nossa: os
+eventos só valem de servidor e em place publicada. O `AnalyticsService` confere isso
+(`RunService:IsStudio()` e `PlaceId == 0`) e, em vez de engolir a chamada, imprime
+`[AnalyticsService]: (studio) passo N "Nome"`. É assim que o roteiro inteiro se
+confere no Studio, onde o painel não existe. Toda chamada da engine vai em `pcall`
+pelo mesmo motivo do `TeleportAsync`: telemetria que derruba o passo do tutorial é
+pior que telemetria nenhuma.
+
+**Os comandos de teste ficam de fora do painel.** `tutorial` e `tutorialshop` entram
+pelo `:Prompt` e pelo `:PromptShop`, e nenhum dos dois registra nada — o passo 1 mora
+no `:offer` (que confere o perfil), e os passos 12 e 13 só valem para quem o servidor
+marcou em `TutorialService.Returned`, que é posto pelo bilhete `TutorialDone` do
+teleporte e por mais nada.
+
+> O passo 13 é o único que nasce no cliente, porque o fim do unboxing só ele vê. Ele
+> sai do fim do `TutorialShopController:run` e **não** do `:finish()` — aquele também
+> roda quando o fluxo aborta, e "abriu a caixa" tem de querer dizer que a caixa abriu.
+> Quem confere de quem é o aviso é o servidor.
+
+> **Fora do código:** o painel só existe depois de Analytics estar habilitado no
+> Creator Hub do universo, e ele leva algumas horas para preencher. A conferência de
+> que o caminho está certo é o output do Studio; a do Creator Hub é só a de que os
+> eventos chegaram.
 
 ## Destaque de UI (`HighlightController`)
 

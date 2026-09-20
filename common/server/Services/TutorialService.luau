@@ -1,4 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
@@ -6,8 +7,10 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
 local Configs = Shared:WaitForChild("Config")
+local ServerConfigs = ServerScriptService:WaitForChild("Config")
 
 local SharedConfig = require(Configs.SharedConfig)
+local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
 
@@ -15,6 +18,7 @@ local Framework = Me.new()
 
 local PortalConfig = SharedConfig.PortalConfig
 local Config = SharedConfig.TutorialConfig
+local AnalyticsConfig = ServerConfig.Analytics
 
 --[[
 	Quem ainda não fez o tutorial recebe a oferta ao cair no lobby.
@@ -49,13 +53,23 @@ local Config = SharedConfig.TutorialConfig
 
 local TutorialService = {
 	Services = {
-		DataService = {}
+		DataService = {},
+		AnalyticsService = {},
 	}
 }
 
 -- A chave no perfil. Uma constante porque ela aparece na leitura e na escrita, e
 -- as duas têm de ser a mesma palavra.
 local DATA_KEY = "Tutorial"
+
+--[[
+	[Player] = true para quem chegou com o bilhete `TutorialDone` no teleporte.
+
+	É o que separa a volta de verdade do `tutorialshop` do Cmdr: os dois rodam o
+	mesmo fluxo na tela, e só um deles é um jogador terminando o tutorial. Sem
+	isto, testar o passo da loja mandaria o passo 13 do funil para o painel.
+]]
+TutorialService.Returned = {}
 
 --[[ INTERNAL ]]
 
@@ -81,6 +95,19 @@ local function isDone(data : any) : boolean
 end
 
 --[=[
+	Um passo do funil de onboarding, se o `AnalyticsService` estiver de pé.
+
+	Ele nunca deveria faltar (é `common/`, carrega nas duas places), mas o service
+	que mede não pode ser o que impede o tutorial de acontecer.
+]=]
+function TutorialService:funnel(player : Player, stepName : string)
+	local analytics = self.Services.AnalyticsService
+	if not analytics then return end
+
+	analytics:LogFunnelStep(player, stepName)
+end
+
+--[=[
 	Esta place é o lobby?
 ]=]
 function TutorialService:isLobby() : boolean
@@ -101,6 +128,10 @@ function TutorialService:offer(player : Player)
 	dataService:Get(player, function(data)
 		if isDone(data) then return end
 		if not player.Parent then return end
+
+		-- O primeiro passo do funil é aqui, e não no `:Prompt`: aquele é a porta do
+		-- comando `tutorial` do Cmdr, e o funil mede jogador, não teste.
+		self:funnel(player, "PromptShown")
 
 		self:Prompt({ player })
 	end)
@@ -125,6 +156,12 @@ function TutorialService:shopPrompt(player : Player)
 		return
 	end
 
+	-- O bilhete é a prova de que ele veio de uma partida vencida: daqui para a
+	-- frente os dois últimos passos do funil valem para este jogador.
+	self.Returned[player] = true
+
+	self:funnel(player, "BackToLobby")
+
 	self:PromptShop({ player })
 end
 
@@ -147,6 +184,10 @@ function TutorialService:watchShop()
 
 	shopService.Signals.ItemPurchased:Connect(function(player : Player, item : any)
 		if not item or item.Id ~= Config.Lobby.Item then return end
+
+		if self.Returned[player] then
+			self:funnel(player, "CrateBought")
+		end
 
 		Framework:Fire("TutorialShopDone", player)
 	end)
@@ -287,16 +328,46 @@ function TutorialService:construct()
 	Framework:Listen("TutorialShopPrompt", function() end)
 	Framework:Listen("TutorialShopDone", function() end)
 
+	--[[
+		O fim do unboxing, que é o último passo do tutorial e o único que só o
+		cliente vê acontecer — o servidor sabe da compra (`ItemPurchased`), não da
+		animação que veio depois.
+
+		O bilhete do teleporte é quem autoriza: sem o `Returned`, o `tutorialshop` do
+		Cmdr mandaria o passo 13 para o painel a cada teste.
+	]]
+	Framework:Listen("TutorialShopFinished", function(player : Player)
+		if not self.Returned[player] then return end
+
+		self.Returned[player] = nil
+
+		self:funnel(player, "CrateOpened")
+	end)
+
 	Framework:Listen("TutorialAnswered", function(player : Player, accepted : any)
 		if accepted ~= true then
 			-- Recusar é resposta, e resposta encerra: quem disse "não" não é
 			-- perguntado de novo toda vez que entra no lobby.
+			--
+			-- O funil sozinho não sabe a diferença entre este "não" e a caixa de fala
+			-- ignorada: as duas param no passo 1. Por isso a recusa é um evento.
+			local analytics = self.Services.AnalyticsService
+			if analytics then
+				analytics:LogEvent(player, AnalyticsConfig.Events.Declined)
+			end
+
 			self:MarkDone(player)
 
 			return
 		end
 
+		self:funnel(player, "Accepted")
+
 		self:Start(player)
+	end)
+
+	Players.PlayerRemoving:Connect(function(player : Player)
+		self.Returned[player] = nil
 	end)
 
 	if not self:isLobby() then return end
