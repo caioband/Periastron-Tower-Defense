@@ -20,7 +20,7 @@ return {
 		entao elas nunca podem apontar para stores diferentes: seria o mesmo jogador
 		com dois perfis, um em cada place.
 	]]
-	PROFILE_KEY = "DEV_ENV_KEY_1",
+	PROFILE_KEY = "PROD_KEY_1",
 	Template = {
 		Stats = {
 			Wins = 0,
