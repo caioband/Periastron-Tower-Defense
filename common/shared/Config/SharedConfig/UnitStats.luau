@@ -56,7 +56,7 @@
 	| `Slow` | `{ Amount, Duration }` -- `Amount` e a fracao de velocidade tirada (0.3 e "anda 30% mais devagar") |
 	| `Stun` | `{ Duration }` -- o inimigo para **de vez** por tantos segundos |
 	| `Burn` | `{ Damage, Ticks, Interval }` -- tantos tiques de tanto dano, de tantos em tantos segundos. Nao acumula: acerto em quem ja queima nao soma dano nem renova o prazo |
-	| `Bleed` | `{ Damage, Ticks, Interval }` -- igual ao `Burn`, com prazo proprio (sangrar e queimar convivem no mesmo alvo) e sem a carta de fogo |
+	| `Bleed` | `{ Damage, Ticks, Interval, Vulnerability }` -- igual ao `Burn`, com prazo proprio (sangrar e queimar convivem no mesmo alvo) e sem a carta de fogo. `Vulnerability` e o quanto **todo** dano que entrar no alvo vale a mais enquanto ele sangra (1.3 e "+30%"), de qualquer fonte; sem o campo, 1 |
 	| `Frost` | `{ Slow, Duration, FreezeStacks, FreezeDuration, FreezeImmunity, Radius, MaxRadius }` -- um acumulo por acerto, contado **por unidade**; com qualquer acumulo o inimigo fica `Slow` mais lento, o acerto de uma unidade renova so o prazo dos dela, e `FreezeStacks` de uma mesma unidade o congelam por `FreezeDuration` e zeram a conta de todas. Descongelado, ele ainda passa `FreezeImmunity` segundos sem aceitar acumulo nenhum. `Radius` (ate `MaxRadius` no nivel maximo) da o mesmo acumulo, sem dano, a quem estiver em volta do alvo |
 
 	`Slow` e `Stun` nao sao a mesma coisa em intensidades diferentes: a lentidao mexe
@@ -172,8 +172,8 @@ local UnitStats = {
 		deles no lugar por um instante.
 
 		**Ela vende alcance de golpe, e nao dano por alvo.** 4 x 18 sao 72 de dano por
-		ciclo, ou 28,8 de DPS com a corrente cheia -- 9,6 por 100 de caixa, dentro do
-		teto da regra 1. Contra um alvo sozinho sao 7,2 de DPS, 2,4 por 100: ai ela e
+		ciclo, ou 28,8 de DPS com a corrente cheia -- 8,2 por 100 de caixa, dentro do
+		teto da regra 1. Contra um alvo sozinho sao 7,2 de DPS, 2,1 por 100: ai ela e
 		das piores da tabela -- e esta certo, porque sozinha ela nao faz nada do que faz.
 
 		Em cima disso vem o tranco: 0,3s parado num ciclo de 2,5s no nivel 0 (12% do
@@ -201,7 +201,7 @@ local UnitStats = {
 	["Electro"] = {
 		Rarity = "Legendary",
 		Class = "Electric",
-		Cost = 300,
+		Cost = 350,
 		Damage = 18,
 		Range = 10,
 		Cooldown = 2.5,
@@ -277,46 +277,48 @@ local UnitStats = {
 		que continuar batendo com o tamanho daquela lista**: quem cobra o dano conta
 		pela lista, mas o DPS do card sai deste numero.
 
-		**`Cooldown = 5.9` e a animacao mais a recuperacao**: 2,9s de gesto e 3s
+		**`Cooldown = 6` e a animacao mais a recuperacao**: 2,9s de gesto e 3,1s
 		parado depois dele. O cooldown desta tabela sempre contou do inicio de um
-		golpe ao inicio do seguinte, entao "3 segundos depois de terminar a
-		animacao" e a soma dos dois -- nao ha um campo de recuperacao separado, e a
-		janela de 5,9s e a mesma que o `swingWindow` manda para o cliente encaixar a
-		animacao. Mexeu a animacao, o 2,9 muda aqui e o `Duration` muda la.
+		golpe ao inicio do seguinte, entao "parado depois de terminar a animacao" e a
+		soma dos dois -- nao ha um campo de recuperacao separado, e a janela de 6s e
+		a mesma que o `swingWindow` manda para o cliente encaixar a animacao. Mexeu a
+		animacao, o 2,9 muda aqui e o `Duration` muda la. O `Cooldowns` do
+		`UnitUpgradeConfig` desce ate 4,8s no nivel maximo, e mesmo la sobra quase o
+		dobro da animacao.
 
 		**Cada acerto e uma area de raio 3, e cada um bate menos que o anterior**
-		(`HitFalloff = 0.1`): 35, 32, 28 e 26 de dano. A queda e por golpe e nao por
-		alvo -- quem esta na area do segundo golpe leva os mesmos 32 que todo mundo
+		(`HitFalloff = 0.1`): 39, 35, 32 e 28 de dano. A queda e por golpe e nao por
+		alvo -- quem esta na area do segundo golpe leva os mesmos 35 que todo mundo
 		que estiver la --, e e o que impede que quatro areas seguidas sejam
 		simplesmente quatro vezes o golpe: o combo vale 3,44 golpes cheios, e nao 4.
 
-		O raio 3 e maior que o do Rocket (2), e de proposito: o Rocket explode a 12
-		de alcance e este precisa de um inimigo a 6 para bater. A area e o que o
-		alcance curto compra.
+		O raio 3 e menor que o alcance dela (7), de proposito, e maior que o do
+		Rocket (2): o Rocket explode a 12 de alcance e este precisa de um inimigo a 7
+		para bater. A area e o que o alcance curto compra.
 
-		Os quatro acertos somam 121 de dano por ciclo, ou 20,5 de DPS -- **5,1 por
-		100 de caixa contra um alvo so**, que e de longe o pior da tabela e esta
-		certo: e a mesma casa do Rocket (4,4), a outra lendaria de area, e pela mesma
-		razao. A regra 1 la de cima mede alvo unico e nao mede area, entao ela cobra
-		das duas o preco de uma coisa que elas nao vendem. O numero que vale para
-		esta unidade e o de grupo: tres inimigos dentro do raio sao 15,4 por 100, na
-		linha do teto de 15 -- ela paga o custo cheio quando acerta a roda inteira, e
-		e ruim contra um alvo sozinho.
+		**O `Damage` desta tabela e por golpe, e nao por ciclo.** Os quatro acertos
+		somam 134 de dano, ou 22,3 de DPS -- 5,6 por 100 de caixa contra um alvo so,
+		que e de longe o pior da tabela e esta certo: e a mesma casa do Rocket (4,4),
+		a outra lendaria de area, e pela mesma razao. A regra 1 la de cima mede alvo
+		unico e nao mede area, entao ela cobra das duas o preco de uma coisa que elas
+		nao vendem. O numero que vale para esta unidade e o de grupo: tres inimigos
+		dentro do raio sao 16,7 por 100, no teto de 15 -- ela paga o custo cheio
+		quando acerta a roda inteira, e e ruim contra um alvo sozinho.
 
-		O que ela vende nao e o DPS medio: sao 121 de dano em area concentrados em
-		2,9s e uma janela de 3s em que ela nao faz nada, entao ela limpa o que estiver
-		junto e deixa passar a fila que vier atras. E a lendaria de alcance curto ao
-		lado do Azure -- os dois so machucam quem chega perto --, e o que os separa e
-		o ritmo e o alvo: o Azure bate de pouco em pouco num inimigo, este limpa a
-		roda toda de uma vez e para.
+		O que ela vende nao e o DPS medio: sao 134 de dano em area concentrados em
+		2,9s e uma janela de 3,1s em que ela nao faz nada, entao ela limpa o que
+		estiver junto e deixa passar a fila que vier atras. E a lendaria de alcance
+		curto ao lado do Azure -- os dois so machucam quem chega perto --, e o que os
+		separa e o ritmo e o alvo: o Azure bate de pouco em pouco num inimigo, este
+		limpa a roda toda de uma vez e para.
 	]=]
 	["Berserker"] = {
 		Rarity = "Legendary",
 		Class = "Melee",
 		Cost = 400,
-		Damage = 35,
-		Range = 6,
-		Cooldown = 5.9,
+		Damage = 39,
+		Range = 7,
+		Cooldown = 6,
 		AttackType = "MultiShot",
 
 		-- Sem uso nesta unidade: os intervalos saem das diferencas do `HitTimes`
@@ -327,7 +329,7 @@ local UnitStats = {
 		HitFalloff = 0.1,
 		RangeStats = {
 			Increment = 1,
-			Max = 10,
+			Max = 11,
 		},
 	},
 
@@ -518,15 +520,16 @@ local UnitStats = {
 	--[[ RARE ]]
 
 	--[[
-		A metralhadora barata: o menor dano por tiro da tabela (4) na maior cadencia
-		dela (0,55 s), a 7,3 de DPS -- 4,2 por 100 de caixa, o pior da tabela e de
-		proposito. Ela nao mata nada sozinha; o que ela vende e cutucar sem parar de
-		longe, e no nivel maximo ela atira tres vezes por segundo.
+		A barata de longe: 7 de dano a cada 1,15 s, a 6,1 de DPS -- 3,5 por 100 de
+		caixa, o pior da tabela e de proposito. Ela nao mata nada sozinha; o que ela
+		vende e cutucar sem parar de longe, e no nivel maximo o ciclo cai para 0,77 s
+		e o dano quase quadruplica (26).
 
-		**`Cooldown` e mais curto que o windup do tiro** (0,7 s no `UnitAttackConfig`),
-		e por isso o passo dela e escrito como `HitTimes` + `Duration`, e nao como
-		`HitTime`: as duas pontas espremem o instante junto com a animacao. Ver o
-		comentario dela la.
+		**O cooldown ja nao e mais curto que o windup do tiro** (0,7 s no
+		`UnitAttackConfig`) nos primeiros niveis, mas volta a ficar perto dele no
+		topo, e por isso o passo dela continua escrito como `HitTimes` + `Duration`,
+		e nao como `HitTime`: com 0,77 s de ciclo contra 1,25 s de animacao, as duas
+		pontas espremem o instante junto com o gesto. Ver o comentario dela la.
 
 		O alcance sobe em degraus ate 16 (`RangeStats.Levels`) -- a faixa longa da
 		regra 2, que ela divide com o Archer (12 na base tambem, 17 no maximo).
@@ -535,9 +538,9 @@ local UnitStats = {
 		Rarity = "Rare",
 		Class = "Ranged",
 		Cost = 175,
-		Damage = 4,
+		Damage = 7,
 		Range = 12,
-		Cooldown = 0.55,
+		Cooldown = 1.15,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
@@ -555,13 +558,15 @@ local UnitStats = {
 		coerente, nao para fechar balanceamento. Duas coisas neles nao sao chute e
 		vale saber antes de mexer:
 
-		- `Cooldown = 2` e a duracao da animacao `Attack` do modelo (2,00s). Com um
-		  cooldown menor a unidade pediria um golpe novo antes de o boneco terminar o
-		  anterior, e o `playAttackVisual` nao reinicia uma track que ja esta tocando
-		  -- a flecha sairia sem o gesto acompanhar.
-		- 16 de dano em 2s da 8,0 de DPS, ou 5,3 por 100 de caixa: acima do Slingshot
-		  (4,2), que e a outra Rare de tiro, e bem abaixo do teto de 15 da regra 1 la
-		  de cima.
+		- **2,00s e o piso do cooldown**, e e a duracao da animacao `Attack` do
+		  modelo. O `Cooldowns` do `UnitUpgradeConfig` desce de 3,5s ate exatamente
+		  esse numero no nivel maximo e nao passa dele: com um cooldown menor a
+		  unidade pediria um golpe novo antes de o boneco terminar o anterior, e o
+		  `playAttackVisual` nao reinicia uma track que ja esta tocando -- a flecha
+		  sairia sem o gesto acompanhar.
+		- 16 de dano em 3,5s da 4,6 de DPS, ou 3,0 por 100 de caixa: na mesma casa do
+		  Slingshot (3,5), que e a outra Rare de tiro, e bem abaixo do teto de 15 da
+		  regra 1 la de cima. No nivel maximo sao 22,5 de DPS.
 
 		**A flecha atravessa** (`Projectile.Subtype = "Piercing"`), e e isso que separa
 		o Archer do Slingshot agora que os dois tem o mesmo alcance: o tiro deixa de
@@ -577,6 +582,11 @@ local UnitStats = {
 		100 de caixa da regra 1 la de cima sozinho; com ela, alinhar mais inimigos
 		continua valendo a pena e para de escalar reto.
 
+		Contra um alvo so ele passa a valer o dobro do que valia ao subir de nivel --
+		o dano quase triplica (16 a 45) enquanto o ciclo cai quase pela metade (3,5s a
+		2s) --, e contra fila ele escala junto com os dois. E por isso que o
+		`Cooldowns` dele para nos 2s da animacao: e o unico teto que a unidade tem.
+
 		Se ele ainda virar escolha obvia em algum mapa, os botoes a girar sao o
 		`Damage` e o `PierceFalloff`, nesta ordem -- o subtipo e a identidade da
 		unidade, e nao um numero de balanceamento.
@@ -587,7 +597,7 @@ local UnitStats = {
 		Cost = 150,
 		Damage = 16,
 		Range = 12,
-		Cooldown = 2,
+		Cooldown = 3.5,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
@@ -694,6 +704,12 @@ local UnitStats = {
 		Cada golpe deixa o alvo sangrando: 1 de dano por segundo, 5 tiques. Como a
 		queimadura, **nao acumula nem renova** -- golpe em quem ja sangra so da o dano
 		do golpe. Upgrade, clima e carta nao mexem no sangramento.
+
+		O corte tambem abre o alvo: enquanto ele sangra, todo dano que entrar nele vale
+		30% a mais (`Vulnerability`), venha de onde vier. Isso vale muito mais no time
+		do que na unidade -- os 5 tiques de 1 sao troco perto de 30% do que as outras
+		torres despejam no mesmo alvo --, e e de proposito: o Slasher e a unidade de
+		entrada, e o que ela faz de melhor e marcar o alvo para os outros.
 	]]
 	["Slasher"] = {
 		Rarity = "Common",
@@ -705,7 +721,7 @@ local UnitStats = {
 		AttackType = "MultiShot",
 		HitInterval = 0,
 		Hits = 1,
-		Bleed = { Damage = 1, Ticks = 5, Interval = 1 },
+		Bleed = { Damage = 1, Ticks = 5, Interval = 1, Vulnerability = 1.3 },
 		RangeStats = {
 			Levels = { 4, 5, 5, 5, 6, 6 },
 		},

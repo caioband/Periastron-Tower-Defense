@@ -75,14 +75,24 @@ Mob.Entities = {
 				O golpe de assinatura do Redcliff Champion: na metade da vida ele para,
 				bate, e uma unidade aleatoria fica atordoada.
 
-				`ModelSet = "Hard"` porque o chefe do elenco Astral tem o dele (o
+				O escopo existe porque o chefe do elenco Astral tem o dele (o
 				`HealthThresholdRush`, logo abaixo), e os dois disparavam no mesmo 50%:
 				o Sentinel tocava `Attack` e `Rush` juntos e ficava parado 1,3s
 				justamente quando o arranque comecava. **Um chefe, um golpe.**
+
+				`ExceptModelSet`, e nao uma lista de quem tem: este e o golpe **padrao** do
+				chefe, e o Easy e o unico elenco que trocou por um proprio. Escrito pelo
+				lado positivo, cada pasta nova deixava o chefe dela mudo ate alguem
+				lembrar de somar o nome -- aconteceu tres vezes antes de a chave virar.
+
+				Os chefes que o herdam hoje (Sky Knight, Korblox Death Raider, Overseer
+				King) nao tem animacao `Attack`, entao neles a pausa de 1,3s sai sem gesto.
+				Cada um sai desta heranca no dia em que ganhar o golpe proprio, que e o
+				caminho que o Astral Sentinel ja fez.
 			]]
 			{
 				Type = "HealthThresholdStunRandomUnit",
-				ModelSet = "Hard",
+				ExceptModelSet = "Easy",
 				Threshold = 0.5,
 				StunDuration = 15,
 				AnimTime = 1.3,
@@ -161,6 +171,59 @@ Mob.ModelSets = {
 		tem que ser inconfundivel. Repetir o degrau de baixo custa dois elites
 		parecidos; repetir o de cima custaria o chefe.
 	]]
+	--[[
+		O elenco Sky, oito modelos para nove slots.
+
+		Mesma regua e mesma conta do Easy: quem repete e o degrau de baixo (o
+		`SkyGuardian`, no Enforcer), para o chefe continuar sendo o unico com a cara
+		dele na wave em que os dois aparecem juntos.
+	]]
+	Medium = {
+		Traveler = "SkyBirdWarrior",
+		RedcliffPawn = "SkyLeader",
+		RedcliffSquire = "SkyWindAxe",
+		RedcliffGuard = "SkyStealther",
+		WallSmasher = "SkyFlyingGoon",
+		CourageBearer = "SkyMage",
+		WingedSquire = "SkyGuardian",
+		RedcliffEnforcer = "SkyGuardian",
+		RedcliffChampion = "SkyKnight",
+	},
+
+	--[[
+		O elenco Korblox, nove modelos para nove slots -- nenhum repete.
+	]]
+	Impossible = {
+		Traveler = "KorbloxMage",
+		RedcliffPawn = "KorbloxSkeleton",
+		RedcliffSquire = "KorbloxGeneral",
+		RedcliffGuard = "KorbloxGremlin",
+		WallSmasher = "KorbloxImperium",
+		CourageBearer = "KorbloxSkeletonDefender",
+		WingedSquire = "KorbloxElder",
+		RedcliffEnforcer = "KorbloxDeathspeaker",
+		RedcliffChampion = "KorbloxDeathRaider",
+	},
+
+	--[[
+		O elenco Overseer, nove modelos para nove slots -- nenhum repete.
+
+		Mesma regua do Easy: os modelos estao enfileirados entre o `Weakest` e o
+		`Strongest` do Workspace, e a fila casa degrau por degrau com o `SPAWN_ORDER`
+		do `Config.Wave`.
+	]]
+	Nightmare = {
+		Traveler = "OverseerMinion",
+		RedcliffPawn = "OverseerWanderer",
+		RedcliffSquire = "OverseerOrb",
+		RedcliffGuard = "OverseerGuard",
+		WallSmasher = "OverseerCharger",
+		CourageBearer = "OverseerWingwalker",
+		WingedSquire = "OverseerMage",
+		RedcliffEnforcer = "OverseerKnight",
+		RedcliffChampion = "OverseerKing",
+	},
+
 	Easy = {
 		Traveler = "AstralInitiate",
 		RedcliffPawn = "AstralWizard",
@@ -182,9 +245,23 @@ Mob.ModelSets = {
 	Astral Sentinel arranca, o Redcliff Champion atordoa uma torre, e nenhum dos dois
 	faz o do outro.
 
-	Atencao ao que o nome diz: o filtro e por **conjunto de modelos**, e nao por
-	dificuldade. `ModelSet = "Hard"` alcanca Medium, Hard, Impossible, Nightmare e o
-	Tutorial -- todos os presets que vestem o elenco Redcliff.
+	Sao duas chaves, e a escolha entre elas importa:
+
+	  - `ModelSet` -- **so** nos conjuntos nomeados. Para o golpe que e daquele elenco.
+	  - `ExceptModelSet` -- em todos **menos** nos nomeados. Para o golpe que e o
+	    padrao da entidade e que algum elenco substituiu pelo seu.
+
+	As duas aceitam um nome ou uma lista.
+
+	A segunda existe porque a primeira tem uma armadilha silenciosa: o filtro e por
+	**conjunto de modelos**, e nao por dificuldade, entao uma dificuldade que ganha
+	pasta propria sai do fallback `Hard` e perde na hora tudo o que estava escopado
+	la. Isso aconteceu tres vezes seguidas -- Nightmare, Medium e Impossible --, e o
+	sintoma e mudo: nenhum erro, o golpe so para de sair.
+
+	Escrito pelo lado negativo, o padrao passa a ser **herdar**: elenco novo ja nasce
+	com o golpe da entidade, e so deixa de te-lo quando alguem disser que ele tem o
+	seu. E a diferenca entre esquecer e ganhar de graca.
 
 	Para um inimigo **trocar** de golpe entre os elencos, e preciso escopar os dois
 	lados: um gimmick `Easy` novo convive com um gimmick sem `ModelSet` em vez de
@@ -201,8 +278,18 @@ function Mob.GetGimmicks(setName : string?, entityName : string)
 	local set = setName or Mob.DefaultModelSet
 	local allowed = {}
 
+	--- Se `scope` (nome, lista ou nil) nomeia o conjunto desta partida.
+	local function names(scope) : boolean
+		if scope == nil then return false end
+		if type(scope) == "table" then return table.find(scope, set) ~= nil end
+		return scope == set
+	end
+
 	for _, gimmick in entity.Gimmicks do
-		if gimmick.ModelSet == nil or gimmick.ModelSet == set then
+		local only = gimmick.ModelSet
+		local applies = (only == nil or names(only)) and not names(gimmick.ExceptModelSet)
+
+		if applies then
 			table.insert(allowed, gimmick)
 		end
 	end

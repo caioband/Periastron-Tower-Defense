@@ -689,13 +689,25 @@ end
 	regras de tique, dono e **nao acumula nem renova** do `ApplyBurn`, com prazo
 	proprio (`BleedingUntil`) -- sangrar e queimar convivem no mesmo alvo.
 
+	O que o sangramento tem a mais e a **ferida aberta**: enquanto o prazo corre, todo
+	dano que entra no inimigo vale `vulnerability` vezes mais (1.3 e "+30%"). Isso nao
+	e um buff de torre -- e o inimigo que esta mais fragil --, entao quem cobra e o
+	`DamageMob`, junto com o "quebradico" da carta, e vale para qualquer fonte: outra
+	unidade, respingo de area, tripmine, e os proprios tiques do sangramento.
+
+	O multiplicador mora no mob (`BleedVulnerability`) e nao no prazo porque o valor e
+	de quem abriu o corte: quem renovar o sangramento depois (so quando o prazo acabar,
+	pela regra de nao acumular) escreve o seu por cima.
+
 	Nenhuma carta mexe no sangramento: a Fire Hazard e do fogo. O desenho sai pelo
 	`MobBleeding` (`BleedVFX`). Hoje quem sangra e o Slasher.
 ]=]
-function MobService:ApplyBleed(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?)
+function MobService:ApplyBleed(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?, vulnerability : number?)
 	self:applyDamageOverTime(mobId, damage, ticks, interval, ownerUserId, {
 		UntilKey = "BleedingUntil",
 		Event = "MobBleeding",
+		VulnerabilityKey = "BleedVulnerability",
+		Vulnerability = vulnerability,
 	})
 end
 
@@ -706,6 +718,10 @@ end
 	bloquearem), `kind.Event` e o aviso do desenho, e `kind.CardStat` e a carta global
 	que multiplica cada tique, quando houver. O tique na tela e o mesmo
 	`MobDamageTick` para todos: numero e barra de vida nao dependem do efeito.
+
+	`kind.VulnerabilityKey` e `kind.Vulnerability` sao o efeito que tambem deixa o alvo
+	mais fragil enquanto dura (hoje so o sangramento): o numero fica gravado no mob e
+	quem cobra e o `DamageMob`, pelo mesmo prazo do `kind.UntilKey`.
 ]=]
 function MobService:applyDamageOverTime(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?, kind)
 	local mob = self.ActiveMobs[mobId]
@@ -722,6 +738,12 @@ function MobService:applyDamageOverTime(mobId : string, damage : number?, ticks 
 
 	local duration = ticks * interval
 	mob[kind.UntilKey] = now + duration
+
+	-- Escrito junto com o prazo, e nunca apagado: quem le confere o prazo antes, entao
+	-- um valor velho de um sangramento que ja acabou nao cobra nada.
+	if kind.VulnerabilityKey then
+		mob[kind.VulnerabilityKey] = math.max(1, kind.Vulnerability or 1)
+	end
 
 	for _, player in Players:GetPlayers() do
 		Framework:Fire(kind.Event, player, mobId, duration)
@@ -1638,9 +1660,20 @@ function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?, 
 		E aqui, no unico caminho de dano do jogo, e nao em cada unidade: ele nao e um
 		buff de torre — o inimigo e que esta mais fragil, e um tiro de tripmine ou um
 		respingo de area conta igual.
+
+		A ferida aberta do sangramento (`ApplyBleed`) entra aqui pelo mesmo motivo, so
+		que por inimigo em vez de por sala: enquanto o `BleedingUntil` correr, tudo que
+		acertar aquele alvo vale `BleedVulnerability` vezes mais — inclusive os tiques
+		do proprio sangramento, que passam por aqui como qualquer outro dano.
 	]]
-	local incoming = (damage or 10) * (self.BrittleMultiplier or 1)
-	if incoming ~= (damage or 10) then
+	local vulnerability = 1
+	if GameClock.Now() < (mob.BleedingUntil or 0) then
+		vulnerability = mob.BleedVulnerability or 1
+	end
+
+	local base = damage or 10
+	local incoming = base * (self.BrittleMultiplier or 1) * vulnerability
+	if incoming ~= base then
 		incoming = math.max(1, math.floor(incoming + 0.5))
 	end
 

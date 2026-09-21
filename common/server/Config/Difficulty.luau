@@ -189,6 +189,13 @@ Difficulty.Presets = {
 	},
 
 	Medium = {
+		--[[
+			O elenco Sky (ver `SharedConfig.Mob.ModelSets`). Como no Nightmare, sair do
+			fallback `Hard` tirou desta dificuldade os gimmicks escopados la -- por isso
+			o atordoamento do chefe lista os tres conjuntos.
+		]]
+		ModelSet = "Medium",
+
 		WeatherChance = 0.15,
 		HealthMultiplier = 1.2,
 		HealthGrowth = 1.022,
@@ -233,6 +240,9 @@ Difficulty.Presets = {
 	},
 
 	Impossible = {
+		-- O elenco Korblox (ver `SharedConfig.Mob.ModelSets`).
+		ModelSet = "Impossible",
+
 		WeatherChance = 0.30,
 		HealthMultiplier = 3.625,
 		HealthGrowth = 1.04,
@@ -255,6 +265,15 @@ Difficulty.Presets = {
 	},
 
 	Nightmare = {
+		--[[
+			O elenco Overseer (ver `SharedConfig.Mob.ModelSets`).
+
+			Como o `Hard` deixou de ser o fallback daqui, todo gimmick escopado nele
+			parou de alcancar esta dificuldade -- e por isso o atordoamento do chefe
+			passou a listar os dois conjuntos.
+		]]
+		ModelSet = "Nightmare",
+
 		WeatherChance = 0.40,
 		HealthMultiplier = 6.75,
 		HealthGrowth = 1.05,

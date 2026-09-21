@@ -1144,7 +1144,7 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 
 		local bleed = stats and stats.Bleed
 		if bleed then
-			self.Services.MobService:ApplyBleed(mobId, bleed.Damage, bleed.Ticks, bleed.Interval, entry.ownerUserId)
+			self.Services.MobService:ApplyBleed(mobId, bleed.Damage, bleed.Ticks, bleed.Interval, entry.ownerUserId, bleed.Vulnerability)
 		end
 
 		--[[

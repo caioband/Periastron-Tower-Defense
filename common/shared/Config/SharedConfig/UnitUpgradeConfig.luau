@@ -17,13 +17,22 @@ local WeatherConfig = require(script.Parent.WeatherConfig)
 	| Campo | O que e |
 	| --- | --- |
 	| `Costs` | o preco de cada upgrade, um por nivel comprado (indice = nivel atual + 1). Manda no `BaseCost`/`CostMultiplier` |
+	| `Damages` | o dano de cada nivel (indice = nivel + 1), do 0 ao maximo. Manda no `DamageMultiplier`, e o item 1 tem que ser o `Damage` do `UnitStats` |
 	| `Cooldowns` | o cooldown de cada nivel (indice = nivel + 1), do 0 ao maximo. Manda no `CooldownMultiplier`, e o item 1 tem que ser o `Cooldown` do `UnitStats` |
 	| `Incomes` | a renda por wave de uma farm em cada nivel (indice = nivel + 1). Manda no `Farm.Income` x `DamageMultiplier`, e o item 1 tem que ser o `Farm.Income` do `UnitStats` |
 
-	Hoje oito unidades usam `Costs`, porque a escada de preco delas foi desenhada
-	por wave e nao por formula: os saltos sao desiguais de proposito. `Cooldowns` so
-	o Slingshot usa -- os 0,55s ate 0,32s dele nao sao geometricos --, e `Incomes` so
-	o Entrepreneur, que e a unica farm.
+	Hoje dez unidades usam `Costs`, porque a escada de preco delas foi desenhada
+	por wave e nao por formula: os saltos sao desiguais de proposito. `Cooldowns` o
+	Slingshot, o Archer e o Berserker usam -- nenhuma das tres desce em razao fixa
+	--, `Damages` o Archer e o Berserker, e `Incomes` so o Entrepreneur, que e a
+	unica farm.
+
+	**`Damages` e o ultimo recurso, e nao a saida facil.** A escada de dano passa por
+	um arredondamento, entao uma tabela desenhada a mao quase sempre ainda cabe numa
+	razao: e so procurar o intervalo de multiplicadores em que os seis numeros
+	arredondam certo, como o Slingshot faz com 1.304. So quando esse intervalo e
+	vazio -- os degraus do Archer e do Berserker se cruzam e nenhum numero serve para
+	os seis -- e que a lista entra.
 
 	A regra para escolher e simples: **se a formula reproduz a tabela exatamente, use
 	a formula**. Ela documenta a intencao (o alvo do nivel maximo) e continua valendo
@@ -104,19 +113,43 @@ UnitUpgradeConfig.Units = {
 		DamageMultiplier = 1.25,
 		CooldownMultiplier = 0.9,
 	},
-	--[[
-		Sem `CooldownMultiplier`, ao contrario do Sword e do Slasher: os 3s parados
-		depois do combo sao a identidade do Berserker, e upgrade nele compra dano, e
-		nao cadencia. Ver o comentario dele no `UnitStats`.
+	--[=[
+		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Dano     | 39   | 48   | 65   | 98   | 115  | 135  |
+		| Cooldown | 6,00 | 5,80 | 5,50 | 5,25 | 5,10 | 4,80 |
+		| Alcance  | 7    | 8    | 9    | 10   | 11   | 11   |
+		| DPS      | 6,5  | 8,3  | 11,8 | 18,7 | 22,5 | 28,1 |
 
-		A escada de preco e a do Rocket, e nao a do Azure: as duas sao lendarias, mas
-		esta comeca em 400 de caixa e sobe so em dano, entao o upgrade dela tem que
-		custar como o da outra lendaria cara.
-	]]
+		**O DPS da tabela acima e por golpe, e nao o que a unidade despeja.** Ela bate
+		quatro vezes por ciclo com `HitFalloff` de 10% (ver o comentario dela no
+		`UnitStats`), entao o combo vale 3,44 golpes cheios e o DPS de verdade e
+		3,44x o da linha: 22,3 no nivel 0 e 96,7 no maximo. A linha esta aqui na forma
+		`Dano / Cooldown` so para poder ser comparada com o resto da tabela, que e de
+		um golpe so.
+
+		Dano e cadencia sao escadas na mao, e nenhuma das duas cabe numa razao. O
+		cooldown desce em passos desiguais -- 0,20, 0,30, 0,25, 0,15 e 0,30 --, que
+		sao os degraus de quanto a recuperacao depois do combo encurta; a animacao
+		(2,9s) nao muda, e por isso mesmo no nivel 5 sobram 1,9s de espera.
+
+		**O dano tem um degrau que nenhuma razao imita: o terceiro upgrade.** De 65
+		para 98 sao +51% de uma vez, contra +17% do seguinte e +35% do anterior -- a
+		faixa de multiplicadores que arredondaria para os seis numeros e vazia por
+		larga margem (o nivel 3 pediria 1,357 e o nivel 5 nao aceita mais que 1,244).
+		Esse salto e o ponto da escada: o nivel 3 e onde a unidade deixa de ser cara
+		e passa a valer o preco, e e la que a decisao de subi-la ou vender esta.
+
+		Ela deixou de ser a lendaria que so sobe em dano: agora o upgrade compra
+		cadencia e alcance tambem (7 a 11, pelo `RangeStats` do `UnitStats`), e e o
+		alcance que muda mais a unidade -- a 11 ela cobre um pedaco de caminho em vez
+		de um ponto.
+
+		Com os 400 de colocacao do `UnitStats`, leva-la ao maximo custa 4.130.
+	]=]
 	["Berserker"] = {
-		BaseCost = 150,
-		CostMultiplier = 1.7,
-		DamageMultiplier = 1.25,
+		Costs = { 325, 480, 650, 875, 1400 },
+		Damages = { 39, 48, 65, 98, 115, 135 },
+		Cooldowns = { 6, 5.8, 5.5, 5.25, 5.1, 4.8 },
 	},
 	--[[
 		O dano do Slasher vai de **5 (base) a 9 (nivel maximo)**, e o multiplicador e
@@ -143,26 +176,30 @@ UnitUpgradeConfig.Units = {
 		CooldownMultiplier = 0.9,
 	},
 	--[=[
-		A unica unidade com `Cooldowns` na mao: os degraus dela nao sao geometricos, e
-		nenhum multiplicador unico passa pelos seis.
-
 		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Dano     | 4    | 5    | 6    | 7    | 9    | 10   |
-		| Cooldown | 0,55 | 0,52 | 0,46 | 0,41 | 0,35 | 0,32 |
-		| DPS      | 7,3  | 9,6  | 13,0 | 17,1 | 25,7 | 31,3 |
+		| Dano     | 7    | 9    | 12   | 16   | 20   | 26   |
+		| Cooldown | 1,15 | 1,05 | 0,93 | 0,87 | 0,82 | 0,77 |
+		| Alcance  | 12   | 13   | 14   | 15   | 15   | 16   |
+		| DPS      | 6,1  | 8,6  | 12,9 | 18,4 | 24,4 | 33,8 |
 
-		**`1.21` nao e o alvo do nivel maximo escrito como raiz**, ao contrario do
-		Slasher e do Frostione: `(10/4) ^ (1/5)` daria 1,2011 e o nivel 4 cairia em
-		8,3 -- um 8 onde a tabela pede 9. A faixa que arredonda para os seis numeros e
-		estreita (1,2075 a 1,2126), e 1,21 esta dentro dela. Mexeu qualquer degrau,
-		refaca a conta: nao ha folga aqui.
+		O cooldown e escada na mao (`Cooldowns`) porque os degraus dela nao sao
+		geometricos: a queda e de 0,10, 0,12, 0,06, 0,05 e 0,05, forte no comeco e
+		quase parada no fim -- o que o upgrade compra nesta unidade, dos niveis 3
+		para cima, e dano e nao cadencia.
+
+		**`1.304` nao e o alvo do nivel maximo escrito como raiz**, ao contrario do
+		Slasher e do Frostione: `(26/7) ^ (1/5)` daria 1,3001 e o nivel 3 cairia em
+		15,4 -- um 15 onde a tabela pede 16. A faixa que arredonda para os seis
+		numeros e estreitissima (1,3034 a 1,3051), e 1.304 esta dentro dela. Mexeu
+		qualquer degrau, refaca a conta: nao ha folga nenhuma aqui, e se a faixa
+		fechar a saida e um `Damages` na mao, como o do Archer e o do Berserker.
 
 		Com os 175 de colocacao do `UnitStats`, leva-la ao maximo custa 1.725.
 	]=]
 	["Slingshot"] = {
 		Costs = { 130, 210, 285, 375, 550 },
-		DamageMultiplier = 1.21,
-		Cooldowns = { 0.55, 0.52, 0.46, 0.41, 0.35, 0.32 },
+		DamageMultiplier = 1.304,
+		Cooldowns = { 1.15, 1.05, 0.93, 0.87, 0.82, 0.77 },
 	},
 	--[[
 		O dano do tiro vai de 15 a 25 no nivel maximo, pela mesma conta do Slasher: a
@@ -176,27 +213,49 @@ UnitUpgradeConfig.Units = {
 		Costs = { 100, 185, 250, 375, 500 },
 		DamageMultiplier = (25 / UnitStats["Pyre"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 	},
-	--[[
+	--[=[
 		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Dano     | 16   | 20   | 25   | 31   | 39   | 49   |
-		| Cooldown | 2,00 | 2,00 | 2,00 | 2,00 | 2,00 | 2,00 |
-		| DPS      | 8,0  | 10,0 | 12,5 | 15,5 | 19,5 | 24,5 |
+		| Dano     | 16   | 20   | 25   | 31   | 37   | 45   |
+		| Cooldown | 3,50 | 3,20 | 2,90 | 2,60 | 2,30 | 2,00 |
+		| Alcance  | 12   | 13   | 14   | 15   | 16   | 17   |
+		| DPS      | 4,6  | 6,3  | 8,7  | 12,0 | 16,1 | 22,5 |
 
-		Sem `CooldownMultiplier` de proposito, ao contrario do Slingshot de que ele e
-		uma variacao: os 2s sao a duracao da animacao `Attack` (ver o comentario dele
-		no `UnitStats`), e upgrade nele compra dano e alcance, nao cadencia. E o que
-		separa os dois agora -- um cutuca cada vez mais rapido, o outro bate cada vez
-		mais forte no mesmo ritmo.
+		Dano e cadencia sao escadas na mao. O cooldown desce **0,30s certos por
+		nivel** -- uma reta, e reta nenhuma e uma razao --, e para exatamente nos
+		2,00s da animacao `Attack` no nivel maximo: e o piso da unidade, e esta
+		escrito assim para ninguem baixar sem mexer na animacao junto (ver o
+		comentario dele no `UnitStats`).
+
+		O dano precisa de `Damages` porque os degraus se cruzam: para o nivel 3 cair
+		em 31 o multiplicador teria que ser pelo menos 1,2399, e para o nivel 4 cair
+		em 37 teria que ser menos de 1,2373. Nao ha numero entre os dois, entao a
+		lista e a unica forma -- e e exatamente o caso que o cabecalho do arquivo
+		descreve.
+
+		O Archer e o Slingshot deixaram de se separar pelo ritmo: agora os dois
+		ganham dano e cadencia com o upgrade, e o que os distingue e a flecha
+		atravessar (o Slingshot cutuca um alvo, o Archer cobra a fila) e o alcance
+		maximo -- 17 contra 16.
 
 		Com os 150 de colocacao do `UnitStats`, leva-lo ao maximo custa 1.835.
-	]]
+	]=]
 	["Archer"] = {
 		Costs = { 125, 235, 300, 425, 600 },
-		DamageMultiplier = 1.25,
+		Damages = { 16, 20, 25, 31, 37, 45 },
+		Cooldowns = { 3.5, 3.2, 2.9, 2.6, 2.3, 2 },
 	},
+	--[[
+		A escada de preco e na mao (`Costs`), e nao a formula de antes: o salto do
+		nivel 1 para o 2 e menor que o do 0 para o 1 (250 para 400 contra 450 para
+		250), e razao nenhuma anda para tras. O desenho e por wave -- o primeiro
+		upgrade e barato de proposito, para quem gastou 450 na colocacao nao ficar uma
+		wave inteira sem poder mexer na torre --, e o peso todo esta no ultimo degrau:
+		1.500, mais do que os tres primeiros juntos.
+
+		Com os 450 de colocacao do `UnitStats`, leva-lo ao maximo custa 4.090.
+	]]
 	["Rocket"] = {
-		BaseCost = 150,
-		CostMultiplier = 1.7,
+		Costs = { 250, 400, 650, 840, 1500 },
 		DamageMultiplier = 1.3,
 	},
 
@@ -207,13 +266,15 @@ UnitUpgradeConfig.Units = {
 		em soquinhos. Upgrade nesta unidade compra dano, alcance e a duracao do tranco
 		(ver `GetStunDuration` e o comentario dela no `UnitStats`).
 
-		A escada de preco e a das outras duas lendarias caras -- ela custa 300 de
-		caixa para entrar em campo, entao o upgrade nao pode custar como o de uma
-		unidade de 100.
+		A escada de preco e na mao (`Costs`), pelo mesmo desenho do Rocket logo acima:
+		o primeiro upgrade e o barato (225 contra os 350 da colocacao) e o ultimo e o
+		caro (1.300). Ela custa 350 de caixa para entrar em campo, entao o upgrade nao
+		pode custar como o de uma unidade de 100.
+
+		Com os 350 de colocacao do `UnitStats`, leva-la ao maximo custa 3.770.
 	]]
 	["Electro"] = {
-		BaseCost = 150,
-		CostMultiplier = 1.7,
+		Costs = { 225, 450, 635, 810, 1300 },
 		DamageMultiplier = 1.25,
 	},
 	--[[
@@ -320,9 +381,38 @@ function UnitUpgradeConfig:GetPlaceCost(unitName, weather)
 	return math.floor(cost * weatherMultiplier(weather, unitName, "Cost") + 0.5)
 end
 
+--[=[
+	O quanto o dano base da unidade cresce ate `level`, **como fator** e nao como
+	dano pronto.
+
+	Ser um fator e o que mantem as duas pontas com o mesmo arredondamento: o
+	servidor (`UnitService:getDamage`) e o card (`formatDamageOrIncome`) multiplicam
+	o `UnitStats.Damage` por este numero junto com carta, carga e clima, e so entao
+	arredondam, uma vez so. Devolver o dano ja pronto arredondaria duas vezes.
+
+	Com `Damages` na unidade, o fator e o item da escada dividido pelo dano base --
+	por isso o item 1 tem que ser o proprio `Damage` do `UnitStats`, senao o nivel 0
+	nao sai 1. Sem ela, a razao geometrica de sempre.
+]=]
 function UnitUpgradeConfig:GetDamageMultiplier(unitName, level, weather)
 	local data = self:GetUnitData(unitName)
-	return (data.DamageMultiplier ^ level) * weatherMultiplier(weather, unitName, "Damage")
+	local ladder = data.Damages
+
+	local multiplier
+	if ladder then
+		local stats = UnitStats[unitName]
+		local baseDamage = stats and stats.Damage or 0
+		local stepDamage = ladder[math.clamp((level or 0) + 1, 1, #ladder)]
+
+		-- Dano base zero nao tem fator possivel (o Entrepreneur e o caso), e cair na
+		-- divisao devolveria `nan` para o card. Nenhuma farm declara `Damages`; o
+		-- ramo existe para que declarar uma nao quebre a tela.
+		multiplier = if baseDamage > 0 then stepDamage / baseDamage else 1
+	else
+		multiplier = data.DamageMultiplier ^ level
+	end
+
+	return multiplier * weatherMultiplier(weather, unitName, "Damage")
 end
 
 function UnitUpgradeConfig:GetRange(unitName, level, weather)

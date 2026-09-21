@@ -1905,8 +1905,9 @@ cliente monta a sua — é o caminho do comando `arrow` do Cmdr.
 ### O elenco muda com a dificuldade, a partida não
 
 Os modelos dos inimigos vivem em `ReplicatedStorage.Shared.Assets.Entities.Difficulties.<conjunto>`,
-um conjunto por pasta. Hoje são dois: `Hard`, com os nove Redcliff, e `Easy`, com oito
-Astral.
+um conjunto por pasta. Hoje são cinco: `Hard` com os nove Redcliff, `Easy` com oito
+Astral, `Medium` com oito Sky, `Impossible` com nove Korblox e `Nightmare` com nove
+Overseer.
 
 **É reskin por slot.** As nove entidades de `SharedConfig.Mob.Entities` continuam sendo
 a verdade da partida — vida, velocidade e gimmicks saem dali em qualquer dificuldade —, e
@@ -1921,33 +1922,35 @@ Entidade que não está na tabela usa o próprio nome, que é o caso de oito dos
 `Hard` — a exceção é o `WingedSquire`, que se chama `WingedRedcliff` como modelo desde
 que veio da planilha. Enquanto os dois nomes existirem, é essa linha que os liga.
 
-| Slot (`SPAWN_ORDER`) | Hard | Easy |
-| --- | --- | --- |
-| 1 | Traveler | AstralInitiate |
-| 2 | RedcliffPawn | AstralWizard |
-| 3 | RedcliffSquire | AstralKnight |
-| 4 | RedcliffGuard | AstralGuardia |
-| 5 | WallSmasher | AstralNecromancer |
-| 6 | CourageBearer | AstralSentry |
-| 7 | WingedSquire | AstralAdventurer |
-| 8 | RedcliffEnforcer | AstralAdventurer |
-| 9 | RedcliffChampion | AstralSentinel |
+| Slot (`SPAWN_ORDER`) | Hard | Easy | Medium | Impossible | Nightmare |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Traveler | AstralInitiate | SkyBirdWarrior | KorbloxMage | OverseerMinion |
+| 2 | RedcliffPawn | AstralWizard | SkyLeader | KorbloxSkeleton | OverseerWanderer |
+| 3 | RedcliffSquire | AstralKnight | SkyWindAxe | KorbloxGeneral | OverseerOrb |
+| 4 | RedcliffGuard | AstralGuardia | SkyStealther | KorbloxGremlin | OverseerGuard |
+| 5 | WallSmasher | AstralNecromancer | SkyFlyingGoon | KorbloxImperium | OverseerCharger |
+| 6 | CourageBearer | AstralSentry | SkyMage | KorbloxSkeletonDefender | OverseerWingwalker |
+| 7 | WingedSquire | AstralAdventurer | SkyGuardian | KorbloxElder | OverseerMage |
+| 8 | RedcliffEnforcer | AstralAdventurer | SkyGuardian | KorbloxDeathspeaker | OverseerKnight |
+| 9 | RedcliffChampion | AstralSentinel | SkyKnight | KorbloxDeathRaider | OverseerKing |
 
-A ordem do Easy saiu da régua que as parts `Workspace.Weakest` e `Workspace.Strongest`
-desenham: os oito modelos estão enfileirados entre elas, do mais fraco ao mais forte, e a
-fila casa degrau por degrau com o `SPAWN_ORDER`. **A régua é documentação de arte, e nada
-a lê em runtime** — quem quiser reordenar o elenco mexe na tabela acima, não nas parts.
+A ordem de cada elenco novo sai da régua que as parts `Workspace.Weakest` e
+`Workspace.Strongest` desenham: os modelos são enfileirados entre elas, do mais fraco ao
+mais forte, e a fila casa degrau por degrau com o `SPAWN_ORDER`. **A régua é documentação
+de arte, e nada a lê em runtime** — quem quiser reordenar um elenco mexe na tabela acima,
+não nas parts.
 
-São oito modelos para nove slots, então um repete, e quem repete é o `AstralAdventurer`,
-no Enforcer. A conta é de leitura de tela: o Enforcer e o Champion aparecem juntos na
-última wave, então dar o modelo do chefe ao Enforcer tiraria do chefe o único momento em
-que ele tem que ser inconfundível. Repetir o degrau de baixo custa dois elites parecidos;
-repetir o de cima custaria o chefe.
+O `Impossible` e o `Nightmare` têm nove modelos e nenhum repete. O `Easy` e o `Medium`
+têm oito para nove slots, então um repete em cada — e nos dois é o **degrau de baixo**, no Enforcer
+(`AstralAdventurer`, `SkyGuardian`). A conta é de leitura de tela: o Enforcer e o Champion
+aparecem juntos na última wave, então dar o modelo do chefe ao Enforcer tiraria do chefe o
+único momento em que ele tem que ser inconfundível. Repetir o degrau de baixo custa dois
+elites parecidos; repetir o de cima custaria o chefe.
 
 ### Quem escolhe o conjunto, e por onde ele viaja
 
-O preset diz o seu em `Difficulty.ModelSet` (só o `Easy` tem um hoje; os outros caem no
-`Mob.DefaultModelSet`, que é o `Hard`). O `MobService:SpawnWave` lê isso uma vez por wave
+O preset diz o seu em `Difficulty.ModelSet`. Hoje só o Hard e o Tutorial caem no
+`Mob.DefaultModelSet` (que é o `Hard`); as outras quatro dificuldades têm elenco próprio. O `MobService:SpawnWave` lê isso uma vez por wave
 e manda o apelido do conjunto no payload do `SpawnClientMob`, junto do nome da entidade.
 
 O apelido atravessa em vez de o cliente perguntar a dificuldade porque `Config.Difficulty`
@@ -1978,21 +1981,46 @@ traz coisa junto — o Astral Sentinel tem uma animação `Rush` que o Redcliff 
 tem. A exceção mora numa chave visível na entidade, e não num `if` dentro de um handler,
 justamente para que quem lê a entidade veja quais gimmicks não valem em todo lugar.
 
-Duas coisas que o nome não diz sozinho:
+São duas chaves, e escolher entre elas é a decisão que importa:
 
-- **O filtro é por elenco, não por dificuldade.** `ModelSet = "Hard"` alcança Medium,
-  Hard, Impossible, Nightmare e o Tutorial — todos os presets que vestem o Redcliff.
-- **Escopar um lado não desescopa o outro.** Um gimmick `Easy` novo *convive* com um
-  gimmick sem `ModelSet`, em vez de substituí-lo. Para um inimigo **trocar** de golpe
-  entre os elencos, os dois precisam de `ModelSet` — é o que os dois do chefe fazem.
+| chave | vale | para |
+| --- | --- | --- |
+| `ModelSet` | **só** nos conjuntos nomeados | o golpe que é daquele elenco |
+| `ExceptModelSet` | em todos **menos** nos nomeados | o golpe padrão da entidade, que algum elenco substituiu |
+
+As duas aceitam um nome ou uma lista.
+
+**A segunda existe porque a primeira tinha uma armadilha silenciosa.** O filtro é por
+elenco, não por dificuldade — então uma dificuldade que ganha pasta própria sai do
+fallback `Hard` e perde na hora tudo o que estivesse escopado lá. Isso aconteceu três
+vezes seguidas (Nightmare, Medium, Impossible) e o sintoma é mudo: nenhum erro, o golpe
+simplesmente para de sair.
+
+Escrito pelo lado negativo o padrão passa a ser **herdar**: elenco novo já nasce com o
+golpe da entidade e só deixa de tê-lo quando alguém disser que ele tem o seu. Por isso o
+atordoamento do chefe é `ExceptModelSet = "Easy"`, e não uma lista de quem o tem.
+
+> **A regra prática:** golpe que um elenco ganhou é `ModelSet`; golpe que um elenco
+> perdeu é `ExceptModelSet` no golpe antigo. Nunca uma lista crescente de quem herda.
+
+Ainda vale saber que **escopar um lado não desescopa o outro**: um gimmick `Easy` novo
+*convive* com um gimmick sem escopo nenhum, em vez de substituí-lo. Para um inimigo
+**trocar** de golpe entre elencos, os dois precisam de chave — é o que os dois do chefe
+fazem.
 
 Hoje o quadro é este:
 
-| Entidade | Elenco Redcliff | Elenco Astral |
+| Entidade | golpe | escopo |
 | --- | --- | --- |
-| WallSmasher | `PerTurnSpeedMultiplier` | idem (sem escopo) |
-| CourageBearer | `PerTurnSpeedMultiplier` | idem (sem escopo) |
-| RedcliffChampion | `HealthThresholdStunRandomUnit` | `HealthThresholdRush` |
+| WallSmasher | `PerTurnSpeedMultiplier` | todos os elencos |
+| CourageBearer | `PerTurnSpeedMultiplier` | todos os elencos |
+| RedcliffChampion | `HealthThresholdStunRandomUnit` | todos menos o Astral |
+| RedcliffChampion | `HealthThresholdRush` | só o Astral |
+
+> **Três chefes ainda herdam o golpe do Champion**: Sky Knight, Korblox Death Raider e
+> Overseer King. Nenhum dos três tem animação `Attack`, então neles a pausa de 1,3 s sai
+> hoje sem gesto. Cada um sai da herança no dia em que ganhar o golpe próprio — o caminho
+> que o Astral Sentinel já fez.
 
 #### `HealthThresholdRush` (o arranque do Astral Sentinel)
 
@@ -2047,11 +2075,15 @@ Um modelo que entre em qualquer conjunto precisa de:
   calculado em runtime a partir dela), mas modelo largo demais é apagado pelo
   `checkIsOnGrid` no laço de movimento.
 
-> **Pendente no `Easy`:** sete dos oito Astral têm só o `KeyframeSequence` do Moon
-> Animator no `AnimSaves` e nenhum `Animation` publicado — estão todos no fallback
-> genérico. Só o `AstralSentinel` tem `Walk` próprio. Publicar as sete e pendurar o
-> `Animation` no modelo é trabalho de arte, e nada no código precisa mudar quando isso
-> acontecer: o `or` já prefere a do modelo.
+> **Pendente de animação.** Boa parte dos modelos novos não tem `Animation` publicado —
+> esses caem no `Walk` genérico. Hoje, contando por slot: **4 de 9** no `Easy`, **8 de 9**
+> no `Medium` (só o `SkyKnight` tem o seu), **8 de 9** no `Impossible` (só o
+> `KorbloxDeathRaider`) e **7 de 9** no `Nightmare`.
+> Publicar e pendurar o `Animation` no modelo é trabalho de arte; nada no código muda
+> quando isso acontecer, porque o `or` já prefere a do modelo.
+>
+> Nenhum modelo dos dois elencos novos tem o par `SlowWalk`/`FastWalk`, então a troca de
+> passada que o Wall Smasher e o Courage Bearer têm no Redcliff não existe neles.
 
 ## Unidades
 
@@ -2087,11 +2119,11 @@ que não tem `AnimationTrack` nenhuma para escutar. Mexeu o marcador no Moon
 Animator, mexe aqui junto — inclusive o `Duration`, que é a duração do arquivo.
 
 **O cooldown conta a animação inteira.** O `Cooldown` do `UnitStats` sempre foi do
-início de um golpe ao início do seguinte, então "3 segundos parado depois de
-terminar a animação" é a soma dos dois: `2.9 + 3 = 5.9`. Não existe campo de
-recuperação separado — a janela de 5,9s é a mesma que o servidor manda no
-`swingWindow`, e é ela que faz o cliente **não** espremer a animação (2,9s cabem
-folgados em 5,9s), que é o que deixa os 3s de recuperação visíveis na tela.
+início de um golpe ao início do seguinte, então "parado depois de terminar a
+animação" é a soma dos dois: `2.9 + 3.1 = 6`. Não existe campo de recuperação
+separado — a janela de 6s é a mesma que o servidor manda no `swingWindow`, e é ela
+que faz o cliente **não** espremer a animação (2,9s cabem folgados em 6s), que é o
+que deixa a recuperação visível na tela.
 
 O `Duration` existe para o caso contrário. Se uma carta de `AttackSpeed` apertar o
 ciclo abaixo dos 2,9s da animação, o cliente encolhe o gesto para ele caber
@@ -2099,10 +2131,12 @@ ciclo abaixo dos 2,9s da animação, o cliente encolhe o gesto para ele caber
 (`UnitService:executeAttack`) — sem isso o fim do combo sairia depois de o golpe
 seguinte já ter começado, com o boneco no meio de outra animação.
 
-> Por isso o Berserker é a única unidade corpo a corpo sem `CooldownMultiplier` no
-> `UnitUpgradeConfig`: a recuperação é a identidade dela, e upgrade nela compra
-> dano, não cadência. Os 10% por nível que o Sword e o Slasher têm comeriam os 3s
-> parados até 0,58s no nível máximo.
+> Por isso o Berserker não usa `CooldownMultiplier` no `UnitUpgradeConfig`, e sim
+> um `Cooldowns` desenhado na mão: a recuperação é a identidade dela, e a escada
+> (6,00 → 5,80 → 5,50 → 5,25 → 5,10 → 4,80) encurta só a espera, nunca a animação
+> — mesmo no nível máximo sobram 1,9s depois dos 2,9s de gesto. Os 10% por nível
+> que o Sword e o Slasher têm comeriam a recuperação até 0,58s no nível máximo, e
+> a unidade deixaria de ser o que é.
 
 ### A área que enfraquece a cada golpe: `HitFalloff`
 
@@ -2117,12 +2151,12 @@ HitFalloff = 0.1,
 O `AOE` já existia (é o do Rocket). O campo novo é o `HitFalloff`, e ele é **a
 perda de um golpe para o seguinte** — não a perda contra o dano cheio:
 
-| Golpe | Fração do cheio | Dano (base 35) |
+| Golpe | Fração do cheio | Dano (base 39) |
 | --- | --- | --- |
-| 1º (0,4333s) | 100% | 35 |
-| 2º (1,2667s) | 90% | 32 |
-| 3º (2,3833s) | 81% | 28 |
-| 4º (2,5667s) | 72,9% | 26 |
+| 1º (0,4333s) | 100% | 39 |
+| 2º (1,2667s) | 90% | 35 |
+| 3º (2,3833s) | 81% | 32 |
+| 4º (2,5667s) | 72,9% | 28 |
 
 É o que impede que quatro áreas seguidas sejam simplesmente quatro vezes o golpe:
 o combo vale **3,44 golpes cheios**, e não 4.
@@ -2219,6 +2253,18 @@ O que muda é o prazo (`mob.BleedingUntil`, separado do `BurningUntil`, então s
 queimar convivem no mesmo inimigo), o desenho (`Assets.VFX.BleedVFX`, pelo evento
 `MobBleeding` e `VFXController:PlayBleeding`) e a carta: a Fire Hazard não mexe no
 sangramento.
+
+E muda uma coisa que a queimadura não tem: a **ferida aberta**. Enquanto o prazo corre,
+todo dano que entra naquele inimigo vale 30% a mais (`UnitStats.Slasher.Bleed.Vulnerability`,
+gravado em `mob.BleedVulnerability`). Quem cobra é o `MobService:DamageMob`, no mesmo lugar
+e pelo mesmo motivo do "quebradiço" da Staff of Azure Ever Ice: **não é buff de torre, é o
+inimigo que está mais frágil** — então vale para qualquer fonte, seja outra unidade, o
+respingo de uma área, uma tripmine ou os próprios tiques do sangramento.
+
+> É aí que está o valor do Slasher, e não nos 5 tiques de 1. Ele é a unidade de entrada,
+> cola no caminho para bater, e o que ela faz de melhor é **marcar o alvo** para o resto do
+> time. Como o sangramento não acumula nem renova, dois Slashers no mesmo alvo não dobram
+> nada: o 30% é um só, e o multiplicador é o de quem abriu o corte.
 
 ### O raio que salta (Electro)
 
