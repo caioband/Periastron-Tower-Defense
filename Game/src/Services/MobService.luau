@@ -700,7 +700,8 @@ end
 	pela regra de nao acumular) escreve o seu por cima.
 
 	Nenhuma carta mexe no sangramento: a Fire Hazard e do fogo. O desenho sai pelo
-	`MobBleeding` (`BleedVFX`). Hoje quem sangra e o Slasher.
+	`MobBleeding` (`BleedVFX`). Hoje sangram o Slasher e o Berserker, com a mesma
+	ferida de 30% -- e, pela regra de nao acumular, os dois juntos abrem um corte so.
 ]=]
 function MobService:ApplyBleed(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?, vulnerability : number?)
 	self:applyDamageOverTime(mobId, damage, ticks, interval, ownerUserId, {
@@ -1033,8 +1034,16 @@ function MobService:onGameOver()
 		Framework:Fire("GameOver", player)
 	end
 
-	self.BaseHealth = self.MaxBaseHealth
-	self:broadcastBaseHealth()
+	--[[
+		A vida **nao** volta ao cheio aqui: a base fica no zero ate o proximo round
+		(`ResetRound`/`ApplyDifficulty`).
+
+		Ela ja foi zerada e transmitida pelo `mobEscaped`, e curar de volta escrevia
+		o numero cheio no billboard logo depois do fim de jogo. Pior que isso: todo
+		guarda de `BaseHealth <= 0` do service -- o corte do laco de movimento, o do
+		`SpawnWave` -- virava letra morta, porque a vida ja estava cheia quando eles
+		eram lidos.
+	]]
 
 	local waveService = self.Services.WaveService
 	if waveService then

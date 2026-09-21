@@ -311,6 +311,19 @@ local UnitStats = {
 		curto ao lado do Azure -- os dois so machucam quem chega perto --, e o que os
 		separa e o ritmo e o alvo: o Azure bate de pouco em pouco num inimigo, este
 		limpa a roda toda de uma vez e para.
+
+		**Todo golpe deixa o alvo sangrando**: 4 de dano por segundo, 5 tiques
+		(`MobService:ApplyBleed`). Como o do Slasher, ele **nao acumula nem renova** --
+		dos quatro acertos do combo so o primeiro abre o corte, os outros tres caem em
+		quem ja esta sangrando e valem so o dano do golpe. Sao 20 de dano por alvo a
+		cada ciclo, e eles correm enquanto a unidade esta na recuperacao dos 3,1s.
+
+		O corte abre o alvo do mesmo tanto que o do Slasher (`Vulnerability = 1.3`):
+		enquanto o inimigo sangra, todo dano que entra nele vale 30% a mais, venha de
+		onde vier -- inclusive dos golpes seguintes do proprio combo e dos tiques do
+		sangramento. E o que faz os 5 segundos depois da area valerem para o time
+		inteiro, e nao so para esta unidade. Um Slasher e um Berserker no mesmo alvo
+		nao dobram nada: quem abriu o corte primeiro manda ate o prazo vencer.
 	]=]
 	["Berserker"] = {
 		Rarity = "Legendary",
@@ -327,6 +340,7 @@ local UnitStats = {
 		Hits = 4,
 		AOE = { Radius = 3 },
 		HitFalloff = 0.1,
+		Bleed = { Damage = 4, Ticks = 5, Interval = 1, Vulnerability = 1.3 },
 		RangeStats = {
 			Increment = 1,
 			Max = 11,

@@ -625,6 +625,25 @@ function WaveService:runRound(generation : number)
 		task.wait(self:getArrowLeadTime())
 		if not self:isCurrent(generation) then return end
 
+		--[[
+			A base pode cair **entre** duas waves.
+
+			Quem sobra no mapa e a wave pulada (`SkipWave`): o laco segue em frente com
+			os inimigos dela ainda andando, e eles continuam chegando ao fim do caminho
+			durante o intervalo, durante o passo do tutorial e durante a espera das
+			setas aqui em cima. O `onGameOver` do `MobService` levanta a bandeira nesse
+			meio tempo, mas o `Ended` dele nao acorda ninguem -- o laco nao estava
+			esperando fim de wave nenhum.
+
+			Sem esta checagem a wave seguinte nascia assim mesmo e a partida seguia com
+			a base no chao. A wave anunciada agora nao chegou a nascer, entao o contador
+			volta para a ultima que de fato aconteceu: e dele que sai a recompensa.
+		]]
+		if self.GameOver then
+			self.WaveCount = math.max(0, (self.WaveCount or 1) - 1)
+			break
+		end
+
 		-- Tempo real, como a espera das setas logo acima: e daqui que o `SkipService`
 		-- conta os segundos ate oferecer a votacao de pular.
 		self.WaveStartedAt = os.clock()

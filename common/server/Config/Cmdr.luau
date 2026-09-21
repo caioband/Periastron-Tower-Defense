@@ -43,15 +43,17 @@ return {
 	--[[
 		Comandos liberados para quem NÃO é admin, por cargo num grupo.
 
-		A chave é o `Name` do comando (não o alias nem o `Group`): o `units` divide o
-		grupo "Currency" com `cash` e `shards`, e só ele deve ser liberado. Quem passa
-		aqui roda aquele comando e mais nenhum; admin continua rodando tudo.
+		**Vazia de propósito: hoje só admin roda comando.** Os testers tinham `units`,
+		`help` e `richtext` pelo cargo 3 do grupo 660345753, e essas três linhas saíram
+		— sem nenhum comando acessível o `GetAccessibleCommands` devolve lista vazia e o
+		console nem aparece para eles (ver `CmdrService`).
+
+		O mecanismo continua de pé para quando for preciso de novo: a chave é o `Name`
+		do comando (não o alias nem o `Group`) — o `units` divide o grupo "Currency" com
+		`cash` e `shards`, e só ele seria liberado. Quem passa aqui roda aquele comando e
+		mais nenhum; admin continua rodando tudo.
 	]]
-	COMMAND_PERMISSIONS = {
-		units = { groupId = 660345753, minRank = 3 },   -- Tester ou acima
-		help  = { groupId = 660345753, minRank = 3 },   -- lista só o que a pessoa pode rodar
-		richtext = { groupId = 660345753, minRank = 3 }, -- bancada de rich text
-	} :: { [string]: { groupId: number, minRank: number } },
+	COMMAND_PERMISSIONS = {} :: { [string]: { groupId: number, minRank: number } },
 
 	-- Anyone testing in Studio counts as an admin.
 	ALLOW_IN_STUDIO = true,

@@ -9,6 +9,12 @@
 	Normal, escalado pela fracao de waves e pelo `WinXpMultiplier` da dificuldade),
 	entao `BASE_XP = 100` deixa o primeiro nivel a meia partida e a curva vai abrindo
 	dai pra frente.
+
+	Quem depende do nivel: os slots de deck (`DeckConfig.SLOT_UNLOCK_LEVELS`, nos
+	niveis 5, 15 e 25) e o caminho alternativo de destravar dificuldade
+	(`DifficultyUnlockConfig`, niveis 3, 6 e 12) -- mexer na curva move os dois, e e
+	por isso que o expoente e o numero a mexer, e nao o `BASE_XP`: o inicio continua
+	no lugar e quem encurta e o meio pra frente, que e onde estava a grind.
 ]=]
 
 local LevelConfig = {}
@@ -17,9 +23,27 @@ local LevelConfig = {}
 
 LevelConfig.MAX_LEVEL = 50
 
--- XP para sair do nivel L: floor(BASE_XP * L^CURVE). L1->2 custa 100, L10->11 ~2238.
+--[=[
+	XP para sair do nivel L: floor(BASE_XP * L^CURVE).
+
+	O expoente desceu de 1.35 para 1.20 para o nivel subir mais rapido. O comeco nao
+	muda (L1->2 continua custando 100, porque 1^x e 1 em qualquer expoente); o que
+	encurta e o resto, e cada vez mais:
+
+	| Sair do nivel | 1.35 (antes) | 1.20 (agora) |
+	| --- | --- | --- |
+	| 1 | 100 | 100 |
+	| 5 | 878 | 690 |
+	| 10 | 2.239 | 1.585 |
+	| 20 | 5.707 | 3.641 |
+	| 49 | 19.132 | 10.672 |
+
+	No acumulado sao ~15% menos XP ate o nivel 5, ~28% ate o 15, ~34% ate o 25 (o
+	ultimo slot de deck) e ~41% ate o 50 -- de ~2.040 para ~1.215 runs cheias no
+	Normal, contando so o XP de partida.
+]=]
 LevelConfig.BASE_XP = 100
-LevelConfig.CURVE = 1.35
+LevelConfig.CURVE = 1.20
 
 --[[ BARRA ]]
 

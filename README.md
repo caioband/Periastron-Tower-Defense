@@ -2177,6 +2177,10 @@ O campo é genérico: vale para qualquer unidade de vários `Hits`, com os golpe
 espaçados por `HitInterval` ou por `HitTimes`. Sem o campo, todos os golpes do
 ciclo valem igual — que é como o Azure continua batendo.
 
+> A área também **sangra**: 4 de dano por segundo por 5s, com a mesma ferida de 30% do
+> Slasher (`UnitStats.Berserker.Bleed`). Ver [O sangramento](#o-sangramento-slasher-berserker)
+> — inclusive por que só o primeiro dos quatro golpes abre o corte.
+
 ### O fogo que não acumula (Pyre)
 
 A primeira unidade `Fire`, Rare: tiro único com o `PyreProjectile`, 15 de dano, e o
@@ -2242,7 +2246,7 @@ Custo (150), alcance (10) e cooldown (2,1s, logo acima da animação de 2,033s) 
 provisórios. A queimadura não cresce com upgrade nem clima; só a carta Fire Hazard
 mexe nela.
 
-### O sangramento (Slasher)
+### O sangramento (Slasher, Berserker)
 
 Cada golpe do Slasher deixa o alvo sangrando: 1 de dano por segundo, 5 tiques
 (`UnitStats.Slasher.Bleed`, executado pelo `MobService:ApplyBleed`). É a queimadura com
@@ -2265,6 +2269,19 @@ respingo de uma área, uma tripmine ou os próprios tiques do sangramento.
 > cola no caminho para bater, e o que ela faz de melhor é **marcar o alvo** para o resto do
 > time. Como o sangramento não acumula nem renova, dois Slashers no mesmo alvo não dobram
 > nada: o 30% é um só, e o multiplicador é o de quem abriu o corte.
+
+O **Berserker** sangra pela mesma porta, com os números dele: 4 de dano por segundo, 5
+tiques, e a mesma ferida de 30% (`UnitStats.Berserker.Bleed`). Declarar o campo é tudo o
+que a unidade precisa fazer — quem aplica é o `UnitService:creditDamage`, o mesmo caminho
+de qualquer coisa que um golpe deixe no inimigo, e por isso o sangramento sai em **cada
+inimigo da área** de cada um dos quatro golpes, e não só no alvo mirado.
+
+A regra de não acumular muda o que o combo dele significa: dos quatro acertos, só o
+primeiro abre o corte; os outros três caem em quem já está sangrando e valem só o dano do
+golpe — mas valem **30% a mais**, porque a ferida que o primeiro abriu já está valendo.
+São 20 de dano por alvo a cada ciclo, correndo justamente durante os 3,1s em que a unidade
+está parada na recuperação. Um Slasher e um Berserker no mesmo alvo continuam abrindo um
+corte só.
 
 ### O raio que salta (Electro)
 

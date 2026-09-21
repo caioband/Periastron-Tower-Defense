@@ -37,7 +37,7 @@ local MONEY_VFX_FALLBACK = 3
 
 -- Os estados desenhados num modelo inteiro (`playModelStatus`): o congelamento --
 -- do Frostione nos inimigos e do clima nas unidades --, a queimadura do Pyre e o
--- sangramento do Slasher. O asset em `Assets.VFX`, o nome do Highlight dele depois
+-- sangramento do Slasher e do Berserker. O asset em `Assets.VFX`, o nome do Highlight dele depois
 -- de mudar para o modelo, e a faxina de quando o modulo `vfx` nao souber dizer
 -- quanto as particulas duram.
 local ICED_VFX_NAME = "IcedVFX"
