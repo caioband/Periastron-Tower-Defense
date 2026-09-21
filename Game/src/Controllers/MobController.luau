@@ -834,10 +834,13 @@ function MobController:construct()
 	end)
 
 	--[[
-		Um tique de dano ao longo do tempo -- queimadura ou sangramento
-		(`MobService:applyDamageOverTime`): o numero e a barra de vida, como um golpe
-		do `AttackVisual` logo abaixo, mas sem o flash -- ele piscaria por cima do
-		Highlight do efeito a cada tique.
+		Dano que nao veio do golpe de uma unidade: os tiques de queimadura e de
+		sangramento (`MobService:applyDamageOverTime`) e a explosao de uma tripmine
+		(`UnitService:stepTripmines`).
+
+		O numero e a barra de vida, como um golpe do `AttackVisual` logo abaixo, mas sem
+		o flash -- ele piscaria por cima do Highlight do efeito a cada tique, e a mina ja
+		tem a explosao dela.
 	]]
 	Framework:Listen("MobDamageTick", function(mobId, damage)
 		local mob = self.SpawnedMobs[mobId]

@@ -284,6 +284,7 @@ local DeckController = {
 	Controllers = {
 		DataController = {},
 		MusicController = {},
+		HUDBadgeController = {},
 	},
 
 	Signals = {
@@ -1489,6 +1490,18 @@ function DeckController:_setOpen(open : boolean)
 	self.TweenMaid:DoCleaning()
 
 	if open then
+		--[[
+			O loadout foi aberto: o selo `New` do botão se encerra aqui. O jogador viu as
+			cartas, e a unit que cair depois disso acende o selo de novo sozinha.
+
+			Aqui dentro do `_setOpen`, e não no clique do botão, porque o painel também
+			abre pelo `Open()` — e abrir é abrir, venha de onde vier.
+		]]
+		local badges = self.Controllers.HUDBadgeController
+		if badges then
+			badges:NoteSeen(HUD_BUTTON_NAME)
+		end
+
 		-- O painel abre sem carta selecionada, então o detalhe começa fechado.
 		self.SelectedUnit = nil
 		self:_render()

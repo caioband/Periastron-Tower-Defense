@@ -2181,6 +2181,35 @@ ciclo valem igual — que é como o Azure continua batendo.
 > Slasher (`UnitStats.Berserker.Bleed`). Ver [O sangramento](#o-sangramento-slasher-berserker)
 > — inclusive por que só o primeiro dos quatro golpes abre o corte.
 
+### A barra de vida desce pelo dano que **entrou**
+
+O cliente não recebe a vida do inimigo a cada golpe. Ele guarda uma cópia (o `MobHealth`
+do `MobController`, escrita uma vez no `SpawnClientMob`) e desconta dela o número que o
+`AttackVisual` trouxe. É barato — um golpe numa fila de oito manda oito números, e não
+oito vidas —, mas tem um preço: **o que não chega ali nunca mais é corrigido**, porque
+não existe reenvio da vida no meio da caminhada.
+
+Por isso o número que atravessa é o que o `MobService:DamageMob` **devolveu**, e não o
+que a unidade pediu. Os dois multiplicadores que moram dentro dele — o "quebradiço" da
+Staff of Azure Ever Ice e a ferida aberta do sangramento — não aparecem em quem chama, e
+o golpe fatal ainda é cortado na vida que sobrou. Quem monta a lista é o
+`UnitService:creditHit`, um lugar só para os dez pontos do `executeAttack` e do
+`executeCombo` que cobram dano.
+
+> Mandar o valor pedido fazia a cópia do cliente descer **menos** que a do servidor a
+> cada golpe dado num alvo sangrando. Em mob comum a diferença morria junto com ele; num
+> boss, que leva golpes demais, ela virava uma barra inteira — o chefe sumia com vida
+> aparente sobrando. É o mesmo motivo do corte na vida restante: sem ele a barra parava
+> num resto em vez de encostar no zero.
+
+Golpe que não encostou em ninguém (o alvo morreu durante o windup) fica de fora da lista:
+o `DamageMob` devolve 0, e um "0" flutuando só sujaria a tela.
+
+**A tripmine não tem `AttackVisual`** — ela não é o golpe de uma unidade, e o VFX dela sai
+no `TripmineTriggered`. Cada acerto da explosão vai como um `MobDamageTick`, o mesmo
+caminho dos tiques de queimadura e de sangramento, que é o que o cliente tem para dano sem
+unidade. Sem isso a mina era o único dano do jogo invisível para a barra.
+
 ### O fogo que não acumula (Pyre)
 
 A primeira unidade `Fire`, Rare: tiro único com o `PyreProjectile`, 15 de dano, e o

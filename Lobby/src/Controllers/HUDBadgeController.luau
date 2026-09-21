@@ -70,22 +70,22 @@ local BADGES = {
 	    já tenha aberto o quadro. O "resetou" apaga quando o quadro abre;
 	  - **RobuxShop** — volta a cada cinco minutos depois de cada abertura, e está
 	    aceso desde a chegada de quem ainda não abriu a loja nesta visita;
-	  - **Backpack** — alguma caixa nova entrou no inventário. Apaga quando uma caixa
-	    daquela raridade é **aberta**;
+	  - **Backpack** — alguma caixa nova entrou no inventário. Apaga quando a mochila
+	    é aberta;
 	  - **Deck** — alguma unit que o jogador não tinha entrou no perfil. Apaga quando
-	    ela é **equipada**;
+	    o loadout é aberto;
 	  - **CardShop** — o bloco de quatro horas da vitrine virou. Apaga quando a loja
 	    abre.
 
-	**O que apaga cada selo é a ação, e não o clique no botão.** Olhar a mochila não
-	torna a caixa velha — abrir a caixa torna. É por isso que os selos da mochila e do
-	loadout saem do próprio perfil (a caixa gasta, a carta equipada) e não precisam
-	que ninguém os avise: quem os apaga é o mesmo `OnChange` que os acendeu.
+	**O que apaga quase todos os selos é abrir o painel** (`NoteSeen`, chamado por
+	cada painel no instante em que ele entra): ali a abertura já aconteceu, e o
+	jogador já viu o que havia de novo — a caixa na prateleira, a carta no loadout, o
+	quadro sorteado de novo, a vitrine trocada. O que chegar **depois** da olhada
+	acende outra vez, pelo mesmo `OnChange`.
 
-	Os três que não têm ação nenhuma para esperar — um quadro que resetou, uma vitrine
-	que trocou, um lembrete de cinco minutos — são avisados pelo `NoteSeen`, chamado
-	do `BeforeOpen` do painel de cada um: ali a abertura já aconteceu, e abrir é a
-	única ação que esses três admitem.
+	A exceção é o claim pendente dos contratos: aquele é estado, e não novidade. Ele
+	insiste até o contrato ser claimado, mesmo com o quadro já aberto, e quem o apaga
+	é o perfil.
 
 	**O estado é da visita ao lobby**, e mora só aqui: nada disso vai para o perfil.
 	Voltar de uma partida é uma visita nova, e o que ainda valer acende de novo — o
@@ -143,23 +143,6 @@ local function periodsOf(source : any) : { [string] : number }
 	end
 
 	return periods
-end
-
---- As cartas equipadas como conjunto. A lista tem repetição; aqui isso não importa.
-local function equippedSet(source : any) : { [string] : boolean }
-	local equipped = {}
-
-	if typeof(source) ~= "table" then
-		return equipped
-	end
-
-	for _, name in source do
-		if typeof(name) == "string" then
-			equipped[name] = true
-		end
-	end
-
-	return equipped
 end
 
 --- O `Data` da replica, ou nil enquanto ela não chegou.
@@ -332,9 +315,12 @@ function HUDBadgeController:_onProfileChanged()
 	if not data then return end
 
 	--[[
-		Caixa que entrou é novidade; caixa que saiu foi aberta, e abrir é o que apaga
-		este selo. As duas coisas saem da mesma comparação porque são a mesma conta em
-		direções opostas.
+		Caixa que entrou é novidade; caixa daquela raridade que acabou sai da conta,
+		senão o selo insistiria por uma caixa que não está mais lá. As duas coisas saem
+		da mesma comparação porque são a mesma conta em direções opostas.
+
+		Quem apaga o selo de verdade é a mochila ser aberta (`NoteSeen`); isto aqui é só
+		não deixar novidade órfã para trás.
 	]]
 	local crates = countsOf(data.Inventory and data.Inventory.Crates)
 	for rarity, amount in crates do
@@ -359,14 +345,6 @@ function HUDBadgeController:_onProfileChanged()
 		end
 	end
 	self.Units = units
-
-	-- Equipar é a ação que apaga: a carta nova saiu da novidade e entrou no deck.
-	local equipped = equippedSet(data.EquippedUnits)
-	for name in self.NewUnits do
-		if equipped[name] then
-			self.NewUnits[name] = nil
-		end
-	end
 
 	--[[
 		O período dos contratos virou: o quadro tem contrato novo. É o `Period` do
@@ -438,16 +416,24 @@ end
 --[=[
 	O painel deste botão foi aberto.
 
-	Quem chama é o `BeforeOpen` do painel de cada um dos três selos que não esperam
-	ação nenhuma — o quadro de contratos, a loja de Robux e a loja de cartas. Os selos
-	da mochila e do loadout ignoram este aviso de propósito: quem os apaga é a caixa
-	aberta e a carta equipada, e não o painel visto.
+	Quem chama é o painel de cada um dos cinco, no instante em que ele abre — o
+	`BeforeOpen` nos três que são `ProximityPanel`, o `_setOpen` na mochila e no
+	loadout, que abrem pelo próprio botão. Abrir é o que apaga o selo: o jogador já
+	viu a novidade, e insistir depois disso só ensina a ignorar o ponto vermelho.
+
+	O que **entrar depois** da olhada acende de novo sozinho — as novidades da mochila
+	e do loadout são zeradas aqui, e não desligadas, então a próxima caixa ou a
+	próxima unit repõe o selo pelo mesmo `OnChange` que o acendeu da primeira vez.
 ]=]
 function HUDBadgeController:NoteSeen(key : string)
 	if key == "Contracts" then
 		-- O claim pendente não é apagado por ter sido visto: ele sai quando o contrato
 		-- for claimado, pelo próprio perfil.
 		self.ContractsReset = false
+	elseif key == "Backpack" then
+		table.clear(self.NewCrates)
+	elseif key == "Deck" then
+		table.clear(self.NewUnits)
 	elseif key == "CardShop" then
 		self.CardShopReset = false
 	elseif key == "RobuxShop" then

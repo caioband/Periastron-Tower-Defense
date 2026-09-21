@@ -1195,6 +1195,34 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 	return dealt
 end
 
+--[=[
+	Cobra o dano e ja anota o acerto na lista que vai no `AttackVisual`.
+
+	O numero que atravessa e o que o `DamageMob` **devolveu**, e nao o que pedimos a
+	ele. Os dois multiplicadores que moram dentro dele -- o "quebradico" do Staff of
+	Azure Ever Ice e a ferida aberta do sangramento (`BleedVulnerability`) -- nao
+	aparecem aqui, e o golpe fatal ainda e cortado na vida que sobrou.
+
+	Isso importa porque o cliente **nao** recebe a vida do mob a cada golpe: ele
+	guarda uma copia e desconta dela exatamente este numero (ver o `MobHealth` do
+	`MobController`). Mandar o valor pedido fazia a copia descer menos que a do
+	servidor, e a diferenca nunca era corrigida -- a barra ficava parada num resto
+	enquanto o servidor ja tinha matado. Num boss, que leva golpes demais para a
+	diferenca passar batida, isso virava uma barra inteira de sobra.
+
+	Golpe que nao encostou em ninguem (o alvo morreu durante o windup) fica de fora
+	da lista: o `DamageMob` devolve 0, e um "0" flutuando so sujaria a tela.
+]=]
+function UnitService:creditHit(entry, hits, mobId, damage : number, auraBonus : number) : number
+	local dealt = self:creditDamage(entry, mobId, damage, auraBonus)
+
+	if dealt > 0 then
+		table.insert(hits, { mobId = mobId, damage = dealt })
+	end
+
+	return dealt
+end
+
 function UnitService:stepCombat()
 	local units = self.PlacedUnits
 	local count = #units
@@ -1543,10 +1571,31 @@ function UnitService:stepTripmines(now, weather : string?)
 					-- jogou o explosivo.
 					local auraBonus = self:getAuraBonus(entry, weather)
 
+					--[[
+						A explosao nao tem `AttackVisual`: ela nao e um golpe de uma unidade, e
+						o VFX dela ja sai no `TripmineTriggered` logo abaixo. Mas o numero e a
+						barra de vida tem que sair, e por isso cada acerto vai como um
+						`MobDamageTick` -- o mesmo caminho dos tiques de queimadura, que e o que
+						o cliente tem para dano sem unidade.
+
+						Sem isto a mina era o unico dano do jogo invisivel para a barra: o
+						cliente desconta de uma copia da vida (ver o `creditHit`), e o que nao
+						chega ali nunca mais e corrigido -- um boss que pisasse numa mina ficava
+						com aquele pedaco de barra sobrando ate morrer.
+					]]
+					local players = Players:GetPlayers()
+
 					for _, mobId in ipairs(mobsHit) do
-						self:creditDamage(entry, mobId, damage, auraBonus)
+						local dealt = self:creditDamage(entry, mobId, damage, auraBonus)
+
+						if dealt > 0 then
+							for _, plr in ipairs(players) do
+								Framework:Fire("MobDamageTick", plr, mobId, dealt)
+							end
+						end
 					end
-					for _, plr in ipairs(Players:GetPlayers()) do
+
+					for _, plr in ipairs(players) do
 						Framework:Fire("TripmineTriggered", plr, entry.unitId, mineId)
 					end
 				end
@@ -1643,8 +1692,7 @@ function UnitService:executeCombo(entry, unitStats, step, targetId, weather : st
 			local radius = SharedConfig.UnitUpgradeConfig:GetMeteorRadius(unitName, entry.upgrades or 0)
 			local hits = {}
 			for _, mobId in mobService:GetMobsInRadius(aimPos, radius) do
-				self:creditDamage(entry, mobId, damage, auraBonus)
-				table.insert(hits, { mobId = mobId, damage = damage })
+				self:creditHit(entry, hits, mobId, damage, auraBonus)
 			end
 			showHits(hits)
 		elseif step.Combo == "Lightning" then
@@ -1666,8 +1714,7 @@ function UnitService:executeCombo(entry, unitStats, step, targetId, weather : st
 				-- meio do raio tambem leva.
 				local hits = {}
 				for _, mobId in mobService:GetMobsAlongLine(unitPosition, through, range, combo.Width or PIERCE_WIDTH) do
-					self:creditDamage(entry, mobId, damage, auraBonus)
-					table.insert(hits, { mobId = mobId, damage = damage })
+					self:creditHit(entry, hits, mobId, damage, auraBonus)
 				end
 				showHits(hits)
 
@@ -1897,8 +1944,7 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 						position = mobService:getMobPosition(targetId),
 					})
 
-					self:creditDamage(entry, targetId, hitDamage, auraBonus)
-					table.insert(hits, { mobId = targetId, damage = hitDamage })
+					self:creditHit(entry, hits, targetId, hitDamage, auraBonus)
 				end
 
 				--[[
@@ -1915,12 +1961,10 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 				local aoeCenter = predictedPos or unitPosition
 				local mobsInRadius = self.Services.MobService:GetMobsInRadius(aoeCenter, aoe.Radius)
 				for _, targetId in ipairs(mobsInRadius) do
-					self:creditDamage(entry, targetId, hitDamage, auraBonus)
-					table.insert(hits, { mobId = targetId, damage = hitDamage })
+					self:creditHit(entry, hits, targetId, hitDamage, auraBonus)
 				end
 				if #hits == 0 and resolvedMobId then
-					self:creditDamage(entry, resolvedMobId, hitDamage, auraBonus)
-					table.insert(hits, { mobId = resolvedMobId, damage = hitDamage })
+					self:creditHit(entry, hits, resolvedMobId, hitDamage, auraBonus)
 				end
 			elseif pierce and resolvedMobId then
 				--[[
@@ -1959,16 +2003,14 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 						scaled = math.max(1, math.floor(hitDamage * (1 - falloff) ^ (index - 1) + 0.5))
 					end
 
-					self:creditDamage(entry, targetId, scaled, auraBonus)
-					table.insert(hits, { mobId = targetId, damage = scaled })
+					self:creditHit(entry, hits, targetId, scaled, auraBonus)
 				end
 
 				-- O alvo saiu da linha entre a mira e o disparo (ele virou uma esquina
 				-- durante o windup): ele levou o tiro do mesmo jeito, senao o golpe
 				-- inteiro se perderia por causa de uma curva.
 				if #hits == 0 then
-					self:creditDamage(entry, resolvedMobId, hitDamage, auraBonus)
-					table.insert(hits, { mobId = resolvedMobId, damage = hitDamage })
+					self:creditHit(entry, hits, resolvedMobId, hitDamage, auraBonus)
 				end
 			elseif cleave and resolvedMobId and predictedPos then
 				--[[
@@ -1998,19 +2040,16 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 						scaled = math.max(1, math.floor(hitDamage * (1 - falloff) ^ (index - 1) + 0.5))
 					end
 
-					self:creditDamage(entry, targetId, scaled, auraBonus)
-					table.insert(hits, { mobId = targetId, damage = scaled })
+					self:creditHit(entry, hits, targetId, scaled, auraBonus)
 				end
 
 				-- O alvo saiu da linha entre a mira e o golpe: ele leva assim mesmo, senao
 				-- uma curva no caminho anularia o ataque inteiro.
 				if #hits == 0 then
-					self:creditDamage(entry, resolvedMobId, hitDamage, auraBonus)
-					table.insert(hits, { mobId = resolvedMobId, damage = hitDamage })
+					self:creditHit(entry, hits, resolvedMobId, hitDamage, auraBonus)
 				end
 			elseif resolvedMobId then
-				self:creditDamage(entry, resolvedMobId, hitDamage, auraBonus)
-				table.insert(hits, { mobId = resolvedMobId, damage = hitDamage })
+				self:creditHit(entry, hits, resolvedMobId, hitDamage, auraBonus)
 			end
 
 			local visualMobId = resolvedMobId or initialMobId

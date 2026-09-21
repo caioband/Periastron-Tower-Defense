@@ -37,7 +37,9 @@ local CLOSE_TO_SCALE = 0.9
 	here so the UI holds no code. Opening a crate does **not** close the panel.
 ]=]
 local CrateUIController = {
-	Controllers = {},
+	Controllers = {
+		HUDBadgeController = {},
+	},
 
 	Signals = {
 		-- (isOpen : boolean)
@@ -72,6 +74,18 @@ function CrateUIController:_setOpen(open : boolean)
 	self.TweenMaid:DoCleaning()
 
 	if open then
+		--[[
+			The backpack was opened, so its `New` badge is done: the player has seen the
+			shelf. A crate that lands after this lights the badge again on its own.
+
+			Here and not on the button's click because the panel also opens through
+			`Open()` -- open is open, wherever it comes from.
+		]]
+		local badges = self.Controllers.HUDBadgeController
+		if badges then
+			badges:NoteSeen(TOGGLE_BUTTON_NAME)
+		end
+
 		self.PanelScale.Scale = OPEN_FROM_SCALE
 		panel.ImageTransparency = 1
 		panel.Visible = true
@@ -181,7 +195,9 @@ function CrateUIController:construct()
 end
 
 function CrateUIController:start()
-
+	for Controller, _ in self.Controllers do
+		self.Controllers[Controller] = Framework:Get(Controller, false, true)
+	end
 end
 
 function CrateUIController:init()
@@ -193,10 +209,6 @@ function CrateUIController:init()
 	self.Maid:GiveTask(self.HudMaid)
 
 	self.IsOpenState = false
-
-	for Controller, _ in self.Controllers do
-		self.Controllers[Controller] = Framework:Get(Controller, false, true)
-	end
 
 	self:construct()
 end
