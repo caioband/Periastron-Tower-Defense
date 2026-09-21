@@ -485,6 +485,7 @@ Duas peças **irmãs** em `StarterGui.Interface`, e quem as liga é o
 ```
 Interface
 ├── WeatherButton        (ImageButton — o ícone do clima, e o interruptor)
+│   └── New              (opcional — o selo de "abre isto aqui")
 └── IndicatorWeather     (o painel; o UIScale dele é a animação)
     ├── WeatherImg       (ImageLabel — o mesmo ícone)
     ├── WeatherName      (TextLabel  — "BLIZZARD")
@@ -499,6 +500,16 @@ observa, e não do controller: quem desenhar um botão novo marca a tag no Studi
 
 **Sem clima no ar não há indicador**: o botão some e o painel fecha, mesmo aberto.
 "Céu limpo" não é um estado que valha um canto da tela ocupado.
+
+**O selo `New` insiste até o painel ser aberto.** Quem nunca abriu o indicador não sabe
+que aquele ícone no canto abre coisa alguma, então a filha `New` do botão (o nome está no
+`WeatherConfig.Indicator.Gui`, e ela é **opcional** — sem ela nada muda e ninguém avisa
+nada) acende junto com o botão enquanto o painel não tiver sido aberto **nesta partida**.
+Não é um aviso sobre o clima que chegou: é sobre o botão que ninguém abriu, e por isso
+volta em toda tempestade até o jogador olhar. Quem o aposenta é o `Open()`, e não o
+clique — abertura é abertura, venha de onde vier. O estado (`PanelSeen`) mora no cliente
+e é por partida: o `RoundRestarted` o zera, e o selo volta no primeiro clima da partida
+seguinte. Nada disso toca o perfil.
 
 As linhas do `Container` vêm de `WeatherConfig.Indicator.Details` — uma por efeito,
 escritas pelo `RichTextController` uma depois da outra (`Line.Stagger`). A cor dentro
@@ -1252,7 +1263,9 @@ as três torres do deck, e um upgrade no meio do caminho deixaria o passo do fec
 com que comprar as outras duas. Vender é pior: devolve para a mão justamente a
 Slingshot com que o roteiro ensina clima, loja e velocidade, desfazendo um passo que
 ele já deu por cumprido — e nenhum passo a pede de novo. Os dois seriam o jeito de
-travar um roteiro que existe para ser vencido. Quem recusa de verdade é o
+travar um roteiro que existe para ser vencido — e o `GrantCash` do fecho, que cobre as
+duas cartas que faltam, é a garantia de que ele não trava, não uma licença para gastar
+antes. Quem recusa de verdade é o
 `TutorialMatchService` (`CanUpgrade()` e `CanSell()`), conferido no `UnitService`
 antes de cobrar e antes de devolver a carta: cliente não se fiscaliza.
 
@@ -1677,6 +1690,23 @@ fala existe o `tutorial` do Cmdr, que entra pelo mesmo `:Prompt` e não escreve 
 `TutorialService:Start(player)`, que teleporta sozinho para o mapa do tutorial com a
 flag `Tutorial` no `TeleportData`. De lá em diante quem manda é o
 `TutorialMatchService`, e o roteiro está em `TutorialConfig.Match.Steps`.
+
+**A loja aparece uma vez só.** No tutorial o calendário de lojas do
+`RoundCardConfig` não conta: quem a abre é o `OpenShop` do passo, e só o passo da wave
+2 — o de comprar o Weather Report — o declara. O `CardShopService` pergunta
+`TutorialMatchService:ShopIsScripted()` antes de olhar o `IsShopWave`, porque o preset
+do tutorial não tem intervalo próprio e caía no padrão de 4: a oferta voltava sozinha na
+wave 4, em cima do passo do 2x, com cartas que o roteiro não pediu e que o passo
+seguinte nem deixa usar.
+
+**O fecho paga as próprias cartas.** O passo `PlaceRest` — o da wave 5, que manda
+cobrir os pontos livres antes do chefe — declara `GrantCash = 300`, e quem o entrega é
+`TutorialMatchService:grantCash` no instante em que o passo abre: 150 por Archer, as
+duas que sobraram no deck. É presente, e não a rede do `Ensure` (`ensureCash`, que só
+completa a diferença até o preço de uma carta obrigatória): entra inteiro, sem olhar a
+carteira, e uma vez só — o `Granted` guarda o `Id` porque o mesmo passo pode ser aberto
+de novo e presente repetido seria dinheiro nascendo do nada. Qualquer passo do roteiro
+pode pedir o campo; hoje só o fecho pede.
 
 **A resposta é do botão.** Enquanto a escolha está no ar, clicar no vazio não fecha
 a caixa (`DialogController:hasChoice`) — sem isso a pergunta morreria no primeiro

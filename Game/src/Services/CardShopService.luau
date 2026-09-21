@@ -1069,11 +1069,21 @@ function CardShopService:construct()
 
 	if waveService and waveService.Signals and waveService.Signals.WaveStarted then
 		waveService.Signals.WaveStarted:Connect(function(waveNumber, preset)
-			-- O tutorial abre a loja na wave que o roteiro dele mandar, por cima do
-			-- calendário normal: o passo da wave 2 é justamente aprender a comprar.
+			--[[
+				O tutorial abre a loja na wave que o roteiro dele mandar -- o passo da
+				wave 2, que e justamente aprender a comprar -- e **so** nela: no
+				tutorial o calendario nao conta (`ShopIsScripted`). Sem isso a wave 4
+				caia no intervalo de 4 do `RoundCardConfig` e a oferta voltava sozinha
+				no meio do passo do 2x, sem o roteiro ter pedido.
+			]]
+			local scripted = tutorial and tutorial:ShopIsScripted()
 			local forced = tutorial and tutorial:ShouldOpenShop(waveNumber)
 
-			if not forced and not RoundCardConfig.IsShopWave(waveNumber, preset and preset.Name) then return end
+			if scripted then
+				if not forced then return end
+			elseif not RoundCardConfig.IsShopWave(waveNumber, preset and preset.Name) then
+				return
+			end
 
 			self:Open(nil, waveNumber)
 		end)

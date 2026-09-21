@@ -92,6 +92,11 @@ TutorialMatchService.DeckUnlocked = false
 -- até o passo dela abrir e destrancada depois. Ver `CanUse`.
 TutorialMatchService.Completed = {}
 
+-- Os passos que já pagaram o `GrantCash` deles, por `Id`. Abrir o mesmo passo duas
+-- vezes é possível (o `BeginStep` da wave que volta depois de um `StopRound`), e
+-- presente dado duas vezes é dinheiro do nada. Ver `grantCash`.
+TutorialMatchService.Granted = {}
+
 -- `nil` enquanto ninguém perguntou; `true`/`false` depois da primeira resposta.
 TutorialMatchService.Tutorial = nil :: boolean?
 
@@ -363,6 +368,7 @@ function TutorialMatchService:openStep(step : any)
 
 	self:scheduleWeather(step)
 	self:ensureCash(step)
+	self:grantCash(step)
 
 	local point = self:pointFor(step)
 
@@ -511,6 +517,35 @@ function TutorialMatchService:ensureCash(step : any)
 end
 
 --[=[
+	O dinheiro que o passo **dá** ao abrir.
+
+	É o outro lado do `ensureCash`: aquele completa a diferença até o preço de uma
+	carta, este entrega o valor inteiro sem perguntar quanto o jogador tem. Quem o
+	pede é o fecho do roteiro, que manda cobrir os pontos livres e por isso tem de
+	garantir o troco das cartas que ainda estão na mão.
+
+	Paga uma vez por passo: o `Granted` guarda o `Id` porque o mesmo passo pode ser
+	aberto de novo, e presente repetido seria dinheiro nascendo do nada.
+]=]
+function TutorialMatchService:grantCash(step : any)
+	local amount = step.GrantCash
+	if not amount or amount <= 0 then return end
+
+	if self.Granted[step.Id] then return end
+
+	local mobService = self.Services.MobService
+	if not mobService then return end
+
+	self.Granted[step.Id] = true
+
+	for _, player in Players:GetPlayers() do
+		mobService:addCash(player, amount)
+	end
+
+	print(`[TutorialMatchService]: dei {amount} de dinheiro no passo "{step.Id}".`)
+end
+
+--[=[
 	Segura a wave enquanto o passo dela não for cumprido.
 
 	Quem chama é o `WaveService`, depois de anunciar o número da wave e antes de os
@@ -604,8 +639,8 @@ end
 --[=[
 	A loja de cartas tem de abrir nesta wave?
 
-	O calendário normal é do `RoundCardConfig.IsShopWave`; o tutorial abre na wave
-	que o roteiro mandar, por cima dele.
+	O calendário normal é do `RoundCardConfig.IsShopWave`; no tutorial ele **não
+	conta** (ver `ShopIsScripted`) e a loja abre só nas waves que o roteiro declarar.
 ]=]
 function TutorialMatchService:ShouldOpenShop(wave : number) : boolean
 	if not self:IsTutorial() then
@@ -615,6 +650,23 @@ function TutorialMatchService:ShouldOpenShop(wave : number) : boolean
 	local step = self:StepFor(wave)
 
 	return step ~= nil and step.OpenShop == true
+end
+
+--[=[
+	No tutorial, a loja é roteirizada — quem a abre é o `OpenShop` do passo, e mais
+	nada.
+
+	O calendário do `RoundCardConfig` é de intervalo fixo (4 waves no preset do
+	tutorial, que não tem entrada própria em `Intervals`), então a wave 4 abria a loja
+	sozinha, no meio do passo do 2x: uma oferta que o roteiro não pediu, por cima de
+	uma instrução que aponta outro canto da tela, com cartas que o passo seguinte nem
+	deixa usar. A lição da loja já foi dada na wave 2, e ela é dada **uma** vez.
+
+	Vale para os dois lados: esta pergunta é o que faz o calendário calar no tutorial,
+	e o `ShouldOpenShop` é o que faz o roteiro falar.
+]=]
+function TutorialMatchService:ShopIsScripted() : boolean
+	return self:IsTutorial()
 end
 
 --[=[

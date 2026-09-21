@@ -83,6 +83,10 @@ local RobuxShopController = {
 		-- aberta antes de apagar a ScreenGui das tres -- ver o `CanDisable`.
 		ShopController = {},
 		RoundCardShopController = {},
+
+		-- O selo `New` do botao da HUD, que volta cinco minutos depois de cada
+		-- abertura. Ver o `BeforeOpen` no `construct`.
+		HUDBadgeController = {},
 	},
 }
 
@@ -355,6 +359,12 @@ function RobuxShopController:construct()
 		-- jogo, por exemplo): a vitrine entra ja com o que vale agora.
 		BeforeOpen = function()
 			self:_render()
+
+			-- A loja foi aberta: o selo apaga e o relogio dele recomeca.
+			local badges = self.Controllers.HUDBadgeController
+			if badges then
+				badges:NoteSeen(HUD_BUTTON_NAME)
+			end
 		end,
 	})
 

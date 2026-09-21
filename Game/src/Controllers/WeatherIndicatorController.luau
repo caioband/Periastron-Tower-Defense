@@ -66,6 +66,10 @@ end
 	**Sem clima no ar não há indicador.** O botão some e o painel fecha, mesmo estando
 	aberto — "céu limpo" não é um estado que valha um canto da tela ocupado.
 
+	**O selo `New`** (a filha opcional do botão) acende com ele enquanto o jogador não
+	tiver aberto o painel nesta partida: sem ele o botão é um ícone que ninguém
+	descobre ser clicável. Ver `PanelSeen`.
+
 	**A animação é no `UIScale`** do painel, o autorado quando existe. Escala, e não
 	posição, para a entrada funcionar em qualquer canto em que o designer ancore o
 	painel.
@@ -97,6 +101,7 @@ local WeatherIndicatorController = {
 -- As peças da tela.
 WeatherIndicatorController.Button = nil :: GuiButton?
 WeatherIndicatorController.ButtonImage = nil :: ImageLabel?
+WeatherIndicatorController.NewBadge = nil :: GuiObject?
 WeatherIndicatorController.Panel = nil :: GuiObject?
 WeatherIndicatorController.Scale = nil :: UIScale?
 WeatherIndicatorController.Image = nil :: ImageLabel?
@@ -123,6 +128,18 @@ WeatherIndicatorController.Lines = {}
 
 -- O painel está aberto? É o estado do interruptor, e não o do tween.
 WeatherIndicatorController.IsOpen = false
+
+--[[
+	O jogador já abriu o painel nesta partida?
+
+	É o interruptor do selo `New`: enquanto for `false`, o selo acende em **toda**
+	tempestade — o aviso não é sobre o clima que chegou, é sobre o botão que ninguém
+	abriu ainda, e um clima ignorado deixa a descoberta para o próximo. Abrir o painel
+	o aposenta pelo resto da partida.
+
+	Mora no cliente e não no perfil: é por partida, e o `RoundRestarted` o zera.
+]]
+WeatherIndicatorController.PanelSeen = false
 
 -- A wave de agora, e o prazo que o servidor mandou: o nome do clima e a última wave
 -- em que ele vale.
@@ -200,6 +217,20 @@ function WeatherIndicatorController:bind() : boolean
 		else
 			warn(`[WeatherIndicatorController]: o {Config.Gui.Button} nao e um ImageButton nem tem uma {Config.Gui.Image} dentro; o icone dele nao vai mudar.`)
 		end
+	end
+
+	--[[
+		O selo de novidade, se o designer desenhou um.
+
+		É **opcional** de propósito, e por isso não há aviso na falta dele: o indicador
+		inteiro funciona sem o selo, e um botão sem filha `New` é um botão sem selo, não
+		um botão quebrado. Nasce apagado — quem o acende é o `refreshButton`, e só junto
+		com um clima no ar.
+	]]
+	local badge = button:FindFirstChild(Config.Gui.New)
+	if badge and badge:IsA("GuiObject") then
+		self.NewBadge = badge
+		badge.Visible = false
 	end
 
 	--[[
@@ -477,6 +508,15 @@ function WeatherIndicatorController:refreshButton()
 	local current = self:current()
 
 	button.Visible = current ~= nil
+
+	--[[
+		O selo vive a vida do botão, menos quando o painel já foi aberto: sem clima ele
+		some com o botão, e depois da primeira abertura não volta mais nesta partida.
+	]]
+	local badge = self.NewBadge
+	if badge then
+		badge.Visible = current ~= nil and not self.PanelSeen
+	end
 
 	if current then
 		self:refreshIcon(current)
@@ -955,6 +995,18 @@ function WeatherIndicatorController:Open()
 
 	self.IsOpen = true
 
+	--[[
+		Abrir é a descoberta: o selo se aposenta aqui, e não no clique do botão, porque
+		quem chama o `Open` não é só ele — e o que aposenta o aviso é o painel ter sido
+		visto, de onde quer que a abertura tenha vindo.
+	]]
+	self.PanelSeen = true
+
+	local badge = self.NewBadge
+	if badge then
+		badge.Visible = false
+	end
+
 	panel.Visible = true
 
 	self:refreshHeader()
@@ -1101,6 +1153,9 @@ function WeatherIndicatorController:construct()
 		self.Wave = 0
 		self.EndsName = nil
 		self.EndsWave = nil
+
+		-- Partida nova, descoberta nova: o selo volta no primeiro clima dela.
+		self.PanelSeen = false
 
 		self:Close(true)
 		self:refreshButton()

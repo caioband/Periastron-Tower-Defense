@@ -121,6 +121,10 @@ local ContractController = {
 		DataController = {},
 		InterfaceController = {},
 		MusicController = {},
+
+		-- O selo `New` do botao da HUD: quem o apaga e o quadro abrir. Ver o
+		-- `BeforeOpen` no `construct`.
+		HUDBadgeController = {},
 	},
 }
 
@@ -605,6 +609,16 @@ function ContractController:construct()
 		BeforeOpen = function()
 			self:_render()
 			self:_updateTimers()
+
+			--[[
+				O quadro foi lido: o selo de "os contratos resetaram" se encerra aqui. O de
+				claim pendente **nao** -- aquele sai quando o contrato for claimado, e quem o
+				apaga e o proprio perfil.
+			]]
+			local badges = self.Controllers.HUDBadgeController
+			if badges then
+				badges:NoteSeen(HUD_BUTTON_NAME)
+			end
 		end,
 	})
 

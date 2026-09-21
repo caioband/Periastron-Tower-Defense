@@ -102,6 +102,54 @@ consome o clique de ninguém. Todos procuram o botão pelo nome em qualquer
 profundidade da coluna (`UIUtil.waitForDescendant`), então mexer nos wrappers no
 Studio não quebra o bind.
 
+### O selo `New` dos botões (`HUDBadgeController`)
+
+Cinco dos seis botões das colunas têm uma label `New` desenhada dentro deles, e o
+`HUDBadgeController` é o **único** que escreve no `Visible` dela. Uma regra por botão:
+
+| Botão | Acende quando | Apaga quando |
+| --- | --- | --- |
+| `HUDLeft.Contracts` | algum contrato está pronto para claim, **ou** o `Period` de um dos períodos virou (contratos resetaram) | o claim acontece (o perfil o desfaz); o "resetou" apaga quando o quadro abre |
+| `HUDLeft.RobuxShop` | na chegada, e cinco minutos depois de cada abertura | a loja abre |
+| `HUDFrame.Backpack` | uma caixa nova entra no inventário | uma caixa daquela raridade é **aberta** |
+| `HUDFrame.Deck` | uma unit que o jogador **não tinha** entra no perfil | ela é **equipada** |
+| `HUDFrame.CardShop` | o bloco de quatro horas da vitrine virou | a loja abre |
+
+**O `HUDFrame.Shop` não tem selo** — a loja de caixas vende o mesmo `ShopConfig.ITEMS`
+sempre, então não há novidade a anunciar, e o botão dela nem tem a label desenhada. Ele
+fica de fora da tabela `BADGES` do controller, e não por acidente.
+
+**O que apaga cada selo é a ação, e não o clique no botão.** Olhar a mochila não torna
+a caixa velha; abrir a caixa torna. Por isso os selos da mochila e do loadout saem do
+próprio perfil — a caixa gasta (`Inventory.Crates` que desce) e a carta equipada
+(`EquippedUnits`) —, e quem os apaga é o mesmo `OnChange` da replica que os acendeu:
+nenhum painel precisa avisar nada. Os três que não têm ação para esperar (um quadro que
+resetou, uma vitrine que trocou, um lembrete de cinco minutos) são avisados pelo
+`NoteSeen`, chamado do `BeforeOpen` do `ProximityPanel` de cada painel — ali a abertura
+já aconteceu, e abrir é a única ação que esses três admitem.
+
+**Claim pendente é estado, e não novidade:** o selo dos contratos insiste enquanto
+houver um contrato completo sem resgatar, mesmo depois de o jogador abrir o quadro. É a
+diferença entre "tem coisa nova aí" e "tem coisa **sua** aí para pegar".
+
+**A virada da vitrine de cartas é conta de relógio** (`RoundCardShopConfig.rotationIndex`
+conferido a cada cinco segundos), e não um evento do servidor: o bloco troca na mesma
+hora para todo mundo, então o cliente sabe sozinho. A virada dos contratos, ao contrário,
+é lida do **perfil** (`Contracts[kind].Period`): o que interessa lá é o sorteio já
+gravado, e acender o selo antes dele mandaria o jogador para um quadro igual ao que ele
+acabou de ver.
+
+**O estado é da visita ao lobby** e mora só no cliente — nada disso vai para o perfil.
+Voltar de uma partida é uma visita nova, e o retrato do perfil é tirado na chegada
+(`_snapshot`) justamente para **nada do que ele já tem** contar como novidade. Não é
+perda: caixa comprada, caixa aberta, unit desencaixotada e contrato claimado acontecem
+todos dentro do lobby, na frente do jogador.
+
+A HUD é `ResetOnSpawn`, então o bind roda de novo em cada cópia e o estado é reescrito
+nela; o `HudToken` derruba a busca que voltar de uma cópia velha. O botão é achado pelo
+`UIUtil.waitForDescendant`, como nos controllers dos painéis, e peça que falte (coluna,
+botão ou a própria label) vira um aviso por chave, uma vez.
+
 ## leaderstats: Coins, Wins e Shards
 
 O `LeaderstatsService` (`Lobby/src/Services`) põe as três colunas na lista de

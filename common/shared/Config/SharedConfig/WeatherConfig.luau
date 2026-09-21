@@ -325,6 +325,7 @@ WeatherConfig.Warning = {
 
 		Interface
 		├── WeatherButton        (ImageButton — o ícone do clima, e o interruptor)
+		│   └── New              (opcional — o selo de "abre isto aqui")
 		└── IndicatorWeather     (o painel, com um UIScale)
 			├── WeatherImg       (ImageLabel — o mesmo ícone do botão)
 			├── WeatherName      (TextLabel  — o nome do clima)
@@ -338,6 +339,12 @@ WeatherConfig.Warning = {
 	**Sem clima no ar não há indicador**: o botão some e o painel fecha, mesmo aberto.
 	"Céu limpo" não é informação que valha um canto da tela ocupado — o indicador
 	existe para as waves em que há o que ler nele.
+
+	**O selo de novidade.** Quem nunca abriu o painel nesta partida não sabe que o
+	botão abre coisa alguma, então o `New` — a filha opcional do botão — acende junto
+	com ele e **insiste**: aparece em toda tempestade enquanto o painel não for aberto
+	uma vez. Aberto, ele se aposenta pelo resto da partida; a partida seguinte começa
+	sem essa memória, e o selo volta no primeiro clima dela.
 
 	As linhas do `Container` são escritas pelo `RichTextController`, uma depois da
 	outra (ver `Line.Stagger`), e a cor dentro delas é automática: o número entra na
@@ -361,6 +368,13 @@ WeatherConfig.Indicator = {
 		Screen = "Interface",
 		Frame = "IndicatorWeather",
 		Button = "WeatherButton",
+
+		--[[
+			O selo de novidade **dentro** do botão, e é opcional: não existindo, o
+			indicador funciona igual e ninguém avisa nada. Quem o acende e o apaga é o
+			`WeatherIndicatorController:refreshButton`.
+		]]
+		New = "New",
 		Image = "WeatherImg",
 		Name = "WeatherName",
 		Duration = "Duration",

@@ -182,6 +182,12 @@ TutorialConfig.Match = {
 		               vazia no canto só continuaria pedindo clique.
 
 		               Ela volta sozinha no próximo passo que a pedir.
+		  - `GrantCash` — quantos de dinheiro o passo **dá** ao abrir, para todo mundo.
+		               É presente, e não a rede do `Ensure`: entra inteiro, uma vez por
+		               passo, sem olhar quanto o jogador tem. É o que garante que o
+		               fecho do roteiro encontre a carteira cheia o bastante para as
+		               cartas que ele pede, mesmo depois de a partida inteira ter sido
+		               gasta em outra coisa.
 
 		A wave 1 pede a **Slingshot**, e ela é a única carta liberada até a wave 5
 		(ver `AllowedUnits`): o tutorial ensina clima, loja e velocidade com uma torre
@@ -249,10 +255,12 @@ TutorialConfig.Match = {
 		--[[
 			A oferta de cartas de round.
 
-			`OpenShop` força a loja a abrir nesta wave, que de outro jeito seguiria o
-			calendário do `RoundCardConfig.IsShopWave`. `Card` é a carta que entra na
-			rotação na marra e a única que o passo aceita comprar — as outras duas
-			continuam na mesa, visíveis, e recusadas até ele comprar a certa.
+			`OpenShop` é o que abre a loja nesta wave — e **esta é a única wave do
+			tutorial em que ela aparece**: o calendário do `RoundCardConfig.IsShopWave`
+			não vale aqui (ver `TutorialMatchService:ShopIsScripted`), então a oferta
+			não volta sozinha na wave 4 por cima do passo do 2x. `Card` é a carta que
+			entra na rotação na marra e a única que o passo aceita comprar — as outras
+			duas continuam na mesa, visíveis, e recusadas até ele comprar a certa.
 
 			`Ensure` é a rede contra o beco sem saída: o passo **segura a wave** até a
 			compra, e um jogador sem os 300 do Weather Report ficaria preso para
@@ -373,6 +381,17 @@ TutorialConfig.Match = {
 
 			-- É aqui que o resto do deck destranca, e só aqui.
 			UnlocksDeck = true,
+
+			--[[
+				O dinheiro das cartas que este passo pede.
+
+				Duas Archer a 150 dão exatamente 300 — o passo paga o que ele cobra, e
+				o jogador não chega no fecho descobrindo que não tem com que cobrir os
+				pontos livres. É soma, não teto: quem economizou a partida inteira fica
+				com sobra, e sobra no último passo de uma partida que acaba na wave
+				seguinte não desequilibra nada.
+			]]
+			GrantCash = 300,
 
 			Points = { "2", "3" },
 			Radius = 3,

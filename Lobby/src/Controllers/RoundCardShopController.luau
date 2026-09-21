@@ -134,6 +134,10 @@ local RoundCardShopController = {
 		-- antes de apagar a ScreenGui das tres -- ver o `CanDisable` no `construct`.
 		ShopController = {},
 		RobuxShopController = {},
+
+		-- O selo `New` do botao da HUD: quem o apaga e a vitrine ser aberta. Ver o
+		-- `BeforeOpen` no `construct`.
+		HUDBadgeController = {},
 	},
 
 	Signals = {
@@ -956,6 +960,13 @@ function RoundCardShopController:construct()
 		BeforeOpen = function()
 			self:_render()
 			self:_updateCountdown()
+
+			-- A vitrine foi vista: o selo de "a loja resetou" se encerra, e volta quando o
+			-- bloco de quatro horas virar de novo.
+			local badges = self.Controllers.HUDBadgeController
+			if badges then
+				badges:NoteSeen(HUD_BUTTON_NAME)
+			end
 		end,
 	})
 
