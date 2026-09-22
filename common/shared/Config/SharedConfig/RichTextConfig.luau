@@ -46,6 +46,66 @@ RichTextConfig.Backends = { "HyperText", "Plain" }
 	pensa em máquina de escrever, e é o backend que converte. `Speed = 0` escreve
 	tudo de uma vez.
 ]=]
+--[=[
+	Como o tamanho da letra sai da **caixa**, e não de um número de pixels.
+
+	Pixel não se traduz entre telas: 12px ocupam um quinto de uma caixa no monitor e
+	metade dela no celular, e a mesma frase que cabia some ou estoura. Pedindo `Fit`, o
+	controller mede a caixa no instante da escrita e tira dela o tamanho da letra — é
+	`Size` calculado, não escrito.
+
+	São duas paredes, e a letra é a menor das duas:
+
+	  1. **a altura** da caixa vezes `TextRatio`, dividida pelas fileiras;
+	  2. **a largura** da caixa contra a largura real da frase mais comprida, também
+	     dividida pelas fileiras.
+
+	E é por isso que as **fileiras** entram na conta. Uma frase de 32 caracteres numa
+	caixa estreita fica minúscula se tiver de caber em uma fileira só — a largura manda,
+	e manda pouco. Deixando-a usar duas, a largura disponível dobra e a altura de cada
+	fileira cai à metade: onde a caixa é larga e baixa a primeira opção ganha, e onde ela
+	é estreita e alta ganha a segunda. O controller experimenta de 1 a `MaxRows` e fica
+	com a que der a **letra maior**, que é a definição do que se quer aqui.
+
+	`TextRatio` é a altura da letra como fração da altura da caixa — o que sobra é a
+	folga em volta.
+
+	`MinTextSize` é o piso: abaixo dele não se lê, e é melhor a frase estourar a caixa
+	(e alguém ver o problema) que virar uma tarja cinza. `MaxTextSize` é o teto, para a
+	caixa grande com frase curta não virar letreiro.
+
+	`MaxRows` é quantas fileiras uma frase pode ocupar. 1 é o padrão porque é o que não
+	surpreende: caixa de uma linha só. Container que quebra linha (uma fala, um tutorial)
+	diz aqui quantas linhas cabem nele.
+
+	`WidthPerChar` é o **plano B**: a largura da frase é medida de verdade
+	(`TextService`), e esta estimativa por caractere só entra quando a medida falha (a
+	fonte não carregou, a chamada foi recusada). 0.6 é a média de uma fonte
+	proporcional; fonte quase monoespaçada (a Press Start 2P) quer 1.
+
+	`Font` é com que fonte a largura é medida, e só vale quando o render não disse a
+	dele em `Options.Font`. O valor é o padrão do HyperText — medir numa fonte e desenhar
+	noutra dá uma letra do tamanho errado, e este é o único lugar em que o palpite cabe.
+
+	`LayoutTimeout` é quanto se espera a caixa ter tamanho **estável** antes de medir.
+	Peça criada agora só mede depois da passada de layout, e medir antes disso congela
+	uma letra do tamanho de um valor intermediário. Ver `RichTextController:AwaitLayout`.
+
+	`Debug` acende no output do Studio **qual das duas paredes** mandou no tamanho. Sem
+	isso, ajustar uma caixa é tentativa e erro: mexer em `TextRatio` não faz nada quando
+	é a largura que limita, e mexer em `MaxRows` não faz nada quando é a altura.
+]=]
+export type FitOptions = {
+	TextRatio : number?,
+	MaxRows : number?,
+	MinTextSize : number?,
+	MaxTextSize : number?,
+	WidthPerChar : number?,
+	Font : string?,
+	LayoutTimeout : number?,
+	Debug : boolean?,
+}
+
 export type Options = {
 	-- Combinação batizada em `Presets`, aplicada por baixo do resto.
 	Preset : string?,
@@ -57,6 +117,17 @@ export type Options = {
 
 	-- Aparência.
 	Size : number?,
+
+	--[[
+		Tira o `Size` da caixa em vez de aceitar o que veio em pixels. `true` usa os
+		padrões de `RichTextConfig.Fit`; uma tabela ajusta o que quiser deles.
+
+		Ligado, a escrita **dorme**: ela espera a caixa ter tamanho estável e mede a
+		largura da frase numa chamada assíncrona. Quem escreve dentro de um clique já
+		está numa thread própria; quem não estiver, que use `task.spawn`.
+	]]
+	Fit : (boolean | FitOptions)?,
+
 	Color : Color3?,
 	Font : string?,
 	Weight : Enum.FontWeight?,
@@ -92,6 +163,21 @@ RichTextConfig.Defaults = {
 	Anim = "none",
 	Wrapped = true,
 } :: Options
+
+--[[
+	Os padrões do `Fit`, para o render que pediu `Fit = true` e não quis escolher nada.
+	O que vier na chamada entra por cima, campo a campo. Ver o tipo `FitOptions`.
+]]
+RichTextConfig.Fit = {
+	TextRatio = 0.9,
+	MaxRows = 1,
+	MinTextSize = 6,
+	MaxTextSize = math.huge,
+	WidthPerChar = 0.6,
+	Font = "rbxasset://fonts/families/FredokaOne.json",
+	LayoutTimeout = 1,
+	Debug = true,
+} :: FitOptions
 
 --[[
 	Combinações batizadas.

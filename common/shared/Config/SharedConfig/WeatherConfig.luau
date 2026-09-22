@@ -439,7 +439,7 @@ WeatherConfig.Indicator = {
 		O tamanho do painel é do designer, e o que está desenhado é em pixels: o mesmo
 		painel numa tela de 1080 e numa de 1440 ocupa a mesma quantidade de pixels, e por
 		isso **parece menor** na maior — ela tem mais pixels para a mesma área de visão. A
-		letra, que sai da caixa medida (ver `Line.TextRatio`), encolhe na mesma proporção.
+		letra, que sai da caixa medida (ver `Line.Fit`), encolhe na mesma proporção.
 
 		A correção é um fator na escala de repouso do `UIScale`:
 
@@ -527,28 +527,30 @@ WeatherConfig.Indicator = {
 			que faz a lista se parecer a mesma no monitor e no celular, onde o painel tem
 			uma fração dos pixels e uma letra de 12px ocuparia o dobro do espaço relativo.
 
-			`TextRatio` é a altura da letra como fração da altura da linha — o que sobra é a
-			folga em volta. `MinTextSize` é o piso: abaixo dele não se lê, e é melhor a linha
-			estourar a caixa (e alguém ver o problema) que virar uma tarja cinza.
+			Quem faz a conta é o `RichTextController:FitSize`, e é lá (em
+			`RichTextConfig.Fit`) que cada campo está explicado. O que se ajusta aqui é o
+			que é desta lista:
 
-			`MaxRows` é quantas fileiras uma linha pode ocupar. É o que impede a frase longa
-			de ficar minúscula: `+50% ELEC UNIT DMG (WHEN STRUCK)` numa caixa estreita cabe
-			em uma fileira só com uma letra que não se lê, e em duas fileiras com o dobro da
-			largura disponível — o controller experimenta de 1 a `MaxRows` e fica com a que
-			der a **letra maior**. Caixa larga e baixa continua escolhendo uma fileira
-			sozinha, porque ali a altura é que limita.
+			  1. `MaxRows = 2` porque `+50% ELEC UNIT DMG (WHEN STRUCK)` numa caixa estreita
+			     cabe em uma fileira só com uma letra que não se lê, e em duas fileiras com o
+			     dobro da largura disponível. Caixa larga e baixa continua escolhendo uma
+			     fileira sozinha, porque ali a altura é que limita;
+			  2. `WidthPerChar = 1` porque a Press Start 2P é quase monoespaçada — e isto é
+			     o plano B, para quando a medida de verdade falhar.
 
-			`WidthPerChar` é o **plano B**: a largura da frase é medida de verdade
-			(`TextService`), e esta estimativa por caractere só entra quando a medida falha.
-			1 é a medida da Press Start 2P, que é quase monoespaçada.
+			A conta vale para a lista inteira, e não por linha: o controller mede a primeira
+			peça com a **frase mais comprida** e o tamanho vale para todas, porque lista com
+			uma tipografia por linha parece defeito.
 
-			A conta vale para a lista inteira, e não por linha: a linha mais comprida manda
-			no tamanho de todas, porque lista com uma tipografia por linha parece defeito.
+			No Studio, a linha do `[RichTextController]` no output diz qual das duas paredes
+			mandou no tamanho — sem ela, ajustar isto aqui é tentativa e erro.
 		]=]
-		TextRatio = 0.9,
-		MaxRows = 2,
-		MinTextSize = 6,
-		WidthPerChar = 1,
+		Fit = {
+			TextRatio = 0.9,
+			MaxRows = 2,
+			MinTextSize = 6,
+			WidthPerChar = 1,
+		},
 
 		--[[
 			Quanto se espera a tela parar de mudar antes de reescrever a lista na medida
@@ -563,9 +565,14 @@ WeatherConfig.Indicator = {
 		qualquer opção dele cabe aqui.
 
 		**`Size` não está aqui de propósito**: o tamanho da letra é medido da caixa a
-		cada escrita (ver `Line.TextRatio`), e um número fixo aqui seria o mesmo pixel no
+		cada escrita (ver `Line.Fit`), e um número fixo aqui seria o mesmo pixel no
 		monitor e no celular. Quem quiser letra maior ou menor mexe na proporção, não
 		aqui.
+
+		**`Fit` também não**, pelo mesmo motivo de sempre: ligado aqui, cada linha se
+		mediria pela própria frase e a lista sairia com uma tipografia por linha. O
+		controller chama o `FitSize` uma vez, com `Line.Fit`, e passa o tamanho pronto
+		para todas.
 	]=]
 	Text = {
 		Font = "rbxasset://fonts/families/PressStart2P.json",

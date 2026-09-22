@@ -1,4 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TextService = game:GetService("TextService")
+local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -12,6 +14,27 @@ local Me = require(Vendor.Me)
 local Framework = Me.new()
 
 local Config = SharedConfig.RichTextConfig
+
+--[[
+	O tamanho em que a largura de uma frase é medida (ver `measureWidth`).
+
+	A largura de um texto é linear no tamanho da letra, então medir uma vez num tamanho
+	grande e escalar dá a largura em qualquer tamanho — com a vantagem de o erro de
+	arredondamento de um tamanho pequeno não entrar na conta. Ele não aparece na tela.
+]]
+local PROBE_SIZE = 100
+
+--[[
+	A conta da letra, no output do Studio (ver `FitOptions.Debug`).
+
+	Só no Studio, porque é informação de quem está desenhando a tela e não do jogador.
+]]
+local IS_STUDIO = RunService:IsStudio()
+
+local function fitPrint(...)
+	if not IS_STUDIO then return end
+	print("[RichTextController]", ...)
+end
 
 --[[
 	Texto rico: letra por letra, com cor, tremor, imagem no meio da frase.
@@ -67,6 +90,15 @@ local Config = SharedConfig.RichTextConfig
 		Backend.OnFinished(object, fn) -> () -> ()
 		Backend.OnEvent(object, fn) -> () -> ()
 
+	**O tamanho da letra.** `Size` é em pixels, e pixel não se traduz entre telas.
+	Quem quiser a letra saindo da caixa em vez de um número pede `Fit`:
+
+		RichText:Write(label, "WAVE 12 INCOMING", { Fit = true })
+
+	A caixa é medida no instante da escrita, e o tamanho sai dela — ver
+	`RichTextConfig.Fit` para as paredes da conta e `:FitSize()` para a caixa que
+	precisa de um tamanho só para várias peças irmãs.
+
 	**A marcação.** `[nome]texto[/nome]`, `[nome=valor]`, `[br]`. Só é tag o que
 	estiver em `RichTextConfig.Aliases`; qualquer outro colchete é texto comum, que
 	é o que faz `[1]` no meio de uma frase continuar sendo `[1]`. `[[` escreve um
@@ -89,6 +121,15 @@ RichTextController.Resolved = false
 -- [GuiObject] = Handle. Um container tem um handle só — dois renderizadores no
 -- mesmo frame escreveriam por cima um do outro.
 RichTextController.Handles = {}
+
+--[[
+	`[fonte][frase] = largura em PROBE_SIZE`, das que já foram medidas.
+
+	Vale para a sessão inteira: a mesma frase não muda de largura entre duas escritas,
+	e a chamada que a mede é assíncrona — sem o cache, toda relançada da mesma tela
+	pagaria a viagem de novo.
+]]
+RichTextController.Widths = {}
 
 --[[ HANDLE ]]
 
@@ -123,6 +164,9 @@ export type Handle = typeof(setmetatable(
 	atrás é passar o valor antigo de novo. É assim porque as opções viram
 	configuração do renderizador lá dentro: desfazê-las depois de cada frase
 	custaria uma remontagem por frase para um caso que o jogo não tem.
+
+	Com `Fit` ligado a chamada **dorme** antes de escrever: a letra sai da caixa, e
+	a caixa só mede depois da passada de layout. Ver `:Fit()`.
 ]=]
 function Handle:Write(text : string, options : Options?) : Handle
 	if not self.Alive then return self end
@@ -131,7 +175,56 @@ function Handle:Write(text : string, options : Options?) : Handle
 		self:SetOptions(options)
 	end
 
+	if self.Options.Fit then
+		self:Fit(text)
+
+		-- O `:Fit()` dorme, e o container pode ter sido destruído no meio.
+		if not self.Alive then return self end
+	end
+
 	self.Backend.Render(self.Object, RichTextController:translate(text, self.Backend), self.Options)
+
+	return self
+end
+
+--[=[
+	Mede a caixa e tira dela o tamanho da letra, daqui para frente.
+
+	É o que `Fit` faz sozinho a cada `:Write()`. Chamar à mão serve para o depois: a
+	tela mudou de tamanho e o que está escrito precisa da medida nova.
+
+		container:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+			handle:Fit()
+		end)
+
+	Sem `text`, a conta usa a última frase escrita — que é o que a tela redimensionada
+	quer. Com `text`, usa o que vai ser escrito, que é o que o `:Write()` quer: a frase
+	que ainda não está lá é a que tem de caber.
+
+	Uma lista de frases mede pela **mais comprida** e devolve um tamanho só. Ver
+	`RichTextController:FitSize`.
+
+	**Dorme**: espera a caixa ter tamanho estável e mede a largura da frase por uma
+	chamada assíncrona. Não reescreve o que já está na tela — o renderizador reescala o
+	que está desenhado junto com a caixa; o tamanho novo vale para a escrita seguinte.
+]=]
+function Handle:Fit(text : (string | { string })?) : Handle
+	if not self.Alive then return self end
+
+	local sample = text or self.Backend.GetText(self.Object) or ""
+
+	local fit = RichTextController:fitSettings(self.Options.Fit)
+
+	RichTextController:AwaitLayout(self.Container, fit.LayoutTimeout)
+
+	if not self.Alive then return self end
+
+	local size = RichTextController:FitSize(self.Container, sample, self.Options, fit)
+
+	if not self.Alive then return self end
+
+	self.Options.Size = size
+	self.Backend.Apply(self.Object, self.Options)
 
 	return self
 end
@@ -325,6 +418,80 @@ function RichTextController:resolveOptions(options : Options?, base : Options?) 
 end
 
 --[=[
+	Os ajustes do `Fit` resolvidos contra `RichTextConfig.Fit`.
+
+	`true` (ou qualquer coisa que não seja tabela) é "os padrões"; tabela entra por
+	cima deles campo a campo, para quem quer mexer só no `MaxRows` não ter de repetir
+	os outros cinco.
+]=]
+function RichTextController:fitSettings(fit : any) : any
+	local resolved = {}
+
+	for key, value in Config.Fit do
+		resolved[key] = value
+	end
+
+	if type(fit) == "table" then
+		for key, value in fit do
+			if value ~= nil then
+				resolved[key] = value
+			end
+		end
+	end
+
+	return resolved
+end
+
+--[=[
+	A largura de uma frase em `PROBE_SIZE`, ou `nil` quando não deu para medir.
+
+	Medida de verdade, e não estimada por número de caracteres: a estimativa (ver
+	`FitOptions.WidthPerChar`) erra para cada lado — conservadora demais ela encolhe a
+	letra sem motivo, e otimista demais deixa a frase estourar a caixa. Como a largura é
+	linear no tamanho da letra, uma medida serve para todos os tamanhos.
+
+	Dorme, porque a chamada é assíncrona; quem a usa já está numa thread própria. O
+	resultado fica em cache por frase **e por fonte** — a mesma frase em duas fontes são
+	duas larguras.
+
+	Falhando (a fonte não existe, a chamada foi recusada), devolve `nil` e quem chamou
+	cai na estimativa. É medida melhor, não medida obrigatória.
+]=]
+function RichTextController:measureWidth(text : string, font : string) : number?
+	local byFont = self.Widths[font]
+	if not byFont then
+		byFont = {}
+		self.Widths[font] = byFont
+	end
+
+	local cached = byFont[text]
+	if cached then
+		return cached
+	end
+
+	local success, bounds = pcall(function()
+		local params = Instance.new("GetTextBoundsParams")
+		params.Text = text
+		params.Size = PROBE_SIZE
+		params.Font = Font.new(font)
+
+		-- 0 é "sem limite": a largura que queremos é a da frase em uma fileira, e é daí
+		-- que sai a conta de quantas fileiras ela precisa.
+		params.Width = 0
+
+		return TextService:GetTextBoundsAsync(params)
+	end)
+
+	if not success or not bounds or bounds.X <= 0 then
+		return nil
+	end
+
+	byFont[text] = bounds.X
+
+	return bounds.X
+end
+
+--[=[
 	A nossa marcação virando o dialeto do backend.
 
 	Varredura à mão em vez de `gsub` por causa do `[[`: um escape precisa ser visto
@@ -467,6 +634,139 @@ function RichTextController:Release(container : GuiObject)
 	if not handle then return end
 
 	handle:Destroy()
+end
+
+--[=[
+	Espera a peça ter tamanho **estável** na tela, e diz se conseguiu.
+
+	Não basta ser diferente de zero. O tamanho medido é o que decide a letra (ver
+	`:FitSize()`) e o que o renderizador guarda como referência de escala do que
+	desenhou, e um `UIListLayout` que ainda está distribuindo as peças dá um valor
+	intermediário — que viraria uma letra de tamanho errado congelada na tela.
+
+	O prazo existe para a caixa que nunca vai ganhar tamanho (tela desligada por outro
+	controller, pai apagado, tamanho zero autorado): isso vira uma escrita sem efeito,
+	e não uma espera infinita. Escrever no prazo esgotado é de propósito — o backend
+	reclama no output dizendo que a caixa mede zero, e é essa a pista do defeito.
+	Silêncio aqui viraria uma tela que não aparece e não explica.
+]=]
+function RichTextController:AwaitLayout(container : GuiObject, timeout : number?) : boolean
+	local deadline = os.clock() + (timeout or Config.Fit.LayoutTimeout or 1)
+	local previous = container.AbsoluteSize
+
+	while true do
+		local current = container.AbsoluteSize
+
+		if current.Magnitude > 0 and current == previous then
+			return true
+		end
+
+		if os.clock() > deadline then
+			return false
+		end
+
+		previous = current
+
+		task.wait()
+	end
+end
+
+--[=[
+	O tamanho da letra que cabe na caixa, em pixels.
+
+	É a conta que o `Fit` faz sozinho (ver `RichTextConfig.Fit` para o porquê de cada
+	parede). Chamar direto serve para o caso que o `Fit` não resolve: **várias peças
+	irmãs com um tamanho só**. Uma lista de linhas se mede uma vez, na primeira peça, e
+	o resultado vale para todas — tipografia por linha pareceria defeito, não
+	responsividade:
+
+		local size = RichText:FitSize(firstLine, texts, Config.Text, Config.Fit)
+
+		for _, handle in handles do
+			handle:Write(markup(...), { Size = size })
+		end
+
+	`text` é uma frase ou uma lista delas; numa lista, manda a **mais comprida**. A
+	marcação é arrancada antes de medir — cor e tremor não ocupam largura.
+
+	`options` é de onde sai a fonte em que a largura é medida (e aceita um `Preset`,
+	como qualquer chamada). `fit` são os ajustes, e quando não vem usa os de
+	`options.Fit`, e depois os padrões do config.
+
+	**Dorme** na primeira vez que vê uma frase (ver `measureWidth`). Não espera o
+	layout: a caixa tem de estar medida quando isto é chamado, e quem chama de fora do
+	`Fit` pede isso com `:AwaitLayout()` antes.
+]=]
+function RichTextController:FitSize(
+	container : GuiObject,
+	text : (string | { string }),
+	options : Options?,
+	fit : any?
+) : number
+	local resolved = self:resolveOptions(options)
+	local settings = self:fitSettings(fit or resolved.Fit)
+
+	local longest = ""
+	if type(text) == "table" then
+		for _, entry in text do
+			local plain = self:Plain(entry)
+
+			if #plain > #longest then
+				longest = plain
+			end
+		end
+	else
+		longest = self:Plain(text)
+	end
+
+	local font = resolved.Font or settings.Font
+	local measured = if #longest > 0 then self:measureWidth(longest, font) else nil
+
+	local box = container.AbsoluteSize
+
+	local best, bestRows, bestWall = settings.MinTextSize, 1, "o PISO (MinTextSize)"
+
+	for rows = 1, math.max(1, settings.MaxRows) do
+		local fromHeight = (box.Y * settings.TextRatio) / rows
+
+		local fromWidth = math.huge
+		if box.X > 0 and #longest > 0 then
+			fromWidth = if measured
+				then (box.X * rows * PROBE_SIZE) / measured
+				else (box.X * rows) / (#longest * settings.WidthPerChar)
+		end
+
+		local size = math.min(fromHeight, fromWidth)
+
+		if size > best then
+			best = size
+			bestRows = rows
+			bestWall = if fromWidth < fromHeight then "a LARGURA da caixa" else "a ALTURA da caixa"
+		end
+	end
+
+	-- O teto entra depois da escolha, e não dentro do laço: ele é um limite de
+	-- legibilidade, não uma parede que deva mudar quantas fileiras ganham.
+	best = math.min(best, settings.MaxTextSize)
+
+	if settings.Debug then
+		local camera = workspace.CurrentCamera
+		local viewport = camera and camera.ViewportSize or Vector2.zero
+
+		fitPrint(string.format(
+			-- Tudo em %.0f, e nao %d: `ViewportSize` e `AbsoluteSize` sao floats, e `%d`
+			-- com float sem representacao inteira e erro, nao arredondamento.
+			"%s | tela %.0fx%.0f | caixa %.0fx%.0f | %.0f chars, largura %s | letra %.1f em %d fileira(s), manda %s",
+			container:GetFullName(),
+			viewport.X, viewport.Y,
+			box.X, box.Y,
+			#longest,
+			if measured then string.format("medida (%.0f em %d)", measured, PROBE_SIZE) else "estimada",
+			best, bestRows, bestWall
+		))
+	end
+
+	return best
 end
 
 --[=[

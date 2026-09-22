@@ -531,21 +531,16 @@ animação mantém isso; o portão é o `writeLinesWhenSettled`, e a escala de c
 autorada no `UIScale` (painel desenhado em 0.8 abre em 0.8).
 
 **O tamanho da letra é medido da caixa, não escrito em pixels** — é o que faz o painel
-funcionar no celular. O renderizador escreve em pixels, e pixel não se traduz entre
-telas: 12px são um quinto da linha num monitor e metade dela num celular, onde o painel
-tem uma fração dos pixels. Então a letra sai de duas paredes, a **altura** da caixa
-(`TextRatio` dela) e a **largura** contra a largura real da frase mais comprida, medida
-pelo `TextService` e guardada em cache (`WidthPerChar` é só o plano B de quando a medida
-falha).
+funcionar no celular. Quem faz a conta é o `RichTextController:FitSize` (ver *O tamanho
+da letra sai da caixa*), e os ajustes desta lista ficam em `Indicator.Line.Fit`:
+`MaxRows = 2` porque `+50% ELEC UNIT DMG (WHEN STRUCK)` numa caixa estreita cabe em uma
+fileira só com uma letra ilegível, e `WidthPerChar = 1` porque a Press Start 2P é quase
+monoespaçada.
 
-As **fileiras** entram na mesma conta, e é o que impede a frase longa de ficar minúscula:
-`+50% ELEC UNIT DMG (WHEN STRUCK)` numa caixa estreita cabe em uma fileira só com uma
-letra ilegível, e em duas com o dobro da largura disponível. O controller experimenta de 1
-a `MaxRows` e fica com a que der a letra **maior** — caixa larga e baixa escolhe uma
-fileira sozinha, porque ali é a altura que limita. A conta usa a frase mais comprida e o
-tamanho vale para todas as linhas: tipografia por linha pareceria defeito. A altura da
-linha de reserva também é fração (`HeightScale`, 0.2 = cinco linhas enchem o `Container`,
-que é o maior clima de hoje), e girar o celular reescreve a lista na medida nova
+A conta é feita **uma vez**, na primeira linha medida e com a frase mais comprida, e o
+tamanho vale para todas: tipografia por linha pareceria defeito. A altura da linha de
+reserva também é fração (`HeightScale`, 0.2 = cinco linhas enchem o `Container`, que é o
+maior clima de hoje), e girar o celular reescreve a lista na medida nova
 (`ResizeDebounce`).
 
 **O painel pode crescer com a tela**, e hoje não cresce: `clamp(alturaDaTela /
@@ -1443,9 +1438,10 @@ handle:Write("Bem-vindo, [color=yellow]comandante[/color].[pause=1] Sente-se.")
 ```
 
 O handle tem `:Write`, `:Skip` (mostra tudo agora — é o que o clique do jogador no
-meio da fala deve fazer), `:Pause`, `:Resume`, `:Clear`, `:SetOptions`, `:GetText`,
-`:IsWriting`, `:OnFinished`, `:OnEvent` e `:Destroy`. O controller ainda tem
-`:Write`, `:Clear`, `:Release`, `:Escape`, `:Plain` e `:GetBackend`.
+meio da fala deve fazer), `:Pause`, `:Resume`, `:Clear`, `:SetOptions`, `:Fit`,
+`:GetText`, `:IsWriting`, `:OnFinished`, `:OnEvent` e `:Destroy`. O controller ainda
+tem `:Write`, `:Clear`, `:Release`, `:FitSize`, `:AwaitLayout`, `:Escape`, `:Plain` e
+`:GetBackend`.
 
 ### A caixa de fala (`DialogController`)
 
@@ -1569,8 +1565,8 @@ sabe que está se amarrando ao HyperText — a regra é: usou duas vezes, vira a
 
 O que vale para a frase inteira não cabe dentro dela e vai por tabela: `Speed` (em
 **caracteres por segundo**, que é como se pensa em máquina de escrever — o backend
-converte), `Size`, `Color`, `Font`, `Weight`, `Italic`, `Transparency`, `Stroke`,
-`Shadow`, `Anim`/`AnimDuration`/`AnimLoop`, `Sound`/`SoundVolume`, `Align`,
+converte), `Size`, `Fit`, `Color`, `Font`, `Weight`, `Italic`, `Transparency`,
+`Stroke`, `Shadow`, `Anim`/`AnimDuration`/`AnimLoop`, `Sound`/`SoundVolume`, `Align`,
 `VerticalAlign`, `ZIndex`, `Wrapped`, `Yield`.
 
 Combinações batizadas ficam em `RichTextConfig.Presets` — hoje `Instant`, `Warning` e
@@ -1580,6 +1576,55 @@ sem ninguém ficar sabendo. A ordem é `Defaults` < preset < o que veio na chama
 > Opção passada num `:Write()` **fica** valendo para o handle, como se fosse um
 > `:SetOptions()` antes do texto. Elas viram configuração do renderizador lá dentro,
 > e desfazê-las a cada frase custaria uma remontagem por frase.
+
+### O tamanho da letra sai da caixa (`Fit`)
+
+`Size` é em pixels, e pixel não se traduz entre telas: 12px são um quinto de uma caixa
+no monitor e metade dela no celular, onde a tela tem uma fração dos pixels. `Fit` troca
+o número pela medida da caixa, no instante da escrita:
+
+```lua
+RichText:Write(label, "WAVE 12 INCOMING", { Fit = true })
+
+-- ou ajustando o que precisar dos padrões de `RichTextConfig.Fit`:
+RichText:Write(label, longLine, { Fit = { MaxRows = 3, MaxTextSize = 48 } })
+```
+
+A letra é a menor de duas paredes: a **altura** da caixa vezes `TextRatio`, e a
+**largura** da caixa contra a largura real da frase — medida pelo `TextService` e
+guardada em cache por frase e por fonte (`WidthPerChar` é só o plano B de quando a
+medida falha). As duas divididas pelas **fileiras**, e é isso que impede a frase longa
+de ficar minúscula: `+50% ELEC UNIT DMG (WHEN STRUCK)` numa caixa estreita cabe em uma
+fileira só com uma letra ilegível, e em duas com o dobro da largura disponível. O
+controller experimenta de 1 a `MaxRows` e fica com a que der a letra **maior** — caixa
+larga e baixa escolhe uma fileira sozinha, porque ali é a altura que limita.
+`MinTextSize` é o piso e `MaxTextSize` o teto.
+
+> `Fit` faz a escrita **dormir**: ela espera a caixa ter tamanho estável (`:AwaitLayout`)
+> e mede a largura por uma chamada assíncrona. Quem escreve dentro de um clique já está
+> numa thread própria; quem não estiver, que use `task.spawn`.
+
+A tela mudou de tamanho depois? `handle:Fit()` sem argumento remede pela última frase
+escrita, e a próxima escrita já sai na medida nova.
+
+**Várias peças irmãs com um tamanho só** não passam pelo `Fit` — cada uma se mediria
+pela própria frase e a lista sairia com uma tipografia por linha. Para isso o tamanho
+se pede uma vez e se reparte (é o que o painel de clima faz):
+
+```lua
+RichText:AwaitLayout(firstLine)
+
+local size = RichText:FitSize(firstLine, texts, Config.Text, Config.Line.Fit)
+
+for _, handle in handles do
+	handle:Write(markup(...), { Size = size })
+end
+```
+
+No Studio, `RichTextConfig.Fit.Debug` imprime **qual das duas paredes** mandou no
+tamanho de cada conta. Sem isso, ajustar uma caixa é tentativa e erro: mexer em
+`TextRatio` não faz nada quando é a largura que limita, e mexer em `MaxRows` não faz
+nada quando é a altura.
 
 ### Texto de jogador passa pelo `:Escape()`
 

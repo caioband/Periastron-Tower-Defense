@@ -1,6 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
-local TextService = game:GetService("TextService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
@@ -27,21 +26,12 @@ local Config = WeatherConfig.Indicator
 local SCALE_EPSILON = 0.001
 
 --[[
-	O tamanho em que a largura de uma frase é medida.
+	A escala do painel, no output do Studio.
 
-	A largura de um texto é linear no tamanho da letra, então medir uma vez num tamanho
-	grande e escalar dá a largura em qualquer tamanho — com a vantagem de o erro de
-	arredondamento de um tamanho pequeno não entrar na conta. Ele não aparece na tela.
-]]
-local PROBE_SIZE = 100
-
---[[
-	As medidas da lista, no output do Studio.
-
-	É o único jeito de saber **qual das duas contas** está mandando no tamanho da letra
-	(ver `lineTextSize`), e sem isso ajustar o painel é tentativa e erro: mexer na
-	proporção da altura não faz nada quando é a largura que limita, e mexer no fator da
-	tela não faz nada quando ele está preso no piso.
+	É o jeito de descobrir os dois números de `Indicator.Responsive` em vez de tentar:
+	ele mostra a altura de cada tela e o fator que saiu dela. **A conta da letra não é
+	daqui** — ela sai do `RichTextController:FitSize`, que imprime a linha dele (ver
+	`RichTextConfig.Fit.Debug`).
 
 	Mesmo motivo do `roundPrint` do `WeatherRoundService`: só no Studio, porque é
 	informação de quem está desenhando a tela, e não do jogador.
@@ -163,13 +153,6 @@ WeatherIndicatorController.ScaleTween = nil :: Tween?
 -- Sobe a cada mudança de tela, para só a última do lote reescrever a lista. Ver
 -- `onViewportChanged`.
 WeatherIndicatorController.ViewportToken = 0
-
---[[
-	Largura de cada frase já medida, em `PROBE_SIZE`. As frases são as sete listas do
-	config, então a tabela nasce pequena e para de crescer — e medir custa uma chamada
-	que dorme, que não vale repetir a cada abertura do painel.
-]]
-WeatherIndicatorController.Widths = {}
 
 --[[ TELA ]]
 
@@ -614,165 +597,6 @@ function WeatherIndicatorController:lineEntry(index : number) : { Frame : GuiObj
 end
 
 --[=[
-	Espera a peça ter tamanho **estável** na tela, e diz se conseguiu.
-
-	Não basta ser diferente de zero: o tamanho medido é o que decide a letra (ver
-	`lineTextSize`) e o que o renderizador guarda como referência de escala, e um
-	`UIListLayout` que ainda está distribuindo as peças dá um valor intermediário — que
-	viraria uma letra de tamanho errado congelada na lista. Dois quadros com a mesma
-	medida é o sinal de que o layout acabou, e é a mesma espera que o
-	`DialogController` faz antes de escrever a fala.
-
-	Escrever no prazo esgotado é de propósito: o renderizador reclama no output dizendo
-	que a caixa mede zero, e é essa a pista de que a tela está com um pai apagado ou um
-	tamanho de zero autorado. Silêncio aqui viraria uma lista que não aparece e não
-	explica.
-]=]
-function WeatherIndicatorController:awaitMeasured(frame : GuiObject) : boolean
-	local deadline = os.clock() + Config.Line.MeasureTimeout
-	local previous = frame.AbsoluteSize
-
-	while true do
-		local current = frame.AbsoluteSize
-
-		if current.Magnitude > 0 and current == previous then
-			return true
-		end
-
-		if os.clock() > deadline then
-			return false
-		end
-
-		previous = current
-
-		task.wait()
-	end
-end
-
---[=[
-	A largura de uma frase em `PROBE_SIZE`, ou `nil` quando não deu para medir.
-
-	Medida de verdade, e não estimada por número de caracteres: a estimativa (ver
-	`Line.WidthPerChar`) erra para cada lado — conservadora demais ela encolhe a letra
-	sem motivo, e otimista demais deixa a frase estourar a caixa. Como a largura é linear
-	no tamanho da letra, uma medida serve para todos os tamanhos.
-
-	Dorme, porque a chamada é assíncrona; quem a usa já está numa thread própria. O
-	resultado fica em cache: são sete listas no config, e a mesma frase não muda de
-	largura entre aberturas.
-
-	Falhando (a fonte não carregou, a chamada foi recusada), devolve `nil` e quem chamou
-	cai na estimativa. É medida melhor, não medida obrigatória.
-]=]
-function WeatherIndicatorController:measureWidth(text : string) : number?
-	local cached = self.Widths[text]
-	if cached then
-		return cached
-	end
-
-	local params = Instance.new("GetTextBoundsParams")
-	params.Text = text
-	params.Size = PROBE_SIZE
-	params.Font = Font.new(Config.Text.Font)
-
-	-- 0 é "sem limite": a largura que queremos é a da frase em uma fileira, e é daí que
-	-- sai a conta de quantas fileiras ela precisa.
-	params.Width = 0
-
-	local ok, bounds = pcall(function()
-		return TextService:GetTextBoundsAsync(params)
-	end)
-
-	if not ok or not bounds or bounds.X <= 0 then
-		return nil
-	end
-
-	self.Widths[text] = bounds.X
-
-	return bounds.X
-end
-
---[=[
-	O tamanho da letra da lista, medido da caixa de uma linha.
-
-	É o que faz o painel ser responsivo **e** o que decide se a letra é grande ou
-	pequena. O renderizador escreve em pixels, e pixel não se traduz entre telas: 12px
-	ocupam um quinto da linha num monitor e metade dela num celular. Então o número não
-	é escrito no config — ele sai da caixa que está na tela agora.
-
-	São duas paredes:
-
-	  1. **a altura** da caixa, dividida pelas fileiras que o texto vai ocupar;
-	  2. **a largura** da caixa, contra a largura real da frase mais comprida (ver
-	     `measureWidth`), também dividida pelas fileiras.
-
-	E é por isso que as **fileiras** entram na conta. Uma frase de 32 caracteres numa
-	caixa estreita fica minúscula se tiver de caber em uma fileira só — a largura manda, e
-	manda pouco. Deixando-a usar duas, a largura disponível dobra e a altura de cada
-	fileira cai à metade: onde a caixa é larga e baixa a primeira opção ganha, e onde ela
-	é estreita e alta ganha a segunda. O laço experimenta de 1 a `MaxRows` e fica com a
-	que der a letra maior, que é a definição do que se quer aqui.
-
-	A conta usa a frase mais comprida da lista e o tamanho vale para todas: tipografia
-	por linha pareceria defeito, não responsividade. O texto medido é o do config, sem
-	marcação — as cores entram depois e não ocupam largura.
-
-	Sem medida real, a largura vem da estimativa por caractere. Sem largura de caixa,
-	só a altura manda: melhor uma letra proporcional que um zero.
-]=]
-function WeatherIndicatorController:lineTextSize(frame : GuiObject, lines : { { Text : string, Kind : string? } }) : number
-	local line = Config.Line
-	local box = frame.AbsoluteSize
-
-	local longest = ""
-	for _, entry in lines do
-		if #entry.Text > #longest then
-			longest = entry.Text
-		end
-	end
-
-	local measured = if #longest > 0 then self:measureWidth(longest) else nil
-
-	local best, bestRows, bestWall = line.MinTextSize, 1, "o PISO (MinTextSize)"
-
-	for rows = 1, math.max(1, line.MaxRows) do
-		local fromHeight = (box.Y * line.TextRatio) / rows
-
-		local fromWidth = math.huge
-		if box.X > 0 and #longest > 0 then
-			fromWidth = if measured
-				then (box.X * rows * PROBE_SIZE) / measured
-				else (box.X * rows) / (#longest * line.WidthPerChar)
-		end
-
-		local size = math.min(fromHeight, fromWidth)
-
-		if size > best then
-			best = size
-			bestRows = rows
-			bestWall = if fromWidth < fromHeight then "a LARGURA da caixa" else "a ALTURA da caixa"
-		end
-	end
-
-	local camera = workspace.CurrentCamera
-	local viewport = camera and camera.ViewportSize or Vector2.zero
-
-	indicatorPrint(string.format(
-		-- Tudo em %.0f, e nao %d: `ViewportSize` e `AbsoluteSize` sao floats, e `%d` com
-		-- float sem representacao inteira e erro, nao arredondamento.
-		"tela %.0fx%.0f | escala %.2f | linha %.0fx%.0f | %.0f chars, largura %s | letra %.1f em %d fileira(s), manda %s",
-		viewport.X, viewport.Y,
-		(self.Scale and self.Scale.Scale) or 1,
-		box.X, box.Y,
-		#longest,
-		if measured then string.format("medida (%.0f em %d)", measured, PROBE_SIZE) else "estimada",
-		best, bestRows, bestWall
-	))
-
-	return best
-end
-
---[=[
 	Apaga o que estiver escrito nas linhas, sem desfazer o pool.
 ]=]
 function WeatherIndicatorController:clearLines()
@@ -794,6 +618,9 @@ end
 function WeatherIndicatorController:refreshLines()
 	local current = self:current()
 	if not current or not self.Container then return end
+
+	local richText = self.Controllers.RichTextController
+	if not richText then return end
 
 	self.Token += 1
 	local token = self.Token
@@ -819,6 +646,22 @@ function WeatherIndicatorController:refreshLines()
 		entries[index] = { Entry = entry, Line = line }
 	end
 
+	-- O texto **sem** as cores: quem mede a largura é o `FitSize`, e marcação não ocupa
+	-- largura nenhuma na tela.
+	local texts = {}
+	for _, line in lines do
+		table.insert(texts, line.Text)
+	end
+
+	indicatorPrint(string.format(
+		-- %.0f, e nao %d: `ViewportSize` e float, e `%d` com float sem representacao
+		-- inteira e erro, nao arredondamento.
+		"tela %.0f de altura | fator %.2f | escala %.2f",
+		(workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y) or 0,
+		self:viewportFactor(),
+		(self.Scale and self.Scale.Scale) or 1
+	))
+
 	task.spawn(function()
 		local size : number? = nil
 
@@ -828,20 +671,21 @@ function WeatherIndicatorController:refreshLines()
 			local queued = entries[index]
 			if queued then
 				-- Peça criada agora só mede depois da passada de layout.
-				self:awaitMeasured(queued.Entry.Frame)
+				richText:AwaitLayout(queued.Entry.Frame, Config.Line.MeasureTimeout)
 
 				if self.Token ~= token then return end
 
 				--[[
 					O tamanho sai da primeira peça medida e vale para a lista inteira: as peças
-					são todas do mesmo tamanho, e medir de novo a cada linha só abriria a chance
-					de duas linhas saírem com letras diferentes.
+					são todas do mesmo tamanho, e a conta é da frase mais comprida (ver
+					`RichTextController:FitSize`) — medir de novo a cada linha só abriria a
+					chance de duas linhas saírem com letras diferentes.
 
 					A conta dorme na primeira vez (a largura da frase é medida por uma chamada
 					assíncrona), então o token é conferido de novo depois dela.
 				]]
 				if not size then
-					size = self:lineTextSize(queued.Entry.Frame, lines)
+					size = richText:FitSize(queued.Entry.Frame, texts, Config.Text, Config.Line.Fit)
 
 					if self.Token ~= token then return end
 				end
