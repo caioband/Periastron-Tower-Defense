@@ -1464,6 +1464,18 @@ próxima; na última, fecha. Fala pedida com `Auto = true` anda sozinha depois d
 `Dialog:OnEvent()` no momento em que a digitação passa pela marca — é o gancho para
 som, câmera ou VFX no meio da frase, em vez de um `task.wait` chutado.
 
+**Morrer no meio da fala não perde a fala.** A `DialogGUI` tem `ResetOnSpawn`: a
+caixa é destruída com a tela e vem outra, vazia. O controller guarda o que faltava
+dizer (de `Index` em diante, não a fala inteira — o jogador já leu o que leu) com as
+mesmas opções, devolve o fundo na hora e reescreve na caixa nova quando ela chega
+(`DialogConfig.Respawn`). `IsResuming()` é o que separa "a fala acabou" de "a fala
+está voltando", para quem decide o que pôr na tela agora.
+
+> Não achando a caixa nova dentro do prazo, a fala é dada por perdida e **quem
+> esperava o `:OnClosed()` é avisado**. Isso não é detalhe: antes, morrer com a fala
+> aberta nunca disparava o `OnClosed`, e o passo do tutorial ficava esperando para
+> sempre — a instrução lida, e nenhum destaque depois dela.
+
 **Atrás da fala, a tela sai do caminho.** Enquanto a caixa está aberta: o resto da
 UI some, o fundo borra e a música abaixa. Nenhum dos três é invenção nova — são
 pedidos aos sistemas que já existiam:
@@ -1741,8 +1753,73 @@ flag `Tutorial` no `TeleportData`. De lá em diante quem manda é o
 2 — o de comprar o Weather Report — o declara. O `CardShopService` pergunta
 `TutorialMatchService:ShopIsScripted()` antes de olhar o `IsShopWave`, porque o preset
 do tutorial não tem intervalo próprio e caía no padrão de 4: a oferta voltava sozinha na
-wave 4, em cima do passo do 2x, com cartas que o roteiro não pediu e que o passo
+wave 4, em cima do passo da velocidade, com cartas que o roteiro não pediu e que o passo
 seguinte nem deixa usar.
+
+**Só o que o passo pede é clicável.** Cada passo de `TutorialConfig.Match.Steps`
+declara uma whitelist em `Buttons`, e todo `GuiButton` da `PlayerGui` que não esteja
+nela (nem seja filho ou pai de algo que esteja, nem esteja em
+`TutorialConfig.ButtonGate.Always`) deixa de aceitar clique — `Active` e `Selectable`
+a `false`, devolvidos ao que eram no fim. Quem desliga é o `ButtonGateController`
+(`common/client`), o mesmo que a segunda metade do tutorial usa no lobby.
+
+| Passo | Libera |
+|---|---|
+| `ClickReady` | `Interface.ReadyWave` |
+| `PlaceFirst` | `@Card` — a carta de `Unit` na hotbar |
+| `BuyReport` | `RoundCardShop.RCSFrame.CardShop` e `@Offer` |
+| `UseReport` | `@Hand` — a carta de round já na mão |
+| `UseSpeed` | `Interface.Speed` e `@SpeedOptions` |
+| `PlaceRest` | `@Deck` — a hotbar inteira, que este passo destranca |
+| `BackToLobby` | `ResultScreen.MainScreen.Lobby` |
+
+Os apelidos `@` existem porque a peça é clonada em runtime e não tem caminho fixo: eles
+viram **funções**, que o gate chama a cada varredura (e que podem devolver uma lista). É
+o que faz o passo da compra funcionar — a carta da mesa não existe quando o passo abre, e
+um alvo resolvido ali seria `nil` para sempre. Há também `@Highlight`, que acompanha o
+que o destaque estiver abraçando.
+
+> **O botão de velocidade não abre um painel.** Ele clona a si mesmo uma vez por degrau e
+> pendura os clones **ao lado dele**, no mesmo pai — eles não são filhos do botão, então
+> liberar o botão não libera as opções. Daí o `@SpeedOptions`, que pergunta a lista ao
+> `SpeedController`. Quando o menu abre, o destaque escorrega do botão para o degrau que
+> o passo pede, e volta para o botão se o menu fechar.
+>
+> O degrau é o `Index` do passo, e **o degrau 2 é o 1,5x**, não o 2x: a ordem em
+> `SpeedConfig.Steps` é `1x`, `1,5x`, `2x`, e o 2x pede gamepass. Passo que segura a wave
+> atrás de uma compra é um beco sem saída, então o roteiro para no 1,5x — a lição ("dá
+> para acelerar") é a mesma.
+
+**A trava é da partida, não do passo.** Cumprido um passo, a whitelist dele continua de
+pé até o próximo abrir — sem isso o intervalo entre duas waves seria a hora de sair do
+roteiro, pela mesma razão que `AllowedUnits` e `CanPlace` valem entre os passos. O que
+sai quando o passo é cumprido é o **prazo da válvula**, não a trava.
+
+> **A válvula.** Trava existe para o jogador não sair do roteiro, não para prendê-lo: se
+> a whitelist de um passo não cobrir o botão que ele pede, o botão certo fica desligado e
+> não há ninguém para religá-lo. Passados `ButtonGate.Release` segundos de passo
+> **aberto** a trava cai sozinha e o output diz por quê. Quatro minutos é exagerado de
+> propósito — válvula que dispara em partida normal não é válvula, é bug, e o piso não é
+> o tempo que o dev leva no passo, é o que um jogador que nunca viu o jogo leva.
+> `BackToLobby` pede dez minutos porque é o único passo sem um seguinte para re-trancar
+> a tela.
+
+Nada disso é regra de jogo: o que o servidor recusa continua sendo recusado no servidor
+(`CanPlace`, `CanUse`, `CanBuy`, `CanSell`, `CanUpgrade`). A trava é educação de
+interface — cliente adulterado destrava a própria tela e não ganha nada com isso.
+
+**O passo se redesenha depois do respawn.** Morrer não fecha passo nenhum — ele
+continua de pé no servidor, segurando a wave se for o caso —, mas leva junto tudo o
+que tem `ResetOnSpawn`. O `TutorialStepController` escuta o `CharacterAdded` e
+reaplica o passo aberto: a whitelist é recontada contra a árvore nova, as setas são
+refeitas e o destaque volta. **A fala tem precedência**: se ela estiver voltando, o
+holofote espera o fim dela, como esperaria na primeira vez.
+
+Na partida sobra pouco a refazer, porque a `Interface` (hotbar, Ready, Speed) não tem
+`ResetOnSpawn`. No lobby é o oposto — `HUD`, `ShopUI` e `crateui` morrem todas —, e
+por isso o fluxo da loja **recomeça** em vez de remendar: sem a compra, do primeiro
+tempo; com a compra feita, da segunda metade (`Start(fromCrate)`), porque mandar
+comprar de novo uma caixa que o jogador já tem é um passo que nunca fecha.
 
 **O fecho paga as próprias cartas.** O passo `PlaceRest` — o da wave 5, que manda
 cobrir os pontos livres antes do chefe — declara `GrantCash = 300`, e quem o entrega é
@@ -1878,8 +1955,18 @@ detalhe, e no mesmo botão a 60px é uma moldura. Na prática: 6px num ícone de
 **Alvo dentro de algo que corta** (`ScrollingFrame`) tem o retângulo **cortado
 junto**, ancestral por ancestral. Rolando para fora de vista, o destaque
 **suspende** — o alvo continua apontado e volta a brilhar quando o jogador rolar de
-volta, em vez de o passo do tutorial se perder. Só alvo tirado da `PlayerGui` apaga
-de vez.
+volta, em vez de o passo do tutorial se perder.
+
+**Alvo destruído pelo respawn volta sozinho.** Quase toda `ScreenGui` tem
+`ResetOnSpawn` (no lobby, *todas*), então morrer reclona a tela inteira da
+`StarterGui` e a instância apontada vira lixo. O `Show` guarda o **caminho de nomes**
+do alvo até a `PlayerGui` junto com ele, e ao perdê-lo o destaque procura o mesmo
+caminho na tela nova (`HighlightConfig.Rebind`) — nome é o que sobrevive à
+reclonagem, tanto no botão autorado quanto na peça clonada em runtime. Enquanto
+procura ele fica **suspenso**, não apagado, e recusa de `Show` por alvo ainda
+invisível não conta como desistência: o botão de Ready e a caixa da mochila nascem
+assim. Estourando o prazo, sai de vez e **calado** — quem pediu o destaque é quem
+sabe se ainda há passo pedindo aquele botão.
 
 > O que não é coberto: alvo **rotacionado**. `AbsolutePosition`/`AbsoluteSize`
 > descrevem a caixa sem rotação, e o `UIStroke` não recorta em diagonal. Não existe

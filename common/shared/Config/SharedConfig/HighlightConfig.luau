@@ -114,4 +114,28 @@ HighlightConfig.Tween = {
 ]=]
 HighlightConfig.BlockInput = false
 
+--[=[
+	A volta do destaque quando o alvo é destruído debaixo dele.
+
+	Quase toda `ScreenGui` tem `ResetOnSpawn`, então **morrer apaga o que estava
+	apontado**: a tela é reclonada da `StarterGui` e a instância que o destaque
+	segurava vira lixo. Sem isto o holofote saía e não voltava, e um passo de tutorial
+	ficava pedindo um clique num botão que ninguém mais destaca.
+
+	O destaque guarda o **caminho de nomes** do alvo até a `PlayerGui` (ver
+	`HighlightController:Show`) e procura o equivalente na tela nova. Nome é o que
+	sobrevive à reclonagem: o botão autorado volta com o mesmo, e a peça clonada em
+	runtime — a carta da hotbar, a caixa da mochila — é remontada com o mesmo também.
+
+	`Timeout` é quanto se espera. A tela nova não chega no mesmo quadro: o
+	`ResetOnSpawn` só reclona quando o personagem novo entra. Estourando, o destaque
+	sai de vez, calado — quem o pediu é quem sabe se ainda faz sentido apontar.
+
+	`Interval` é o compasso da procura.
+]=]
+HighlightConfig.Rebind = {
+	Timeout = 10,
+	Interval = 0.2,
+}
+
 return HighlightConfig

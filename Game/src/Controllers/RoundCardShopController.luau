@@ -714,14 +714,9 @@ function RoundCardShopController:_closeShop(fade : number?)
 		end
 	end
 
-	--[[
-		A hotbar volta -- a menos que um passo do tutorial a queira fora da tela. A
-		compra e a licao daquela wave, e a mao nao faz parte dela: devolve-la aqui
-		acenderia, no fechamento da loja, exatamente o que o passo tirou.
-	]]
-	local tutorial = self.Controllers.TutorialStepController
-
-	self:_setDeckHidden(tutorial ~= nil and not tutorial:WantsDeck())
+	-- A hotbar volta. Quem a escondeu foi esta loja, ao abrir, e fechando ela nao ha
+	-- mais nada por cima da mao.
+	self:_setDeckHidden(false)
 end
 
 --[=[

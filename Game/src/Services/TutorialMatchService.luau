@@ -413,12 +413,21 @@ function TutorialMatchService:openStep(step : any)
 			Positions = positions,
 			Lines = step.Lines,
 
-			-- O que o passo faz com a hotbar: `Deck` enquanto ele corre, `HidesDeck`
-			-- quando ele fecha. Os dois viajam porque quem desenha a mão é o cliente.
-			Deck = step.Deck,
-			HidesDeck = step.HidesDeck,
 			Locked = locked,
 			AllowedUnits = self:allowedUnits(),
+
+			--[[
+				A whitelist de botões do passo. Viaja porque quem desliga botão é o
+				cliente — botão é tela, e tela é dele.
+
+				Isto **não** é uma regra de jogo: o que o servidor recusa continua sendo
+				recusado no servidor (`CanPlace`, `CanUse`, `CanBuy`, `CanSell`,
+				`CanUpgrade`), e a trava daqui é educação de interface. Cliente adulterado
+				destrava a própria tela e não ganha nada com isso.
+			]]
+			Buttons = step.Buttons,
+			BlockedButtons = step.BlockedButtons,
+			ButtonRelease = step.ButtonRelease,
 		})
 	end
 end

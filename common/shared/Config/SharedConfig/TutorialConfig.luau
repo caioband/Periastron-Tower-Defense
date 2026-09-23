@@ -70,6 +70,60 @@ end
 TutorialConfig.PromptDelay = 3
 
 --[=[
+	A trava de botões do tutorial, nas duas metades.
+
+	O roteiro aponta uma coisa de cada vez, e **o que ele não aponta não é clicável**:
+	quem está aprendendo onde fica o botão de Ready não pode abrir o board de
+	dificuldade, vender a torre que o passo acabou de pedir ou pular a wave que o
+	passo está esperando. Quem desliga é o `ButtonGateController`; daqui sai só o que
+	é do tutorial.
+
+	Cada passo diz o que libera (ver `Buttons` em `Match.Steps`, e o alvo de cada
+	tempo do fluxo do lobby). Esta tabela é o que vale **em cima de qualquer passo**.
+
+	> O nome é `ButtonGate`, e não `Buttons`, porque `TutorialConfig.Buttons` já é
+	> outra coisa: os dois botões da escolha da oferta. São assuntos diferentes com a
+	> mesma palavra, e o segundo a chegar apagaria o primeiro em silêncio.
+
+	  - `Always` — sempre clicável, em todo passo das duas places. Hoje é só a caixa
+	    de fala: um botão de escolha que não aceita clique é uma conversa sem saída, e
+	    a caixa é a mesma nas duas metades;
+	  - `Ignore` — telas em que a trava não pisa, por nome. O destaque já é ignorado
+	    sem precisar ser dito. As outras três:
+
+	      `Cmdr` porque trancar o console é trancar a ferramenta com que se destrava o
+	      resto;
+
+	      `TouchGui` e `MovementButtons` porque **movimento não é botão do roteiro**. É
+	      a mesma linha que faz a trava ser nos botões e não no `BlockInput` do
+	      destaque: o jogador continua dono da câmera e das próprias pernas enquanto
+	      aprende onde clicar. No celular, andar, correr, dar dash e pular são botões de
+	      tela — trancá-los junto seria travar o jogador no lugar, que é exatamente o
+	      que se estava evitando;
+	  - `Release` — a válvula, em segundos de passo **aberto**. Se a whitelist de um
+	    passo não cobrir o botão que ele pede, o jogador ficaria com a tela morta e
+	    ninguém para religá-la; passado o prazo a trava cai sozinha e o output diz por
+	    quê.
+
+	    Quatro minutos, e é para ser exagerado. Válvula que dispara em partida normal
+	    não é válvula, é bug — e o piso não é o tempo que *eu* levo para cumprir o
+	    passo, é o que um jogador que nunca viu o jogo leva. O intervalo do preset de
+	    tutorial sozinho já são 45s (o passo do Ready fica aberto a contagem inteira
+	    mesmo com o clique no primeiro segundo), e 90s morria no meio do passo do
+	    Slingshot, com o jogador ainda lendo a fala e procurando o ponto no mapa.
+
+	    Ela só corre enquanto o passo está **aberto**: cumprido o passo, o prazo sai
+	    (`HoldRelease`) e a whitelist fica de pé até o passo seguinte — o jogador não
+	    está preso, só não tem o que clicar enquanto a wave corre. Passo que precise
+	    de outro prazo pede em `ButtonRelease`.
+]=]
+TutorialConfig.ButtonGate = {
+	Always = { "SharedUIs.DialogGUI.Container" },
+	Ignore = { "Cmdr", "TouchGui", "MovementButtons" },
+	Release = 240,
+}
+
+--[=[
 	As frases.
 
 	1. Branco, nome em gradiente laranja, meio segundo de espera e o nome do jogo
@@ -168,20 +222,33 @@ TutorialConfig.Match = {
 		               outro.
 		  - `Lines`  — o que a caixa de fala diz ao abrir o passo, com a marcação de
 		               sempre. Passo sem fala nenhuma vai direto ao destaque.
-		  - `Deck`   — `false` tira a **hotbar** da tela enquanto o passo corre. É para
-		               o passo que não pede carta nenhuma: o botão de Ready, a compra
-		               na loja, o 2x. Carta acesa embaixo de um passo que aponta outro
-		               canto da tela é convite a clicar no lugar errado.
+		  - `Buttons` — **a whitelist de botões do passo**: o que o jogador pode clicar
+		               enquanto ele está aberto. Tudo o que não estiver aqui (nem for
+		               filho ou pai de algo que esteja, nem estiver em
+		               `TutorialConfig.ButtonGate.Always`) para de aceitar clique.
 
-		               O padrão é a mão na tela — passo que não declara nada segue
-		               como sempre —, e quem a devolve é o fim do passo.
-		  - `HidesDeck` — `true` leva a hotbar embora **quando o passo é cumprido**, em
-		               vez de devolvê-la. É o par do `Deck` para o passo que precisa da
-		               mão para ser feito e não precisa mais dela depois: a Slingshot
-		               que foi para o mapa não deixou nada para arrastar, e a hotbar
-		               vazia no canto só continuaria pedindo clique.
+		               Cada entrada é um caminho de tela a partir da `PlayerGui` — o
+		               mesmo de `Highlight` — ou um dos apelidos que o controller
+		               resolve na hora, porque a peça só existe em runtime:
 
-		               Ela volta sozinha no próximo passo que a pedir.
+		                 `@Highlight` o que o destaque está abraçando agora
+		                 `@Deck`      a hotbar inteira (`Interface.TowerContainer`)
+		                 `@Card`      a carta de `Unit` na hotbar
+		                 `@Hand`      a carta de round `Card` já na mão
+		                 `@Offer`     a carta `Card` na mesa da loja
+
+		               **A whitelist sobrevive ao passo**: cumprido ele, ela continua de
+		               pé até o passo seguinte abrir. A trava é da partida, como a do
+		               deck (`AllowedUnits`) e a do `CanPlace` — sem isso o jogador
+		               destravaria a tela inteira no intervalo entre duas waves.
+
+		               Passo sem `Buttons` não tranca nada, e é assim que um roteiro
+		               antigo continua funcionando.
+		  - `BlockedButtons` — a subtração, para quando a whitelist é um painel inteiro
+		               e um botão de dentro dele não pode ser clicado. Ganha do
+		               `Buttons`.
+		  - `ButtonRelease` — o prazo da válvula **deste** passo, em segundos, quando o
+		               de `TutorialConfig.ButtonGate.Release` não serve.
 		  - `GrantCash` — quantos de dinheiro o passo **dá** ao abrir, para todo mundo.
 		               É presente, e não a rede do `Ensure`: entra inteiro, uma vez por
 		               passo, sem olhar quanto o jogador tem. É o que garante que o
@@ -214,19 +281,17 @@ TutorialConfig.Match = {
 			Wave = 0,
 			Kind = "Ready",
 
-			--[[
-				A mão fica fora da tela: a lição é o botão do canto, e o mapa ainda nem
-				tem wave para ele defender.
-
-				`HidesDeck` para ela não voltar no instante em que este passo fecha: o
-				passo do Slingshot abre no mesmo quadro e a esconderia de novo, e o que
-				o jogador veria seria a hotbar piscando. Quem a traz é a fala que manda
-				arrastar.
-			]]
-			Deck = false,
-			HidesDeck = true,
-
 			Highlight = "Interface.ReadyWave",
+
+			--[[
+				O botão de Ready e nada mais.
+
+				O `WeatherButton` fica de fora mesmo sendo inofensivo: o passo manda olhar
+				em volta e apertar um botão, e um segundo botão aceso no mesmo canto é
+				exatamente a dúvida que o passo existe para não criar. O clima aparece na
+				wave 3, com um passo só para ele.
+			]]
+			Buttons = { "Interface.ReadyWave" },
 
 			Lines = {
 				"[color=white]Take your time to look around.[/color][pause=0.4] When you're set, hit [gradient=green]READY[/gradient][color=white] — the wave starts when the timer runs out.[/color]",
@@ -239,13 +304,19 @@ TutorialConfig.Match = {
 			Kind = "Place",
 			Hold = true,
 
-			-- A mão está na tela para o arrasto acontecer, e sai junto com ele: a
-			-- Slingshot era a única carta liberada, e o que sobra é uma hotbar vazia.
-			HidesDeck = true,
-
 			Unit = "Slingshot",
 			Point = "1",
 			Radius = 3,
+
+			--[[
+				Só a carta que o passo pede.
+
+				A hotbar já apaga as outras (`AllowedUnits`), mas apagada e desligada não
+				são a mesma coisa: `@Card` é o que garante que o clique numa carta apagada
+				não chegue a lugar nenhum. E o par das duas é o que faz a tela dizer a
+				mesma coisa que o servidor responderia (`CanPlace`).
+			]]
+			Buttons = { "@Card" },
 
 			Lines = {
 				"[color=white]This is your deck.[/color][pause=0.4] Drag the [gradient=orange]Slingshot[/gradient] onto the marked spot.",
@@ -278,10 +349,6 @@ TutorialConfig.Match = {
 			Kind = "Buy",
 			Hold = true,
 
-			-- A compra acontece na mesa da loja, que vem por cima da hotbar. A mão só
-			-- volta quando a carta comprada tiver um lugar nela.
-			Deck = false,
-
 			OpenShop = true,
 			Card = "WeatherReport",
 			Ensure = true,
@@ -295,6 +362,21 @@ TutorialConfig.Match = {
 			Highlight = "RoundCardShop.RCSFrame.CardShop",
 
 			ScheduleWeather = { "Drought", "Fog", "Rain" },
+
+			--[=[
+				O botão que abre a loja **e** a carta que o passo manda comprar.
+
+				Os dois, e não só o que o destaque está apontando no momento: o destaque
+				escorrega do botão para a carta quando a loja abre (ver `awaitCard`), e uma
+				whitelist que o seguisse deixaria o botão de fechar a loja mudo no meio do
+				passo — o jogador abriria a mesa e não teria como sair dela.
+
+				As outras duas cartas da mesa continuam clicáveis de propósito: elas estão
+				dentro de `Background.RoundCardShop`, que não está liberado, então o clique
+				não passa — mas o `CanBuy` do servidor já recusava, e é ele quem manda. O
+				que muda aqui é o jogador não ficar tentando.
+			]=]
+			Buttons = { "RoundCardShop.RCSFrame.CardShop", "@Offer" },
 
 			Lines = {
 				"[color=white]Cards show up between waves.[/color][pause=0.4] Buy the [gradient=green]Weather Report[/gradient] — you'll need it.",
@@ -321,40 +403,51 @@ TutorialConfig.Match = {
 
 			Card = "WeatherReport",
 
+			-- A carta comprada, que agora está na mão. A hotbar de unidades está vazia
+			-- (a Slingshot foi para o mapa na wave 1), então não há mais nada a liberar.
+			Buttons = { "@Hand" },
+
 			Lines = {
 				"[color=white]The weather is here — it buffs some enemies and weakens your towers.[/color]",
 				"[color=white]Use your[/color] [gradient=green]Weather Report[/gradient] [color=white]to clear it for this wave.[/color]",
 			},
 		},
 
-		--[[
+		--[=[
 			O botão de velocidade.
 
-			`Hold` segura a wave 4 até o jogador pôr a partida em 2x — o tempo fica
-			parado, como pedido. `Index` é o degrau do `SpeedConfig` (1 = 1x, 2 = 2x), e
-			`Highlight` é o caminho da tela, a partir da `PlayerGui`, que o destaque
-			abraça.
+			`Hold` segura a wave 4 até o jogador acelerar a partida — o tempo fica parado,
+			como pedido. `Highlight` é o caminho da tela, a partir da `PlayerGui`, que o
+			destaque abraça.
 
-			Não há nada a liberar: o 2x já é de graça para todo mundo no jogo: o
-			`SpeedService:SetIndex` não cobra nem pede gamepass.
-		]]
+			**`Index` é o degrau do `SpeedConfig`, e o degrau 2 é o 1,5x** — não o 2x. A
+			ordem lá é `1 = 1x`, `2 = 1,5x`, `3 = 2x`, e é de propósito que o roteiro pare
+			no segundo: **o 2x pede gamepass** (`Steps[3].Gamepass = "Speed"`), e um passo
+			que segura a wave atrás de uma compra é um beco sem saída para quem não a tem.
+			O 1,5x é de graça para todo mundo, e a lição — "dá para acelerar" — é a mesma.
+
+			Trocar este número é trocar a fala junto: ela nomeia o degrau que o destaque
+			vai apontar.
+
+			**O menu não é um painel.** O botão clona a si mesmo uma vez por degrau e
+			pendura os clones ao lado dele, no mesmo pai — eles não são filhos do botão.
+			Por isso a whitelist pede `@SpeedOptions` além do botão: sem isso o menu abre
+			e nenhuma opção aceita clique. Quando ele abre, o destaque escorrega do botão
+			para o degrau de `Index` (ver `watchSpeedOptions`).
+		]=]
 		{
 			Id = "UseSpeed",
 			Wave = 4,
 			Kind = "Speed",
 			Hold = true,
 
-			-- Nada a colocar nesta wave: a Slingshot já está no mapa e o resto do deck
-			-- só destranca na 5. A mão sai para o olho ir ao botão, e continua fora
-			-- depois — quem a traz de volta é o passo do fecho, que precisa dela.
-			Deck = false,
-			HidesDeck = true,
-
 			Index = 2,
 			Highlight = "Interface.Speed",
 
+			Buttons = { "Interface.Speed", "@SpeedOptions" },
+
 			Lines = {
-				"[color=white]In a hurry?[/color][pause=0.3] Tap [gradient=orange]2x[/gradient] to speed the match up.",
+				"[color=white]In a hurry?[/color][pause=0.3] Tap [gradient=orange]1.5x[/gradient] to speed the match up.",
 			},
 		},
 
@@ -396,6 +489,13 @@ TutorialConfig.Match = {
 			Points = { "2", "3" },
 			Radius = 3,
 
+			--[[
+				A hotbar inteira, e não uma carta: é o passo que solta o deck
+				(`UnlocksDeck`), e a lição aqui é cobrir o mapa com o que se tem. Qual
+				carta vale em qual ponto continua sendo conta do `CanPlace`.
+			]]
+			Buttons = { "@Deck" },
+
 			Lines = {
 				"[color=white]Last wave — and it brings a[/color] [gradient=orange]boss[/gradient][color=white].[/color]",
 				"[color=white]Put the rest of your deck on the open spots.[/color]",
@@ -427,11 +527,25 @@ TutorialConfig.Match = {
 			Id = "BackToLobby",
 			Kind = "Lobby",
 
-			-- A partida acabou: não há mais nada para colocar no mapa.
-			Deck = false,
-
 			Highlight = "ResultScreen.MainScreen.Lobby",
 			HighlightWait = 20,
+
+			--[=[
+				Só o botão de voltar ao lobby.
+
+				O "PLAY AGAIN" ao lado já é trancado pelo `ResultController` — botão é
+				assunto de quem é dono da tela —, e por isso ele nem chega a esta conta: a
+				trava não toca em botão que já estava desligado.
+
+				O prazo é o maior do roteiro, e o motivo não é a coreografia longa que faz o
+				botão nascer (backdrop, painel, recompensas, barra de XP): é que **este passo
+				não tem um seguinte**. Nos outros, uma válvula que dispara cedo demais é
+				corrigida pelo passo que abre na wave seguinte e tranca a tela de novo; aqui
+				não abre passo nenhum, e o que a válvula soltar fica solto até o teleporte.
+				Errar para mais custa nada, e errar para menos custa a tela inteira.
+			]=]
+			Buttons = { "ResultScreen.MainScreen.Lobby" },
+			ButtonRelease = 600,
 		},
 	},
 }

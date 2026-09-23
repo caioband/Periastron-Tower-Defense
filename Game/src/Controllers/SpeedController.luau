@@ -494,6 +494,46 @@ function SpeedController:bindOutsideClick()
 	end)
 end
 
+--[[ API ]]
+
+--[=[
+	O botao `Interface.Speed`, quando ele ja foi achado na tela.
+]=]
+function SpeedController:GetButton() : GuiButton?
+	return self.button
+end
+
+--- As opcoes abertas agora. Lista vazia com o menu fechado.
+function SpeedController:GetOptions() : { GuiButton }
+	return self.options
+end
+
+--[=[
+	A opcao de um degrau, ou `nil` quando o menu esta fechado (ou quando o degrau
+	pedido e o que ja esta em uso -- esse nao ganha clone, o proprio botao e ele).
+
+	Quem pergunta e quem precisa apontar ou liberar **uma** das opcoes de fora daqui:
+	hoje o passo do tutorial que manda acelerar a partida, que destaca o degrau que
+	pede e deixa so ele clicavel. Sem isto, a unica saida seria procurar o clone pelo
+	nome na tela -- um nome que e detalhe interno deste controller.
+]=]
+function SpeedController:GetOption(stepIndex : number?) : GuiButton?
+	if not stepIndex then return nil end
+
+	for _, option in self.options do
+		if option:GetAttribute(STEP_ATTRIBUTE) == stepIndex then
+			return option
+		end
+	end
+
+	return nil
+end
+
+--- O menu de opcoes esta aberto?
+function SpeedController:IsExpanded() : boolean
+	return self.expanded == true
+end
+
 --[[ CICLO DE VIDA ]]
 
 function SpeedController:construct()

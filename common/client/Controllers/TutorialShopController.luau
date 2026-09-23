@@ -32,10 +32,11 @@ local Config = TutorialConfig.Lobby
 		6. a mochila fecha sozinha e o unboxing roda com a tela trancada;
 		7. a fala de despedida.
 
-	**Nada fora do passo é clicável.** A cada passo, todo botão de tela que não seja
-	o alvo é desligado (`Active = false`) e devolvido ao estado anterior depois — é
-	o que impede o jogador de abrir o deck, entrar num portal ou comprar outra caixa
-	no meio do roteiro.
+	**Nada fora do passo é clicável.** Quem desliga é o `ButtonGateController`, o
+	mesmo que os passos da partida usam: a cada tempo do fluxo a whitelist é o alvo
+	daquele tempo (mais a caixa de fala, que é `TutorialConfig.ButtonGate.Always`), e o
+	resto para de aceitar clique. É o que impede o jogador de abrir o deck, entrar num
+	portal ou comprar outra caixa no meio do roteiro.
 
 	A trava é nos botões, e **não** no `BlockInput` do destaque, de propósito:
 	aquele cobre a tela com frames que engolem qualquer input, inclusive o arrastar
@@ -55,6 +56,7 @@ local TutorialShopController = {
 	Controllers = {
 		DialogController = {},
 		HighlightController = {},
+		ButtonGateController = {},
 
 		-- As telas que o fluxo abre e fecha. Nenhuma delas é obrigatória: place sem
 		-- alguma delas simplesmente não tem esse passo.
@@ -69,9 +71,6 @@ TutorialShopController.Running = false
 -- Uma sessão por fluxo: o `while` de cada espera morre quando outra começa (ou
 -- quando o fluxo é abortado), em vez de ficar rodando em segundo plano.
 TutorialShopController.Session = 0
-
--- Os botões que o fluxo desligou, com o estado que eles tinham. Ver `lockTo`.
-TutorialShopController.LockedButtons = {}
 
 -- De quanto em quanto tempo uma espera longa se anuncia no output.
 local REPORT_INTERVAL = 3
@@ -107,70 +106,41 @@ function TutorialShopController:controller(name : string) : any
 end
 
 --[=[
-	Desliga todo botão de tela que não seja o alvo do passo, e guarda o estado de
-	cada um para devolver depois.
-
-	**Por que não o `BlockInput` do destaque.** Ele cobre a tela com quatro frames
-	`Active`, e frame `Active` engole *qualquer* input que passe por cima — inclusive
-	o arrastar que gira a câmera. O jogador ficava preso olhando para um lado só.
-
-	Aqui a trava é nos botões: o que está fora do passo deixa de aceitar clique,
-	hover e navegação por controle, e a câmera continua livre. O alvo, seus
-	ancestrais e seus filhos ficam de fora da trava — clicar num botão dentro do
-	alvo é clicar no alvo.
-
-	Roda de novo a cada passo, e é isso que cobre os botões que ainda não existiam
-	quando o anterior começou (o de comprar nasce com a loja aberta).
-]=]
-function TutorialShopController:lockTo(target : GuiObject?)
-	self:unlockButtons()
-
-	local highlightGui = PlayerGui:FindFirstChild(SharedConfig.HighlightConfig.Gui.Name)
-
-	for _, screen in PlayerGui:GetChildren() do
-		if screen == highlightGui or not screen:IsA("LayerCollector") then
-			continue
-		end
-
-		for _, button in screen:GetDescendants() do
-			if not button:IsA("GuiButton") then
-				continue
-			end
-
-			local isTarget = target ~= nil
-				and (button == target or button:IsDescendantOf(target) or target:IsDescendantOf(button))
-
-			if isTarget or not button.Active then
-				continue
-			end
-
-			self.LockedButtons[button] = { Active = button.Active, Selectable = button.Selectable }
-
-			button.Active = false
-			button.Selectable = false
-		end
-	end
-end
-
---[=[
-	Devolve os botões ao que eles eram.
-]=]
-function TutorialShopController:unlockButtons()
-	for button, state in self.LockedButtons do
-		if button.Parent then
-			button.Active = state.Active
-			button.Selectable = state.Selectable
-		end
-	end
-
-	table.clear(self.LockedButtons)
-end
-
---[=[
 	Aponta um alvo e deixa **só ele** clicável.
+
+	A trava é refeita a cada tempo do fluxo, e é isso que cobre os botões que ainda
+	não existiam quando o anterior começou — o de comprar nasce com a loja aberta, a
+	caixa nasce com a mochila aberta. O gate ainda se reaplica sozinho quando um botão
+	novo chega, então a ordem entre "abriu a tela" e "apontei o alvo" deixou de
+	importar.
+
+	`nil` tranca a tela inteira e apaga o destaque: é o que o passo do unboxing pede,
+	para não haver uma segunda caixa para abrir sem querer.
+
+	O prazo da válvula é o `StallRelease` do config, contado a partir daqui — e como
+	o `point` vem sempre um instante antes da espera daquele tempo, ele é o prazo
+	daquela espera.
 ]=]
 function TutorialShopController:point(target : GuiObject?)
-	self:lockTo(target)
+	local gate = self:controller("ButtonGateController")
+
+	if gate then
+		local allow = {}
+
+		if target then
+			table.insert(allow, target)
+		end
+
+		for _, entry in (TutorialConfig.ButtonGate.Always or {}) do
+			table.insert(allow, entry)
+		end
+
+		gate:Lock({
+			Allow = allow,
+			Ignore = TutorialConfig.ButtonGate.Ignore,
+			Release = Config.StallRelease,
+		})
+	end
 
 	local highlight = self:controller("HighlightController")
 	if not highlight then return end
@@ -189,12 +159,15 @@ end
 
 	Devolve `false` quando o tempo acaba **ou** quando outro fluxo começou no meio —
 	quem chama trata os dois do mesmo jeito: para de esperar e sai.
+
+	A válvula que solta a trava quando a espera passa do limite **não é daqui**: ela é
+	do `ButtonGateController`, armada pelo `point` que vem antes de cada espera (ver
+	`Lobby.StallRelease`). Estava aqui antes de os passos da partida precisarem da
+	mesma rede, e duas implementações da mesma ideia é uma a mais.
 ]=]
 function TutorialShopController:await(session : number, timeout : number?, condition : () -> boolean, label : string?) : boolean
 	local deadline = if timeout then os.clock() + timeout else nil
-	local started = os.clock()
-	local nextReport = started + REPORT_INTERVAL
-	local released = false
+	local nextReport = os.clock() + REPORT_INTERVAL
 
 	while self.Session == session and self.Running do
 		if condition() then
@@ -213,21 +186,6 @@ function TutorialShopController:await(session : number, timeout : number?, condi
 			nextReport = os.clock() + REPORT_INTERVAL
 
 			print(`[DEBUG/TutorialLobby] esperando: {label}`)
-		end
-
-		--[[
-			Espera que passa do limite solta a trava dos botões.
-
-			A trava existe para o jogador não sair do roteiro, não para prendê-lo: se o
-			passo não reconhecer o que ele fez, o menor dos males é devolver a tela e
-			deixar o destaque apontando. Um tutorial que atrapalha é pior que um
-			tutorial que desiste.
-		]]
-		if not released and os.clock() - started > (Config.StallRelease or math.huge) then
-			released = true
-
-			warn(`[TutorialShopController]: {label or "o passo"} demorou demais; soltando a trava dos botoes.`)
-			self:unlockButtons()
 		end
 
 		task.wait(Config.PollInterval)
@@ -256,7 +214,7 @@ function TutorialShopController:say(session : number, lines : { string }?) : boo
 		closed = true
 	end)
 
-	dialog:Play(lines, TutorialConfig.Speech({
+	local playing = dialog:Play(lines, TutorialConfig.Speech({
 		-- O HUD fica: o passo seguinte aponta um botão dele.
 		HideUI = false,
 		Blur = false,
@@ -264,9 +222,39 @@ function TutorialShopController:say(session : number, lines : { string }?) : boo
 		Auto = true,
 	}))
 
-	return self:await(session, nil, function()
+	--[=[
+		Fala que não entrou não pode **parar** o fluxo.
+
+		A espera aqui embaixo não tem prazo: ela roda até o `OnClosed` chegar, e
+		`OnClosed` de uma fala que nunca começou não chega nunca. O fluxo ficava parado
+		na primeira linha, com a tela trancada no alvo do tempo anterior e nada
+		acontecendo — foi assim que o recomeço depois do respawn no lobby morria em
+		silêncio.
+
+		Seguir sem ela é o menor dos males: o tempo seguinte aponta o botão da loja, que
+		é o que o jogador precisa clicar de qualquer jeito. O output diz o que faltou.
+	]=]
+	if not playing then
+		if disconnect then
+			disconnect()
+		end
+
+		warn("[TutorialShopController]: a caixa de fala nao entrou; seguindo o fluxo sem ela.")
+
+		return true
+	end
+
+	local finished = self:await(session, nil, function()
 		return closed
 	end)
+
+	-- Espera que acabou sem a fala fechar (outra sessão começou, ou o fluxo foi
+	-- abortado) deixa a inscrição para trás: sem isto, cada recomeço empilha mais uma.
+	if disconnect then
+		disconnect()
+	end
+
+	return finished
 end
 
 --[=[
@@ -372,7 +360,10 @@ end
 function TutorialShopController:finish()
 	self.Running = false
 
-	self:unlockButtons()
+	local gate = self:controller("ButtonGateController")
+	if gate then
+		gate:Unlock()
+	end
 
 	local highlight = self:controller("HighlightController")
 	if highlight then
@@ -386,12 +377,37 @@ end
 	Escrito como uma sequência, e não como um punhado de callbacks, porque é isso
 	que ele é: cada passo só faz sentido depois do anterior, e o `await` é o que
 	transforma "o jogador clicou" em uma linha de código.
+
+	Ele é partido em duas metades pela **compra**, e a fratura é ali por causa do
+	respawn: morrer no lobby destrói a `HUD`, a `ShopUI` e a `crateui` (todas têm
+	`ResetOnSpawn`), e o fluxo tem de recomeçar em algum lugar. Antes da compra,
+	recomeçar do zero não custa nada — o jogador só tinha clicado num botão. Depois
+	dela, recomeçar seria mandá-lo comprar uma caixa que ele já comprou, então a volta
+	é pela segunda metade. Ver `onRespawn`.
 ]=]
-function TutorialShopController:run(session : number)
+function TutorialShopController:run(session : number, fromCrate : boolean?)
+	if fromCrate then
+		return self:runCrate(session)
+	end
+
+	if not self:runShop(session) then
+		return
+	end
+
+	self:runCrate(session)
+end
+
+--[=[
+	A primeira metade: a fala, o botão da loja e a compra da caixa.
+
+	Devolve `false` quando o fluxo morreu no meio — outra sessão começou, ou uma
+	espera desistiu.
+]=]
+function TutorialShopController:runShop(session : number) : boolean
 	local highlight = self:controller("HighlightController")
 
 	-- 1. a fala
-	if not self:say(session, Config.Lines) then return end
+	if not self:say(session, Config.Lines) then return false end
 
 	-- 2. o botão da loja, até ela abrir
 	local shopButton = highlight and highlight:Find(Config.ShopButton)
@@ -424,7 +440,7 @@ function TutorialShopController:run(session : number)
 
 		return self:onScreen(self:buyButton())
 	end, "a loja abrir") then
-		return
+		return false
 	end
 
 	-- 3. o botão de comprar, até a compra acontecer
@@ -440,8 +456,19 @@ function TutorialShopController:run(session : number)
 	if not self:await(session, nil, function()
 		return self.Bought == true
 	end, "a compra da caixa") then
-		return
+		return false
 	end
+
+	return true
+end
+
+--[=[
+	A segunda metade: a caixa comprada saindo da mochila, e a despedida.
+
+	É por aqui que o fluxo volta quando o jogador morre **depois** de ter comprado.
+]=]
+function TutorialShopController:runCrate(session : number)
+	local highlight = self:controller("HighlightController")
 
 	-- 4. a loja fecha sozinha e a mochila é apontada
 	local shop = self:controller("ShopController")
@@ -553,16 +580,23 @@ end
 --[=[
 	Começa o fluxo. Chamar de novo reinicia do primeiro passo — é o que o
 	`tutorialshop` do Cmdr faz quando alguém quer ver de novo.
+
+	`fromCrate` entra pela segunda metade, com a compra dada por feita. É por onde o
+	respawn volta quando o jogador já tinha comprado a caixa (ver `onRespawn`), e é
+	também o que impede o recomeço de pedir uma segunda compra.
 ]=]
-function TutorialShopController:Start()
+function TutorialShopController:Start(fromCrate : boolean?)
 	self:hookUnboxing()
 
 	self.Session += 1
 	local session = self.Session
 
 	self.Running = true
-	self.Bought = false
 	self.Unboxed = false
+
+	-- Recomeço pela segunda metade não desfaz a compra: ela aconteceu, e o servidor
+	-- não a faria de novo.
+	self.Bought = fromCrate == true
 
 	print(string.format("[DEBUG/TutorialLobby] comecando o fluxo | dialogo=%s destaque=%s loja=%s mochila=%s unboxing=%s",
 		tostring(self:controller("DialogController") ~= nil),
@@ -572,11 +606,48 @@ function TutorialShopController:Start()
 		tostring(self:controller("UnboxingController") ~= nil)))
 
 	task.spawn(function()
-		self:run(session)
+		self:run(session, fromCrate)
 
 		if self.Session == session then
 			self:finish()
 		end
+	end)
+end
+
+--[=[
+	O jogador morreu no meio do fluxo.
+
+	No lobby **toda** `ScreenGui` tem `ResetOnSpawn`: a `HUD`, a `ShopUI`, a
+	`crateui`. A tela em que o fluxo estava apontando deixou de existir, e as
+	referências que ele tinha na mão viraram lixo — inclusive a caixa cujo clique ele
+	estava esperando, que é uma instância e não uma condição.
+
+	Por isso a volta é um recomeço, e onde ele recomeça depende do que já foi feito:
+
+	  - **sem a compra**, do primeiro tempo. O jogador só tinha clicado num botão, e
+	    refazer isso não custa nada;
+	  - **com a compra**, da segunda metade. Mandá-lo comprar de novo uma caixa que
+	    ele já tem seria um passo que nunca fecha — o servidor não vende duas vezes.
+
+	Fluxo parado não reage: morrer fora do tutorial da loja é morrer, e nada mais.
+]=]
+function TutorialShopController:onRespawn()
+	if not self.Running then return end
+
+	local bought = self.Bought == true
+
+	print(`[DEBUG/TutorialLobby] respawn no meio do fluxo; recomecando {bought and "pela caixa" or "do inicio"}.`)
+
+	--[[
+		A tela nova ainda não chegou quando o `CharacterAdded` dispara: o
+		`ResetOnSpawn` reclona a `StarterGui` depois dele. As esperas do fluxo já
+		procuram cada peça com orçamento próprio, então basta sair da frente do quadro
+		do nascimento — quem espera de verdade é o `await`.
+	]]
+	task.defer(function()
+		if not self.Running then return end
+
+		self:Start(bought)
 	end)
 end
 
@@ -614,6 +685,11 @@ end
 function TutorialShopController:construct()
 	Framework:Listen("TutorialShopPrompt", function()
 		self:Start()
+	end)
+
+	-- Ver `onRespawn`: no lobby o respawn leva a tela inteira embora.
+	Player.CharacterAdded:Connect(function()
+		self:onRespawn()
 	end)
 
 	-- A compra: quem avisa é o servidor, pelo mesmo evento que já fechava o passo

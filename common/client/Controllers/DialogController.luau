@@ -106,6 +106,16 @@ local DialogController = {
 
 DialogController.Container = nil :: GuiObject?
 DialogController.Screen = nil :: ScreenGui?
+
+--[[
+	A caixa já apareceu alguma vez nesta sessão?
+
+	É o que separa "esta place não tem caixa de fala" de "a caixa morreu e está
+	voltando". Sem a diferença, o `getContainer` teria de escolher entre nunca esperar
+	(e perder toda fala pedida logo depois de um respawn) e sempre esperar (e travar
+	por dez segundos cada `Play` de uma place que não tem a `SharedUIs`).
+]]
+DialogController.Existed = false
 DialogController.Handle = nil :: any
 
 -- A conversa no ar.
@@ -122,6 +132,25 @@ DialogController.Session = 0
 
 DialogController.LastAdvance = 0
 DialogController.Listeners = {}
+
+--[[
+	As opções da fala no ar, guardadas para ela poder voltar igual depois de um
+	respawn (ver `Respawn` em `DialogConfig` e o `Destroying` do `:Play`).
+]]
+DialogController.Options = nil :: any
+
+--[[
+	A fala esperando a caixa nova, quando o jogador morreu no meio dela. `nil`
+	quando não há nada voltando.
+
+	`IsOpen()` responde `false` nesse intervalo — a caixa de fato não está na tela —,
+	então quem precisa saber que ainda vem fala pergunta por `IsResuming()`.
+]]
+DialogController.Resume = nil :: any
+
+-- Sobe a cada volta marcada e a cada `:Play()`. É o que faz uma fala nova cancelar
+-- a volta da anterior em vez de as duas disputarem a caixa.
+DialogController.ResumeToken = 0
 
 -- Quem quer saber quando a caixa fechou. Ver `:OnClosed`.
 DialogController.ClosedListeners = {}
@@ -148,6 +177,17 @@ DialogController.BlurTween = nil :: Tween?
 
 	Guardada depois de achada, e reachada quando o `Parent` some — a `PlayerGui` é
 	remontada a cada respawn e a referência velha vira lixo.
+
+	**Se ela já existiu e sumiu, esperamos por ela.** A `DialogGUI` tem
+	`ResetOnSpawn`: renascer destrói a tela e a nova só chega alguns quadros depois,
+	quando o clone da `StarterGui` acontece. Uma fala pedida nesse intervalo — que é
+	exatamente o caso do fluxo do tutorial recomeçando no `CharacterAdded` — não
+	achava caixa nenhuma, o `:Play()` devolvia `false` e quem esperava o `OnClosed`
+	ficava esperando para sempre: nenhuma fala na tela e o roteiro parado.
+
+	A espera é **só** para quem já viu a caixa uma vez (ver `Existed`). Place que não
+	tem a `SharedUIs` continua respondendo `nil` na hora, como sempre respondeu — lá
+	não há o que esperar.
 ]=]
 function DialogController:getContainer() : GuiObject?
 	local container = self.Container
@@ -156,19 +196,43 @@ function DialogController:getContainer() : GuiObject?
 	end
 
 	local gui = Config.Gui
+	local respawn = Config.Respawn or {}
 
-	local folder = PlayerGui:FindFirstChild(gui.Folder)
-	local screen = folder and folder:FindFirstChild(gui.Screen)
-	local found = screen and screen:FindFirstChild(gui.Container)
+	local function look() : GuiObject?
+		local folder = PlayerGui:FindFirstChild(gui.Folder)
+		local screen = folder and folder:FindFirstChild(gui.Screen)
+		local found = screen and screen:FindFirstChild(gui.Container)
 
-	if not found or not found:IsA("GuiObject") then
+		return if found and found:IsA("GuiObject") then found :: GuiObject else nil
+	end
+
+	local found = look()
+
+	if not found and self.Existed then
+		local deadline = os.clock() + (respawn.Timeout or 10)
+
+		repeat
+			task.wait(respawn.Interval or 0.2)
+
+			found = look()
+		until found or os.clock() > deadline
+
+		if not found then
+			warn("[DialogController]: a caixa de fala nao voltou depois do respawn.")
+		end
+	end
+
+	if not found then
 		self:warnMissing()
 
 		return nil
 	end
 
+	local screen = found.Parent
+
+	self.Existed = true
 	self.Container = found
-	self.Screen = if screen:IsA("ScreenGui") then screen else nil
+	self.Screen = if screen and screen:IsA("ScreenGui") then screen else nil
 
 	-- O handle é do container: container novo (respawn, tela recriada) pede handle
 	-- novo, senão escreveríamos num frame que não está mais na tela. Os botões são
@@ -635,6 +699,106 @@ function DialogController:GetButton(index : number) : GuiButton?
 end
 
 --[=[
+	A caixa morreu com a fala aberta: guarda o que falta dizer e larga o que está
+	fora dela.
+
+	O que sobra é de `Index` em diante, e não a fala inteira: o jogador já leu o que
+	leu, e recomeçar do zero é fazê-lo ler duas vezes a mesma coisa para ser punido
+	por ter morrido. As opções são as mesmas — o mesmo fundo, os mesmos botões, o
+	mesmo modo automático —, porque a fala é a mesma; só a caixa é outra.
+
+	O fundo é devolvido **agora**, e não na volta: o borrão e a UI escondida são da
+	tela que acabou de morrer, e deixá-los de pé enquanto a caixa nova não chega é
+	exatamente a tela travada que este bloco existe para evitar. A volta os pede de
+	novo, porque ela passa pelo `:Play()` inteiro.
+]=]
+function DialogController:noteDestroyed()
+	local remaining = {}
+	for index = math.max(1, self.Index), #self.Lines do
+		table.insert(remaining, self.Lines[index])
+	end
+
+	self.Session += 1
+	self.Open = false
+	self.Lines = {}
+	self.Index = 0
+	self.PendingButtons = nil
+
+	self:releaseBackground()
+
+	if #remaining == 0 then
+		-- Nada por dizer: a fala tinha acabado, e isto é um fechamento como outro
+		-- qualquer.
+		self:fireClosed()
+
+		return
+	end
+
+	self.ResumeToken += 1
+	local token = self.ResumeToken
+
+	self.Resume = { Lines = remaining, Options = self.Options }
+
+	task.spawn(function()
+		self:awaitResume(token)
+	end)
+end
+
+--[=[
+	Espera a caixa nova aparecer e reescreve nela o que faltava.
+
+	A caixa não volta no mesmo quadro em que a antiga morre: o `ResetOnSpawn` só
+	reclona a `StarterGui` quando o personagem novo entra, e entre uma coisa e outra
+	há o tempo de respawn do servidor. Por isso é espera, e não uma tentativa só.
+
+	Desistindo (ver `Respawn.Timeout`), quem esperava o `:OnClosed()` **é avisado**.
+	É essa linha que impede um passo de tutorial de ficar parado para sempre
+	esperando uma fala que não volta mais — melhor o passo seguir sem a instrução que
+	o jogador preso numa tela que não responde.
+]=]
+function DialogController:awaitResume(token : number)
+	local respawn = Config.Respawn or {}
+	local deadline = os.clock() + (respawn.Timeout or 10)
+
+	while os.clock() < deadline do
+		if self.ResumeToken ~= token then return end
+
+		local container = self:getContainer()
+
+		if container and container.Parent then
+			local resume = self.Resume
+
+			self.Resume = nil
+
+			if resume then
+				self:Play(resume.Lines, resume.Options)
+			end
+
+			return
+		end
+
+		task.wait(respawn.Interval or 0.2)
+	end
+
+	if self.ResumeToken ~= token then return end
+
+	warn("[DialogController]: a caixa de fala nao voltou depois do respawn; a fala foi perdida.")
+
+	self.Resume = nil
+	self:fireClosed()
+end
+
+--[=[
+	Avisa quem pediu `:OnClosed()`. Em `task.spawn` porque o callback é de fora: um
+	erro nele não pode derrubar quem está fechando a caixa.
+]=]
+function DialogController:fireClosed()
+	for _, listener in self.ClosedListeners do
+		task.spawn(listener)
+	end
+end
+
+--[=[
 	Põe uma conversa na tela. `lines` é uma frase ou a lista delas.
 
 	Devolve `false` quando não deu — caixa que não existe nesta place, ou texto rico
@@ -667,6 +831,14 @@ function DialogController:Play(lines : string | { string }, options : PlayOption
 	self.Session += 1
 	local session = self.Session
 
+	-- Volta marcada de uma fala anterior não pode escrever por cima desta.
+	self.ResumeToken += 1
+	self.Resume = nil
+
+	-- Guardadas para a fala poder voltar igual depois de um respawn (ver o
+	-- `Destroying` mais abaixo).
+	self.Options = options
+
 	self.Lines = list
 	self.Index = 1
 	self.Auto = options and options.Auto or false
@@ -687,25 +859,24 @@ function DialogController:Play(lines : string | { string }, options : PlayOption
 		end
 	end
 
-	-- A `DialogGUI` tem `ResetOnSpawn`: morrer com a fala aberta destrói a caixa, e
-	-- sem isto o fechamento nunca chegaria — o borrão ficaria na tela e o resto da
-	-- UI, escondido, até o jogador sair do servidor.
-	--
-	-- Não é um `:Close()` de propósito: a caixa e os botões já não existem, e
-	-- limpá-los seria escrever em instância destruída. Aqui só se desfaz o que está
-	-- **fora** da tela que morreu.
+	--[=[
+		A `DialogGUI` tem `ResetOnSpawn`: morrer com a fala aberta **destrói a caixa**.
+
+		Sem isto o fechamento nunca chegaria — o borrão ficaria na tela e o resto da UI,
+		escondido, até o jogador sair do servidor. E pior que o borrão: quem espera o
+		`:OnClosed()` (o passo do tutorial, o fluxo do lobby) ficaria esperando para
+		sempre por um aviso que não vem.
+
+		Não é um `:Close()` de propósito: a caixa e os botões já não existem, e
+		limpá-los seria escrever em instância destruída. Aqui só se desfaz o que está
+		**fora** da tela que morreu, e se marca a volta da fala (ver `awaitResume`).
+	]=]
 	local container = self.Container
 	if container then
 		container.Destroying:Once(function()
-			if not self.Open then return end
+			if not self.Open or self.Session ~= session then return end
 
-			self.Session += 1
-			self.Open = false
-			self.Lines = {}
-			self.Index = 0
-			self.PendingButtons = nil
-
-			self:releaseBackground()
+			self:noteDestroyed()
 		end)
 	end
 
@@ -807,9 +978,23 @@ function DialogController:Close()
 	self:releaseBackground()
 	self:setVisible(false)
 
-	for _, listener in self.ClosedListeners do
-		task.spawn(listener)
-	end
+	-- Fechamento por gesto cancela a volta de uma fala que estivesse esperando caixa.
+	self.ResumeToken += 1
+	self.Resume = nil
+
+	self:fireClosed()
+end
+
+--[=[
+	Ainda vem fala?
+
+	`true` no intervalo entre a caixa morrer com o jogador e a caixa nova chegar. É o
+	que separa "a fala acabou" de "a fala está voltando" para quem decide o que pôr na
+	tela agora — o passo do tutorial não pode acender o destaque por cima de uma
+	instrução que está a um segundo de reaparecer.
+]=]
+function DialogController:IsResuming() : boolean
+	return self.Resume ~= nil
 end
 
 function DialogController:IsOpen() : boolean

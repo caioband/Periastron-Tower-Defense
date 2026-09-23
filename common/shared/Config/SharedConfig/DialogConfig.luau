@@ -140,6 +140,29 @@ DialogConfig.Advance = {
 ]]
 DialogConfig.AutoHold = 2.5
 
+--[=[
+	A volta da fala depois de o jogador morrer no meio dela.
+
+	A `DialogGUI` tem `ResetOnSpawn`: morrer com a caixa aberta **destrói a caixa**, e
+	a tela nova vem limpa. A fala não pode simplesmente sumir — quem morre no meio de
+	uma instrução do tutorial fica sem a instrução, com o passo ainda aberto do lado
+	do servidor e nada na tela dizendo o que fazer.
+
+	Então ela volta, da linha em que estava (ver `DialogController:Play`). O que
+	sobra em `Lines` a partir do `Index` é reescrito na caixa nova, com as mesmas
+	opções — o mesmo fundo, os mesmos botões, o mesmo modo automático.
+
+	`Timeout` é quanto se espera a caixa nova aparecer. Estourando, a fala é dada por
+	perdida e quem esperava o `:OnClosed()` **é avisado** — é isso que impede o passo
+	do tutorial de ficar esperando para sempre por uma fala que não volta mais.
+
+	`Interval` é o compasso da espera: é gente renascendo, não animação.
+]=]
+DialogConfig.Respawn = {
+	Timeout = 10,
+	Interval = 0.2,
+}
+
 --[[
 	O texto do comando `dialog` do Cmdr.
 

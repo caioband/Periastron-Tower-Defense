@@ -105,6 +105,16 @@ HighlightController.MoveTween = nil :: Tween?
 -- quando o alvo voltar. Ver `suspend`.
 HighlightController.Suspended = false
 
+--[[
+	O caminho de nomes do alvo até a `PlayerGui`, para reencontrá-lo se a tela dele
+	for reclonada (respawn). Ver `pathOf` e `rebind`.
+]]
+HighlightController.Path = nil :: { string }?
+
+-- Sobe a cada `Show` e a cada `Hide`. Uma procura em curso confere o número antes
+-- de apontar: alvo novo no meio dela ganha, e o `Hide` a cancela de vez.
+HighlightController.RebindToken = 0
+
 --[[ INTERNAL ]]
 
 local function create(className : string, properties : { [string] : any }, parent : Instance?) : any
@@ -407,6 +417,94 @@ end
 	recalculando sessenta vezes por segundo um retângulo que não muda é o custo que
 	o `RenderStepped` do exemplo mais comum cobra sem precisar.
 ]=]
+--[=[
+	O caminho de nomes de um alvo até a `PlayerGui`, ou `nil` se ele não estiver lá.
+
+	É a mesma linguagem do `:Find()` — e é de propósito: o que se guarda para
+	reencontrar o alvo tem de ser exatamente o que a busca sabe seguir. Nome é também
+	a única coisa que sobrevive a um `ResetOnSpawn`, que destrói a instância e clona
+	outra igual da `StarterGui`.
+]=]
+function HighlightController:pathOf(target : Instance) : { string }?
+	local names = {}
+	local current : Instance? = target
+
+	while current and current ~= PlayerGui do
+		table.insert(names, 1, current.Name)
+		current = current.Parent
+	end
+
+	if current ~= PlayerGui or #names == 0 then
+		return nil
+	end
+
+	return names
+end
+
+--[=[
+	O alvo morreu debaixo do destaque: procura o equivalente na tela nova.
+
+	É o caso do respawn — quase toda `ScreenGui` tem `ResetOnSpawn`, e a tela inteira
+	é reclonada. A instância antiga é lixo, mas o caminho de nomes continua valendo,
+	e é por ele que o destaque reencontra o que estava apontando.
+
+	Não achando dentro do prazo (`Rebind.Timeout`), sai de vez e **calado**: quem
+	pediu o destaque é quem sabe se ainda há passo pedindo aquele botão, e um aviso
+	aqui apareceria também no caso legítimo de a tela ter sido fechada de vez.
+]=]
+function HighlightController:rebind()
+	local path = self.Path
+	local options = self.Options
+
+	if not path then
+		self:Hide()
+
+		return
+	end
+
+	self.RebindToken += 1
+	local token = self.RebindToken
+
+	-- O escuro sai enquanto não há o que apontar: holofote em cima de nada é pior
+	-- que holofote nenhum. É `suspend`, e não `Hide`, porque o alvo não foi
+	-- esquecido — ele está sendo reencontrado.
+	self:suspend(true)
+
+	local rebind = Config.Rebind or {}
+
+	task.spawn(function()
+		local deadline = os.clock() + (rebind.Timeout or 10)
+
+		while os.clock() < deadline do
+			if self.RebindToken ~= token then return end
+
+			local found = self:Find(path)
+
+			--[[
+				O `Show` recusa alvo invisível, e o alvo da tela nova costuma nascer assim:
+				o botão de Ready só aparece quando a contagem começa, a caixa da mochila só
+				quando ela abre. Recusa não é desistência — a procura continua, e é por isso
+				que ela olha o resultado do `Show` em vez de dar o alvo por apontado.
+
+				O `Show` que dá certo sobe o token, e é ele quem encerra esta thread.
+			]]
+			if found and found:IsDescendantOf(PlayerGui) then
+				if self.RebindToken ~= token then return end
+
+				if self:Show(found, options) then
+					return
+				end
+			end
+
+			task.wait(rebind.Interval or 0.2)
+		end
+
+		if self.RebindToken ~= token then return end
+
+		self:Hide()
+	end)
+end
+
 function HighlightController:track(target : GuiObject)
 	local maid = Maid.new()
 	self.TargetMaid = maid
@@ -432,10 +530,17 @@ function HighlightController:track(target : GuiObject)
 		self:refresh(false)
 	end))
 
-	-- Alvo tirado da tela de vez é outra história: não há mais o que apontar.
+	--[[
+		Alvo tirado da `PlayerGui` pode ser o fim dele — ou pode ser a tela inteira
+		sendo reclonada por um respawn, que é o caso mais comum de todos, porque quase
+		toda `ScreenGui` tem `ResetOnSpawn`.
+
+		Os dois são o mesmo evento visto daqui, então o destaque não decide: ele
+		procura o mesmo caminho na tela nova e desiste se não achar (ver `rebind`).
+	]]
 	maid:GiveTask(target.AncestryChanged:Connect(function()
 		if not target:IsDescendantOf(PlayerGui) then
-			self:Hide()
+			self:rebind()
 		end
 	end))
 end
@@ -499,6 +604,17 @@ function HighlightController:Show(target : GuiObject, options : Options?) : bool
 	self.Options = options
 	self.Suspended = false
 
+	--[[
+		O caminho de nomes fica guardado junto com o alvo: é por ele que o destaque
+		reencontra o botão quando a tela dele for reclonada por um respawn (ver
+		`rebind`). Alvo sem caminho — o que não está sob a `PlayerGui` — simplesmente
+		não volta, e isso é honesto: não há onde procurá-lo.
+	]]
+	self.Path = self:pathOf(target)
+
+	-- Alvo novo cancela a procura do anterior.
+	self.RebindToken += 1
+
 	local gui = self.Gui
 	if gui then
 		gui.Enabled = true
@@ -537,6 +653,11 @@ function HighlightController:Hide()
 	self.Options = nil
 	self.Suspended = false
 
+	-- Esquecer o caminho é o que separa "sair" de "estar voltando": depois de um
+	-- `Hide` não há o que reencontrar, e uma procura em curso morre aqui.
+	self.Path = nil
+	self.RebindToken += 1
+
 	for _, blocker in self.Blockers do
 		blocker.Visible = false
 	end
@@ -568,11 +689,21 @@ end
 	É o que permite apontar um botão de fora do código que o conhece: o comando
 	`highlight` do Cmdr e o passo de tutorial que vier escrito em config, sem
 	nenhum dos dois precisar de uma referência à instância.
+
+	Aceita a lista de nomes já partida, para quem a tem na mão — é o caso do `rebind`,
+	que guardou a cadeia do alvo e não pode juntá-la com pontos para partir de novo:
+	nome com ponto dentro (`"1.5x"`, que é o tipo de nome que uma arte ganha) viraria
+	dois degraus e o alvo não seria achado nunca mais.
 ]=]
-function HighlightController:Find(path : string) : GuiObject?
+function HighlightController:Find(path : string | { string }) : GuiObject?
 	local names = {}
-	for name in string.gmatch(path, "[^%.]+") do
-		table.insert(names, name)
+
+	if type(path) == "table" then
+		names = path
+	else
+		for name in string.gmatch(path, "[^%.]+") do
+			table.insert(names, name)
+		end
 	end
 
 	--[[
