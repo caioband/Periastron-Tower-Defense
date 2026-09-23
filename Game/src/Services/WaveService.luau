@@ -621,9 +621,15 @@ function WaveService:runRound(generation : number)
 			caminho terminarem de correr antes do primeiro mob nascer, e quem as
 			desenha e o `WaveController`, que anima em tempo de tela. Encurtar so
 			este lado poria o mob no mapa com a seta ainda no meio da rota.
+
+			So a wave 1 espera, porque so a wave 1 tem seta: o cliente as toca uma vez
+			para ensinar o caminho, e da wave 2 em diante nao ha nada correndo na rota
+			para esperar -- a espera seria tempo parado com o mapa vazio.
 		]]
-		task.wait(self:getArrowLeadTime())
-		if not self:isCurrent(generation) then return end
+		if self.WaveCount == 1 then
+			task.wait(self:getArrowLeadTime())
+			if not self:isCurrent(generation) then return end
+		end
 
 		--[[
 			A base pode cair **entre** duas waves.

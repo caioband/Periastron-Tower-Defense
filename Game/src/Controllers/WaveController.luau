@@ -127,7 +127,18 @@ function WaveController:OnWave(num, hasBoss)
 	self.Controllers.UILibraryController:doComponent("Wave", "set", num)
 	self:setWaveMusic(hasBoss)
 	self:playWaveSound()
-	self:playArrows()
+
+	--[[
+		As setas so correm na wave 1.
+
+		Elas ensinam o caminho, e o caminho nao muda de uma wave para a outra:
+		repetidas a cada wave viravam so o `getArrowLeadTime` de espera parada antes
+		de cada spawn. O servidor corta essa espera pela mesma condicao (ver
+		`WaveService`), entao os dois lados tem que concordar em qual wave e esta.
+	]]
+	if num == 1 then
+		self:playArrows()
+	end
 end
 
 function WaveController:construct()

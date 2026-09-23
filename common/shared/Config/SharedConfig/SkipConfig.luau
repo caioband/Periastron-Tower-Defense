@@ -8,7 +8,7 @@
 
 	`OfferDelay` é medido em **tempo real**, e não no `GameClock`: ele existe para
 	medir a paciência de quem está olhando a tela, e não o ritmo da partida. No 2x
-	o jogo anda mais rápido, mas sete segundos continuam sendo sete segundos.
+	o jogo anda mais rápido, mas cinco segundos continuam sendo cinco segundos.
 
 	A animação é a mesma do `WeatherWarning` (ver `WarningConfig`): o prompt desce
 	de `SlideOffset` acima do lugar autorado enquanto a transparência de **todos**
@@ -35,10 +35,10 @@ SkipConfig.CountName = "PlayerCount"
 	e o prompt entrar. Se a wave ainda estiver nascendo nessa hora, ele espera o
 	último mob -- ver `WaveService:CanSkipWave`.
 ]]
-SkipConfig.OfferDelay = 7
+SkipConfig.OfferDelay = 5
 
 -- De quanto em quanto o servidor confere se já é hora de abrir ou de fechar. Não
--- precisa ser fino: o que ele mede é uma janela de sete segundos.
+-- precisa ser fino: o que ele mede é uma janela de cinco segundos.
 SkipConfig.PollInterval = 0.25
 
 --[[
