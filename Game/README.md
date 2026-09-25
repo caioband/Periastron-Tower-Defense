@@ -437,8 +437,8 @@ Ao contrário do `ClassIcon`, unidade sem retrato **não esconde** o label: o no
 nível moram dentro do `Info`, e sumir com a moldura levaria os dois junto. Ela volta
 para a arte autorada no StarterGui, lida uma vez no carregamento do módulo e antes de
 qualquer troca — sem guardar esse padrão, o card abriria com o rosto da unidade
-*anterior*, que é um erro pior porque parece certo. Hoje faltam retrato só o Azure,
-o Archer e o Archmage.
+*anterior*, que é um erro pior porque parece certo. Hoje só o Azure está sem
+retrato.
 
 Tudo menos o `DmgDone` sai do `UnitUpgradeConfig` — o cliente refaz a mesma conta
 do servidor a partir do nível, então não precisa de replicação. O `DmgDone` só o

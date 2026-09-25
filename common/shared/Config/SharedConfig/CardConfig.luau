@@ -70,8 +70,7 @@ end
 	como no `ClassIcon`: o `Info` carrega o nome e o nível da unidade dentro dele, e
 	sumir com a moldura levaria os dois junto.
 
-	Faltam Azure, Archer e Archmage. É aqui que se conserta, uma linha por
-	unidade.
+	Falta o Azure. É aqui que se conserta, uma linha por unidade.
 ]]
 CardConfig.Icons = {
 	Slasher = "rbxassetid://77799937837921",
@@ -85,6 +84,8 @@ CardConfig.Icons = {
 	Slingshot = "rbxassetid://121913498884239",
 	Pyre = "rbxassetid://116877116738728",
 	["Subspace Tripminer"] = "rbxassetid://130513046357852",
+	Archmage = "rbxassetid://114668138717801",
+	Archer = "rbxassetid://111421285376457",
 }
 
 --[=[
