@@ -216,18 +216,18 @@ local ShopController = {
 --[[ INTERNAL ]]
 
 --[=[
-	Uma porcentagem como a arte escreve: `40%`, `7.79%`, `1.29%`.
+	Uma porcentagem como a arte escreve: `40%`, `85.97%`, `0.14%`.
 
-	Duas casas e o suficiente para a menor chance da tabela (a lendaria na caixa mais
-	barata, 1,29%) nao virar "1%", e o zero a direita cai fora para o caso redondo
-	nao virar "40.00%" ao lado de um "7.79%".
+	Duas casas e o suficiente para a menor chance da tabela (a Cosmic na Crate Of
+	Nature, 0,14%) nao virar "0%", e o zero a direita cai fora para o caso redondo
+	nao virar "40.00%" ao lado de um "85.97%".
 ]=]
 local function formatPercent(chance : number) : string
 	local rounded = math.floor(chance * 100 + 0.5) / 100
 
 	-- Chance que existe mas nao cabe em duas casas vira `<0.01%`, e nao `0%`: a
 	-- linha esta ali porque a raridade pode sair, e escrever zero seria mentir.
-	-- Nenhum pool de hoje chega perto disso (a menor e 1,29%), mas quem mexer nos
+	-- Nenhum pool de hoje chega perto disso (a menor e 0,14%), mas quem mexer nos
 	-- numeros nao vai descobrir esta regra pelo bug.
 	if rounded <= 0 then
 		return "<0.01%"

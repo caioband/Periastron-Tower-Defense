@@ -70,21 +70,21 @@ end
 	como no `ClassIcon`: o `Info` carrega o nome e o nível da unidade dentro dele, e
 	sumir com a moldura levaria os dois junto.
 
-	Faltam Azure, Slingshot, Subspace Tripminer, Archer e Electro. É aqui que se
-	conserta, uma linha por unidade.
-
-	O **Berserker** já tem a carta dele em `Images`, mas ainda não o retrato: o id
-	aqui é o do Slasher, provisório, e é uma linha para trocar quando a arte do
-	quadradinho existir.
+	Faltam Azure, Archer e Archmage. É aqui que se conserta, uma linha por
+	unidade.
 ]]
 CardConfig.Icons = {
 	Slasher = "rbxassetid://77799937837921",
 	Entrepreneur = "rbxassetid://97283177894419",
 	Sword = "rbxassetid://77707891613366",
-
-	-- Provisório: é o retrato do Slasher, e não o dele. Ver a nota acima.
-	Berserker = "rbxassetid://77799937837921",
+	Berserker = "rbxassetid://122236769508129",
 	Rocket = "rbxassetid://119165882760846",
+
+	Electro = "rbxassetid://97063910778003",
+	Frostione = "rbxassetid://73183225566473",
+	Slingshot = "rbxassetid://121913498884239",
+	Pyre = "rbxassetid://116877116738728",
+	["Subspace Tripminer"] = "rbxassetid://130513046357852",
 }
 
 --[=[

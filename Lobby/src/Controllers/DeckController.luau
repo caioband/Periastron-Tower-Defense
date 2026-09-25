@@ -13,6 +13,7 @@ local Me = require(Vendor.Me)
 local Signal = require(Packages.Signal)
 
 local SharedConfig = require(Configs.SharedConfig)
+local LightingUtil = require(Util.LightingUtil)
 local UIUtil = require(Util.UIUtil)
 
 local CardConfig = SharedConfig.CardConfig
@@ -55,6 +56,15 @@ local COOLDOWN_NAME = "AttackSpeed"
 local RANGE_NAME = "Range"
 
 local WAIT_TIMEOUT = 10
+
+--[[
+	O nome do pedido ao `InterfaceController`: com o loadout aberto, a tela e so
+	dele -- o mesmo das lojas e dos contratos (`ProximityPanel`).
+]]
+local HIDE_REASON = "Deck"
+
+-- O borrao do fundo, o mesmo `UIBlur` e o mesmo tamanho do `ProximityPanel`.
+local BLUR_SIZE = 24
 
 --[[
 	O texto do slot travado. O `%d` e o nivel que ele pede
@@ -254,7 +264,8 @@ end
 
 	O botão `HUDFrame.Deck` abre e fecha (o mesmo botão com o painel aberto
 	fecha), e a abertura é um tween do `UIScale` de 0 até a escala que veio
-	autorada.
+	autorada. Aberto, ele fica sozinho na tela com o fundo borrado, como as lojas e
+	os contratos (ver `_claimScreen`).
 
 	**Uma carta por clique.** Quem põe carta no deck é o `EquipToggle`, com a
 	unidade selecionada — a carta do inventário só **mostra**, ela não equipa. O botão
@@ -285,6 +296,7 @@ local DeckController = {
 		DataController = {},
 		MusicController = {},
 		HUDBadgeController = {},
+		InterfaceController = {},
 	},
 
 	Signals = {
@@ -1476,6 +1488,81 @@ function DeckController:_errorMessage(reason : string?, unitName : string) : str
 	return nil
 end
 
+function DeckController:_playBlur(open : boolean)
+	self.BlurMaid:DoCleaning()
+
+	local info = if open then OPEN_INFO else CLOSE_INFO
+	local tween = LightingUtil.TweenUIBlur(if open then BLUR_SIZE else 0, info)
+	if not tween then
+		return
+	end
+
+	self.BlurMaid:GiveTask(function()
+		tween:Cancel()
+	end)
+end
+
+--[=[
+	O loadout e a unica coisa na tela enquanto esta aberto, como as lojas e os
+	contratos.
+
+	O pedido ao `InterfaceController` so sabe esconder ScreenGui inteira, e o
+	`CardUI` mora **dentro** do `HUD`: o pedido deixa o `HUD` de fora, e os vizinhos
+	do `CardUI` (`HUDFrame`, `HUDMiddle`, `HUDLeft`) apagam aqui. So sai quem estava
+	aceso, e so esses voltam -- um frame que outro dono ja tinha apagado continua
+	apagado.
+]=]
+function DeckController:_claimScreen()
+	self.ScreenClaimed = true
+
+	local interface = self.Controllers.InterfaceController
+	if interface then
+		interface:Hide(HIDE_REASON, { Except = { HUD_UI_NAME } })
+	end
+
+	local cardUI = self.CardUI
+	local hud = cardUI and cardUI.Parent
+
+	if hud then
+		for _, sibling in hud:GetChildren() do
+			if sibling ~= cardUI and sibling:IsA("GuiObject") and sibling.Visible then
+				sibling.Visible = false
+				table.insert(self.HiddenSiblings, sibling)
+			end
+		end
+	end
+
+	self:_playBlur(true)
+end
+
+--[=[
+	Devolve a tela: o resto da UI volta e o borrao sai. So age se o loadout pediu a
+	tela -- o bind chama isto sempre, e baixar o borrao ali apagaria o de uma loja
+	que estivesse aberta.
+]=]
+function DeckController:_releaseScreen()
+	if not self.ScreenClaimed then
+		return
+	end
+
+	self.ScreenClaimed = false
+
+	local interface = self.Controllers.InterfaceController
+	if interface then
+		interface:Show(HIDE_REASON)
+	end
+
+	for _, sibling in self.HiddenSiblings do
+		if sibling.Parent then
+			sibling.Visible = true
+		end
+	end
+
+	table.clear(self.HiddenSiblings)
+
+	self:_playBlur(false)
+end
+
 function DeckController:_setOpen(open : boolean)
 	local cardUI = self.CardUI
 	if not cardUI or not cardUI.Parent or not self.Scale then
@@ -1507,6 +1594,8 @@ function DeckController:_setOpen(open : boolean)
 		self:_render()
 		self.Signals.SelectionChanged:Fire(nil)
 
+		self:_claimScreen()
+
 		cardUI.Visible = true
 		self.Scale.Scale = 0
 
@@ -1515,6 +1604,10 @@ function DeckController:_setOpen(open : boolean)
 	else
 		self.AnimMaid:DoCleaning()
 		self:_hideError()
+
+		-- Devolvida no comeco do fechamento, como no `ProximityPanel`: o resto da UI
+		-- volta atras do painel, em vez de aparecer de uma vez depois que ele sai.
+		self:_releaseScreen()
 
 		-- Fechar com carta no ar não perde nada: a troca já está gravada no perfil, e
 		-- o pouso vira o redesenho que acontece agora.
@@ -1691,7 +1784,10 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 		end))
 	end
 
-	-- Cópia nova é respawn: o painel volta fechado e sem seleção.
+	-- Cópia nova é respawn: o painel volta fechado e sem seleção. Morrer com ele
+	-- aberto deixaria o pedido de tela de pé -- o jogador renasceria sem o resto da
+	-- UI e com o fundo borrado.
+	self:_releaseScreen()
 	self.IsOpenState = false
 	self.SelectedUnit = nil
 	self:_hideError()
@@ -1878,6 +1974,13 @@ function DeckController:init()
 	self.AnimMaid = Maid.new()
 	self.HudMaid = Maid.new()
 
+	-- O tween do borrao vive fora do bind: ele e do Lighting, e nao do HUD.
+	self.BlurMaid = Maid.new()
+
+	-- Os vizinhos do `CardUI` que a abertura apagou, para o fechamento devolver.
+	self.HiddenSiblings = {}
+	self.ScreenClaimed = false
+
 	self.Maid:GiveTask(self.UIMaid)
 	self.Maid:GiveTask(function()
 		self:_clearInventory()
@@ -1886,6 +1989,7 @@ function DeckController:init()
 	self.Maid:GiveTask(self.TweenMaid)
 	self.Maid:GiveTask(self.AnimMaid)
 	self.Maid:GiveTask(self.HudMaid)
+	self.Maid:GiveTask(self.BlurMaid)
 
 	self.IsOpenState = false
 	self.SelectedUnit = nil

@@ -248,6 +248,13 @@ fecha (o mesmo botão com o painel aberto fecha). A abertura é um tween do `UIS
 do `CardUI` de 0 até a escala que veio autorada — a escala é lida da GUI no bind,
 antes de qualquer animação, então mexer nela no Studio basta.
 
+Aberto, o loadout fica **sozinho na tela**, como as lojas e os contratos: pede ao
+`InterfaceController` para esconder as outras ScreenGuis e borra o fundo com o mesmo
+`UIBlur` do `ProximityPanel`. Como o `CardUI` mora dentro do `HUD`, o pedido deixa o
+`HUD` de fora e os vizinhos dele (`HUDFrame`, `HUDMiddle`, `HUDLeft`) são apagados
+pelo próprio `DeckController` — só os que estavam acesos, e só esses voltam no
+fechamento. Com isso o botão `Deck` some junto, e quem fecha é o X do `CardUI`.
+
 ### Uma carta por clique
 
 O deck é contado em **cartas**, não em unidades. `EquippedUnits` é um array de
@@ -665,16 +672,21 @@ evoluir, e não a chance de comprar aquela caixa e receber aquela raridade: uma
 Crate Of Beginnings vira Crate Of Nature em 25% das aberturas (e dali pode
 continuar), então o pool da comum só vale em 75% delas. A diferença não é detalhe:
 
-| Caixa | Common | Rare | Epic | Legendary |
-| --- | ---: | ---: | ---: | ---: |
-| Crate Of Beginnings | 69,56% | 21,36% | 7,79% | **1,29%** (0,25% no pool cru) |
-| Crate Of Nature | 38,25% | 40,45% | 16,89% | 4,41% |
-| Fragmented Crate | — | 43% | 44,6% | 12,4% |
-| Legendary Crate | — | 20% | 40% | 40% |
+| Caixa | Common | Rare | Epic | Legendary | Cosmic |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Crate Of Beginnings | 85,97% | 10% | 3% | **1%** (0,71% no pool cru) | 0,035% (escondida) |
+| Crate Of Nature | 70% | 20% | 8% | 1,86% | 0,14% |
+| Fragmented Crate | — | 43% | 44,6% | 11,48% | 0,92% |
+| Legendary Crate | — | 20% | 40% | 40% | — |
 
-A lendária sai **cinco vezes** mais da caixa mais barata do que o pool cru sugere.
 Mostrar o pool seria a loja prometer um número que o jogo não entrega, e por isso a
 conta mora no config do servidor e não na tela.
+
+As duas primeiras linhas são o **alvo**, e os pools delas saem de trás para frente a
+partir dele — por isso os números quebrados no `POOLS`. A Cosmic da Beginnings vem só
+da evolução e não tem como sair, então quem cede o 0,035% dela é a Common (85,97% e não
+86%). Mexeu em `UPGRADES` ou nos pools da Fragmented/Legendary, as chances publicadas
+das duas mudam junto e a conta tem de ser refeita.
 
 ### A Azure saiu do drop, mas não do jogo
 
@@ -690,7 +702,8 @@ também continua devolvendo a lista honesta do tier; quem filtra é o sorteio.
 
 **As odds publicadas não mudaram, e isso é o esperado**: elas são por *raridade*. Tirar
 a Azure não tira chance de lendária — só faz o sorteio cair sempre nas outras duas.
-Numa simulação de 200 mil aberturas com o config de hoje:
+Numa simulação de 200 mil aberturas (feita com as odds anteriores, quando a
+Beginnings publicava 1,29% de lendária; a divisão entre as duas é o que importa):
 
 | Caixa | Lendárias | Azure | Como as lendárias se dividem |
 | --- | ---: | ---: | --- |

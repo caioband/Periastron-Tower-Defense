@@ -3236,7 +3236,8 @@ A `Luck` multiplica o peso de Epic, Legendary e Cosmic no pool da caixa (o piso 
 `GamepassConfig.LUCK_MIN_RARITY`) e deixa Common e Rare como estão. Como o sorteio
 normaliza pela soma dos pesos, subir as de cima já empurra as de baixo para baixo —
 mexer nos dois lados seria dois números para manter em sincronia. Medido em 300 mil
-aberturas por linha:
+aberturas por linha (com as odds anteriores da Beginnings e da Nature; hoje as duas
+são mais baixas em Epic+, ver `Lobby/README.md`):
 
 | Caixa | Epic+ sem pass | Epic+ com a pass |
 | --- | ---: | ---: |
