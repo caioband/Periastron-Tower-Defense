@@ -209,6 +209,8 @@ shards <ação> <jogadores> <valor>    Shards salvos (Stats.Shards)
 roundcash <ação> <jogadores> <valor> (só na Game) o dinheiro que paga as torres na partida
 strike [unidade]                     (só na Game) derruba um raio numa unidade posicionada
 units <ação> <jogadores> <unidade> [qtd]  o inventário salvo de unidades (Units do perfil)
+viewdata <jogador> [store] [data]    lê o perfil salvo (só leitura, jogador pode estar offline)
+                                     store = PROD_KEY_1 etc.; data = AAAA-MM-DD[THH:MM] UTC
 dialog [jogadores] [auto]            põe a fala de teste na caixa de diálogo
                                      jogadores omitido = todo mundo; auto = anda sozinha
 richtext [jogadores]                 abre a bancada de texto rico (rodar de novo fecha)
@@ -325,6 +327,15 @@ valor que está lá agora, e não no que estava quando o comando foi digitado. O
 `roundcash` passa pelo `addCash`/`spendCash` do `MobService` em vez de escrever na
 tabela, porque são eles que disparam o `UpdateCash`: sem isso o contador na tela
 ficaria no valor antigo até a próxima kill.
+
+`viewdata` (aliases `inspectdata`, `olddata`) usa o `ProfileStore:GetAsync`: não abre
+sessão, não trava o perfil e não salva nada. `store` omitido (ou `current`) é a
+`PROFILE_KEY` de hoje; com uma chave antiga (`PROD_KEY_1`) ele lê o que ficou lá
+depois da troca. Com `data`, o `VersionQuery` devolve a última versão salva até
+aquele momento — o DataStore guarda as versões de cada chave por 30 dias, então data
+mais velha que isso só acha a versão atual da chave, se ela for anterior à data. A
+saída vai para o console do Cmdr e, inteira, para o log do servidor (F9 → Server).
+No Studio só lê a store de verdade se o acesso às APIs estiver ligado.
 
 `restartwarning` (alias `testrestart`) entra pelo mesmo caminho do evento da engine,
 então o que aparece na tela é exatamente o que apareceria no dia — ver

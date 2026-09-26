@@ -47,6 +47,16 @@ parts do caminho em jogo. No servidor, não: lá as 585 parts dos seis mapas
 guardados também aparecem, e quem consulta a tag precisa filtrar por
 `workspace.Map` (é o que `UnitService:getGridParts` faz).
 
+## Fallback de spawn
+
+Quando o mapa carrega, o `MapService` guarda a posição da primeira `SpawnLocation`
+da pasta do mapa (a `SpawnLocation` da raiz; sem ela, a primeira em qualquer nível),
+`MapConfig.SPAWN_HEIGHT_OFFSET` studs acima. Todo personagem que nasce — respawn
+incluído — e quem já estava em jogo quando o mapa chegou é conferido: se estiver a
+mais de `MapConfig.SPAWN_FALLBACK_RADIUS` studs (no plano) do spawn, é levado para
+lá. Cobre SpawnLocation esquecida na place (a Roblox sorteia entre todas as ligadas)
+e personagem que nasceu antes do mapa existir. Mapa sem SpawnLocation só avisa.
+
 ## A vida da base no mapa (`BaseHP`)
 
 Cada pasta de mapa em `ServerStorage.Maps` traz na raiz — irmã do `Content`, como a

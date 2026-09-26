@@ -204,6 +204,103 @@ function ExampleService:resolveStartingMap() : string?
 	return self:pickRandomMap()
 end
 
+--[=[
+	A primeira `SpawnLocation` da pasta do mapa: a que se chama `SpawnLocation` na
+	raiz (a que o `LoadMap` clona) e, sem ela, a primeira que houver em qualquer
+	nível da pasta.
+]=]
+local function findMapSpawn(MapInstance : Instance) : SpawnLocation?
+	local direct = MapInstance:FindFirstChild("SpawnLocation")
+	if direct and direct:IsA("SpawnLocation") then
+		return direct
+	end
+
+	return MapInstance:FindFirstChildWhichIsA("SpawnLocation", true)
+end
+
+--[=[
+	Guarda onde o personagem deve aparecer no mapa que acabou de carregar e leva
+	para lá quem já estiver em jogo.
+
+	A `SpawnLocation` clonada já resolve o caso comum; isto é a rede embaixo dela.
+	A Roblox sorteia entre **todas** as SpawnLocations ligadas do Workspace, e uma
+	esquecida na place (ou um personagem que nasceu antes de o mapa existir) põe o
+	jogador fora do mapa.
+
+	Só a posição vem da SpawnLocation; a rotação fica só com o giro no plano, para
+	uma spawn inclinada não nascer o personagem torto.
+]=]
+function ExampleService:setSpawnFallback(MapInstance : Instance)
+	local spawn = findMapSpawn(MapInstance)
+	if not spawn then
+		self.SpawnCFrame = nil
+		warn(string.format("[MapService]: o mapa '%s' nao tem SpawnLocation; sem fallback de spawn.", MapInstance.Name))
+		return
+	end
+
+	local position = spawn.Position + Vector3.new(0, MapConfig.SPAWN_HEIGHT_OFFSET, 0)
+	local look = spawn.CFrame.LookVector * Vector3.new(1, 0, 1)
+	if look.Magnitude < 1e-3 then
+		look = Vector3.new(0, 0, -1)
+	end
+
+	self.SpawnCFrame = CFrame.lookAt(position, position + look.Unit)
+
+	for _, player in Players:GetPlayers() do
+		if player.Character then
+			task.spawn(self.ensureAtSpawn, self, player.Character)
+		end
+	end
+end
+
+--[=[
+	Leva o personagem para o `SpawnCFrame` se ele estiver fora do raio do spawn.
+
+	Espera o `HumanoidRootPart` e um `Heartbeat`: o `CharacterAdded` pode chegar
+	antes de a Roblox posicionar o personagem, e mover antes disso seria desfeito.
+]=]
+function ExampleService:ensureAtSpawn(character : Model)
+	local root = character:WaitForChild("HumanoidRootPart", 10)
+	if not root or not root:IsA("BasePart") then
+		return
+	end
+
+	RunService.Heartbeat:Wait()
+
+	local target = self.SpawnCFrame
+	if not target or not character.Parent then
+		return
+	end
+
+	local offset = (root.Position - target.Position) * Vector3.new(1, 0, 1)
+	if offset.Magnitude <= MapConfig.SPAWN_FALLBACK_RADIUS then
+		return
+	end
+
+	root.AssemblyLinearVelocity = Vector3.zero
+	character:PivotTo(target)
+end
+
+--[=[
+	Liga o `ensureAtSpawn` em todo personagem que nascer, respawn incluído.
+
+	Ligado no `init` antes de decidir o mapa: sem mapa ainda, o `SpawnCFrame` é nil
+	e o `ensureAtSpawn` não faz nada; quem nasceu nessa janela é pego pelo
+	`setSpawnFallback` quando o mapa chegar.
+]=]
+function ExampleService:watchSpawns()
+	local function watch(player : Player)
+		player.CharacterAdded:Connect(function(character)
+			self:ensureAtSpawn(character)
+		end)
+	end
+
+	Players.PlayerAdded:Connect(watch)
+	for _, player in Players:GetPlayers() do
+		watch(player)
+	end
+end
+
 function ExampleService:LoadMap(Name : string)
 	local MapInstance = Maps:FindFirstChild(Name)
 	if not MapInstance then return end
@@ -297,6 +394,8 @@ function ExampleService:LoadMap(Name : string)
 		SpawnClone.Enabled = true
 		SpawnClone.Parent = workspace
 	end
+
+	self:setSpawnFallback(MapInstance)
 
 	local Nodes = MapInstance:FindFirstChild("Nodes")
 	if Nodes then
@@ -485,6 +584,8 @@ function ExampleService:init()
 		nao tem yield nenhum, entao termina dentro do proprio PlayerAdded, antes de
 		o personagem nascer.
 	]]
+	self:watchSpawns()
+
 	local mapName = self:resolveStartingMap()
 	if not mapName then
 		warn("[MapService]: nenhum mapa disponivel para carregar.")

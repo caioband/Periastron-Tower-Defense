@@ -122,6 +122,19 @@ module.BASE_HEALTH_PART = "BaseHP"
 module.BASE_HEALTH_LABEL = "Value"
 
 --[=[
+	Fallback de spawn do `MapService`: quando o personagem nasce (ou o mapa carrega
+	com ele já em jogo) longe da primeira `SpawnLocation` da pasta do mapa, ele é
+	levado até ela.
+
+	  - `SPAWN_HEIGHT_OFFSET` -- quantos studs acima do centro da SpawnLocation o
+	    personagem aparece. Folga para não nascer enterrado no chão.
+	  - `SPAWN_FALLBACK_RADIUS` -- até esta distância (em studs, no plano) o
+	    personagem é considerado "no spawn" e fica onde a Roblox o pôs.
+]=]
+module.SPAWN_HEIGHT_OFFSET = 5
+module.SPAWN_FALLBACK_RADIUS = 25
+
+--[=[
 	Returns the canonical map name for the passed string (case insensitive),
 	or nil when the map does not exist.
 ]=]
