@@ -11,9 +11,14 @@ local Framework = Me.new()
 --[[
 	Mexer nas moedas salvas de um jogador: `Stats.Cash` e `Stats.Shards`.
 
-	Hoje sobrou a leitura (`Peek`) e a semente do `Stats.CoinsEarned`. Os comandos
-	`cash` e `shards` do Cmdr moraram aqui até precisarem alcançar jogador fora do
-	servidor; agora quem escreve por eles é o `ProfileEditService`.
+	Escreve moeda num jogador **deste servidor** (`Apply`): é por aqui que o
+	`RobuxShopService` credita os packs de coins. Também lê (`Peek`) e semeia o
+	`Stats.CoinsEarned`.
+
+	Os comandos `cash` e `shards` do Cmdr não passam mais por aqui: eles alcançam
+	jogador fora do servidor, e quem escreve por eles é o `ProfileEditService`.
+	**Não apague o `Apply` achando que era só dos comandos** — sem ele o callback do
+	pack erra, o recibo volta como `NotProcessedYet` e ninguém recebe as coins.
 
 	Não é o dinheiro da partida. Aquele é do `MobService.SessionCash`, vive só
 	enquanto o round dura e nem chega ao perfil; quem mexe nele é o `roundcash`, que
@@ -37,6 +42,21 @@ CurrencyService.Stats = {
 }
 
 --[[ INTERNAL ]]
+
+--[=[
+	O valor depois da operacao. Nunca negativo: saldo negativo nao existe em lugar
+	nenhum do jogo, e um `remove` grande demais e engano de quem digitou, nao um
+	pedido para dever.
+]=]
+local function applyAction(action : string, current : number, amount : number) : number
+	if action == "set" then
+		return math.max(amount, 0)
+	elseif action == "remove" then
+		return math.max(current - amount, 0)
+	end
+
+	return math.max(current + amount, 0)
+end
 
 --[=[
 	Cria o `Stats.CoinsEarned` (o total de coins ganhos, da MOST COINS) no perfil
@@ -83,6 +103,43 @@ function CurrencyService:Peek(player : Player, stat : string) : number?
 	local stats = entry.Profile.Data.Stats
 
 	return (stats and stats[stat]) or 0
+end
+
+--[=[
+	Aplica `set`, `add` ou `remove` numa moeda e devolve `(anterior, novo)`, ou
+	`nil` mais o motivo.
+
+	A leitura e a escrita acontecem dentro do mesmo `Update`, e nao em volta dele:
+	e o que garante que o `add` some em cima do valor que esta la agora, e nao no
+	que estava quando o comando foi digitado.
+]=]
+function CurrencyService:Apply(player : Player, stat : string, action : string, amount : number) : (number?, number?, string?)
+	if not self.Stats[stat] then
+		return nil, nil, string.format("'%s' nao e uma moeda conhecida.", tostring(stat))
+	end
+
+	local dataService = self.Services.DataService
+	if not dataService then
+		return nil, nil, "DataService indisponivel."
+	end
+
+	if not (dataService.Profiles and dataService.Profiles[player]) then
+		return nil, nil, string.format("o perfil de %s ainda nao carregou.", player.Name)
+	end
+
+	local previous, updated = 0, 0
+
+	dataService:Update(player, "Stats", function(stats)
+		stats = stats or {}
+
+		previous = stats[stat] or 0
+		updated = applyAction(action, previous, amount)
+		stats[stat] = updated
+
+		return stats
+	end)
+
+	return previous, updated, nil
 end
 
 --[[ CICLO DE VIDA ]]
