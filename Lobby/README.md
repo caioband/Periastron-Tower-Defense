@@ -153,6 +153,14 @@ nela; o `HudToken` derruba a busca que voltar de uma cópia velha. O botão é a
 `UIUtil.waitForDescendant`, como nos controllers dos painéis, e peça que falte (coluna,
 botão ou a própria label) vira um aviso por chave, uma vez.
 
+## Badge de boas-vindas
+
+O `WelcomeBadgeService` (`Lobby/src/Services`) pede ao `BadgeService` o badge
+`Welcome` para todo jogador que entra no lobby, no `PlayerAdded` e sem esperar o
+perfil. Quem já tem não ganha de novo: o `BadgeService` pergunta à Roblox antes.
+Só existe no Lobby porque a Game nunca é a primeira place que o jogador vê. O
+sistema de badges em si está no README da raiz.
+
 ## leaderstats: Coins, Wins e Shards
 
 O `LeaderstatsService` (`Lobby/src/Services`) põe as três colunas na lista de

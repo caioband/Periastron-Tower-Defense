@@ -3149,7 +3149,7 @@ e a lista de admins do Cmdr. Isso foi separado:
 
 | | Onde | Conteúdo |
 |---|---|---|
-| **Servidor** | `ServerScriptService.Config` ← `common/server/Config` | `Data` (PROFILE_KEY + template), `Wave`, `Summon`, `Difficulty`, `Cmdr` (ADMIN_USER_IDS, GROUP_ID, ALLOW_IN_STUDIO) |
+| **Servidor** | `ServerScriptService.Config` ← `common/server/Config` | `Data` (PROFILE_KEY + template), `Wave`, `Summon`, `Difficulty`, `Cmdr` (ADMIN_USER_IDS, GROUP_ID, ALLOW_IN_STUDIO), `Badges` (nome → BadgeId) |
 | **Compartilhado** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, `SharedConfig` (UnitStats, UnitAttackConfig, UnitUpgradeConfig, UnitVFXConfig, CrateConfig, MapConfig, PortalConfig, FootstepConfig, LightingConfig, RarityConfig, LevelConfig, DifficultyUnlockConfig, DeckConfig, RoundCardConfig, RoundCardShopConfig, CardModifier, `Mob`, `Cmdr` cosmético, `GamepassConfig`) |
 
 Convenção nos scripts de servidor:
@@ -3397,6 +3397,25 @@ ganhou pelo menos o saldo que tem, então o `CurrencyService` (common), ao ver a
 chave faltando no perfil que carregou, a cria com o `Cash` atual — perfil novo tem
 saldo zero e começa do zero. Com a chave no template, o reconcile a criaria em
 zero antes, e não daria mais para saber quem era perfil antigo.
+
+## Badges da Roblox (`BadgeService`, as duas places)
+
+Os ids ficam em `common/server/Config/Badges.luau` (`Nome = BadgeId`), e a única
+porta para dar badge é o `BadgeService` (`common/server/Services`):
+`BadgeService:Award(player, "Nome")`. Ele pergunta `UserHasBadgeAsync` antes do
+`AwardBadge` para não gastar cota com quem já tem, guarda a resposta pela sessão,
+tenta cada chamada até 3 vezes e não faz nada no Studio (a Roblox não entrega badge
+ali). `Award` espera a rede; quem não quer esperar chama dentro de `task.spawn`.
+
+Badge novo: criar no site (no mesmo universo), pôr uma linha na config e chamar o
+`Award` de onde a conquista acontece.
+
+| Nome | Quando | Quem dá |
+| --- | --- | --- |
+| `Welcome` | Primeira entrada no jogo | `WelcomeBadgeService` (Lobby), no `PlayerAdded` |
+
+"Primeira vez" é o próprio badge quem guarda, não o perfil — trocar a `PROFILE_KEY`
+não dá o badge de novo.
 
 ## Painel por proximidade (`Shared.Util.ProximityPanel`, Lobby)
 
