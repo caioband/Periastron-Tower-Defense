@@ -669,24 +669,26 @@ resultado da conta, e não a tabela que a produz.
 E o número publicado é a chance **real**, com a evolução da caixa dentro
 (`Crate.GetDisplayOdds`). As `POOLS` são a chance depois de a caixa parar de
 evoluir, e não a chance de comprar aquela caixa e receber aquela raridade: uma
-Crate Of Beginnings vira Crate Of Nature em 25% das aberturas (e dali pode
-continuar), então o pool da comum só vale em 75% delas. A diferença não é detalhe:
+Crate Of Beginnings vira Crate Of Nature em 10% das aberturas (e dali pode
+continuar), então o pool da comum só vale em 90% delas. A diferença não é detalhe:
 
 | Caixa | Common | Rare | Epic | Legendary | Cosmic |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Crate Of Beginnings | 85,97% | 10% | 3% | **1%** (0,71% no pool cru) | 0,035% (escondida) |
-| Crate Of Nature | 70% | 20% | 8% | 1,86% | 0,14% |
+| Crate Of Beginnings | 85,99% | 10% | 3% | **1%** (0,64% no pool cru) | 0,014% (escondida) |
+| Crate Of Nature | 38,25% | 40,45% | 16,89% | 4,27% | 0,14% |
 | Fragmented Crate | — | 43% | 44,6% | 11,48% | 0,92% |
 | Legendary Crate | — | 20% | 40% | 40% | — |
 
 Mostrar o pool seria a loja prometer um número que o jogo não entrega, e por isso a
 conta mora no config do servidor e não na tela.
 
-As duas primeiras linhas são o **alvo**, e os pools delas saem de trás para frente a
-partir dele — por isso os números quebrados no `POOLS`. A Cosmic da Beginnings vem só
-da evolução e não tem como sair, então quem cede o 0,035% dela é a Common (85,97% e não
-86%). Mexeu em `UPGRADES` ou nos pools da Fragmented/Legendary, as chances publicadas
-das duas mudam junto e a conta tem de ser refeita.
+A linha da Beginnings é o **alvo** (86 / 10 / 3 / 1), e o pool dela sai de trás para
+frente a partir dele — por isso os números quebrados no `POOLS`. A Cosmic dela vem só
+da evolução e não tem como sair, então quem cede o 0,014% é a Common (85,99% e não
+86%). Para esse alvo fechar, a evolução Beginnings → Nature baixou de 25% para **10%**:
+a 25%, só a parte que vira Nature já passava de 3% de Epic e 10% de Rare. Mexeu em
+`UPGRADES` ou em qualquer outro pool, a chance publicada da Beginnings muda junto e a
+conta tem de ser refeita.
 
 ### A Azure saiu do drop, mas não do jogo
 
@@ -703,7 +705,8 @@ também continua devolvendo a lista honesta do tier; quem filtra é o sorteio.
 **As odds publicadas não mudaram, e isso é o esperado**: elas são por *raridade*. Tirar
 a Azure não tira chance de lendária — só faz o sorteio cair sempre nas outras duas.
 Numa simulação de 200 mil aberturas (feita com as odds anteriores, quando a
-Beginnings publicava 1,29% de lendária; a divisão entre as duas é o que importa):
+Beginnings publicava 1,29% de lendária e a Rocket ainda era Legendary — hoje ela é
+Epic, e as lendárias que sobram no drop são Berserker e Electro):
 
 | Caixa | Lendárias | Azure | Como as lendárias se dividem |
 | --- | ---: | ---: | --- |

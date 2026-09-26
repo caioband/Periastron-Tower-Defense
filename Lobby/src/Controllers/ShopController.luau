@@ -216,11 +216,11 @@ local ShopController = {
 --[[ INTERNAL ]]
 
 --[=[
-	Uma porcentagem como a arte escreve: `40%`, `85.97%`, `0.14%`.
+	Uma porcentagem como a arte escreve: `40%`, `85.99%`, `0.14%`.
 
 	Duas casas e o suficiente para a menor chance da tabela (a Cosmic na Crate Of
 	Nature, 0,14%) nao virar "0%", e o zero a direita cai fora para o caso redondo
-	nao virar "40.00%" ao lado de um "85.97%".
+	nao virar "40.00%" ao lado de um "85.99%".
 ]=]
 local function formatPercent(chance : number) : string
 	local rounded = math.floor(chance * 100 + 0.5) / 100

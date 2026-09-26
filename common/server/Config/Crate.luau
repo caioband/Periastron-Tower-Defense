@@ -28,7 +28,7 @@ local module = {}
 
 	As odds publicadas na loja não mudam: elas são **por raridade**, e tirar a Azure não
 	tira a chance de lendária — só faz o sorteio cair sempre nas outras duas (Berserker
-	e Rocket). A conta de `GetDisplayOdds` continua valendo palavra por palavra.
+	e Electro). A conta de `GetDisplayOdds` continua valendo palavra por palavra.
 
 	⚠️ Esvaziar uma raridade inteira aqui faz o sorteio **descer um degrau** e entregar
 	uma unit mais fraca no lugar, com um aviso no output — o mesmo caminho da Cosmic,
@@ -45,45 +45,40 @@ module.EXCLUDED_UNITS = {
 	A crate comum não alcança Cosmic: o único caminho dela para lá é evoluir antes
 	(veja UPGRADES abaixo).
 
-	Cosmic tem peso de verdade na épica (a Fragmented Crate), onde mora o Archmage, a
-	única unit Cosmic hoje. A rara leva só um resto (ver a tabela abaixo), e a comum e
-	a lendária ficam em zero.
+	Cosmic só tem peso na épica (a Fragmented Crate), onde mora o Archmage, a única
+	unit Cosmic hoje. Nas outras linhas ela continua em zero de propósito.
 
 	⚠️ Zero no pool não é "nunca": a comum e a rara podem **evoluir** até a épica
 	(ver UPGRADES), e aí o sorteio é o do pool épico. Por esse caminho elas também
 	entregam Cosmic, bem mais raro. O `GetOdds` conta isso; a loja da Crate Of
 	Beginnings esconde a linha (ver `HIDDEN_DISPLAY_RARITIES`).
 
-	**Os pools da comum e da rara saem de trás para frente**, das chances que a loja
-	tem de mostrar (`GetOdds`, com a evolução dentro) -- por isso os números
-	quebrados. O alvo publicado:
+	**O pool da comum sai de trás para frente**, da chance que a loja tem de mostrar
+	(`GetOdds`, com a evolução dentro) -- por isso os números quebrados. O alvo
+	publicado da Crate Of Beginnings é 86 / 10 / 3 / 1.
 
-		| Caixa               | Common | Rare | Epic | Legendary | Cosmic |
-		| Crate Of Beginnings |  85.97 |   10 |    3 |         1 | (0.035, escondida) |
-		| Crate Of Nature     |     70 |   20 |    8 |      1.86 |   0.14 |
+	A Cosmic dela (0,014%, escondida) vem só da evolução até a Fragmented e não tem
+	como sair, então quem cede é a Common: a loja mostra 85,99, e não 86.
 
-	A Cosmic da Beginnings vem só da evolução até a Fragmented e não tem como sair,
-	então quem cede o 0,035% dela é a Common (85,97 e não 86). A Cosmic da Nature é
-	quase toda evolução também: o pool dela só completa o que falta para 0,14.
-
-	Mexeu em UPGRADES ou nos pools da épica/lendária, as chances publicadas destas
-	duas mudam junto e a conta tem de ser refeita.
+	Mexeu em UPGRADES ou em qualquer outro pool, a chance publicada da Beginnings muda
+	junto e a conta tem de ser refeita. É também por ela que a evolução da comum
+	baixou para 10% (ver UPGRADES).
 ]]
 module.POOLS = {
 	["Common"] = {
-		Common = 91.28671,
-		Rare = 6.66664,
-		Epic = 1.33333,
-		Legendary = 0.71332,
+		Common = 91.29021,
+		Rare = 6.61667,
+		Epic = 1.45667,
+		Legendary = 0.63645,
 		Cosmic = 0,
 	},
 
 	["Rare"] = {
-		Common = 82.3528,
-		Rare = 15.9412,
-		Epic = 1.5412,
-		Legendary = 0.1624,
-		Cosmic = 0.0024,
+		Common = 45,
+		Rare = 40,
+		Epic = 12,
+		Legendary = 3,
+		Cosmic = 0,
 	},
 
 	-- A Fragmented Crate e a unica com Cosmic (o Archmage): o 1% saiu da Legendary,
@@ -110,7 +105,7 @@ module.POOLS = {
 	a evolução e a garantia (pity) continuam iguais.
 
 	A Crate Of Beginnings ainda pode entregar Cosmic evoluindo até a Fragmented Crate
-	(uns 0,03%). A linha só sai da tela; as outras raridades seguem com a chance real
+	(uns 0,014%). A linha só sai da tela; as outras raridades seguem com a chance real
 	delas, sem redistribuir o peso da escondida.
 ]]
 module.HIDDEN_DISPLAY_RARITIES = {
@@ -122,14 +117,17 @@ module.HIDDEN_DISPLAY_RARITIES = {
 	é o pool da crate evoluída. Chance em %.
 ]]
 module.UPGRADES = {
-	["Common"] = { To = "Rare", Chance = 25 },
+	-- Era 25. Baixou para a Beginnings conseguir publicar 86/10/3/1: a 25%, so a
+	-- parte que vira Nature ja passava de 3% de Epic e 10% de Rare (ver POOLS). O
+	-- teto que ainda fecha e ~17,7% -- acima disso a Epic da Beginnings estoura.
+	["Common"] = { To = "Rare", Chance = 10 },
 	["Rare"] = { To = "Epic", Chance = 15 },
 	["Epic"] = { To = "Legendary", Chance = 8 },
 }
 
 --[[
 	Com `true`, a crate que evoluiu rola a evolução dela também: uma Common pode
-	encadear até Legendary (25% * 15% * 8% = 0,3%). Com `false`, evolui no máximo um
+	encadear até Legendary (10% * 15% * 8% = 0,12%). Com `false`, evolui no máximo um
 	degrau — a Common nunca passa de Rare.
 ]]
 module.CHAIN_UPGRADES = true
@@ -140,9 +138,9 @@ module.CHAIN_UPGRADES = true
 
 	As `POOLS` la em cima sao a chance depois de a caixa parar de evoluir, e nao a
 	chance de comprar aquela caixa e receber aquela raridade. Uma Crate Of Beginnings
-	evolui para Crate Of Nature em 25% das aberturas (e dali pode continuar), entao o
-	pool da comum vale so em 75% delas. A diferenca nao e detalhe: a lendaria sai a
-	0,71% pelo pool e a **1%** de verdade.
+	evolui para Crate Of Nature em 10% das aberturas (e dali pode continuar), entao o
+	pool da comum vale so em 90% delas. A diferenca nao e detalhe: a lendaria sai a
+	0,64% pelo pool e a **1%** de verdade.
 
 	Mostrar o pool cru seria a loja prometer um numero que o jogo nao entrega, e por
 	isso a conta e feita aqui e nao na tela: **a chance publicada e a chance real**.
@@ -245,8 +243,8 @@ module.PITY_RARITIES = { "Cosmic", "Legendary" }
 	Mexeu nos pools ou nas evolucoes, o limite acompanha sem tocar em mais nada.
 
 		| Caixa (hoje)        | Legendary | Cosmic |
-		| Crate Of Beginnings |       100 |   2857 |
-		| Crate Of Nature     |        54 |    715 |
+		| Crate Of Beginnings |       100 |   7247 |
+		| Crate Of Nature     |        24 |    725 |
 		| Fragmented Crate    |         9 |    109 |
 		| Legendary Crate     |         3 |      - |
 ]=]

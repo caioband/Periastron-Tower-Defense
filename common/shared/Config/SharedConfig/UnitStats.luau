@@ -247,7 +247,7 @@ local UnitStats = {
 		alcance so diferencia enquanto as faixas continuarem distintas.
 	]]
 	["Rocket"] = {
-		Rarity = "Legendary",
+		Rarity = "Epic",
 		Class = "Ranged",
 		Cost = 450,
 		Damage = 50,
