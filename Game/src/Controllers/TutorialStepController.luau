@@ -67,6 +67,7 @@ local TutorialStepController = {
 		RoundCardShopController = {},
 		SpeedController = {},
 		ButtonGateController = {},
+		DifficultyController = {},
 	}
 }
 
@@ -259,6 +260,10 @@ end
 ]=]
 function TutorialStepController:show(step : any)
 	self.Step = step
+
+	-- A hotbar inteira fora da tela enquanto o passo pedir (`HideDeck`). Quem a
+	-- devolve é o `clear`, quando o passo acaba ou outro abre por cima.
+	self:setDeckHeld(step.HideDeck == true)
 
 	--[[
 		A trava vem **antes** da fala, e não com o destaque.
@@ -705,7 +710,22 @@ end
 function TutorialStepController:clear()
 	self.Step = nil
 
+	self:setDeckHeld(false)
 	self:clearVisuals()
+end
+
+--[=[
+	Esconde (ou devolve) o `Interface.TowerContainer` inteiro, pelo
+	`DifficultyController`, que é o dono do `Visible` dele.
+
+	Diferente do `setCardsHidden`, que apaga as cartas uma a uma enquanto a fala está
+	no ar: este tira o container todo, e dura o passo inteiro.
+]=]
+function TutorialStepController:setDeckHeld(held : boolean)
+	local difficulty = self.Controllers.DifficultyController
+	if difficulty and difficulty.HoldHotbar then
+		difficulty:HoldHotbar("Tutorial", held)
+	end
 end
 
 --[=[

@@ -412,6 +412,7 @@ function TutorialMatchService:openStep(step : any)
 			Position = point and point.Position or nil,
 			Positions = positions,
 			Lines = step.Lines,
+			HideDeck = step.HideDeck,
 
 			Locked = locked,
 			AllowedUnits = self:allowedUnits(),

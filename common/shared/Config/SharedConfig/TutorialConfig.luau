@@ -255,6 +255,9 @@ TutorialConfig.Match = {
 		               fecho do roteiro encontre a carteira cheia o bastante para as
 		               cartas que ele pede, mesmo depois de a partida inteira ter sido
 		               gasta em outra coisa.
+		  - `HideDeck` — `true` tira o `Interface.TowerContainer` inteiro da tela enquanto
+		               o passo está aberto, e o devolve quando ele fecha. Quem mexe no
+		               `Visible` é o `DifficultyController` (`HoldHotbar`).
 
 		A wave 1 pede a **Slingshot**, e ela é a única carta liberada até a wave 5
 		(ver `AllowedUnits`): o tutorial ensina clima, loja e velocidade com uma torre
@@ -292,6 +295,13 @@ TutorialConfig.Match = {
 				wave 3, com um passo só para ele.
 			]]
 			Buttons = { "Interface.ReadyWave" },
+
+			--[[
+				O `Interface.TowerContainer` inteiro fora da tela enquanto este passo
+				está aberto, e de volta quando ele fecha (a contagem acabou). Ainda não há
+				o que colocar: as cartas só entram no passo seguinte, na wave 1.
+			]]
+			HideDeck = true,
 
 			Lines = {
 				"[color=white]Take your time to look around.[/color][pause=0.4] When you're set, hit [gradient=green]READY[/gradient][color=white] — the wave starts when the timer runs out.[/color]",

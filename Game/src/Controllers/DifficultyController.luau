@@ -25,6 +25,13 @@ local LOCK_LABEL_NAME = "Time"
 local DifficultyController = {
 	Buttons = {},
 
+	-- O que a partida pede para a hotbar (dificuldade decidida ou não). Ver
+	-- `setHotbarVisible`.
+	HotbarWanted = false,
+
+	-- Quem está segurando a hotbar fora da tela: `{ [motivo] = true }`. Ver `HoldHotbar`.
+	HotbarHolds = {},
+
 	-- { [dificuldade] = { Button, Frame, Label, WasActive, WasAutoButtonColor } }
 	Locks = {},
 }
@@ -48,9 +55,36 @@ end
 	aberta — e as cartas nao teriam onde ser colocadas.
 ]=]
 function DifficultyController:setHotbarVisible(visible : boolean)
+	self.HotbarWanted = visible == true
+
+	self:applyHotbar()
+end
+
+--[=[
+	Escreve o `Visible` do `TowerContainer`: a partida pede **e** ninguém segura.
+
+	Continua havendo um dono só do interruptor (este controller); quem precisa da
+	hotbar fora da tela por um tempo pede com `HoldHotbar`, em vez de escrever o
+	`Visible` por fora — o `DifficultyLocked` ou o próximo estado da votação
+	acenderiam a hotbar de volta no meio do pedido.
+]=]
+function DifficultyController:applyHotbar()
 	if self.hotbar then
-		self.hotbar.Visible = visible
+		self.hotbar.Visible = self.HotbarWanted and next(self.HotbarHolds) == nil
 	end
+end
+
+--[=[
+	Segura (ou solta) a hotbar fora da tela em nome de `reason`. Soltar o último
+	pedido devolve a hotbar ao que a partida quer — se a dificuldade ainda não foi
+	decidida, ela continua escondida.
+
+	Hoje quem pede é o `TutorialStepController`, no passo do Ready (`HideDeck`).
+]=]
+function DifficultyController:HoldHotbar(reason : string, held : boolean)
+	self.HotbarHolds[reason] = if held then true else nil
+
+	self:applyHotbar()
 end
 
 --[=[
