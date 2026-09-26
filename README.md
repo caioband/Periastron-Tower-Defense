@@ -204,7 +204,7 @@ lighting <preset> [segundos]         troca o preset; tab completa os nomes
 lightinglist                         lista o que existe em Assets.Lighting
 weather <clima|off> [segundos]       liga o clima no mapa carregado; off desliga
 restartwarning <motivo> [seg]        ensaia o aviso de restart do servidor (não reinicia nada)
-cash <ação> <jogadores> <valor>      Cash salvo (Stats.Cash), o do lobby
+cash <ação> <jogadores> <valor>      Cash salvo (Stats.Cash), o do lobby; jogador pode estar offline
 shards <ação> <jogadores> <valor>    Shards salvos (Stats.Shards)
 roundcash <ação> <jogadores> <valor> (só na Game) o dinheiro que paga as torres na partida
 strike [unidade]                     (só na Game) derruba um raio numa unidade posicionada
@@ -305,6 +305,30 @@ e o `strike` continua servido pela cópia comum. Com isso o nó `Types/Game` do
 `Game/default.project.json` ficaria apontando para uma pasta vazia — que o git não
 versiona e o Rojo não encontraria num clone novo —, então saiu junto.
 
+#### Moedas e unidades em jogador fora do servidor
+
+`cash`, `shards` e `units` aceitam **username ou `#UserId`** (tipo `playerIds` do Cmdr),
+com o jogador neste servidor, em outro ou offline; `me`, `all` e `others` continuam
+valendo para quem está neste servidor. O `ProfileEditService` escolhe o caminho:
+
+| Onde está o perfil | O que acontece | Resposta |
+|---|---|---|
+| Neste servidor | `DataService:Update`, na hora | `antes -> depois` |
+| Sessão aberta em outro servidor (ou de um que caiu) | `MessageAsync`; o `DataService` de lá aplica e salva em segundos | `sent to their server` |
+| Sem sessão | a mesma mensagem, e uma sessão curta que a consome e fecha | `antes -> depois (offline, saved)` |
+| Sem perfil nenhum | nada (provável nome errado) | `has no profile` |
+
+No caso sem sessão o valor também vai por mensagem: se o jogador entrar bem no meio,
+quem abrir o perfil primeiro aplica a edição, uma vez só. Enquanto a sessão curta está
+aberta, quem entrar **neste** servidor espera ela fechar (`DataService.OfflineSessions`).
+
+Os dois `DataService` registram o `MessageHandler` em toda sessão e, se a sessão
+acabar com o jogador ainda no servidor (perfil tomado por outro servidor), **expulsam
+o jogador** pedindo para reentrar — antes, ele continuava jogando sem salvar nada. No
+desligamento do servidor isso não dispara: lá quem fecha é o `BindToClose`. Quem sai
+enquanto o perfil carrega tem a sessão solta na hora, em vez de presa até o servidor
+fechar.
+
 #### Moedas pelo console
 
 São **três** moedas e duas delas são a mesma conta em lugares diferentes:
@@ -321,10 +345,10 @@ saldo negativo não existe em lugar nenhum do jogo. A resposta do console diz o 
 e o depois de cada jogador, senão um `remove` que bateu no chão e um `set` num valor
 que já era aquele pareceriam "o comando não fez nada".
 
-O `cash` e o `shards` escrevem pelo `CurrencyService` (`common/server/Services`), que
-lê e escreve dentro do mesmo `DataService:Update` — assim o `add` soma em cima do
-valor que está lá agora, e não no que estava quando o comando foi digitado. O
-`roundcash` passa pelo `addCash`/`spendCash` do `MobService` em vez de escrever na
+O `cash`, o `shards` e o `units` escrevem pelo `ProfileEditService`
+(`common/server/Services`), que lê e escreve dentro da mesma operação — assim o `add`
+soma em cima do valor que está lá agora, e não no que estava quando o comando foi
+digitado. O `roundcash` passa pelo `addCash`/`spendCash` do `MobService` em vez de escrever na
 tabela, porque são eles que disparam o `UpdateCash`: sem isso o contador na tela
 ficaria no valor antigo até a próxima kill.
 

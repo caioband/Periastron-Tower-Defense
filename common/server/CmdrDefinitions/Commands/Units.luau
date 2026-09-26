@@ -11,9 +11,9 @@ return {
 		},
 
 		{
-			Type = "players",
+			Type = "playerIds",
 			Name = "players",
-			Description = "Who gets it.",
+			Description = "Who gets it: usernames or #UserIds, online or not (me/all/others still work for this server).",
 		},
 
 		{

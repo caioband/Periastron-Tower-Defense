@@ -62,47 +62,20 @@ local function knownNames() : string
 	return table.concat(names, ", ")
 end
 
-return function(_context, action : string, players : { Player }, unitText : string, amount : number?)
-	local DataService = Framework:Get("DataService", false, true)
-
-	if #players == 0 then
-		return "Nobody matched."
-	end
+return function(_context, action : string, userIds : { number }, unitText : string, amount : number?)
+	local ProfileEditService = Framework:Get("ProfileEditService", false, true)
 
 	local unitName = resolveUnitName(unitText)
 	if not unitName then
 		return string.format("There is no unit called '%s'. Known units: %s.", unitText, knownNames())
 	end
 
-	local delta = math.max(0, math.floor(amount or 1))
-	local done = {}
-
-	for _, player in players do
-		local previous = 0
-		local target = 0
-
-		DataService:Update(player, "Units", function(units)
-			units = units or {}
-			previous = units[unitName] or 0
-
-			if action == "set" then
-				target = delta
-			elseif action == "remove" then
-				target = math.max(0, previous - delta)
-			else
-				target = previous + delta
-			end
-
-			-- Zero sai da tabela em vez de virar `= 0`: é assim que o perfil de quem
-			-- nunca teve a unidade se parece, e o `DeckConfig` trata os dois casos
-			-- pelo mesmo `owned[unitName] or 0`.
-			units[unitName] = if target > 0 then target else nil
-
-			return units
-		end)
-
-		table.insert(done, string.format("%s %d -> %d", player.Name, previous, target))
-	end
-
-	return string.format("%s %s: %s", action, unitName, table.concat(done, ", "))
+	-- Online neste servidor, em outro ou offline: quem decide o caminho é o
+	-- `ProfileEditService`. Unidade zerada sai da tabela (ver `KEYS` lá).
+	return ProfileEditService:RunCommand(userIds, {
+		Key = "Units",
+		Field = unitName,
+		Action = action,
+		Amount = math.max(0, math.floor(amount or 1)),
+	})
 end
