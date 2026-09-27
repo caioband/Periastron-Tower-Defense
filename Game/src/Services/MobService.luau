@@ -172,11 +172,11 @@ local GimmickHandlers = {
 			end
 
 			GameClock.Delay(freezeTime, function()
-				if not self.ActiveMobs[mobId] then return end
+				if self.ActiveMobs[mobId] ~= mob then return end
 
-				for _, player in Players:GetPlayers() do
-					Framework:Fire("UpdateMobSpeed", player, mobId, mob.CurrentSpeed)
-				end
+				-- Um Time Stop ou um gelo mais longo pode ter entrado no meio: ai quem
+				-- solta o boneco e ele, e o `broadcastSpeed` fica calado.
+				broadcastSpeed(self, mobId, mob)
 
 				local unitService = self.Services.UnitService
 				if unitService then
@@ -279,9 +279,9 @@ function MobService:ApplyWeather(weatherName : string?)
 		local speed = computeSpeed(self, mob)
 		if speed ~= mob.CurrentSpeed then
 			mob.CurrentSpeed = speed
-			for _, player in Players:GetPlayers() do
-				Framework:Fire("UpdateMobSpeed", player, mobId, speed)
-			end
+
+			-- Mob parado so guarda a velocidade nova: quem o soltar manda ela.
+			broadcastSpeed(self, mobId, mob)
 		end
 	end
 end
@@ -339,10 +339,10 @@ function MobService:FreezeAll(duration : number?) : number
 
 		self.FreezeUntil = nil
 
+		-- Quem levou um gelo ou um choque que vai alem do Time Stop continua parado:
+		-- o `broadcastSpeed` o pula, e o `StunMob` dele o solta na hora certa.
 		for mobId, mob in self.ActiveMobs do
-			for _, player in Players:GetPlayers() do
-				Framework:Fire("UpdateMobSpeed", player, mobId, mob.CurrentSpeed)
-			end
+			broadcastSpeed(self, mobId, mob)
 		end
 	end)
 

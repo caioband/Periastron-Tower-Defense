@@ -1251,7 +1251,24 @@ function UnitService:stepCombat()
 	self:collectAuraSources()
 	self:stepTripmines(now, weather)
 
-	for i = 1, count do
+	--[[
+		A volta pela lista comeca em quem ficou sem busca no quadro anterior, e nao
+		sempre na primeira unidade.
+
+		Unidade pronta sem ninguem no alcance busca em todo quadro, e oito delas no
+		comeco da lista gastavam o orcamento inteiro sozinhas: quem vinha depois nunca
+		mais achava alvo novo e ficava parada com um inimigo na frente. Comecando pelo
+		primeiro que ficou de fora, toda unidade busca em no maximo
+		`ceil(unidades / TARGET_SCANS_PER_FRAME)` quadros.
+
+		O cursor e um indice e nao a unidade: vender ou colocar uma torre no meio so
+		desloca a fila por um quadro, e o modulo abaixo o mantem dentro da lista.
+	]]
+	local start = ((self.ScanCursor or 1) - 1) % count + 1
+	local starved = nil
+
+	for step = 0, count - 1 do
+		local i = (start + step - 1) % count + 1
 		local entry = units[i]
 		local stats = SharedConfig.UnitStats[entry.unitName]
 
@@ -1297,8 +1314,8 @@ function UnitService:stepCombat()
 				que roubar o alvo do que ja estava la.
 
 				O orcamento de buscas por quadro continua mandando — estourou, a
-				unidade fica com o alvo anterior se ele ainda serve e tenta de novo
-				no proximo quadro.
+				unidade fica com o alvo anterior se ele ainda serve e e a primeira a
+				buscar no proximo quadro (ver `ScanCursor` la em cima).
 			]]
 			if scansLeft > 0 then
 				scansLeft -= 1
@@ -1310,8 +1327,12 @@ function UnitService:stepCombat()
 					targetId = nil
 				end
 				entry.targetMobId = targetId
-			elseif not targetValid then
-				entry.targetMobId = nil
+			else
+				starved = starved or i
+
+				if not targetValid then
+					entry.targetMobId = nil
+				end
 			end
 
 			if targetValid then
@@ -1319,6 +1340,11 @@ function UnitService:stepCombat()
 				self:executeAttack(entry, stats, targetId, weather)
 			end
 		end
+	end
+
+	-- Ninguem ficou sem busca: a ordem de hoje serve, e o cursor fica onde esta.
+	if starved then
+		self.ScanCursor = starved
 	end
 end
 

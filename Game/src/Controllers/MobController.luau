@@ -506,6 +506,8 @@ function MobController:createEntity(entityData)
 		speed = speed,
 		pointIndex = 2,
 		points = smooth.points,
+		-- Onde o mob esta no caminho, no chao. Ver o laco de movimento.
+		pathPos = startPosition,
 		-- O caminho inteiro, e nao so os pontos: o `MobTeleported` precisa das
 		-- distancias acumuladas para achar onde o mob reaparece.
 		smooth = smooth,
@@ -664,41 +666,52 @@ function MobController:startMovementLoop()
 				continue
 			end
 
-			local posH = Vector3.new(currentPos.X, 0, currentPos.Z)
-			local currentHeight = currentPos.Y - (extentsSize.Y / 2)
-			-- O mesmo `dt` acelerado que o `MobService` usa para somar a distancia
-			-- do lado dele. Os dois tem que andar juntos, senao o mob some da tela
-			-- antes de chegar ou chega depois de ja ter batido na base.
+			--[[
+				O ponto do caminho onde o mob esta, guardado em vez de relido do modelo:
+				o boneco e so o desenho disso, e reconstruir a posicao a partir do pivot
+				a cada quadro acumularia o erro de arredondamento do `PivotTo`.
+			]]
+			local pos = data.pathPos or Vector3.new(currentPos.X, currentPos.Y - (extentsSize.Y / 2), currentPos.Z)
+
+			--[[
+				O mesmo `dt` acelerado que o `MobService` usa para somar a distancia
+				do lado dele, e a mesma regua: a distancia e gasta em 3D, ao longo dos
+				segmentos do caminho suavizado, que e como o `cumulative` do `PathUtil`
+				mede o `mob.Distance` do servidor.
+
+				Antes o gasto era so no plano, e numa rampa o boneco andava mais rapido
+				que o servidor. O erro nunca era corrigido: no Mountain, que sobe 17
+				studs, a tela chegava na base quase 5 studs a frente -- mais que o
+				alcance de uma unidade corpo a corpo.
+			]]
 			local remaining = data.speed * GameClock.Scaled(dt)
-			local lookTargetH = nil
+			local lookTarget3D = nil
 
 			while remaining > 0 and data.pointIndex <= #points do
 				local target = points[data.pointIndex]
-				local targetH = Vector3.new(target.X, 0, target.Z)
-				local toTarget = targetH - posH
+				local toTarget = target - pos
 				local d = toTarget.Magnitude
 				if d <= 1e-4 then
-					currentHeight = target.Y
+					pos = target
 					data.pointIndex += 1
 					continue
 				end
-				lookTargetH = targetH
+				lookTarget3D = target
 				if remaining >= d then
-					posH = targetH
-					currentHeight = target.Y
+					pos = target
 					remaining -= d
 					data.pointIndex += 1
 				else
-					local alpha = remaining / d
-					posH = posH + toTarget.Unit * remaining
-					currentHeight = currentHeight + (target.Y - currentHeight) * alpha
+					pos += toTarget.Unit * remaining
 					remaining = 0
 				end
 			end
 
-			local nextPos = Vector3.new(posH.X, currentHeight + (extentsSize.Y / 2), posH.Z)
-			if lookTargetH then
-				local lookTarget = Vector3.new(lookTargetH.X, nextPos.Y, lookTargetH.Z)
+			data.pathPos = pos
+
+			local nextPos = pos + Vector3.new(0, extentsSize.Y / 2, 0)
+			if lookTarget3D then
+				local lookTarget = Vector3.new(lookTarget3D.X, nextPos.Y, lookTarget3D.Z)
 				if (lookTarget - nextPos).Magnitude > 0.01 then
 					mobClone:PivotTo(CFrame.lookAt(nextPos, lookTarget))
 				else
@@ -789,6 +802,7 @@ function MobController:construct()
 			end
 		end
 		movement.pointIndex = math.max(2, nextIndex)
+		movement.pathPos = position
 
 		local model = movement.model
 		if model and model.Parent then
