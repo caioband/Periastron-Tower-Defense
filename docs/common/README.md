@@ -5,6 +5,7 @@ When a system also has place-specific parts, its page here covers the shared cor
 
 | Page | What it covers |
 | --- | --- |
+| [AFK detection](afk.md) | `AfkController` and `AfkService`: who is AFK, and pausing playtime while AFK |
 | [Admin commands](admin-commands.md) | The Cmdr console: every command, permissions, currency and unit edits, `viewdata` |
 | [Audio](audio.md) | `MusicController`: music, SFX, fades, ducking |
 | [Badges](badges.md) | Awarding Roblox badges |

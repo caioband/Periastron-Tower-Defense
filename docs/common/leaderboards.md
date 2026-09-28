@@ -59,7 +59,7 @@ The SurfaceGui is in the Workspace, so what the server writes replicates to ever
 | Key | Written by | Rule |
 | --- | --- | --- |
 | `BoxesOpened` | `CrateService:OpenCrate` (Lobby) | a crate spent and rolled; the `unbox` command does not count |
-| `TimePlayed` | `PlaytimeService` (common) | from profile load until leave, in both places; written every minute |
+| `TimePlayed` | `PlaytimeService` (common) | from profile load until leave, in both places, minus time AFK in the Lobby (see [AFK detection](afk.md)); written every minute |
 | `TimeInMatches` | `MatchStatsService` (Game) | real time with `WaveService` `Running`, from waiting for players to the last wave |
 | `MatchesPlayed` | `MatchStatsService` (Game) | +1 when the player's time in that round passes `Data.MIN_MATCH_SECONDS` (180 s): win, loss, or leaving midway |
 
