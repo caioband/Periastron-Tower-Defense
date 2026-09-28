@@ -10,32 +10,35 @@ local ServerConfigs = ServerScriptService:WaitForChild("Config")
 local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 local Signal = require(Packages.Signal)
 
 local Framework = Me.new()
+local log = Log.new("MatchStatsService")
 
 local MIN_MATCH_SECONDS = ServerConfig.Data.MIN_MATCH_SECONDS
 
 --[[
-	`Stats.MatchesPlayed` e `Stats.TimeInMatches`: quanto tempo cada jogador passa
-	dentro de um round, e quantas partidas passaram de `MIN_MATCH_SECONDS`.
+	`Stats.MatchesPlayed` and `Stats.TimeInMatches`: how long each player spends inside
+	a round, and how many matches went past `MIN_MATCH_SECONDS`.
 
-	"Dentro de um round" e o `WaveService` em `Running` -- da espera pelos jogadores
-	e da votacao de dificuldade ate a ultima wave. A tela de resultado e o intervalo
-	parado em `Idle` nao contam. O tempo e o de verdade (`os.clock`), e nao o do
-	`GameClock`: acelerar a partida nao encurta o tempo que o jogador passou nela.
+	"Inside a round" is `WaveService` in `Running`: from waiting for players and the
+	difficulty vote to the last wave. The results screen and the idle intermission in
+	`Idle` do not count. Time is real time (`os.clock`), not `GameClock`: speeding up
+	the match does not shorten the time the player spent in it.
 
-	Cada jogador tem o proprio relogio (`JoinedAt`), que abre quando o round comeca
-	ou quando ele entra num round ja rodando, e fecha em um de dois lugares:
+	Each player has their own clock (`JoinedAt`), which opens when the round starts
+	or when they join a running round, and closes in one of two places:
 
-	  - o round fechou (`WaveService.Signals.RoundClosed`) -- fim da partida ou reset;
-	  - ele saiu, ou o servidor desligou (`DataService:OnBeforeRelease`, com o perfil
-	    ainda aberto).
+	  - the round closed (`WaveService.Signals.RoundClosed`): match end or reset;
+	  - they left, or the server shut down (`DataService:OnBeforeRelease`, with the
+	    profile still open).
 
-	Fechar e escrever: o tempo vai inteiro para `TimeInMatches`, e se passou do piso
-	a partida entra em `MatchesPlayed`. Uma partida so conta uma vez por jogador,
-	porque fechar tira o relogio dele -- quem sai e volta para o mesmo round comeca
-	um relogio novo, e so conta de novo se ficar outro `MIN_MATCH_SECONDS`.
+	Closing means writing: the whole time goes to `TimeInMatches`, and if it passed the
+	floor the match enters `MatchesPlayed`. A match only counts once per player,
+	because closing removes their clock: a player who leaves and returns to the same
+	round starts a new clock, and only counts again after another
+	`MIN_MATCH_SECONDS`.
 ]]
 local MatchStatsService = {
 	Services = {
@@ -43,14 +46,14 @@ local MatchStatsService = {
 		WaveService = {},
 	},
 
-	-- [Player] = `os.clock()` de quando ele entrou no round rodando.
+	-- [Player] = `os.clock()` from when they joined the running round.
 	JoinedAt = {},
 
 	Signals = {
 		--[[
-			(player, seconds) -- o relogio do jogador fechou, com o tempo que ele passou
-			naquele round. Dispara antes de o perfil fechar, na saida tambem. Quem escuta
-			e o `ContractTrackerService` ("Play 7 hours worth of matches").
+			(player, seconds): the player's clock closed, with the time they spent in that
+			round. Fires before the profile closes, on leave too. `ContractTrackerService`
+			listens ("Play 7 hours worth of matches").
 		]]
 		Closed = Signal.new(),
 	},
@@ -64,7 +67,7 @@ function MatchStatsService:_open(player : Player)
 	end
 end
 
---- Fecha o relogio do jogador e escreve o que ele valeu.
+--- Closes the player's clock and writes what it was worth.
 function MatchStatsService:_close(player : Player)
 	local joinedAt = self.JoinedAt[player]
 	if not joinedAt then return end
@@ -103,14 +106,14 @@ function MatchStatsService:_closeAll()
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function MatchStatsService:construct()
 	local waveService = self.Services.WaveService
 	local dataService = self.Services.DataService
 
 	if not waveService then
-		warn("[MatchStatsService]: sem WaveService; partidas e tempo em partida nao vao ser contados.")
+		log:Warn("no WaveService; matches and match time will not be counted.")
 		return
 	end
 
@@ -134,15 +137,15 @@ function MatchStatsService:construct()
 		end)
 	end
 
-	-- Limpeza para quem saiu sem perfil aberto (o gancho acima nem roda).
+	-- Cleanup for players who left without an open profile (the hook above does not even run).
 	Players.PlayerRemoving:Connect(function(player : Player)
 		task.defer(function()
 			self.JoinedAt[player] = nil
 		end)
 	end)
 
-	-- O primeiro round comeca no `start` do WaveService, que pode ter rodado antes
-	-- deste: o `RoundStarted` dele ja passou.
+	-- The first round starts in WaveService's `start`, which may have run before this
+	-- one: its `RoundStarted` already fired.
 	if waveService:IsRoundRunning() then
 		self:_openAll()
 	end

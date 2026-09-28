@@ -7,13 +7,14 @@ local Me = require(Vendor:WaitForChild("Me"))
 local Framework = Me.new()
 
 --[[
-	Ver a oferta de tutorial de novo.
+	See the tutorial offer again.
 
-	A chave `Tutorial` encerra o assunto na primeira resposta — vencer **ou**
-	recusar —, então quem está testando o fluxo só a veria uma vez por perfil. Este
-	comando devolve a chave para `false` e, no lobby, reabre a fala na hora.
+	The `Tutorial` key settles the matter on the first answer (winning **or**
+	declining), so someone testing the flow would see it only once per profile. This
+	command sets the key back to `false` and, in the Lobby, reopens the dialog right
+	away.
 
-	Não mexe em mais nada: unidades, coins e crates continuam onde estavam.
+	It touches nothing else: units, coins, and crates stay where they were.
 ]]
 return function(context, players : { Player }?)
 	local TutorialService = Framework:Get("TutorialService", false, true)

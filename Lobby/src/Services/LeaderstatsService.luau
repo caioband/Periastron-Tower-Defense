@@ -4,43 +4,46 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("LeaderstatsService")
 
 --[[
-	O `leaderstats` do lobby: Coins, Wins e Shards na lista de jogadores.
+	The Lobby `leaderstats`: Coins, Wins, and Shards in the player list.
 
-	Os três saem de `Data.Stats`, e nenhum deles é calculado aqui — este service só
-	copia o perfil para os `IntValue` que a Roblox desenha. A fonte continua sendo o
-	perfil, e quem quiser o número certo lê de lá.
+	All three come from `Data.Stats`, and none is computed here: this service only copies
+	the profile into the `IntValue`s Roblox draws. The profile is still the source, and
+	anyone who wants the right number reads it there.
 
-	**Coins é `Stats.Cash`.** O perfil chama de `Cash` e a tela chama de Coins desde
-	sempre (é o que o `HUDController` escreve na moeda do HUD); a lista de jogadores
-	segue a tela, não o nome da chave. Não é o dinheiro da partida — aquele é o
-	`MobService.SessionCash`, que vive só enquanto o round dura e nem chega ao perfil.
+	**Coins is `Stats.Cash`.** The profile calls it `Cash` and the screen calls it Coins
+	(it is what `HUDController` writes on the HUD currency); the player list follows the
+	screen, not the key name. It is not match money: that is `MobService.SessionCash`,
+	which only lives while the round lasts and never reaches the profile.
 
-	**Por que fica só na Lobby.** Foi onde pediram, e é onde ele faz sentido: na Game
-	a lista de jogadores concorre com a partida, e `Wins` nem muda até o fim dela. As
-	duas places têm o mesmo perfil, então o dia em que a Game também quiser é mover
-	este arquivo para `common/server/Services`.
+	**Why Lobby only.** It is where it makes sense: in Game the player list competes with
+	the match, and `Wins` does not even change until it ends. Both places have the same
+	profile, so the day Game wants it too, move this file to `common/server/Services`.
 
-	**Como ele se mantém em dia.** Toda escrita no perfil passa pelo
-	`DataService:Update` — o `Set` da replica só acontece lá dentro —, e ele anuncia
-	cada uma no `DataUpdated`. Não há polling: a coluna muda no mesmo instante em que
-	o perfil muda, seja uma compra na loja, um summon ou o `cash` do Cmdr.
+	**How it stays up to date.** Every profile write goes through `DataService:Update`
+	(the replica's `Set` only happens in there), and it announces each one in
+	`DataUpdated`. There is no polling: the column changes the instant the profile does,
+	whether a shop purchase, a summon, or Cmdr's `cash`.
+
+	See docs/lobby/hud.md.
 ]]
 
 local FOLDER_NAME = "leaderstats"
 
--- A chave de `Data` que interessa. As outras escritas (`Units`, `EquippedUnits`…)
--- não mexem em nenhuma das três colunas.
+-- The `Data` key that matters. Other writes (`Units`, `EquippedUnits`…)
+-- touch none of the three columns.
 local STATS_KEY = "Stats"
 
 --[[
-	Uma linha por coluna, **na ordem em que elas aparecem** na lista de jogadores:
-	a Roblox desenha na ordem em que os valores entram na pasta.
+	One line per column, **in the order they appear** in the player list: Roblox draws
+	them in the order the values enter the folder.
 
-	`Name` é o que o jogador lê; `Stat` é a chave em `Data.Stats`.
+	`Name` is what the player reads; `Stat` is the key in `Data.Stats`.
 ]]
 local ENTRIES = {
 	{ Name = "Coins", Stat = "Cash" },
@@ -57,14 +60,14 @@ local LeaderstatsService = {
 --[[ INTERNAL ]]
 
 --[=[
-	A pasta do jogador, criada com as três colunas já dentro se ainda não existir.
+	The player's folder, created with the three columns already inside if it does not
+	exist.
 
-	Ela é parenteada **por último**, de propósito: a lista de jogadores começa a
-	desenhar assim que a pasta aparece, e uma pasta vazia por um frame pisca uma
-	linha sem coluna nenhuma.
+	It is parented **last**, on purpose: the player list starts drawing as soon as the
+	folder appears, and an empty folder for one frame flashes a row with no columns.
 
-	A pasta vive no `Player`, que sobrevive ao respawn — então isto roda uma vez por
-	jogador, e todo o resto é escrita de valor.
+	The folder lives on the `Player`, which survives respawn, so this runs once per
+	player, and everything else is value writes.
 ]=]
 local function ensureFolder(player : Player) : Folder
 	local existing = player:FindFirstChild(FOLDER_NAME)
@@ -89,9 +92,9 @@ end
 --[[ API ]]
 
 --[=[
-	Copia as três colunas do perfil aberto. Sem perfil (ainda carregando, ou já
-	encerrado) não faz nada — a pasta nem chega a nascer, em vez de nascer com três
-	zeros que não são o que o jogador tem.
+	Copies the three columns from the open profile. With no profile (still loading, or
+	already closed) it does nothing: the folder is not even created, instead of being
+	created with three zeros that are not what the player has.
 ]=]
 function LeaderstatsService:Refresh(player : Player)
 	local dataService = self.Services.DataService
@@ -111,9 +114,9 @@ function LeaderstatsService:Refresh(player : Player)
 		local value = folder:FindFirstChild(config.Name)
 
 		--[[
-			`IntValue` trunca sozinho, mas silenciosamente: o `math.floor` explícito é
-			para o dia em que uma recompensa fracionária aparecer e o número da lista
-			divergir do número do HUD sem ninguém entender por quê.
+			`IntValue` truncates on its own, but silently: the explicit `math.floor` is for
+			the day a fractional reward appears and the list's number diverges from the HUD's
+			with nobody understanding why.
 		]]
 		if value and value:IsA("IntValue") then
 			value.Value = math.floor(stats[config.Stat] or 0)
@@ -121,12 +124,12 @@ function LeaderstatsService:Refresh(player : Player)
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function LeaderstatsService:construct()
 	local dataService = self.Services.DataService
 	if not dataService then
-		warn("[LeaderstatsService]: sem DataService; a lista de jogadores fica sem colunas.")
+		log:Warn("no DataService; the player list has no columns.")
 		return
 	end
 
@@ -143,11 +146,11 @@ function LeaderstatsService:construct()
 	end)
 
 	--[[
-		Quem carregou entre o `init` do `DataService` e este `start`.
+		Players who loaded between `DataService`'s `init` and this `start`.
 
-		A volta vem depois das conexões, e não antes: no meio delas um perfil poderia
-		carregar sem sinal ligado para ouvi-lo. Repetir não custa nada — `Refresh` é
-		idempotente.
+		The sweep comes after the connections, not before: between them a profile could
+		load with no signal connected to hear it. Repeating costs nothing: `Refresh` is
+		idempotent.
 	]]
 	for player in dataService.Profiles or {} do
 		self:Refresh(player)

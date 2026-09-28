@@ -6,54 +6,59 @@ local Players = game:GetService("Players")
 local ServerConfigs = ServerScriptService:WaitForChild("Config")
 
 local ServerConfig = require(ServerConfigs)
+local Log = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Util"):WaitForChild("Log"))
+
+local log = Log.new("AnalyticsService")
 
 local Config = ServerConfig.Analytics
 
 --[[
-	O único lugar do jogo que fala com a `AnalyticsService` da Roblox.
+	The only place in the game that talks to Roblox's `AnalyticsService`.
 
-	Quem quer medir alguma coisa chama daqui — `:LogFunnelStep` para o funil de
-	onboarding e `:LogEvent` para um evento avulso —, e nenhum outro arquivo
-	precisa saber que a API existe, nem repetir as guardas que ela pede.
+	Anything that wants to measure something calls in here (`:LogFunnelStep` for the
+	onboarding funnel and `:LogEvent` for a standalone event), and no other file
+	needs to know the API exists or repeat the guards it requires.
 
-	**Três guardas, e todas moram aqui:**
+	**Three guards, all living here:**
 
-	  1. **Studio e place não publicada.** A Roblox não aceita evento de analytics
-	     vindo do Studio nem de um `.rbxl` solto (`PlaceId == 0`), e não aceita
-	     nenhum vindo do cliente. Em vez de engolir a chamada, ela vira um `print`
-	     com o número e o nome do passo: é assim que o roteiro inteiro se confere
-	     no Studio, onde o painel não existe.
-	  2. **`pcall` em toda chamada da engine**, como o `TeleportAsync` do
-	     `TutorialService` já faz. Telemetria que derruba o passo do tutorial é
-	     pior que telemetria nenhuma.
-	  3. **Repetição.** A Roblox já conta só a primeira vez de cada passo por
-	     usuário; a guarda em memória evita a chamada e, principalmente, deixa o
-	     output honesto — passo impresso duas vezes no Studio seria um bug para
-	     caçar que não existe.
+	  1. **Studio and unpublished places.** Roblox does not accept analytics events
+	     from Studio or from a loose `.rbxl` (`PlaceId == 0`), and accepts none from
+	     the client. Instead of swallowing the call, it becomes a Studio-only debug
+	     log with the step number and name: that is how the whole script is checked
+	     in Studio, where the dashboard does not exist.
+	  2. **`pcall` on every engine call**, as `TutorialService`'s `TeleportAsync`
+	     already does. Telemetry that breaks a tutorial step is worse than no
+	     telemetry.
+	  3. **Repetition.** Roblox already counts only the first time of each step per
+	     user; the in-memory guard avoids the call and, above all, keeps the output
+	     honest: a step logged twice in Studio would be a bug to hunt that does not
+	     exist.
 
-	O `AnalyticsService` do `Framework:Get` é **este** módulo; a da Roblox é a
-	`Analytics` do topo do arquivo, e é ela quem tem os `Log...`.
+	The `AnalyticsService` from `Framework:Get` is **this** module; Roblox's is the
+	`Analytics` at the top of the file, and it is the one with the `Log...` methods.
+
+	See docs/common/tutorial.md.
 ]]
 
 local AnalyticsService = {}
 
--- [UserId] = { [nome do passo] = true }. Só o que este servidor já mandou.
+-- [UserId] = { [step name] = true }. Only what this server already sent.
 AnalyticsService.Sent = {}
 
 --[[ INTERNAL ]]
 
 --[=[
-	Esta place manda evento de verdade?
+	Does this place send real events?
 
-	`PlaceId == 0` é o arquivo que nunca foi publicado — a Roblox não teria onde
-	pendurar o dado.
+	`PlaceId == 0` is a file that was never published: Roblox would have nowhere to
+	attach the data.
 ]=]
 function AnalyticsService:enabled() : boolean
 	return not RunService:IsStudio() and game.PlaceId ~= 0
 end
 
 --[=[
-	O número do passo, pela ordem da lista.
+	The step number, by list order.
 ]=]
 function AnalyticsService:stepNumber(stepName : string) : number?
 	for index, name in Config.Funnel.Onboarding do
@@ -66,8 +71,8 @@ function AnalyticsService:stepNumber(stepName : string) : number?
 end
 
 --[=[
-	As três chaves que a Roblox aceita em `customFields`, na ordem em que os campos
-	chegam. Mais de três é descartado — o quarto não existe na API.
+	The three keys Roblox accepts in `customFields`, in the order the fields arrive.
+	More than three are dropped: a fourth does not exist in the API.
 ]=]
 local FIELD_KEYS = {
 	Enum.AnalyticsCustomFieldKeys.CustomField01,
@@ -95,19 +100,19 @@ end
 --[[ API ]]
 
 --[=[
-	Um passo do funil de onboarding, pelo nome que ele tem em
+	An onboarding funnel step, by its name in
 	`ServerConfig.Analytics.Funnel.Onboarding`.
 
-	Nome fora da lista não vira passo nenhum: avisa no output e para por aí. Mandar
-	um número inventado seria pior — o painel passaria a ter um passo que ninguém
-	sabe de onde veio.
+	A name not in the list becomes no step at all: it warns in the output and stops
+	there. Sending a made-up number would be worse: the dashboard would gain a step
+	nobody knows the origin of.
 ]=]
 function AnalyticsService:LogFunnelStep(player : Player, stepName : string)
 	if typeof(player) ~= "Instance" or not player:IsA("Player") then return end
 
 	local step = self:stepNumber(stepName)
 	if not step then
-		warn(`[AnalyticsService]: o passo "{stepName}" nao esta em Config.Analytics.Funnel.Onboarding; nada foi registrado.`)
+		log:StudioWarn(`step "{stepName}" is not in Config.Analytics.Funnel.Onboarding; nothing was logged.`)
 
 		return
 	end
@@ -122,7 +127,7 @@ function AnalyticsService:LogFunnelStep(player : Player, stepName : string)
 	sent[stepName] = true
 
 	if not self:enabled() then
-		print(`[AnalyticsService]: (studio) passo {step} "{stepName}" de {player.Name}.`)
+		log:Debug(`(studio) step {step} "{stepName}" for {player.Name}.`)
 
 		return
 	end
@@ -132,19 +137,19 @@ function AnalyticsService:LogFunnelStep(player : Player, stepName : string)
 	end)
 
 	if not success then
-		warn(`[AnalyticsService]: o passo {step} "{stepName}" de {player.Name} nao foi: {err}`)
+		log:Warn(`step {step} "{stepName}" for {player.Name} failed: {err}`)
 
 		return
 	end
 
-	print(`[AnalyticsService]: passo {step} "{stepName}" de {player.Name}.`)
+	log:Debug(`step {step} "{stepName}" for {player.Name}.`)
 end
 
 --[=[
-	Um evento avulso — o que o funil não sabe dizer.
+	A standalone event: what the funnel cannot say.
 
-	`value` é o número que a Roblox soma (o padrão dela é 1), e `fields` é uma
-	lista de até três textos, que entram nos `CustomField01..03`.
+	`value` is the number Roblox sums (its default is 1), and `fields` is a list of up
+	to three strings, which go into `CustomField01..03`.
 ]=]
 function AnalyticsService:LogEvent(player : Player, eventName : string, value : number?, fields : { string }?)
 	if typeof(player) ~= "Instance" or not player:IsA("Player") then return end
@@ -153,7 +158,7 @@ function AnalyticsService:LogEvent(player : Player, eventName : string, value : 
 	local custom = self:fields(fields)
 
 	if not self:enabled() then
-		print(`[AnalyticsService]: (studio) evento "{eventName}" = {amount} de {player.Name}.`)
+		log:Debug(`(studio) event "{eventName}" = {amount} for {player.Name}.`)
 
 		return
 	end
@@ -163,19 +168,19 @@ function AnalyticsService:LogEvent(player : Player, eventName : string, value : 
 	end)
 
 	if not success then
-		warn(`[AnalyticsService]: o evento "{eventName}" de {player.Name} nao foi: {err}`)
+		log:Warn(`event "{eventName}" for {player.Name} failed: {err}`)
 
 		return
 	end
 
-	print(`[AnalyticsService]: evento "{eventName}" = {amount} de {player.Name}.`)
+	log:Debug(`event "{eventName}" = {amount} for {player.Name}.`)
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function AnalyticsService:construct()
-	-- O que já foi mandado só interessa enquanto o jogador está na sala: quem sai e
-	-- volta cai noutro servidor, e a Roblox é quem sabe o que ele já fez.
+	-- What was already sent only matters while the player is in the room: a player who
+	-- leaves and returns lands on another server, and Roblox knows what they already did.
 	Players.PlayerRemoving:Connect(function(player : Player)
 		self.Sent[player.UserId] = nil
 	end)

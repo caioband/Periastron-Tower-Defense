@@ -8,17 +8,19 @@ local Me = require(Vendor.Me)
 local Framework = Me.new()
 
 --[[
-	O lado servidor da seta de indicação.
+	The server side of the guidance arrow.
 
-	A seta é toda do cliente (`ArrowController`): ela é enfeite, e enfeite que o
-	servidor replicasse custaria rede a cada giro. O que atravessa é só a posição —
-	um `Vector3`, que o Warp serializa —, e cada cliente monta a sua.
+	The arrow is all client (`ArrowController`): it is decoration, and decoration the
+	server replicated would cost network on every spin. Only the position crosses (a
+	`Vector3`, which Warp serializes), and each client builds its own.
 
-	Serve para o que o servidor sabe e o cliente não: onde está o mob que o tutorial
-	quer apontar, qual tile a partida mandou destacar. O comando `arrow` do Cmdr
-	entra pelo mesmo caminho.
+	It serves what the server knows and the client does not: where the enemy the
+	tutorial wants to point at is, which tile the match wants highlighted. The Cmdr
+	`arrow` command goes through the same path.
 
-	Fica em `common/` porque o modelo existe nas duas places.
+	It lives in `common/` because the model exists in both places.
+
+	See docs/common/ui-guidance.md.
 ]]
 
 local ArrowService = {
@@ -36,8 +38,8 @@ export type PointOptions = {
 }
 
 --[=[
-	Aponta uma posição para cada jogador da lista. Uma seta por jogador: mandar de
-	novo troca de lugar em vez de somar setas na tela.
+	Points at a position for each player in the list. One arrow per player: sending
+	again moves it instead of adding arrows on screen.
 ]=]
 function ArrowService:Point(players : { Player }, position : Vector3, options : PointOptions?)
 	for _, player in players do
@@ -46,8 +48,8 @@ function ArrowService:Point(players : { Player }, position : Vector3, options : 
 end
 
 --[=[
-	Apaga a seta. É o mesmo evento sem posição — o cliente entende a ausência como
-	"apague", e assim não existe um segundo identificador para declarar e manter.
+	Clears the arrow. It is the same event without a position: the client reads the
+	absence as "clear", so there is no second identifier to declare and maintain.
 ]=]
 function ArrowService:Clear(players : { Player })
 	for _, player in players do
@@ -55,12 +57,12 @@ function ArrowService:Clear(players : { Player })
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function ArrowService:construct()
-	-- O identificador do evento nasce no servidor: sem este `Listen` vazio, o
-	-- `Listen` do cliente ficaria dez segundos esperando um evento que ninguém
-	-- registrou — e levaria junto o resto do `construct` dele.
+	-- The event identifier is created on the server: without this empty `Listen`,
+	-- the client's `Listen` would wait ten seconds for an event nobody registered,
+	-- and take the rest of its `construct` down with it.
 	Framework:Listen("ArrowPoint", function() end)
 end
 

@@ -9,16 +9,18 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
 --[[
-	Os mapas vivem em ServerStorage, nao em ReplicatedStorage.
+	Maps live in ServerStorage, not ReplicatedStorage.
 
-	Isso muda uma coisa importante para quem for mexer aqui: o cliente nao ve mapa
-	nenhum, so o clone que este service coloca em `workspace.Map`. Entao
-	`CollectionService:GetTagged("Grid")` no cliente devolve exatamente as parts do
-	mapa em jogo — nao mais as dos seis mapas somadas.
+	That changes one important thing for anyone working here: the client sees no map
+	at all, only the clone this service puts in `workspace.Map`. So
+	`CollectionService:GetTagged("Grid")` on the client returns exactly the parts of the
+	map in play, not every map's parts combined.
+
+	See docs/game/maps.md.
 ]]
 local Maps = ServerStorage:WaitForChild("Maps")
 
--- Atributo da pasta `Maps` que forca o mapa num play do Studio. Ver `getStudioMap`.
+-- An attribute on the `Maps` folder that forces the map in a Studio play. See `getStudioMap`.
 local STUDIO_MAP_ATTRIBUTE = "StudioMap"
 
 local Configs = Shared:WaitForChild("Config")
@@ -36,8 +38,10 @@ local Maid = require(Vendor.Maid)
 local Promise = require(Packages.Promise)
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("MapService")
 
 local LightingConfig = SharedConfig.LightingConfig
 local WeatherConfig = SharedConfig.WeatherConfig
@@ -51,11 +55,11 @@ local ExampleService = {
 }
 
 --[=[
-	Espera um service aparecer no loader, com limite.
+	Waits for a service to appear in the loader, with a limit.
 
-	`Framework:Get` com yield esperaria para sempre se o service nao existisse, e um
-	`init` travado em silencio seria pior do que carregar o mapa sem iluminacao. O
-	`Me:Load` fecha em muito menos que isto.
+	A yielding `Framework:Get` would wait forever if the service did not exist, and an
+	`init` silently stuck would be worse than loading the map without lighting.
+	`Me:Load` finishes in much less than this.
 ]=]
 local function waitForService(name : string, timeout : number?)
 	local deadline = os.clock() + (timeout or 5)
@@ -72,10 +76,9 @@ local function waitForService(name : string, timeout : number?)
 end
 
 --[=[
-	Um mapa qualquer entre os que o MapConfig oferece e que existem de fato na
-	pasta. O config manda porque ele e a unica coisa que o Lobby consegue ler
-	sobre mapas — sortear algo fora dele daria um mapa que o portal nao sabe
-	mostrar.
+	Any map among those MapConfig offers that actually exists in the folder. The config
+	rules because it is the only thing the Lobby can read about maps: drawing something
+	outside it would give a map the portal does not know how to show.
 ]=]
 function ExampleService:pickRandomMap() : string?
 	local candidates = {}
@@ -85,10 +88,10 @@ function ExampleService:pickRandomMap() : string?
 		end
 	end
 
-	-- Config vazio ou defasado: melhor cair para o que existe na pasta do que
-	-- nao carregar mapa nenhum.
+	-- Empty or stale config: better to fall back to what exists in the folder than
+	-- to load no map at all.
 	if #candidates == 0 then
-		warn("[MapService]: nenhum mapa do MapConfig existe em ServerStorage.Maps; sorteando direto da pasta.")
+		log:Warn("no MapConfig map exists in ServerStorage.Maps; picking straight from the folder.")
 		for _, folder in Maps:GetChildren() do
 			table.insert(candidates, folder.Name)
 		end
@@ -102,23 +105,23 @@ function ExampleService:pickRandomMap() : string?
 end
 
 --[=[
-	O mapa que o grupo escolheu no Lobby, se veio.
+	The map the group chose in the Lobby, if it came.
 
-	O `PortalService` de la embarca `{ Map = ... }` no TeleportData de uma unica
-	chamada de TeleportAsync para o grupo inteiro, entao qualquer jogador do
-	servidor carrega a mesma escolha. `resolveMap` valida contra o MapConfig e
-	normaliza a caixa; nome desconhecido volta nil e cai no sorteio.
+	The Lobby's `PortalService` attaches `{ Map = ... }` to the TeleportData of a single
+	TeleportAsync call for the whole group, so any player on the server carries the
+	same choice. `resolveMap` validates against MapConfig and normalizes the case; an
+	unknown name returns nil and falls back to the random draw.
 ]=]
 --[=[
-	O nome de mapa que este servidor aceita carregar.
+	The map name this server accepts loading.
 
-	É o `MapConfig.resolveMap` **mais** o mapa do tutorial, que fica de fora do
-	`MapConfig` de propósito: estando lá, ele entraria no sorteio de fim de partida e
-	na tela de escolha do lobby, e ninguém quer cair no mapa de tutorial por acaso.
+	It is `MapConfig.resolveMap` **plus** the tutorial map, which stays out of
+	`MapConfig` on purpose: there, it would enter the end-of-match draw and the Lobby's
+	choice screen, and nobody wants to land on the tutorial map by chance.
 
-	Sem isto, tanto o atributo `StudioMap = "Tutorial"` quanto o TeleportData do
-	Lobby eram recusados como "nome desconhecido" e o servidor sorteava outro mapa —
-	com o tutorial rodando por cima de um mapa que não tem os `PlacementPoints` dele.
+	Without this, both the `StudioMap = "Tutorial"` attribute and the Lobby's
+	TeleportData would be refused as an "unknown name" and the server would draw
+	another map, with the tutorial running on a map that lacks its `PlacementPoints`.
 ]=]
 function ExampleService:resolveMapName(mapName : string?) : string?
 	local tutorialMap = TutorialConfig.Match.Map
@@ -146,7 +149,7 @@ function ExampleService:getTeleportedMap(player : Player) : string?
 
 	local resolved = self:resolveMapName(teleportData.Map)
 	if resolved and not Maps:FindFirstChild(resolved) then
-		warn(string.format("[MapService]: o Lobby pediu '%s', que o MapConfig conhece mas nao existe em ServerStorage.Maps.", resolved))
+		log:Warn(string.format("the Lobby asked for '%s', which MapConfig knows but does not exist in ServerStorage.Maps.", resolved))
 		return nil
 	end
 
@@ -154,12 +157,13 @@ function ExampleService:getTeleportedMap(player : Player) : string?
 end
 
 --[=[
-	O mapa pedido pelo atributo `StudioMap` da pasta `ServerStorage.Maps`, para
-	testar um mapa especifico no Studio sem depender do sorteio.
+	The map requested by the `StudioMap` attribute on the `ServerStorage.Maps` folder,
+	to test a specific map in Studio without depending on the draw.
 
-	So o `resolveStartingMap` le isto, e so no Studio: o servidor de verdade continua
-	obedecendo o Lobby. Passa pela mesma validacao do TeleportData -- nome fora do
-	MapConfig ou sem pasta avisa e cai no sorteio, em vez de subir sem mapa.
+	Only `resolveStartingMap` reads this, and only in Studio: the real server still
+	obeys the Lobby. It goes through the same validation as TeleportData: a name
+	outside MapConfig or without a folder warns and falls back to the draw, instead of
+	starting with no map.
 ]=]
 function ExampleService:getStudioMap() : string?
 	local requested = Maps:GetAttribute(STUDIO_MAP_ATTRIBUTE)
@@ -169,7 +173,7 @@ function ExampleService:getStudioMap() : string?
 
 	local resolved = self:resolveMapName(requested)
 	if not resolved or not Maps:FindFirstChild(resolved) then
-		warn(string.format("[MapService]: o atributo %s pede '%s', que nao esta no MapConfig ou nao existe em ServerStorage.Maps; sorteando.",
+		log:StudioWarn(string.format("the %s attribute asks for '%s', which is not in MapConfig or does not exist in ServerStorage.Maps; picking at random.",
 			STUDIO_MAP_ATTRIBUTE, requested))
 		return nil
 	end
@@ -178,15 +182,15 @@ function ExampleService:getStudioMap() : string?
 end
 
 --[=[
-	Decide qual mapa carregar.
+	Decides which map to load.
 
-	No Studio nao existe TeleportData, entao vale o `StudioMap` (ver
-	`getStudioMap`) e, sem ele, sorteia e segue — sem aviso, para nao poluir o
-	output em todo teste. Em servidor de verdade o esperado e vir do Lobby; nao
-	vindo, avisa e sorteia.
+	Studio has no TeleportData, so `StudioMap` applies (see `getStudioMap`) and, without
+	it, it draws and moves on, with no warning, so every test's output stays clean. On a
+	real server the map is expected to come from the Lobby; if it does not, it warns and
+	draws.
 
-	Yield: em servidor precisa de um jogador para ler o JoinData, e o primeiro so
-	chega depois do boot.
+	Yields: on a server it needs a player to read JoinData, and the first only arrives
+	after boot.
 ]=]
 function ExampleService:resolveStartingMap() : string?
 	if RunService:IsStudio() then
@@ -200,14 +204,14 @@ function ExampleService:resolveStartingMap() : string?
 		return mapName
 	end
 
-	warn("[MapService]: servidor sem TeleportData de mapa valido; sorteando.")
+	log:Warn("server has no valid map in TeleportData; picking at random.")
 	return self:pickRandomMap()
 end
 
 --[=[
-	A primeira `SpawnLocation` da pasta do mapa: a que se chama `SpawnLocation` na
-	raiz (a que o `LoadMap` clona) e, sem ela, a primeira que houver em qualquer
-	nível da pasta.
+	The map folder's first `SpawnLocation`: the one named `SpawnLocation` at the root
+	(the one `LoadMap` clones) and, without it, the first one at any level of the
+	folder.
 ]=]
 local function findMapSpawn(MapInstance : Instance) : SpawnLocation?
 	local direct = MapInstance:FindFirstChild("SpawnLocation")
@@ -219,22 +223,22 @@ local function findMapSpawn(MapInstance : Instance) : SpawnLocation?
 end
 
 --[=[
-	Guarda onde o personagem deve aparecer no mapa que acabou de carregar e leva
-	para lá quem já estiver em jogo.
+	Stores where the character should appear on the map that just loaded and moves
+	anyone already in play there.
 
-	A `SpawnLocation` clonada já resolve o caso comum; isto é a rede embaixo dela.
-	A Roblox sorteia entre **todas** as SpawnLocations ligadas do Workspace, e uma
-	esquecida na place (ou um personagem que nasceu antes de o mapa existir) põe o
-	jogador fora do mapa.
+	The cloned `SpawnLocation` already handles the common case; this is the safety net
+	under it. Roblox picks among **all** enabled SpawnLocations in the Workspace, and
+	one forgotten in the place (or a character spawned before the map existed) puts the
+	player off the map.
 
-	Só a posição vem da SpawnLocation; a rotação fica só com o giro no plano, para
-	uma spawn inclinada não nascer o personagem torto.
+	Only the position comes from the SpawnLocation; rotation keeps only the yaw, so a
+	tilted spawn does not spawn the character crooked.
 ]=]
 function ExampleService:setSpawnFallback(MapInstance : Instance)
 	local spawn = findMapSpawn(MapInstance)
 	if not spawn then
 		self.SpawnCFrame = nil
-		warn(string.format("[MapService]: o mapa '%s' nao tem SpawnLocation; sem fallback de spawn.", MapInstance.Name))
+		log:StudioWarn(string.format("map '%s' has no SpawnLocation; no spawn fallback.", MapInstance.Name))
 		return
 	end
 
@@ -254,10 +258,10 @@ function ExampleService:setSpawnFallback(MapInstance : Instance)
 end
 
 --[=[
-	Leva o personagem para o `SpawnCFrame` se ele estiver fora do raio do spawn.
+	Moves the character to `SpawnCFrame` if it is outside the spawn radius.
 
-	Espera o `HumanoidRootPart` e um `Heartbeat`: o `CharacterAdded` pode chegar
-	antes de a Roblox posicionar o personagem, e mover antes disso seria desfeito.
+	Waits for `HumanoidRootPart` and one `Heartbeat`: `CharacterAdded` may arrive
+	before Roblox positions the character, and moving before that would be undone.
 ]=]
 function ExampleService:ensureAtSpawn(character : Model)
 	local root = character:WaitForChild("HumanoidRootPart", 10)
@@ -282,11 +286,11 @@ function ExampleService:ensureAtSpawn(character : Model)
 end
 
 --[=[
-	Liga o `ensureAtSpawn` em todo personagem que nascer, respawn incluído.
+	Hooks `ensureAtSpawn` up to every character that spawns, respawns included.
 
-	Ligado no `init` antes de decidir o mapa: sem mapa ainda, o `SpawnCFrame` é nil
-	e o `ensureAtSpawn` não faz nada; quem nasceu nessa janela é pego pelo
-	`setSpawnFallback` quando o mapa chegar.
+	Connected in `init` before deciding the map: with no map yet, `SpawnCFrame` is nil
+	and `ensureAtSpawn` does nothing; anyone who spawned in that window is caught by
+	`setSpawnFallback` when the map arrives.
 ]=]
 function ExampleService:watchSpawns()
 	local function watch(player : Player)
@@ -314,12 +318,11 @@ function ExampleService:LoadMap(Name : string)
 		Clone.Parent = workspace
 
 		--[=[
-			A BoundingBox e irma do Content na pasta do mapa, mas quem a consome e o
-			WeatherService, que so enxerga o Workspace — entao ela entra junto do mapa.
+			The BoundingBox is a sibling of Content in the map folder, but its consumer
+			is WeatherService, which only sees the Workspace, so it comes in with the map.
 
-			Inerte de proposito: `CanQuery` desligado tira ela do raycast dos passos e
-			da validacao de posicionamento de unidade, que varrem o que esta em cima do
-			mapa.
+			Inert on purpose: `CanQuery` off takes it out of the footstep raycast and unit
+			placement validation, which sweep what is on top of the map.
 		]=]
 		local Bounds = MapInstance:FindFirstChild(WeatherConfig.BoundsPartName)
 		if Bounds and Bounds:IsA("BasePart") then
@@ -331,32 +334,32 @@ function ExampleService:LoadMap(Name : string)
 			BoundsClone.Transparency = 1
 			BoundsClone.Parent = Clone
 		else
-			warn(string.format("[MapService]: o mapa '%s' nao tem a Part '%s'; o clima vai cair para a caixa calculada.",
+			log:StudioWarn(string.format("map '%s' has no '%s' Part; weather falls back to the computed box.",
 				Name, WeatherConfig.BoundsPartName))
 		end
 
 		--[=[
-			A BaseHP e irma do Content como a BoundingBox, e entra junto do mapa pelo
-			mesmo motivo: o billboard dela e o unico lugar onde o jogador ve a vida da
-			base, e do mapa o cliente so enxerga o que esta em `workspace.Map`.
+			BaseHP is a sibling of Content like the BoundingBox, and comes in with the map
+			for the same reason: its billboard is the only place the player sees the base
+			health, and of the map the client only sees what is in `workspace.Map`.
 
-			O clone e forcado a ancorado e inerte -- Part solta cairia do mundo levando
-			o billboard junto, e `CanQuery` ligado a poria no raycast que valida o
-			posicionamento de unidade, que varre justamente o que esta em cima do mapa.
-			A aparencia fica a que veio autorada. Quem escreve o numero e o
-			`BaseHealthController`, no cliente.
+			The clone is forced anchored and inert: a loose Part would fall out of the
+			world taking the billboard with it, and `CanQuery` on would put it in the
+			raycast that validates unit placement, which sweeps exactly what is on top of
+			the map. The appearance stays as authored. `BaseHealthController`, on the
+			client, writes the number.
 		]=]
 		--[=[
-			Os `PlacementPoints` são irmãos do Content, como a BoundingBox e a BaseHP, e
-			entram junto pelo mesmo motivo: quem os consome (o roteiro do tutorial, para
-			saber onde a unidade tem de entrar, e a seta que aponta o lugar) só enxerga
-			o que está em `workspace.Map`.
+			`PlacementPoints` are siblings of Content, like the BoundingBox and BaseHP, and
+			come in for the same reason: their consumers (the tutorial script, to know
+			where the unit must go, and the arrow that points at the spot) only see what is
+			in `workspace.Map`.
 
-			As parts entram inertes. Elas são marcas de chão, não cenário: colidir
-			empurraria o jogador, e `CanQuery` ligado as poria no raycast que valida o
-			posicionamento — a marca do lugar recusaria a unidade que ela mesma pede.
+			The parts come in inert. They are ground marks, not scenery: colliding would
+			push the player, and `CanQuery` on would put them in the placement validation
+			raycast: the spot's mark would refuse the very unit it asks for.
 
-			Mapa sem a pasta não avisa nada: só o do tutorial a tem.
+			A map without the folder warns about nothing: only the tutorial's has it.
 		]=]
 		local Points = MapInstance:FindFirstChild("PlacementPoints")
 		if Points then
@@ -383,7 +386,7 @@ function ExampleService:LoadMap(Name : string)
 			BaseHPClone.CanTouch = false
 			BaseHPClone.Parent = Clone
 		else
-			warn(string.format("[MapService]: o mapa '%s' nao tem a Part '%s'; a vida da base nao vai aparecer em lugar nenhum.",
+			log:StudioWarn(string.format("map '%s' has no '%s' Part; the base health will not show anywhere.",
 				Name, MapConfig.BASE_HEALTH_PART))
 		end
 	end
@@ -404,9 +407,9 @@ function ExampleService:LoadMap(Name : string)
 		for _, Node : Instance in Nodes:GetChildren() do
 			local Clone = Node:Clone()
 
-			-- Um node pode ser uma Part (um ponto) ou um Folder com um trecho
-			-- inteiro dentro, quando o mapa tem bifurcacao. Folder nao tem
-			-- Transparency, entao a propriedade e aplicada nas BaseParts.
+			-- A node can be a Part (a point) or a Folder with a whole segment inside,
+			-- when the map has a fork. A Folder has no Transparency, so the property is
+			-- applied to the BaseParts.
 			if Clone:IsA("BasePart") then
 				Clone.Transparency = transparency
 			end
@@ -419,38 +422,39 @@ function ExampleService:LoadMap(Name : string)
 			Clone.Parent = workspace.PathScriptable.Nodes
 		end
 
-		-- O cliente monta as rotas a partir destes nodes replicados e precisa
-		-- saber quando parou de faltar peca. Ver `PathUtil.WaitForNodes`.
+		-- The client builds the routes from these replicated nodes and needs to know
+		-- when pieces stopped missing. See `PathUtil.WaitForNodes`.
 		PathUtil.PublishNodeCounts(workspace.PathScriptable.Nodes)
 	end
 
 	--[=[
-		A iluminacao do mapa passa pelo LightingService.
+		The map's lighting goes through LightingService.
 
-		`Register` clona a pasta para `Assets.Lighting` antes de aplicar, e esse clone
-		e o que faz a transicao existir: os mapas moram em ServerStorage, que nao
-		replica, entao sem ele o cliente nao teria de onde ler os valores de destino.
+		`Register` clones the folder into `Assets.Lighting` before applying, and that
+		clone is what makes the transition possible: maps live in ServerStorage, which
+		does not replicate, so without it the client would have nowhere to read the
+		target values from.
 
-		Mapa sem a pasta fica com a iluminacao autorada na place — o `Snowy` e assim
-		hoje, e continua sendo.
+		A map without the folder keeps the lighting authored in the place: `Snowy` is
+		like that today.
 	]=]
 	local MapLighting = MapInstance:FindFirstChild("Lighting")
 	if not MapLighting then
-		-- Dito em voz alta porque e indistinguivel de "o service falhou" no console.
-		warn(string.format("[MapService]: o mapa '%s' nao tem pasta Lighting; a iluminacao fica a que estava.", Name))
+		-- Said out loud because in the console it is indistinguishable from "the service failed".
+		log:StudioWarn(string.format("map '%s' has no Lighting folder; the lighting stays as it was.", Name))
 		return
 	end
 
 	local LightingService = self.Services.LightingService
 	if not LightingService or not LightingService.Register then
-		warn("[MapService]: LightingService indisponivel; a iluminacao do mapa nao foi aplicada.")
+		log:Warn("LightingService unavailable; the map lighting was not applied.")
 		return
 	end
 
 	local presetName = LightingConfig.MapPrefix .. Name
 
-	-- `registerMapLighting` normalmente ja registrou todo mundo no init; isto cobre
-	-- um LoadMap de um mapa que apareceu depois.
+	-- `registerMapLighting` normally already registered everyone in init; this covers
+	-- a LoadMap of a map that showed up later.
 	if not LightingService:GetPreset(presetName) then
 		presetName = LightingService:Register(MapLighting, presetName) or presetName
 	end
@@ -459,16 +463,15 @@ function ExampleService:LoadMap(Name : string)
 end
 
 --[=[
-	Registra a pasta `Lighting` de TODOS os mapas como preset, nao so a do mapa
-	carregado.
+	Registers EVERY map's `Lighting` folder as a preset, not only the loaded map's.
 
-	Os mapas vivem em ServerStorage e nao replicam; o `Register` clona cada pasta
-	para `Assets.Lighting`, que e o que faz o cliente enxergar todas. Sem isto o
-	comando `lighting` so conseguiria oferecer a do mapa em jogo — e trocar de
-	iluminacao para testar exige justamente as outras.
+	Maps live in ServerStorage and do not replicate; `Register` clones each folder into
+	`Assets.Lighting`, which is what lets the client see all of them. Without this the
+	`lighting` command could only offer the one for the map in play, and switching
+	lighting to test needs exactly the others.
 
-	Sao seis instancias pequenas por mapa; o custo de replicar todas e irrelevante
-	perto de poder comparar uma com a outra em jogo.
+	It is six small instances per map; the cost of replicating all of them is
+	irrelevant next to being able to compare one with another in play.
 ]=]
 function ExampleService:registerMapLighting() : number
 	local LightingService = self.Services.LightingService
@@ -492,7 +495,7 @@ function ExampleService:registerMapLighting() : number
 	end
 
 	if #missing > 0 then
-		warn(string.format("[MapService]: sem pasta Lighting, ficaram de fora dos presets: %s.", table.concat(missing, ", ")))
+		log:StudioWarn(string.format("left out of the presets for having no Lighting folder: %s.", table.concat(missing, ", ")))
 	end
 
 	return registered
@@ -501,9 +504,9 @@ end
 function ExampleService:construct()
 	Framework:Listen("RequestMapMusic", function(player : Player)
 	--	if not self.CurrentMapName then return end
-		-- O nome da faixa, e nao o do mapa: quem procura o Sound do outro lado
-		-- procura por nome exato, e nem toda faixa se chama como a pasta do mapa
-		-- (ver `MapConfig.getMusic`).
+		-- The track's name, not the map's: the other side looks for the Sound by exact
+		-- name, and not every track is named after the map folder
+		-- (see `MapConfig.getMusic`).
 		Framework:Fire("PlayMapMusic", player, MapConfig.getMusic(self.CurrentMapName))
 	end)
 
@@ -511,22 +514,23 @@ function ExampleService:construct()
 end
 
 --[=[
-	O mapa deste servidor entra no Index de quem esta jogando.
+	This server's map enters the Index of everyone playing.
 
-	"Jogou pela primeira vez" e aqui: o servidor da partida e reservado e ja nasce
-	sabendo o mapa (`resolveStartingMap`), entao estar dentro dele **e** jogar --
-	nao ha o que esperar de round, e quem sai na primeira wave tambem jogou.
+	"Played for the first time" is here: the match server is reserved and starts
+	already knowing the map (`resolveStartingMap`), so being in it **is** playing:
+	there is no round to wait for, and someone who leaves on the first wave also
+	played.
 
-	Preso no `PlayerDataLoaded` e nao no `PlayerAdded` porque o Index e escrita de
-	perfil: sem perfil aberto nao ha onde gravar. Os dois lados sao cobertos --
-	quem entra depois pelo sinal, quem ja estava dentro pela varredura.
+	Hooked to `PlayerDataLoaded` and not `PlayerAdded` because the Index is a profile
+	write: with no open profile there is nowhere to save. Both sides are covered:
+	players joining later through the signal, players already in through the sweep.
 ]=]
 function ExampleService:watchIndex()
 	local dataService = self.Services.DataService
 	local indexService = self.Services.IndexService
 
 	if not dataService or not indexService then
-		warn("[MapService]: sem DataService/IndexService; o mapa nao entra no Index.")
+		log:Warn("no DataService/IndexService; the map does not enter the Index.")
 		return
 	end
 
@@ -558,42 +562,41 @@ function ExampleService:init()
 	Framework:Listen("PlayMapMusic", function() end)
 
 	--[[
-		O LightingService entra aqui, antes de decidir o mapa, de proposito: esta e a
-		ultima hora em que ceder a thread nao custa nada. Depois que o mapa foi
-		decidido o LoadMap corre dentro do PlayerAdded e nao pode mais parar (ver
-		abaixo), e o `start`, que resolveria as dependencias normalmente, roda depois
-		deste `init`.
+		LightingService comes in here, before deciding the map, on purpose: this is the
+		last moment when yielding the thread costs nothing. Once the map is decided,
+		LoadMap runs inside PlayerAdded and can no longer stop (see below), and `start`,
+		which would normally resolve dependencies, runs after this `init`.
 	]]
 	self.Services.LightingService = waitForService("LightingService")
 	if not self.Services.LightingService then
-		warn("[MapService]: LightingService nao carregou; o mapa vai entrar sem trocar a iluminacao.")
+		log:Warn("LightingService did not load; the map will load without changing the lighting.")
 	else
-		-- Todos os mapas viram preset, nao so o que vai ser carregado: e o que
-		-- permite o comando `lighting` trocar entre as iluminacoes para comparar.
+		-- Every map becomes a preset, not only the one to be loaded: that is what lets the
+		-- `lighting` command switch between lightings to compare.
 		local registered = self:registerMapLighting()
-		print(string.format("[MapService]: %d iluminacao(oes) de mapa registrada(s) em Assets.Lighting.", registered))
+		log:Debug(string.format("%d map lighting(s) registered in Assets.Lighting.", registered))
 	end
 
 	--[[
-		Carregado assim que houver como decidir, e nao num nome fixo.
+		Loaded as soon as there is a way to decide, not under a fixed name.
 
-		Em servidor isso espera o primeiro jogador (e de onde vem o JoinData). Nada
-		que dependa do mapa corre antes: o `MobService:getRoutes()` so monta o
-		caminho na primeira wave, e o `WaveService` nem comeca o round enquanto nao
-		houver jogador pronto. A `SpawnLocation` tambem chega a tempo — o LoadMap
-		nao tem yield nenhum, entao termina dentro do proprio PlayerAdded, antes de
-		o personagem nascer.
+		On a server this waits for the first player (that is where JoinData comes
+		from). Nothing that depends on the map runs before: `MobService:getRoutes()` only
+		builds the path on the first wave, and `WaveService` does not even start the
+		round until a player is ready. The `SpawnLocation` also arrives in time: LoadMap
+		does not yield at all, so it finishes inside PlayerAdded itself, before the
+		character spawns.
 	]]
 	self:watchSpawns()
 
 	local mapName = self:resolveStartingMap()
 	if not mapName then
-		warn("[MapService]: nenhum mapa disponivel para carregar.")
+		log:Warn("no map available to load.")
 		return
 	end
 
 	self:LoadMap(mapName)
-	print(string.format("[MapService]: mapa carregado: %s", mapName))
+	log:Debug(string.format("map loaded: %s", mapName))
 end
 
 return ExampleService

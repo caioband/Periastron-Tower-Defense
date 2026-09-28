@@ -2,42 +2,39 @@ local UnitStats = require(script.Parent.UnitStats)
 local WeatherConfig = require(script.Parent.WeatherConfig)
 
 --[[
-	Como cada unidade cresce de nivel em nivel.
+	How each unit grows from level to level.
 
-	O caminho normal e a formula: `BaseCost * CostMultiplier ^ nivel` para o preco,
-	`Damage * DamageMultiplier ^ nivel` para o dano, `Cooldown * CooldownMultiplier ^
-	nivel` para a cadencia. E o que a `Default` faz, e e o que a maioria das unidades
-	usa -- uma progressao geometrica cabe em tres numeros e nao tem como ficar
-	dessincronizada de si mesma.
+	The normal path is the formula: `BaseCost * CostMultiplier ^ level` for price,
+	`Damage * DamageMultiplier ^ level` for damage, `Cooldown * CooldownMultiplier ^
+	level` for attack speed. That is what `Default` does and what most units use: a
+	geometric progression fits in three numbers and cannot fall out of sync with
+	itself.
 
-	Algumas unidades, porem, tem escadas **desenhadas na mao**, e progressao
-	geometrica nenhuma passa por todos os degraus delas. Para essas ha dois campos
-	opcionais:
+	Some units, though, have ladders **designed by hand**, and no geometric
+	progression passes through all their steps. Those get optional fields:
 
-	| Campo | O que e |
+	| Field | What it is |
 	| --- | --- |
-	| `Costs` | o preco de cada upgrade, um por nivel comprado (indice = nivel atual + 1). Manda no `BaseCost`/`CostMultiplier` |
-	| `Damages` | o dano de cada nivel (indice = nivel + 1), do 0 ao maximo. Manda no `DamageMultiplier`, e o item 1 tem que ser o `Damage` do `UnitStats` |
-	| `Cooldowns` | o cooldown de cada nivel (indice = nivel + 1), do 0 ao maximo. Manda no `CooldownMultiplier`, e o item 1 tem que ser o `Cooldown` do `UnitStats` |
-	| `Incomes` | a renda por wave de uma farm em cada nivel (indice = nivel + 1). Manda no `Farm.Income` x `DamageMultiplier`, e o item 1 tem que ser o `Farm.Income` do `UnitStats` |
+	| `Costs` | each upgrade's price, one per level bought (index = current level + 1). Overrides `BaseCost`/`CostMultiplier` |
+	| `Damages` | damage at each level (index = level + 1), from 0 to max. Overrides `DamageMultiplier`; item 1 must equal `UnitStats` `Damage` |
+	| `Cooldowns` | cooldown at each level (index = level + 1), from 0 to max. Overrides `CooldownMultiplier`; item 1 must equal `UnitStats` `Cooldown` |
+	| `Incomes` | a farm's income per wave at each level (index = level + 1). Overrides `Farm.Income` x `DamageMultiplier`; item 1 must equal `UnitStats` `Farm.Income` |
 
-	Hoje dez unidades usam `Costs`, porque a escada de preco delas foi desenhada
-	por wave e nao por formula: os saltos sao desiguais de proposito. `Cooldowns` o
-	Slingshot, o Archer e o Berserker usam -- nenhuma das tres desce em razao fixa
-	--, `Damages` o Archer e o Berserker, e `Incomes` so o Entrepreneur, que e a
-	unica farm.
+	Ten units use `Costs` today, because their price ladder was designed per wave,
+	not by formula: the jumps are uneven on purpose. The Slingshot, Archer, and
+	Berserker use `Cooldowns` (none of them drops at a fixed ratio), the Archer and
+	Berserker use `Damages`, and only the Entrepreneur, the only farm, uses `Incomes`.
 
-	**`Damages` e o ultimo recurso, e nao a saida facil.** A escada de dano passa por
-	um arredondamento, entao uma tabela desenhada a mao quase sempre ainda cabe numa
-	razao: e so procurar o intervalo de multiplicadores em que os seis numeros
-	arredondam certo, como o Slingshot faz com 1.304. So quando esse intervalo e
-	vazio -- os degraus do Archer e do Berserker se cruzam e nenhum numero serve para
-	os seis -- e que a lista entra.
+	**`Damages` is the last resort, not the easy way out.** The damage ladder goes
+	through rounding, so a hand-designed table almost always still fits a ratio:
+	find the multiplier range where all six numbers round right, as the Slingshot
+	does with 1.304. Only when that range is empty (the Archer's and Berserker's
+	steps cross, and no number works for all six) does the list come in.
 
-	A regra para escolher e simples: **se a formula reproduz a tabela exatamente, use
-	a formula**. Ela documenta a intencao (o alvo do nivel maximo) e continua valendo
-	se o `MaxUpgrades` mudar; a lista nao. O alcance tem a mesma escolha, e ela mora
-	no `RangeStats` do `UnitStats`.
+	The rule is simple: **if the formula reproduces the table exactly, use the
+	formula**. It documents the intent (the max-level target) and still holds if
+	`MaxUpgrades` changes; the list does not. Range has the same choice, in
+	`UnitStats`' `RangeStats`.
 ]]
 local UnitUpgradeConfig = {
 	MaxUpgrades = 5,
@@ -57,56 +54,55 @@ UnitUpgradeConfig.Units = {
 		DamageMultiplier = 1.25,
 	},
 	--[[
-		Dano e cooldown param em alvos fixos no nivel maximo, pela mesma conta do
-		Slasher logo abaixo: a raiz `MaxUpgrades`-esima de alvo/base, para o topo cair
-		exatamente em 115 de dano e 3s de cooldown.
+		Damage and cooldown stop at fixed targets at max level, by the same math as the
+		Slasher below: the `MaxUpgrades`-th root of target/base, so the top lands
+		exactly on 115 damage and a 3 s cooldown.
 
-		| Nivel    | 0  | 1    | 2    | 3    | 4    | 5  |
-		| Dano     | 38 | 47   | 59   | 73   | 92   | 115 |
-		| Cooldown | 5  | 4,51 | 4,08 | 3,68 | 3,32 | 3  |
+		| Level    | 0  | 1    | 2    | 3    | 4    | 5   |
+		| Damage   | 38 | 47   | 59   | 73   | 92   | 115 |
+		| Cooldown | 5  | 4.51 | 4.08 | 3.68 | 3.32 | 3   |
 	]]
 	["Subspace Tripminer"] = {
-		-- Com os 350 de colocacao do `UnitStats`, leva-la ao maximo custa 2.565.
+		-- With the 350 placement cost from `UnitStats`, maxing it costs 2,565.
 		Costs = { 225, 300, 425, 550, 715 },
 		DamageMultiplier = (115 / UnitStats["Subspace Tripminer"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 		CooldownMultiplier = (3 / UnitStats["Subspace Tripminer"].Cooldown) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 	},
 	--[=[
-		| Nivel   | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Renda   | 60   | 75   | 95   | 120  | 150  | 225  |
-		| Aura    | 10%  | 15%  | 20%  | 25%  | 30%  | 30%  |
-		| Alcance | 4    | 5    | 5    | 6    | 7    | 8    |
+		| Level  | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Income | 60   | 75   | 95   | 120  | 150  | 225  |
+		| Aura   | 10%  | 15%  | 20%  | 25%  | 30%  | 30%  |
+		| Range  | 4    | 5    | 5    | 6    | 7    | 8    |
 
-		A renda e escada na mao (`Incomes`) porque os degraus dela nao sao uma razao
-		so: os quatro primeiros ficam perto de 1,25, e o ultimo e 1,5. Esse salto e o
-		ponto da unidade -- o nivel 5 dela custa 675 e devolve 75 a mais por wave, e e
-		a unica compra da tabela que se paga em nove waves em vez de matar alguma
-		coisa.
+		Income is a hand ladder (`Incomes`) because its steps are not one ratio: the
+		first four are near 1.25, and the last is 1.5. That jump is the unit's point:
+		its level 5 costs 675 and returns 75 more per wave, the only purchase in the
+		table that pays for itself in nine waves instead of killing something.
 
-		A aura e o alcance moram no `UnitStats` (`Farm.Aura` e `RangeStats.Levels`),
-		e nao aqui, porque sao numeros da unidade e nao da escada de upgrade.
+		Aura and range live in `UnitStats` (`Farm.Aura` and `RangeStats.Levels`), not
+		here, because they are unit numbers, not upgrade ladder numbers.
 
-		Com os 200 de colocacao do `UnitStats`, leva-la ao maximo custa 2.050.
+		With the 200 placement cost from `UnitStats`, maxing it costs 2,050.
 	]=]
 	["Entrepreneur"] = {
 		Costs = { 150, 250, 325, 450, 675 },
 		Incomes = { 60, 75, 95, 120, 150, 225 },
 
 		--[[
-			Inerte, e mantido so porque o `GetDamageMultiplier` e chamado para toda
-			unidade: o `Damage` dela e 0, e a renda deixou de sair daqui quando ganhou
-			o `Incomes` acima. Mexer neste numero nao muda nada em jogo.
+			Inert, kept only because `GetDamageMultiplier` is called for every unit: its
+			`Damage` is 0, and income stopped coming from here when it got `Incomes`
+			above. Changing this number changes nothing in game.
 		]]
 		DamageMultiplier = 1.25,
 	},
 	--[[
-		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Dano     | 35   | 44   | 55   | 68   | 85   | 107  |
-		| Cooldown | 2,00 | 1,80 | 1,62 | 1,46 | 1,31 | 1,18 |
-		| DPS      | 17,5 | 24,4 | 34,0 | 46,6 | 64,8 | 90,6 |
+		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Damage   | 35   | 44   | 55   | 68   | 85   | 107  |
+		| Cooldown | 2.00 | 1.80 | 1.62 | 1.46 | 1.31 | 1.18 |
+		| DPS      | 17.5 | 24.4 | 34.0 | 46.6 | 64.8 | 90.6 |
 
-		O dano e a cadencia saem da formula; so o preco e escada na mao (`Costs`).
-		Com os 200 de colocacao do `UnitStats`, leva-la ao maximo custa 2.090.
+		Damage and attack speed come from the formula; only the price is a hand ladder
+		(`Costs`). With the 200 placement cost from `UnitStats`, maxing it costs 2,090.
 	]]
 	["Sword"] = {
 		Costs = { 165, 250, 325, 450, 700 },
@@ -114,37 +110,35 @@ UnitUpgradeConfig.Units = {
 		CooldownMultiplier = 0.9,
 	},
 	--[=[
-		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Dano     | 39   | 48   | 65   | 98   | 115  | 135  |
-		| Cooldown | 6,00 | 5,80 | 5,50 | 5,25 | 5,10 | 4,80 |
-		| Alcance  | 7    | 8    | 9    | 10   | 11   | 11   |
-		| DPS      | 6,5  | 8,3  | 11,8 | 18,7 | 22,5 | 28,1 |
+		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Damage   | 39   | 48   | 65   | 98   | 115  | 135  |
+		| Cooldown | 6.00 | 5.80 | 5.50 | 5.25 | 5.10 | 4.80 |
+		| Range    | 7    | 8    | 9    | 10   | 11   | 11   |
+		| DPS      | 6.5  | 8.3  | 11.8 | 18.7 | 22.5 | 28.1 |
 
-		**O DPS da tabela acima e por golpe, e nao o que a unidade despeja.** Ela bate
-		quatro vezes por ciclo com `HitFalloff` de 10% (ver o comentario dela no
-		`UnitStats`), entao o combo vale 3,44 golpes cheios e o DPS de verdade e
-		3,44x o da linha: 22,3 no nivel 0 e 96,7 no maximo. A linha esta aqui na forma
-		`Dano / Cooldown` so para poder ser comparada com o resto da tabela, que e de
-		um golpe so.
+		**The DPS above is per hit, not what the unit deals.** It hits four times per
+		cycle with a 10% `HitFalloff` (see its comment in `UnitStats`), so the combo is
+		worth 3.44 full hits and real DPS is 3.44x the row: 22.3 at level 0 and 96.7 at
+		max. The row is `Damage / Cooldown` only so it compares with the rest of the
+		table, which is single-hit.
 
-		Dano e cadencia sao escadas na mao, e nenhuma das duas cabe numa razao. O
-		cooldown desce em passos desiguais -- 0,20, 0,30, 0,25, 0,15 e 0,30 --, que
-		sao os degraus de quanto a recuperacao depois do combo encurta; a animacao
-		(2,9s) nao muda, e por isso mesmo no nivel 5 sobram 1,9s de espera.
+		Damage and attack speed are hand ladders, and neither fits a ratio. The
+		cooldown drops in uneven steps (0.20, 0.30, 0.25, 0.15, and 0.30), how much the
+		post-combo recovery shortens; the animation (2.9 s) does not change, which is
+		why even at level 5 there are 1.9 s of waiting.
 
-		**O dano tem um degrau que nenhuma razao imita: o terceiro upgrade.** De 65
-		para 98 sao +51% de uma vez, contra +17% do seguinte e +35% do anterior -- a
-		faixa de multiplicadores que arredondaria para os seis numeros e vazia por
-		larga margem (o nivel 3 pediria 1,357 e o nivel 5 nao aceita mais que 1,244).
-		Esse salto e o ponto da escada: o nivel 3 e onde a unidade deixa de ser cara
-		e passa a valer o preco, e e la que a decisao de subi-la ou vender esta.
+		**Damage has a step no ratio imitates: the third upgrade.** From 65 to 98 is
+		+51% at once, against +17% for the next and +35% for the previous; the
+		multiplier range that would round to all six numbers is empty by a wide margin
+		(level 3 would need 1.357 and level 5 accepts no more than 1.244). That jump is
+		the ladder's point: level 3 is where the unit stops being expensive and starts
+		being worth it, where the decision to upgrade or sell lives.
 
-		Ela deixou de ser a lendaria que so sobe em dano: agora o upgrade compra
-		cadencia e alcance tambem (7 a 11, pelo `RangeStats` do `UnitStats`), e e o
-		alcance que muda mais a unidade -- a 11 ela cobre um pedaco de caminho em vez
-		de um ponto.
+		Upgrades buy attack speed and range too (7 to 11, through `UnitStats`
+		`RangeStats`), and range changes the unit most: at 11 it covers a stretch of
+		path instead of a point.
 
-		Com os 400 de colocacao do `UnitStats`, leva-la ao maximo custa 4.130.
+		With the 400 placement cost from `UnitStats`, maxing it costs 4,130.
 	]=]
 	["Berserker"] = {
 		Costs = { 325, 480, 650, 875, 1400 },
@@ -152,23 +146,22 @@ UnitUpgradeConfig.Units = {
 		Cooldowns = { 6, 5.8, 5.5, 5.25, 5.1, 4.8 },
 	},
 	--[[
-		O dano do Slasher vai de **5 (base) a 9 (nivel maximo)**, e o multiplicador e
-		a raiz `MaxUpgrades`-esima de 9/5 -- escrito como conta, e nao como 1.12475,
-		para o topo cair exatamente em 9 e continuar caindo se o teto de upgrades
-		mudar. A escada que sai disso, ja arredondada como o servidor arredonda:
+		The Slasher's damage goes from **5 (base) to 9 (max level)**, and the multiplier
+		is the `MaxUpgrades`-th root of 9/5, written as math rather than 1.12475 so the
+		top lands exactly on 9 and keeps landing there if the upgrade cap changes. The
+		resulting ladder, rounded as the server rounds:
 
-		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Dano     | 5    | 6    | 6    | 7    | 8    | 9    |
-		| Cooldown | 0,85 | 0,77 | 0,69 | 0,62 | 0,56 | 0,50 |
-		| DPS      | 5,9  | 7,8  | 8,7  | 11,3 | 14,3 | 17,9 |
+		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Damage   | 5    | 6    | 6    | 7    | 8    | 9    |
+		| Cooldown | 0.85 | 0.77 | 0.69 | 0.62 | 0.56 | 0.50 |
+		| DPS      | 5.9  | 7.8  | 8.7  | 11.3 | 14.3 | 17.9 |
 
-		**O nivel 2 repete o dano, e nao ha como nao repetir**: sao cinco degraus
-		para quatro pontos de dano. Ele nao e um nivel morto porque o
-		`CooldownMultiplier` corta 10% do intervalo em todo nivel -- o DPS sobe de
-		5,9 a 17,9 sem nenhum degrau parado.
+		**Level 2 repeats the damage, and it cannot not repeat**: five steps for four
+		damage points. It is not a dead level because `CooldownMultiplier` cuts 10% of
+		the interval every level; DPS rises from 5.9 to 17.9 with no flat step.
 
-		So o preco e escada na mao (`Costs`). Com os 90 de colocacao do `UnitStats`,
-		leva-la ao maximo custa 1.534.
+		Only the price is a hand ladder (`Costs`). With the 90 placement cost from
+		`UnitStats`, maxing it costs 1,534.
 	]]
 	["Slasher"] = {
 		Costs = { 100, 144, 230, 370, 600 },
@@ -176,25 +169,24 @@ UnitUpgradeConfig.Units = {
 		CooldownMultiplier = 0.9,
 	},
 	--[=[
-		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Dano     | 7    | 9    | 12   | 16   | 20   | 26   |
-		| Cooldown | 1,15 | 1,05 | 0,93 | 0,87 | 0,82 | 0,77 |
-		| Alcance  | 12   | 13   | 14   | 15   | 15   | 16   |
-		| DPS      | 6,1  | 8,6  | 12,9 | 18,4 | 24,4 | 33,8 |
+		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Damage   | 7    | 9    | 12   | 16   | 20   | 26   |
+		| Cooldown | 1.15 | 1.05 | 0.93 | 0.87 | 0.82 | 0.77 |
+		| Range    | 12   | 13   | 14   | 15   | 15   | 16   |
+		| DPS      | 6.1  | 8.6  | 12.9 | 18.4 | 24.4 | 33.8 |
 
-		O cooldown e escada na mao (`Cooldowns`) porque os degraus dela nao sao
-		geometricos: a queda e de 0,10, 0,12, 0,06, 0,05 e 0,05, forte no comeco e
-		quase parada no fim -- o que o upgrade compra nesta unidade, dos niveis 3
-		para cima, e dano e nao cadencia.
+		The cooldown is a hand ladder (`Cooldowns`) because its steps are not
+		geometric: it drops 0.10, 0.12, 0.06, 0.05, and 0.05, strong at first and
+		almost flat at the end; from level 3 up, upgrades buy damage, not attack speed.
 
-		**`1.304` nao e o alvo do nivel maximo escrito como raiz**, ao contrario do
-		Slasher e do Frostione: `(26/7) ^ (1/5)` daria 1,3001 e o nivel 3 cairia em
-		15,4 -- um 15 onde a tabela pede 16. A faixa que arredonda para os seis
-		numeros e estreitissima (1,3034 a 1,3051), e 1.304 esta dentro dela. Mexeu
-		qualquer degrau, refaca a conta: nao ha folga nenhuma aqui, e se a faixa
-		fechar a saida e um `Damages` na mao, como o do Archer e o do Berserker.
+		**`1.304` is not the max-level target written as a root**, unlike the Slasher
+		and Frostione: `(26/7) ^ (1/5)` would give 1.3001 and level 3 would land at
+		15.4, a 15 where the table wants 16. The range that rounds to all six numbers is
+		very narrow (1.3034 to 1.3051), and 1.304 is inside it. Change any step and
+		redo the math: there is no slack here, and if the range closes the way out is a
+		hand `Damages`, like the Archer's and Berserker's.
 
-		Com os 175 de colocacao do `UnitStats`, leva-la ao maximo custa 1.725.
+		With the 175 placement cost from `UnitStats`, maxing it costs 1,725.
 	]=]
 	["Slingshot"] = {
 		Costs = { 130, 210, 285, 375, 550 },
@@ -202,42 +194,42 @@ UnitUpgradeConfig.Units = {
 		Cooldowns = { 1.15, 1.05, 0.93, 0.87, 0.82, 0.77 },
 	},
 	--[[
-		O dano do tiro vai de 15 a 25 no nivel maximo, pela mesma conta do Slasher: a
-		raiz `MaxUpgrades`-esima de alvo/base. So o tiro cresce: a queimadura e fixa.
+		The shot's damage goes from 15 to 25 at max level, by the same math as the
+		Slasher: the `MaxUpgrades`-th root of target/base. Only the shot grows; the burn
+		is fixed.
 
-		| Nivel | 0  | 1  | 2  | 3  | 4  | 5  |
-		| Dano  | 15 | 17 | 18 | 20 | 23 | 25 |
+		| Level  | 0  | 1  | 2  | 3  | 4  | 5  |
+		| Damage | 15 | 17 | 18 | 20 | 23 | 25 |
 	]]
 	["Pyre"] = {
-		-- Com os 150 de colocacao do `UnitStats`, leva-lo ao maximo custa 1.560.
+		-- With the 150 placement cost from `UnitStats`, maxing it costs 1,560.
 		Costs = { 100, 185, 250, 375, 500 },
 		DamageMultiplier = (25 / UnitStats["Pyre"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 	},
 	--[=[
-		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Dano     | 16   | 20   | 25   | 31   | 37   | 45   |
-		| Cooldown | 3,50 | 3,20 | 2,90 | 2,60 | 2,30 | 2,00 |
-		| Alcance  | 12   | 13   | 14   | 15   | 16   | 17   |
-		| DPS      | 4,6  | 6,3  | 8,7  | 12,0 | 16,1 | 22,5 |
+		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Damage   | 16   | 20   | 25   | 31   | 37   | 45   |
+		| Cooldown | 3.50 | 3.20 | 2.90 | 2.60 | 2.30 | 2.00 |
+		| Range    | 12   | 13   | 14   | 15   | 16   | 17   |
+		| DPS      | 4.6  | 6.3  | 8.7  | 12.0 | 16.1 | 22.5 |
 
-		Dano e cadencia sao escadas na mao. O cooldown desce **0,30s certos por
-		nivel** -- uma reta, e reta nenhuma e uma razao --, e para exatamente nos
-		2,00s da animacao `Attack` no nivel maximo: e o piso da unidade, e esta
-		escrito assim para ninguem baixar sem mexer na animacao junto (ver o
-		comentario dele no `UnitStats`).
+		Damage and attack speed are hand ladders. The cooldown drops **exactly 0.30 s
+		per level** (a straight line, and no straight line is a ratio) and stops at the
+		2.00 s of the `Attack` animation at max level: the unit's floor, written this
+		way so nobody lowers it without changing the animation too (see its comment in
+		`UnitStats`).
 
-		O dano precisa de `Damages` porque os degraus se cruzam: para o nivel 3 cair
-		em 31 o multiplicador teria que ser pelo menos 1,2399, e para o nivel 4 cair
-		em 37 teria que ser menos de 1,2373. Nao ha numero entre os dois, entao a
-		lista e a unica forma -- e e exatamente o caso que o cabecalho do arquivo
-		descreve.
+		Damage needs `Damages` because the steps cross: for level 3 to land on 31 the
+		multiplier would have to be at least 1.2399, and for level 4 to land on 37 it
+		would have to be under 1.2373. There is no number between them, so the list is
+		the only way, exactly the case the file header describes.
 
-		O Archer e o Slingshot deixaram de se separar pelo ritmo: agora os dois
-		ganham dano e cadencia com o upgrade, e o que os distingue e a flecha
-		atravessar (o Slingshot cutuca um alvo, o Archer cobra a fila) e o alcance
-		maximo -- 17 contra 16.
+		The Archer and Slingshot no longer differ by pace: both gain damage and attack
+		speed with upgrades, and what sets them apart is the piercing arrow (the
+		Slingshot pokes one target, the Archer charges the line) and max range, 17
+		against 16.
 
-		Com os 150 de colocacao do `UnitStats`, leva-lo ao maximo custa 1.835.
+		With the 150 placement cost from `UnitStats`, maxing it costs 1,835.
 	]=]
 	["Archer"] = {
 		Costs = { 125, 235, 300, 425, 600 },
@@ -245,14 +237,14 @@ UnitUpgradeConfig.Units = {
 		Cooldowns = { 3.5, 3.2, 2.9, 2.6, 2.3, 2 },
 	},
 	--[[
-		A escada de preco e na mao (`Costs`), e nao a formula de antes: o salto do
-		nivel 1 para o 2 e menor que o do 0 para o 1 (250 para 400 contra 450 para
-		250), e razao nenhuma anda para tras. O desenho e por wave -- o primeiro
-		upgrade e barato de proposito, para quem gastou 450 na colocacao nao ficar uma
-		wave inteira sem poder mexer na torre --, e o peso todo esta no ultimo degrau:
-		1.500, mais do que os tres primeiros juntos.
+		The price ladder is by hand (`Costs`), not the old formula: the jump from level 1
+		to 2 is smaller than from 0 to 1 (250 to 400 against 450 to 250), and no ratio
+		goes backward. It is designed per wave: the first upgrade is cheap on purpose,
+		so a player who spent 450 placing it is not stuck a whole wave without touching
+		the tower, and the weight is on the last step: 1,500, more than the first three
+		together.
 
-		Com os 450 de colocacao do `UnitStats`, leva-lo ao maximo custa 4.090.
+		With the 450 placement cost from `UnitStats`, maxing it costs 4,090.
 	]]
 	["Rocket"] = {
 		Costs = { 250, 400, 650, 840, 1500 },
@@ -260,46 +252,44 @@ UnitUpgradeConfig.Units = {
 	},
 
 	--[[
-		Sem `CooldownMultiplier`, como o Berserker: os 2,5s entre dois raios valem em
-		todo nivel. Cadencia nela nao compra so dano -- compra tranco, em quatro
-		inimigos de uma vez --, e quanto mais perto um raio do outro, mais a fila anda
-		em soquinhos. Upgrade nesta unidade compra dano, alcance e a duracao do tranco
-		(ver `GetStunDuration` e o comentario dela no `UnitStats`).
+		No `CooldownMultiplier`, like the Berserker: 2.5 s between bolts at every
+		level. Attack speed here would not only buy damage but stuns on four enemies at
+		once, and the closer the bolts, the more the line moves in jolts. Upgrades on
+		this unit buy damage, range, and stun duration (see `GetStunDuration` and its
+		comment in `UnitStats`).
 
-		A escada de preco e na mao (`Costs`), pelo mesmo desenho do Rocket logo acima:
-		o primeiro upgrade e o barato (225 contra os 350 da colocacao) e o ultimo e o
-		caro (1.300). Ela custa 350 de caixa para entrar em campo, entao o upgrade nao
-		pode custar como o de uma unidade de 100.
+		The price ladder is by hand (`Costs`), with the same design as the Rocket above:
+		the first upgrade is the cheap one (225 against the 350 to place) and the last
+		the expensive one (1,300).
 
-		Com os 350 de colocacao do `UnitStats`, leva-la ao maximo custa 3.770.
+		With the 350 placement cost from `UnitStats`, maxing it costs 3,770.
 	]]
 	["Electro"] = {
 		Costs = { 225, 450, 635, 810, 1300 },
 		DamageMultiplier = 1.25,
 	},
 	--[[
-		O upgrade compra dano e cadencia ate alvos fixos no nivel maximo: 14 de dano
-		(10 -> 14) e cooldown pela metade (1s -> 0,5s), o que da 28 de DPS no topo.
-		Mesma conta do Slasher logo abaixo: a raiz `MaxUpgrades`-esima de alvo/base,
-		para o topo cair exatamente nos alvos. Lentidao e congelamento nao crescem --
-		mas tiro mais rapido fecha os quatro acumulos mais cedo, entao o congelamento
-		fica mais frequente com o nivel.
+		Upgrades buy damage and attack speed up to fixed max-level targets: 14 damage
+		(10 -> 14) and half the cooldown (1 s -> 0.5 s), for 28 DPS at the top. Same
+		math as the Slasher below: the `MaxUpgrades`-th root of target/base. Slow and
+		freeze do not grow, but a faster shot fills the four stacks sooner, so freezes
+		become more frequent with level.
 
-		| Nivel    | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Dano     | 10   | 11   | 11   | 12   | 13   | 14   |
-		| Cooldown | 1,00 | 0,87 | 0,76 | 0,66 | 0,57 | 0,50 |
-		| DPS      | 10,0 | 12,6 | 14,5 | 18,2 | 22,6 | 28,0 |
+		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Damage   | 10   | 11   | 11   | 12   | 13   | 14   |
+		| Cooldown | 1.00 | 0.87 | 0.76 | 0.66 | 0.57 | 0.50 |
+		| DPS      | 10.0 | 12.6 | 14.5 | 18.2 | 22.6 | 28.0 |
 	]]
 	["Frostione"] = {
-		-- Com os 200 de colocacao do `UnitStats`, leva-la ao maximo custa 2.015.
+		-- With the 200 placement cost from `UnitStats`, maxing it costs 2,015.
 		Costs = { 135, 250, 345, 470, 615 },
 		DamageMultiplier = (14 / UnitStats["Frostione"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 		CooldownMultiplier = (0.5 / UnitStats["Frostione"].Cooldown) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 	},
 	--[[
-		+15% de dano por nivel, nos tres ataques. O cooldown do fim da sequencia desce
-		de 8s ate 6,5s no nivel maximo, pela mesma conta do Slasher: a raiz
-		`MaxUpgrades`-esima de alvo/base. O raio do meteoro cresce a parte
+		+15% damage per level, on all three attacks. The cooldown at the end of the
+		sequence drops from 8 s to 6.5 s at max level, by the same math as the Slasher:
+		the `MaxUpgrades`-th root of target/base. The meteor radius grows separately
 		(`GetMeteorRadius`).
 	]]
 	["Archmage"] = {
@@ -311,20 +301,19 @@ UnitUpgradeConfig.Units = {
 }
 
 --[[
-	O clima entra por aqui, e não em cada chamador.
+	Weather enters here, not in each caller.
 
-	Todos os getters abaixo aceitam um `weather` opcional no fim — o nome do Model
-	de clima que está no ar. Passando nil (ou um clima sem efeito para aquela
-	unidade), o número devolvido é exatamente o de antes, então quem não se importa
-	com clima não precisa mudar nada.
+	Every getter below takes an optional `weather` last: the name of the weather
+	Model in effect. With nil (or a weather with no effect on that unit), the number
+	returned is exactly the one without weather, so callers that do not care need
+	no change.
 
-	Concentrar a conta aqui é o que faz o servidor e o cliente concordarem: o
-	alcance que o `UnitService` usa para procurar alvo, o círculo que o
-	`UnitPlacementController` desenha no chão e o número que o card mostra saem
-	todos da mesma função. Se o clima entrasse só no combate, o jogador veria um
-	círculo que não corresponde ao que a unidade alcança.
+	Keeping the math here is what makes server and client agree: the range
+	`UnitService` uses to find targets, the circle `UnitPlacementController` draws,
+	and the number the card shows all come from the same function.
 
-	Quem tem os multiplicadores é o `WeatherConfig`; aqui só se aplica.
+	`WeatherConfig` owns the multipliers; they are only applied here. See
+	docs/game/weather-in-match.md.
 ]]
 local function weatherMultiplier(weather, unitName, stat)
 	if not weather then return 1 end
@@ -336,19 +325,19 @@ function UnitUpgradeConfig:GetUnitData(unitName)
 end
 
 --[=[
-	O que custa o **proximo** upgrade, saindo de `currentLevel`.
+	What the **next** upgrade costs, from `currentLevel`.
 
-	Com `Costs` na unidade, e o item `currentLevel + 1` da lista; sem ele, a formula
-	geometrica de sempre. Ver o cabecalho do arquivo para quando usar cada uma.
+	With `Costs` on the unit, it is item `currentLevel + 1` of the list; without it,
+	the usual geometric formula. See the file header for when to use each.
 ]=]
 function UnitUpgradeConfig:GetCost(unitName, currentLevel)
 	local data = self:GetUnitData(unitName)
 	local ladder = data.Costs
 
 	if ladder then
-		-- O clamp existe para um nivel fora da lista nao devolver nil e virar erro de
-		-- aritmetica no card: quem chama aqui ja checou o `IsMaxed`, mas o preco de um
-		-- nivel que nao existe tem que ser um numero.
+		-- The clamp keeps a level outside the list from returning nil and becoming an
+		-- arithmetic error on the card: callers already checked `IsMaxed`, but the price
+		-- of a level that does not exist must still be a number.
 		return ladder[math.clamp((currentLevel or 0) + 1, 1, #ladder)]
 	end
 
@@ -356,23 +345,23 @@ function UnitUpgradeConfig:GetCost(unitName, currentLevel)
 end
 
 --[=[
-	O que custa **colocar** a unidade no mapa, com o clima do momento.
+	What it costs to **place** the unit on the map, with the current weather.
 
-	É o `UnitStats[nome].Cost` vezes o multiplicador de `Cost` do clima (a chuva
-	desconta 25% do Ice). Sem clima, ou com um clima que não mexe em preço, devolve o
-	número da tabela sem tocar em nada.
+	`UnitStats[name].Cost` times the weather's `Cost` multiplier (rain discounts Ice
+	by 25%). Without weather, or with weather that does not touch prices, returns the
+	table number untouched.
 
-	Existe pelo mesmo motivo dos outros getters: o servidor cobra por aqui e o card
-	da hotbar mostra por aqui, então não há como o jogador ver um preço e pagar
-	outro.
+	It exists for the same reason as the other getters: the server charges through
+	here and the hotbar card shows through here, so the player cannot see one price
+	and pay another.
 
-	> **A venda não segue o desconto.** O `GetInvested` continua somando o preço de
-	> tabela, e é ele que os dois lados usam para o valor de venda — o servidor
-	> guarda no `entry.invested` o preço cheio, mesmo tendo cobrado menos. Fazer o
-	> contrário obrigaria o cliente a saber quanto foi pago em cada unidade (o
-	> `invested` não é replicado), e o desconto viraria uma divergência entre o que o
-	> card promete de volta e o que a venda dá. Na prática o desconto continua sendo
-	> só vantagem: comprar por 75 e vender por 50 nunca é lucro.
+	> **Selling does not follow the discount.** `GetInvested` still adds the list
+	> price, and both sides use it for the sell value; the server stores the full
+	> price in `entry.invested` even when it charged less. The reverse would require
+	> the client to know what was paid for each unit (`invested` is not replicated),
+	> and the discount would become a mismatch between what the card promises and
+	> what the sale gives. In practice the discount is still only an advantage:
+	> buying at 75 and selling at 50 is never a profit.
 ]=]
 function UnitUpgradeConfig:GetPlaceCost(unitName, weather)
 	local stats = UnitStats[unitName]
@@ -382,17 +371,17 @@ function UnitUpgradeConfig:GetPlaceCost(unitName, weather)
 end
 
 --[=[
-	O quanto o dano base da unidade cresce ate `level`, **como fator** e nao como
-	dano pronto.
+	How much the unit's base damage grows up to `level`, **as a factor**, not as
+	ready damage.
 
-	Ser um fator e o que mantem as duas pontas com o mesmo arredondamento: o
-	servidor (`UnitService:getDamage`) e o card (`formatDamageOrIncome`) multiplicam
-	o `UnitStats.Damage` por este numero junto com carta, carga e clima, e so entao
-	arredondam, uma vez so. Devolver o dano ja pronto arredondaria duas vezes.
+	Being a factor keeps both sides on the same rounding: the server
+	(`UnitService:getDamage`) and the card (`formatDamageOrIncome`) multiply
+	`UnitStats.Damage` by this number along with card, charge, and weather, and round
+	once, at the end. Returning ready damage would round twice.
 
-	Com `Damages` na unidade, o fator e o item da escada dividido pelo dano base --
-	por isso o item 1 tem que ser o proprio `Damage` do `UnitStats`, senao o nivel 0
-	nao sai 1. Sem ela, a razao geometrica de sempre.
+	With `Damages` on the unit, the factor is the ladder item divided by base damage,
+	which is why item 1 must be the `UnitStats` `Damage` itself, or level 0 would not
+	come out as 1. Without it, the usual geometric ratio.
 ]=]
 function UnitUpgradeConfig:GetDamageMultiplier(unitName, level, weather)
 	local data = self:GetUnitData(unitName)
@@ -404,9 +393,9 @@ function UnitUpgradeConfig:GetDamageMultiplier(unitName, level, weather)
 		local baseDamage = stats and stats.Damage or 0
 		local stepDamage = ladder[math.clamp((level or 0) + 1, 1, #ladder)]
 
-		-- Dano base zero nao tem fator possivel (o Entrepreneur e o caso), e cair na
-		-- divisao devolveria `nan` para o card. Nenhuma farm declara `Damages`; o
-		-- ramo existe para que declarar uma nao quebre a tela.
+		-- Zero base damage has no possible factor (the Entrepreneur is the case), and the
+		-- division would return `nan` to the card. No farm declares `Damages`; the branch
+		-- exists so declaring one does not break the screen.
 		multiplier = if baseDamage > 0 then stepDamage / baseDamage else 1
 	else
 		multiplier = data.DamageMultiplier ^ level
@@ -424,8 +413,8 @@ function UnitUpgradeConfig:GetRange(unitName, level, weather)
 
 	local range = baseRange
 	if rangeStats and rangeStats.Levels then
-		-- Alcance por nivel, para as escadas que nao sao uma reta (ver o `RangeStats`
-		-- no cabecalho do `UnitStats`).
+		-- Range per level, for ladders that are not a straight line (see `RangeStats` in
+		-- the `UnitStats` header).
 		local levels = rangeStats.Levels
 		range = levels[math.clamp((level or 0) + 1, 1, #levels)]
 	elseif rangeStats then
@@ -433,16 +422,16 @@ function UnitUpgradeConfig:GetRange(unitName, level, weather)
 		range = math.min(increased, math.max(rangeStats.Max or increased, baseRange))
 	end
 
-	-- Depois do teto de upgrade, de propósito: o clima corta o alcance que a
-	-- unidade tem, não o que ela poderia ter.
+	-- After the upgrade cap, on purpose: weather cuts the range the unit has, not the
+	-- range it could have.
 	return range * weatherMultiplier(weather, unitName, "Range")
 end
 
 --[=[
-	Cooldown entre ataques.
+	Cooldown between attacks.
 
-	A velocidade de ataque do clima entra como divisão: um multiplicador de 1.3 é
-	"bate 30% mais rápido", ou seja, o mesmo ciclo em 1/1.3 do tempo.
+	Weather attack speed enters as a division: a 1.3 multiplier is "hits 30% faster",
+	the same cycle in 1/1.3 of the time.
 ]=]
 function UnitUpgradeConfig:GetCooldown(unitName, level, weather)
 	local stats = UnitStats[unitName]
@@ -464,12 +453,12 @@ function UnitUpgradeConfig:GetCooldown(unitName, level, weather)
 end
 
 --[=[
-	Quanto tempo o golpe da unidade para o inimigo, no nivel dado. Zero para quem nao
-	atordoa.
+	How long the unit's attack stops an enemy, at the given level. Zero for units
+	that do not stun.
 
-	`Stun.Duration` e o do nivel 0; com `Stun.MaxDuration`, o tranco sobe em linha
-	reta ate ele no nivel maximo. Sem clima, como a aura: o clima de raio tem o
-	tranco proprio dele (`WeatherConfig.Thunder`), e nao mexe no das unidades.
+	`Stun.Duration` is level 0's; with `Stun.MaxDuration`, the stun rises linearly to
+	it at max level. No weather, like the aura: the thunder weather has its own stun
+	(`WeatherConfig.Thunder`) and does not touch units'.
 ]=]
 function UnitUpgradeConfig:GetStunDuration(unitName, level)
 	local stats = UnitStats[unitName]
@@ -487,11 +476,11 @@ function UnitUpgradeConfig:GetStunDuration(unitName, level)
 end
 
 --[=[
-	O raio da area de gelo que o acerto espalha em volta do alvo, no nivel dado. Zero
-	para quem nao tem `Frost` ou nao declara `Radius`.
+	The radius of the ice area a hit spreads around the target, at the given level.
+	Zero for units without `Frost` or without `Radius`.
 
-	Mesma escada do `GetStunDuration` logo acima: `Frost.Radius` no nivel 0 e
-	`Frost.MaxRadius` no maximo, em linha reta. Sem `MaxRadius` o raio nao cresce.
+	Same ladder as `GetStunDuration` above: `Frost.Radius` at level 0 and
+	`Frost.MaxRadius` at max, linearly. Without `MaxRadius` the radius does not grow.
 ]=]
 function UnitUpgradeConfig:GetFrostRadius(unitName, level)
 	local stats = UnitStats[unitName]
@@ -509,9 +498,9 @@ function UnitUpgradeConfig:GetFrostRadius(unitName, level)
 end
 
 --[=[
-	O raio da explosao do meteoro do Archmage no nivel dado. Mesma escada do
-	`GetFrostRadius` logo acima: `Combo.Meteor.Radius` no nivel 0 e `MaxRadius` no
-	maximo, em linha reta. Zero para quem nao tem meteoro.
+	The Archmage meteor's explosion radius at the given level. Same ladder as
+	`GetFrostRadius` above: `Combo.Meteor.Radius` at level 0 and `MaxRadius` at max,
+	linearly. Zero for units without a meteor.
 ]=]
 function UnitUpgradeConfig:GetMeteorRadius(unitName, level)
 	local stats = UnitStats[unitName]
@@ -529,18 +518,18 @@ function UnitUpgradeConfig:GetMeteorRadius(unitName, level)
 end
 
 --[=[
-	O bônus de caixa da aura de uma farm no nível dado, como fração somável: 0.15 é
-	"+15%". Unidade sem aura devolve 0.
+	A farm's aura cash bonus at the given level, as an additive fraction: 0.15 is
+	"+15%". A unit without an aura returns 0.
 
-	`Aura.MaxBonus` é o teto, e ele existe porque o bônus **soma entre farms**: duas
-	cobrindo a mesma torre valem o dobro, então o que segura o empilhamento é este
-	número e não a quantidade de farms. Sem o campo, a conta sobe reta e não para.
+	`Aura.MaxBonus` is the cap, and it exists because the bonus **adds up across
+	farms**: two covering the same tower are worth double, so this number, not the
+	number of farms, limits stacking. Without the field, the math rises without end.
 
-	Não aceita `weather` de propósito, ao contrário dos getters acima. O bônus é
-	economia, e economia não anda com o clima — é a mesma regra do `Farm.Income`,
-	que o `payFarmUnits` paga sem clima justamente para a seca não virar bônus de
-	caixa. O **raio** da aura continua sendo o `GetRange`, esse sim com clima,
-	porque é o círculo que o jogador vê desenhado no chão.
+	It does not take `weather` on purpose, unlike the getters above. The bonus is
+	economy, and economy does not follow weather (the same rule as `Farm.Income`,
+	which `payFarmUnits` pays without weather so drought does not become a cash
+	bonus). The aura **radius** is still `GetRange`, with weather, because it is the
+	circle the player sees on the ground.
 ]=]
 function UnitUpgradeConfig:GetAuraBonus(unitName, level)
 	local stats = UnitStats[unitName]
@@ -560,20 +549,18 @@ function UnitUpgradeConfig:GetAuraBonus(unitName, level)
 end
 
 --[=[
-	A renda por wave de uma farm no nível dado, **sem arredondar** e sem carta. Zero
-	para quem não é farm.
+	A farm's income per wave at the given level, **unrounded** and without cards.
+	Zero for non-farms.
 
-	Devolver o número cru é de propósito: quem chama multiplica pela carta de
-	`Income` e arredonda uma vez só no fim (o `payFarmUnits` no servidor, o
-	`formatDamageOrIncome` no card). Arredondar aqui arredondaria duas vezes e o card
-	prometeria um caixa diferente do que cai na conta.
+	Returning the raw number is on purpose: callers multiply by the `Income` card and
+	round once at the end (`payFarmUnits` on the server, `formatDamageOrIncome` on
+	the card). Rounding here would round twice and the card would promise different
+	cash than what lands.
 
-	Com `Incomes` na unidade, é o item `level + 1` da lista; sem ele, é o
-	`Farm.Income` crescendo pelo `DamageMultiplier`, que era como a renda subia antes
-	de qualquer farm ter escada própria.
+	With `Incomes` on the unit, it is item `level + 1`; without it, `Farm.Income`
+	growing by `DamageMultiplier`.
 
-	Sem `weather` pela mesma razão do `GetAuraBonus` logo acima: renda é economia, e
-	economia não anda com o clima.
+	No `weather` for the same reason as `GetAuraBonus` above: income is economy.
 ]=]
 function UnitUpgradeConfig:GetIncome(unitName, level)
 	local stats = UnitStats[unitName]
@@ -593,9 +580,8 @@ function UnitUpgradeConfig:GetIncome(unitName, level)
 end
 
 --[=[
-	Dano por golpe no nivel dado, com o mesmo arredondamento que o servidor usa
-	em `UnitService:executeAttack` — o card tem que mostrar o numero que vai de
-	fato entrar no mob.
+	Damage per hit at the given level, with the same rounding the server uses in
+	`UnitService:executeAttack`: the card must show the number that actually lands.
 ]=]
 function UnitUpgradeConfig:GetDamage(unitName, level, weather)
 	local stats = UnitStats[unitName]
@@ -604,7 +590,7 @@ function UnitUpgradeConfig:GetDamage(unitName, level, weather)
 end
 
 --[=[
-	Dano por segundo: todos os golpes de um ciclo de ataque divididos pelo cooldown.
+	Damage per second: all hits of an attack cycle divided by the cooldown.
 ]=]
 function UnitUpgradeConfig:GetDPS(unitName, level, weather)
 	local stats = UnitStats[unitName]
@@ -614,13 +600,13 @@ function UnitUpgradeConfig:GetDPS(unitName, level, weather)
 end
 
 --[=[
-	Total de caixa investido na unidade: o custo de colocacao mais o custo de cada
-	upgrade ja comprado. Serve para o cliente calcular o valor de venda sem precisar
-	do `entry.invested` do servidor — as duas contas seguem a mesma tabela.
+	Total cash invested in the unit: the placement cost plus each upgrade bought. Lets
+	the client compute the sell value without the server's `entry.invested`; both
+	follow the same table.
 
-	Sem clima de propósito, nos dois sentidos: o que se investiu não muda porque
-	começou a nevar, e o desconto de colocação da chuva (`GetPlaceCost`) também não
-	entra aqui — ver o comentário de lá.
+	No weather on purpose, both ways: what was invested does not change because it
+	started snowing, and rain's placement discount (`GetPlaceCost`) does not enter
+	here either; see the comment there.
 ]=]
 function UnitUpgradeConfig:GetInvested(unitName, level)
 	local stats = UnitStats[unitName]

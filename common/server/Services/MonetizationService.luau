@@ -18,24 +18,27 @@ local Maid = require(Vendor.Maid)
 local Promise = require(Packages.Promise)
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local GamepassConfig = SharedConfig.GamepassConfig
 
 local Framework = Me.new()
+local log = Log.new("MonetizationService")
 
 --[[
-	Compras e gamepasses.
+	Purchases and gamepasses.
 
-	As duas metades nao se parecem: uma compra de developer product e um **evento**
-	que precisa ser creditado uma vez so (o `ProcessReceipt` e o `PurchaseHistory`
-	cuidam disso), e uma gamepass e um **estado** que o jogador tem ou nao tem hoje.
+	The two halves do not look alike: a developer product purchase is an **event**
+	that must be credited exactly once (`ProcessReceipt` and `PurchaseHistory` handle
+	that), and a gamepass is a **state** the player has or does not have today.
 
-	Por isso a pass nunca vira credito no perfil. O que fica gravado em
-	`Data.Gamepasses` e uma copia do que a Roblox respondeu, reescrita inteira a cada
-	entrada: quem leu antes nao precisa perguntar de novo, e uma pass reembolsada some
-	sozinha no proximo login em vez de deixar um beneficio orfao. Quem consome sao as
-	funcoes do `SharedConfig.GamepassConfig`, das duas pontas, sempre a partir do
-	perfil.
+	So a pass never becomes a credit on the profile. What is stored in
+	`Data.Gamepasses` is a copy of what Roblox answered, fully rewritten on every
+	join: readers do not need to ask again, and a refunded pass disappears on its own
+	at the next login instead of leaving an orphaned benefit. The functions in
+	`SharedConfig.GamepassConfig` consume it, on both sides, always from the profile.
+
+	See docs/common/gamepasses.md.
 ]]
 local MonetizationService = {
 	Services = {
@@ -45,10 +48,11 @@ local MonetizationService = {
 
 function MonetizationService:construct()
 	--[[
-		`or {}` e nao `= {}`: os `start()` dos services sao `task.spawn`ados num laco, sem
-		ordem garantida, entao um service que registre um produto no `start()` dele pode
-		chegar aqui antes. Zerar a tabela apagaria o callback dele -- e a compra ficaria
-		sem quem a credite, que e um sintoma que so aparece com Robux de verdade.
+		`or {}` and not `= {}`: services' `start()` calls are `task.spawn`ed in a loop,
+		with no guaranteed order, so a service that registers a product in its
+		`start()` may get here first. Resetting the table would erase its callback,
+		and the purchase would have no one to credit it: a symptom that only shows up
+		with real Robux.
 	]]
 	self.Callbacks = self.Callbacks or {}
 
@@ -108,12 +112,12 @@ function MonetizationService:construct()
 end
 
 --[=[
-	Diz quem credita um developer product. O callback recebe `(player, receiptInfo)` e
-	devolve `false` quando **nao** deu para creditar -- ai o receipt volta como
-	`NotProcessedYet` e a Roblox tenta de novo mais tarde.
+	Sets who credits a developer product. The callback receives `(player,
+	receiptInfo)` and returns `false` when it could **not** credit: then the receipt
+	comes back as `NotProcessedYet` and Roblox retries later.
 
-	Pode ser chamado antes do `construct` daqui (ver o comentario la), entao a tabela e
-	criada por quem chegar primeiro.
+	It can be called before this module's `construct` (see the comment there), so the
+	table is created by whoever arrives first.
 ]=]
 function MonetizationService:RegisterProduct(productId, callback)
 	self.Callbacks = self.Callbacks or {}
@@ -129,16 +133,15 @@ function MonetizationService:start()
 end
 
 --[=[
-	Quem manda conferir as passes: a entrada de cada jogador, e a compra de uma pass
-	no meio da sessao.
+	What triggers the pass check: each player's join, and buying a pass mid-session.
 
-	O `PromptGamePassPurchaseFinished` e o que faz a pass valer **na hora**. Sem ele o
-	jogador compraria o 2x Coins e so veria efeito no proximo login, o que parece a
-	compra nao ter funcionado -- e o suporte que responde por isso.
+	`PromptGamePassPurchaseFinished` is what makes the pass apply **right away**.
+	Without it, a player would buy 2x Coins and only see the effect at the next
+	login, which looks like the purchase did not work, and support answers for that.
 
-	A conferencia da entrada espera o perfil (`DataService:Get`) porque ela escreve
-	nele; num fio proprio, porque sao chamadas web e nada mais precisa esperar por
-	elas.
+	The join check waits for the profile (`DataService:Get`) because it writes to it;
+	on its own thread, because these are web calls and nothing else needs to wait
+	on them.
 ]=]
 function MonetizationService:_watchPasses()
 	local function recalibrate(player : Player)
@@ -167,12 +170,11 @@ function MonetizationService:_watchPasses()
 end
 
 --[=[
-	Pergunta a Roblox uma pass so. Devolve `nil` -- e nao `false` -- quando a chamada
-	falhou.
+	Asks Roblox about a single pass. Returns `nil`, not `false`, when the call failed.
 
-	A diferenca importa: `false` e "ele nao tem", e apaga o beneficio; `nil` e "nao deu
-	para saber", e o `RecalibratePasses` mantem o que ja estava gravado. Uma queda da
-	API nao pode tirar do jogador o que ele comprou.
+	The difference matters: `false` is "they do not have it" and removes the benefit;
+	`nil` is "could not tell", and `RecalibratePasses` keeps what was already stored.
+	An API outage must not take away what the player bought.
 ]=]
 function MonetizationService:_ownsPass(Player : Player, gamePassId : number) : boolean?
 	local ok, owns = pcall(function()
@@ -180,8 +182,8 @@ function MonetizationService:_ownsPass(Player : Player, gamePassId : number) : b
 	end)
 
 	if not ok then
-		warn(string.format(
-			"[MonetizationService]: nao deu para conferir a pass %d de %s (%s); mantendo o que o perfil ja diz.",
+		log:Warn(string.format(
+			"could not check pass %d for %s (%s); keeping what the profile already says.",
 			gamePassId, Player.Name, tostring(owns)))
 		return nil
 	end
@@ -190,36 +192,37 @@ function MonetizationService:_ownsPass(Player : Player, gamePassId : number) : b
 end
 
 --[=[
-	Reescreve `Data.Gamepasses` com o que a Roblox responde agora, e publica no
-	`Player` os atributos das passes que precisam ser vistas pelos **outros**.
+	Rewrites `Data.Gamepasses` with what Roblox answers now, and publishes on the
+	`Player` the attributes for passes that must be seen by **others**.
 
-	Roda uma pass por vez porque `UserOwnsGamePassAsync` e uma chamada web por pass --
-	sao poucas, e elas rodam num fio proprio (ver `construct`), entao ninguem espera
-	por isto.
+	It checks one pass at a time because `UserOwnsGamePassAsync` is one web call per
+	pass: there are few, and they run on their own thread (see `construct`), so
+	nobody waits on this.
 
-	O atributo existe porque o perfil replica so para o dono: o rotulo do VIP tem de
-	aparecer na mensagem dele na tela de todo mundo, e um atributo de `Player` replica
-	para a sala inteira. Continua sendo o servidor quem escreve -- o cliente so le.
+	The attribute exists because the profile only replicates to its owner: the VIP
+	tag must appear on their chat message on everyone's screen, and a `Player`
+	attribute replicates to the whole room. The server still writes it; the client
+	only reads.
 ]=]
 function MonetizationService:RecalibratePasses(Player : Player)
 	local DataService = self.Services.DataService
 	if not DataService or not DataService.Update then
-		warn("[MonetizationService]: DataService indisponivel, nao da para conferir as passes.")
+		log:Warn("DataService unavailable; passes cannot be checked.")
 		return
 	end
 
 	--[[
-		As respostas sao colhidas **antes** do `Update`, e nao dentro dele: o callback
-		do `Update` nao pode ceder o fio (duas escritas simultaneas veriam o mesmo
-		estado inicial), e cada `UserOwnsGamePassAsync` cede.
+		The answers are gathered **before** `Update`, not inside it: the `Update`
+		callback must not yield (two simultaneous writes would see the same starting
+		state), and each `UserOwnsGamePassAsync` yields.
 	]]
 	local answers = {}
 	for key, pass in GamepassConfig.PASSES do
 		answers[key] = self:_ownsPass(Player, pass.Id)
 	end
 
-	-- Cada pergunta e uma chamada web, e o jogador pode ter saido no meio delas: sem
-	-- isto o `Update` so avisaria que o perfil sumiu, uma linha por saida.
+	-- Each question is a web call, and the player may have left in between: without
+	-- this, `Update` would just warn that the profile is gone, one line per leave.
 	if not DataService.Profiles or not DataService.Profiles[Player] then
 		return
 	end
@@ -233,7 +236,7 @@ function MonetizationService:RecalibratePasses(Player : Player)
 		for key in GamepassConfig.PASSES do
 			local answer = answers[key]
 
-			-- `nil` e "a chamada falhou": vale o que o perfil ja dizia.
+			-- `nil` means "the call failed": what the profile already said stands.
 			if answer == nil then
 				owned[key] = current[key] == true or nil
 			elseif answer then

@@ -1,57 +1,57 @@
 --[=[
-	Curva de nivel do perfil e a arte da barra de XP do HUD.
+	The profile's level curve and the art of the HUD XP bar.
 
-	`Stats.XP` no perfil e um total acumulado — o nivel nao e guardado, e sempre
-	derivado dai (`Resolve`). Assim nao existe perfil com nivel e XP fora de sincronia
-	e mexer na curva reavalia todo mundo sem migracao.
+	`Stats.XP` in the profile is an accumulated total; the level is never stored,
+	always derived from it (`Resolve`). Level and XP can never be out of sync, and
+	changing the curve re-evaluates everyone without a migration.
 
-	O XP por partida sai de `Config.Data.BASE_WINNING_XP` (200 numa run cheia no
-	Normal, escalado pela fracao de waves e pelo `WinXpMultiplier` da dificuldade),
-	entao `BASE_XP = 100` deixa o primeiro nivel a meia partida e a curva vai abrindo
-	dai pra frente.
+	Match XP comes from `Config.Data.BASE_WINNING_XP` (200 for a full Medium run,
+	scaled by the fraction of waves and the difficulty's `WinXpMultiplier`), so
+	`BASE_XP = 100` puts the first level at half a match, and the curve opens up
+	from there.
 
-	Quem depende do nivel: os slots de deck (`DeckConfig.SLOT_UNLOCK_LEVELS`, nos
-	niveis 5, 15 e 25) e o caminho alternativo de destravar dificuldade
-	(`DifficultyUnlockConfig`, niveis 3, 6 e 12) -- mexer na curva move os dois, e e
-	por isso que o expoente e o numero a mexer, e nao o `BASE_XP`: o inicio continua
-	no lugar e quem encurta e o meio pra frente, que e onde estava a grind.
+	Level drives the deck slots (`DeckConfig.SLOT_UNLOCK_LEVELS`, at 5, 15, and 25)
+	and the alternative difficulty unlock path (`DifficultyUnlockConfig`, levels 3,
+	6, and 12). Changing the curve moves both, which is why the exponent is the
+	knob and not `BASE_XP`: the start stays put and only the middle onward, where
+	the grind was, gets shorter.
 ]=]
 
 local LevelConfig = {}
 
---[[ CURVA ]]
+--[[ CURVE ]]
 
 LevelConfig.MAX_LEVEL = 50
 
 --[=[
-	XP para sair do nivel L: floor(BASE_XP * L^CURVE).
+	XP to leave level L: floor(BASE_XP * L^CURVE).
 
-	O expoente desceu de 1.35 para 1.20 para o nivel subir mais rapido. O comeco nao
-	muda (L1->2 continua custando 100, porque 1^x e 1 em qualquer expoente); o que
-	encurta e o resto, e cada vez mais:
+	The exponent went from 1.35 to 1.20 so levels come faster. The start does not
+	change (L1->2 still costs 100, since 1^x is 1); the rest gets shorter, more and
+	more:
 
-	| Sair do nivel | 1.35 (antes) | 1.20 (agora) |
+	| Leaving level | 1.35 (before) | 1.20 (now) |
 	| --- | --- | --- |
 	| 1 | 100 | 100 |
 	| 5 | 878 | 690 |
-	| 10 | 2.239 | 1.585 |
-	| 20 | 5.707 | 3.641 |
-	| 49 | 19.132 | 10.672 |
+	| 10 | 2,239 | 1,585 |
+	| 20 | 5,707 | 3,641 |
+	| 49 | 19,132 | 10,672 |
 
-	No acumulado sao ~15% menos XP ate o nivel 5, ~28% ate o 15, ~34% ate o 25 (o
-	ultimo slot de deck) e ~41% ate o 50 -- de ~2.040 para ~1.215 runs cheias no
-	Normal, contando so o XP de partida.
+	Cumulatively that is ~15% less XP to level 5, ~28% to 15, ~34% to 25 (the last
+	deck slot), and ~41% to 50: from ~2,040 to ~1,215 full Medium runs, counting
+	only match XP.
 ]=]
 LevelConfig.BASE_XP = 100
 LevelConfig.CURVE = 1.20
 
---[[ BARRA ]]
+--[[ BAR ]]
 
 --[=[
-	Uma imagem por faixa de progresso do nivel atual, em ordem crescente: cada
-	entrada vale ate o seu `Threshold`. Abaixo da primeira (progresso exatamente
-	zero) a barra fica com a imagem vazia que veio autorada na GUI — ver
-	`HUDController`, que a le do proprio ImageLabel em vez de repetir o id aqui.
+	One image per progress band of the current level, in increasing order: each
+	entry applies up to its `Threshold`. Below the first (progress exactly zero)
+	the bar keeps the empty image authored in the GUI; see `HUDController`, which
+	reads it from the ImageLabel instead of repeating the id here.
 ]=]
 LevelConfig.BAR_IMAGES = {
 	{ Threshold = 0.2, Image = "rbxassetid://134959500194037" },
@@ -63,8 +63,8 @@ LevelConfig.BAR_IMAGES = {
 
 export type LevelState = {
 	Level : number,
-	XP : number,        -- XP dentro do nivel atual
-	Required : number,  -- XP para o proximo nivel (0 no maximo)
+	XP : number,        -- XP within the current level
+	Required : number,  -- XP to the next level (0 at the max)
 	Progress : number,  -- 0..1
 	IsMax : boolean,
 }
@@ -72,7 +72,7 @@ export type LevelState = {
 --[[ API ]]
 
 --[=[
-	Quanto XP custa sair de `level` para o seguinte. Zero no nivel maximo.
+	How much XP it costs to go from `level` to the next. Zero at the max level.
 ]=]
 function LevelConfig:GetXPForLevel(level : number) : number
 	level = math.floor(tonumber(level) or 1)
@@ -85,7 +85,7 @@ function LevelConfig:GetXPForLevel(level : number) : number
 end
 
 --[=[
-	Quebra o XP acumulado do perfil em nivel + progresso dentro dele.
+	Splits the profile's accumulated XP into level + progress within it.
 ]=]
 function LevelConfig:Resolve(totalXP : number?) : LevelState
 	local remaining = math.max(0, math.floor(tonumber(totalXP) or 0))
@@ -114,8 +114,8 @@ function LevelConfig:Resolve(totalXP : number?) : LevelState
 end
 
 --[=[
-	A imagem da faixa em que o progresso cai, ou nil quando ele e zero — nesse caso
-	quem chama usa a barra vazia autorada.
+	The image for the band the progress falls in, or nil when progress is zero; the
+	caller then uses the authored empty bar.
 ]=]
 function LevelConfig:GetBarImage(progress : number) : string?
 	progress = tonumber(progress) or 0
@@ -134,7 +134,7 @@ function LevelConfig:GetBarImage(progress : number) : string?
 end
 
 --[=[
-	Todos os ids da barra, para o preload do HUD.
+	Every bar id, for the HUD preload.
 ]=]
 function LevelConfig:GetBarImages() : { string }
 	local images = {}

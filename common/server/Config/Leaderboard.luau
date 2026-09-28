@@ -1,48 +1,50 @@
 --[[
-	As leaderboards globais do lobby (`Workspace.Leaderboards`).
+	The Lobby's global leaderboards (`Workspace.Leaderboards`).
 
-	Cada entrada de `Boards` liga um modelo do mapa a um numero do perfil. Quem le
-	e o `LeaderboardService` (common): nas duas places ele **grava** o numero de
-	cada jogador num OrderedDataStore; na Lobby, onde a pasta existe, ele tambem
-	**le** o topo e desenha.
+	Each `Boards` entry links a map model to a profile number. `LeaderboardService`
+	(common) reads it: in both places it **writes** each player's number to an
+	OrderedDataStore; in the Lobby, where the folder exists, it also **reads** the
+	top and draws it.
 
-	  - `Model`  -- o nome do modelo dentro de `Workspace.Leaderboards`.
-	  - `Store`  -- o sufixo do OrderedDataStore. Trocar zera a board.
-	  - `Path`   -- onde o numero mora no perfil (`Data`), chave por chave.
-	  - `Format` -- como o numero aparece na linha:
-	      "Level"  -- o nivel que o XP da (`LevelConfig:Resolve`)
-	      "Number" -- abreviado (`1.25M`, `3.4B`)
-	      "Time"   -- segundos em `DD:HH:MM`
+	  - `Model`:  the model name inside `Workspace.Leaderboards`.
+	  - `Store`:  the OrderedDataStore suffix. Changing it resets the board.
+	  - `Path`:   where the number lives in the profile (`Data`), key by key.
+	  - `Format`: how the number shows on the row:
+	      "Level":  the level the XP gives (`LevelConfig:Resolve`)
+	      "Number": abbreviated (`1.25M`, `3.4B`)
+	      "Time":   seconds as `DD:HH:MM`
 
-	**Por que o HIGHEST LEVEL guarda XP, e nao o nivel.** A ordem e a mesma, e o XP
-	desempata: dois jogadores no nivel 50 continuam em ordem de quem jogou mais.
+	**Why HIGHEST LEVEL stores XP, not the level.** The order is the same, and XP
+	breaks ties: two players at level 50 stay ordered by who played more.
 
-	**O tamanho do jogo nao pesa.** O OrderedDataStore ja guarda as chaves em ordem,
-	entao pedir o topo e uma pagina de `TOP` entradas -- o mesmo custo com cem
-	jogadores ou com cem milhoes. Nada aqui percorre a store inteira.
+	**Game size does not matter.** The OrderedDataStore already keeps keys in order,
+	so asking for the top is one page of `TOP` entries: the same cost with a hundred
+	players or a hundred million. Nothing here walks the whole store.
+
+	See docs/common/leaderboards.md.
 ]]
 
 return {
 	FOLDER_NAME = "Leaderboards",
 
-	-- Quantas linhas cada board mostra. Uma pagina so do `GetSortedAsync`, que
-	-- aceita ate 100.
+	-- How many rows each board shows. A single `GetSortedAsync` page, which
+	-- accepts up to 100.
 	TOP = 50,
 
 	--[[
-		De quanto em quanto tempo cada servidor manda os numeros dos seus jogadores
-		(so os que mudaram) e de quanto em quanto tempo o lobby redesenha o topo.
+		How often each server sends its players' numbers (only those that changed) and
+		how often the Lobby redraws the top.
 
-		O limite de escrita e 60 + 10 por jogador por minuto, por servidor. Com 8
-		boards e 120s, o pior caso (todas mudaram) sao 4 por jogador por minuto --
-		e o normal sao 2, os dois tempos.
+		The write limit is 60 + 10 per player per minute, per server. With 8 boards and
+		120s, the worst case (all changed) is 4 per player per minute, and the usual
+		case is 2, for both intervals.
 	]]
 	WRITE_INTERVAL = 120,
 	READ_INTERVAL = 120,
 
 	Boards = {
 		{ Model = "HighestLevelLB", Store = "XP", Path = { "Stats", "XP" }, Format = "Level" },
-		-- O total ganho, e nao o saldo: gastar na loja nao derruba ninguem da board.
+		-- The total earned, not the balance: spending in the shop does not knock anyone off the board.
 		{ Model = "MostCoinsLB", Store = "CoinsEarned", Path = { "Stats", "CoinsEarned" }, Format = "Number" },
 		{ Model = "MostMatchesWonLB", Store = "Wins", Path = { "Stats", "Wins" }, Format = "Number" },
 		{ Model = "NightmareWinsLB", Store = "NightmareWins", Path = { "Stats", "DifficultyWins", "Nightmare" }, Format = "Number" },

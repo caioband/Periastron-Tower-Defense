@@ -10,34 +10,34 @@ local MAX_FLIGHT_TIME = 3
 local ARRIVE_DISTANCE = 1
 
 --[[
-	Quanto o projetil que atravessa segue voando, em studs, quando o
-	`Projectile.PierceRange` da unidade nao diz outra coisa.
+	How far a piercing projectile keeps flying, in studs, when the unit's
+	`Projectile.PierceRange` does not say otherwise.
 
-	Ele nao para no alvo -- e o que "atravessar" quer dizer --, entao precisa de um
-	fim proprio. Vale folgado mais que o alcance de qualquer unidade da tabela: a
-	flecha sumindo no ar depois de passar pelo ultimo inimigo e o desenho certo, e
-	quem decide quem levou dano e o servidor, que corta no alcance de verdade.
+	It does not stop at the target (that is what "piercing" means), so it needs its
+	own end. It is comfortably more than any unit's range in the table: the arrow
+	vanishing in the air after passing the last enemy is the right drawing, and the
+	server decides who took damage, cutting at the real range.
 ]]
 local PIERCE_DISTANCE = 24
 
---- O valor de `Projectile.Subtype` que faz o projetil atravessar.
+--- The `Projectile.Subtype` value that makes the projectile pierce.
 local PIERCING = "Piercing"
 
 --[[
-	O attachment que um projetil pode trazer com o estouro dele dentro.
+	The attachment a projectile can carry with its burst inside.
 
-	E opcional e e do **asset**, nao de config: o projetil que tiver um attachment
-	com este nome estoura ao chegar, e o que nao tiver some como sempre. O
-	`PyreProjectile` tem dois attachments -- o `Ball`, com os emitters ligados que
-	fazem o rastro, e o `Explosion`, com os desligados que so saem no impacto.
+	It is optional and belongs to the **asset**, not config: a projectile with an
+	attachment by this name bursts on arrival, and one without it vanishes as usual.
+	`PyreProjectile` has two attachments: `Ball`, with the enabled emitters that make
+	the trail, and `Explosion`, with the disabled ones that only fire on impact.
 
-	Emitter desligado nao aparece sozinho: quem o faz aparecer e o `Emit`, e por
-	isso o artista pode deixar os dois grupos pendurados na mesma part sem um
-	atrapalhar o outro.
+	A disabled emitter does not appear on its own: `Emit` makes it appear, so the
+	artist can leave both groups on the same part without one getting in the other's
+	way.
 ]]
 local IMPACT_ATTACHMENT = "Explosion"
 
---- Quantas particulas por emitter quando o asset nao disser. O mesmo do `VFXController`.
+--- How many particles per emitter when the asset does not say. The same as `VFXController`.
 local DEFAULT_EMIT_COUNT = 25
 
 local ProjectileController = {}
@@ -63,21 +63,20 @@ local function setCFrame(instance, cf)
 end
 
 --[=[
-	Estoura o projetil onde ele parou, em vez de o apagar na hora.
+	Bursts the projectile where it stopped, instead of removing it right away.
 
-	Tres coisas ao mesmo tempo: o rastro para de emitir, o estouro sai, e a casca
-	some deixando so as particulas no ar. Sem apagar o rastro o projetil continuaria
-	cuspindo fogo parado no lugar pelo tempo do estouro; sem sumir a casca ficaria a
-	bolinha pairando no meio da explosao.
+	Three things at once: the trail stops emitting, the burst fires, and the shell
+	vanishes, leaving only the particles in the air. Without stopping the trail the
+	projectile would keep spitting fire in place during the burst; without hiding the
+	shell the little ball would hover in the middle of the explosion.
 
-	Devolve por quanto tempo as particulas ainda vivem, para quem chamou saber
-	quando pode destruir de verdade -- destruir junto com o `Emit` mata as
-	particulas antes de elas nascerem. Devolve `nil` quando o projetil nao tem
-	estouro nenhum, e ai o caminho e o de sempre.
+	Returns how long the particles still live, so the caller knows when it can really
+	destroy it: destroying along with `Emit` kills the particles before they are born.
+	Returns `nil` when the projectile has no burst, and then it takes the usual path.
 
-	O prazo e de **tela**, e nao de partida: `ParticleEmitter` nao conhece o
-	`GameClock`, entao as particulas duram os mesmos 2 segundos reais no 1x e no 2x
-	e o `task.delay` e que acerta com elas.
+	The deadline is **screen** time, not match time: `ParticleEmitter` does not know
+	`GameClock`, so the particles last the same 2 real seconds at 1x and 2x, and
+	`task.delay` matches them.
 ]=]
 local function burstImpact(instance) : number?
 	local burst = instance:FindFirstChild(IMPACT_ATTACHMENT, true)
@@ -103,12 +102,12 @@ local function burstImpact(instance) : number?
 	end
 
 	--[[
-		A casca sai de cena, e nao o attachment: as particulas ja emitidas vivem
-		presas a ele, e destruir a part agora levaria o estouro junto.
+		The shell leaves the scene, not the attachment: the already-emitted particles
+		live attached to it, and destroying the part now would take the burst with it.
 
-		`Anchored` porque o laco de voo acabou de soltar o projetil -- o template vem
-		com `Anchored = false` e `CanCollide = true`, e sem isto a bolinha invisivel
-		cairia (e esbarraria) durante os dois segundos do estouro.
+		`Anchored` because the flight loop just released the projectile: the template
+		comes with `Anchored = false` and `CanCollide = true`, and without this the
+		invisible ball would fall (and bump into things) during the two-second burst.
 	]]
 	local function hide(part)
 		part.Transparency = 1
@@ -129,8 +128,8 @@ local function burstImpact(instance) : number?
 end
 
 --[=[
-	Tira o projetil de cena: com estouro, ele fica ate as particulas morrerem; sem
-	estouro, some agora.
+	Removes the projectile from the scene: with a burst, it stays until the particles
+	die; without one, it goes now.
 ]=]
 local function retire(instance)
 	local linger = burstImpact(instance)
@@ -158,21 +157,21 @@ local function targetPosition(targetModel, fallback)
 end
 
 --[=[
-	O voo de quem atravessa: reta, sem perseguir, e sem parar no alvo.
+	A piercing projectile's flight: straight, no homing, and no stopping at the target.
 
-	A diferenca para o tiro comum nao e so o fim. O projetil comum **persegue** --
-	ele recalcula o alvo a cada quadro e curva atras dele --, e uma flecha que
-	atravessa nao pode fazer isso: a direcao e congelada no disparo, na mira que a
-	unidade tinha, senao ela curvaria para o primeiro inimigo em vez de riscar a
-	linha por onde os outros vao levar dano.
+	The difference from a regular shot is not only the end. A regular projectile
+	**homes**: it recomputes the target every frame and curves after it, and a piercing
+	arrow cannot do that: the direction is frozen at firing, at the unit's aim, or it
+	would curve toward the first enemy instead of drawing the line along which the
+	others take damage.
 
-	O `onArrive` sai quando ela **passa** por onde o alvo estava, e nao quando ela
-	morre: e ali que o efeito de acerto pertence. Depois disso ela segue mais um
-	tanto e some sozinha.
+	`onArrive` fires when it **passes** where the target was, not when it dies: that
+	is where the hit effect belongs. After that it continues a bit more and vanishes
+	on its own.
 
-	Quem leva dano nao se decide aqui. O servidor ja resolveu isso no
-	`UnitService:executeAttack`, na mesma linha e com o alcance de verdade da
-	unidade; daqui sai so o desenho.
+	Who takes damage is not decided here. The server already resolved that in
+	`UnitService:executeAttack`, on the same line and with the unit's real range; only
+	the drawing comes from here.
 ]=]
 function ProjectileController:_flyThrough(template, startPos, aimPos, config, finish)
 	local heading = aimPos - startPos
@@ -203,7 +202,7 @@ function ProjectileController:_flyThrough(template, startPos, aimPos, config, fi
 		setCFrame(projectile, CFrame.lookAt(pos, pos + direction))
 
 		if travelled >= impactAt then
-			-- O `finish` so passa a primeira vez; as outras chamadas nao fazem nada.
+			-- `finish` only goes through the first time; later calls do nothing.
 			finish(pos)
 		end
 
@@ -264,9 +263,9 @@ function ProjectileController:Fire(startPos, targetModel, config, onArrive, fall
 		local step = speed * dt
 
 		--[[
-			Chegar e bater; estourar o prazo e desistir. Sao coisas diferentes, e so a
-			primeira merece o estouro -- um projetil que passou 3 segundos no ar sem
-			alcancar ninguem nao explodiu em cima de nada.
+			Arriving is hitting; running out the clock is giving up. They are different,
+			and only the first deserves the burst: a projectile that spent 3 seconds in
+			the air without reaching anyone did not explode on anything.
 		]]
 		local arrived = distance <= math.max(step, ARRIVE_DISTANCE)
 

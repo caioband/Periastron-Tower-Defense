@@ -8,15 +8,14 @@ local Me = require(Vendor.Me)
 local Framework = Me.new()
 
 --[[
-	O lado servidor da bancada de texto rico.
+	The server side of the rich text workbench.
 
-	A bancada em si é toda do cliente (`RichTextLabController`); o servidor existe
-	aqui por causa da permissão: quem manda abrir é o comando `richtext` do Cmdr, e
-	é o `BeforeRun` do `CmdrService` que decide se quem pediu pode. Bancada que o
-	cliente abrisse por conta própria seria uma tela de dev na mão de qualquer
-	jogador.
+	The workbench itself is all client (`RichTextLabController`); the server exists
+	here for permission: the Cmdr `richtext` command asks it to open, and
+	`CmdrService`'s `BeforeRun` decides whether the caller may. A workbench the
+	client opened on its own would be a dev screen in any player's hands.
 
-	Fica em `common/` porque o Cmdr roda nas duas places.
+	It lives in `common/` because Cmdr runs in both places.
 ]]
 
 local RichTextLabService = {
@@ -26,8 +25,8 @@ local RichTextLabService = {
 --[[ API ]]
 
 --[=[
-	Abre a bancada para quem estiver na lista, ou fecha se já estiver aberta — o
-	comando é o mesmo interruptor nos dois sentidos.
+	Opens the workbench for everyone in the list, or closes it if already open: the
+	command is the same toggle both ways.
 ]=]
 function RichTextLabService:Toggle(players : { Player })
 	for _, player in players do
@@ -35,12 +34,12 @@ function RichTextLabService:Toggle(players : { Player })
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function RichTextLabService:construct()
-	-- O identificador do evento nasce no servidor: sem este `Listen` vazio, o
-	-- `Listen` do cliente ficaria dez segundos esperando um evento que ninguém
-	-- registrou — e levaria junto o resto do `construct` dele.
+	-- The event identifier is created on the server: without this empty `Listen`,
+	-- the client's `Listen` would wait ten seconds for an event nobody registered,
+	-- and take the rest of its `construct` down with it.
 	Framework:Listen("RichTextLabToggle", function() end)
 end
 

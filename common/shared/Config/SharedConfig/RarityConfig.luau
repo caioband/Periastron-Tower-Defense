@@ -13,7 +13,10 @@
 	in ServerScriptService.Config.Crate.
 ]]
 
+local Log = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Util"):WaitForChild("Log"))
 local UnitStats = require(script.Parent.UnitStats)
+
+local log = Log.new("RarityConfig")
 
 local module = {}
 
@@ -128,7 +131,7 @@ local function buildUnitIndex(): { [string]: { string } }
 	for unitName, stats in UnitStats do
 		local rarity = module.resolve(stats.Rarity)
 		if not rarity then
-			warn(string.format("[RarityConfig]: unit %q has no valid Rarity (%s).", unitName, tostring(stats.Rarity)))
+			log:StudioWarn(string.format("unit %q has no valid Rarity (%s).", unitName, tostring(stats.Rarity)))
 			continue
 		end
 

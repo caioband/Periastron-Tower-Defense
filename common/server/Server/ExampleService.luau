@@ -1,6 +1,6 @@
--- NOTA: este modulo NAO e carregado pelo framework. O Me:Load() do servidor so
--- varre ServerScriptService.Services, e este arquivo e filho do script Server.
--- Fica aqui como template de servico -- copie para Services/ para usar.
+-- NOTE: this module is NOT loaded by the framework. The server's Me:Load() only
+-- scans ServerScriptService.Services, and this file is a child of the Server script.
+-- It stays here as a service template: copy it to Services/ to use it.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")

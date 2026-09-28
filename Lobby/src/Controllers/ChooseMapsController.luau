@@ -12,12 +12,14 @@ local SharedConfig = require(Configs.SharedConfig)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local Signal = require(Packages.Signal)
 
 local MapConfig = SharedConfig.MapConfig
 local PortalConfig = SharedConfig.PortalConfig
 
 local Framework = Me.new()
+local log = Log.new("ChooseMapsController")
 
 --[[ CONSTANTS ]]
 local CHOOSE_MAPS_UI_NAME = "ChooseMaps"
@@ -40,18 +42,18 @@ local CHECKMARK_NAME = "CheckMark"
 local ENTRY_SCALE_NAME = "SelectionScale"
 
 --[[
-	O cadeado do template: o `Frame` que cobre a carta e o rotulo de dentro dele que
-	diz quantas vitorias faltam.
+	The template's lock: the `Frame` covering the card and the label inside it that says
+	how many wins are missing.
 
-	O rotulo se chama `MaxPlrs` como o contador de jogadores do painel, e os dois nao
-	se confundem porque este e procurado **dentro do `Locked`** e o outro direto no
-	painel -- nenhuma das duas buscas e recursiva.
+	The label is called `MaxPlrs` like the panel's player counter, and the two are not
+	confused because this one is looked up **inside `Locked`** and the other directly in
+	the panel: neither lookup is recursive.
 ]]
 local LOCKED_NAME = "Locked"
 local LOCKED_LABEL_NAME = "MaxPlrs"
 
--- O texto do cadeado. O `%d` e quantas vitorias ainda faltam, e nao quantas o mapa
--- pede: "faltam 2" e o que o jogador precisa saber, e o total ele descobre sozinho.
+-- The lock text. `%d` is how many wins are still missing, not how many the map
+-- asks for: "2 to go" is what the player needs to know, and they figure out the total.
 local LOCKED_FORMAT = "%d MORE WINS REQUIRED"
 
 -- Same curves the crate panel uses, so both panels read as the same UI.
@@ -83,7 +85,7 @@ local ChooseMapsController = {
 	Controllers = {
 		InterfaceController = {},
 
-		-- De onde saem as vitorias que destrancam os mapas. Ver `_watchWins`.
+		-- Where the wins that unlock maps come from. See `_watchWins`.
 		DataController = {},
 	},
 
@@ -142,12 +144,12 @@ function ChooseMapsController:_findCheckMark(entry : Instance) : GuiObject?
 end
 
 --[=[
-	O cadeado da carta: o `Frame` autorado que a cobre, e o rotulo de dentro onde as
-	vitorias que faltam sao escritas.
+	The card's lock: the authored `Frame` covering it, and the label inside where the
+	missing wins are written.
 
-	Como o `CheckMark`, ele e arte do template e nao e construido aqui -- um template
-	sem ele continua funcionando, o mapa so nunca parece trancado. Nasce escondido:
-	quem o acende e o `_renderLocks`, ja sabendo quantas vitorias o jogador tem.
+	Like `CheckMark`, it is template art and not built here: a template without it still
+	works, the map just never looks locked. It starts hidden: `_renderLocks` lights it,
+	already knowing how many wins the player has.
 ]=]
 function ChooseMapsController:_findLock(entry : Instance) : (GuiObject?, TextLabel?)
 	local locked = entry:FindFirstChild(LOCKED_NAME, true)
@@ -183,9 +185,9 @@ function ChooseMapsController:_buildEntries(scroll : Instance, template : Instan
 		local entry = template:Clone()
 		entry.Name = ENTRY_NAME_PREFIX .. mapName
 
-		-- A posicao na lista **e** a ordem: o `getOrderedMaps` ja devolve os mapas do
-		-- mais barato para o mais caro em vitorias, e nao ha um segundo numero no
-		-- config para desencontrar deste.
+		-- The position in the list **is** the order: `getOrderedMaps` already returns maps from
+		-- cheapest to most expensive in wins, and there is no second number in the
+		-- config to drift from this one.
 		entry.LayoutOrder = index
 		entry.Visible = true
 
@@ -222,10 +224,10 @@ function ChooseMapsController:_buildEntries(scroll : Instance, template : Instan
 			LockedLabel = lockedLabel,
 
 			--[[
-				O estado autorado do botao, lido e nao presumido: destrancar devolve o
-				que o template trazia, e nao um `true` escrito na mao aqui. E a mesma
-				razao do `wasAnchored` do gesto das cartas -- devolver um valor inventado
-				e mexer no que nao era nosso para mexer.
+				The button's authored state, read and not assumed: unlocking restores what the
+				template had, not a `true` written by hand here. It is the same reason as the
+				card gesture's `wasAnchored`: restoring an invented value touches what was not
+				ours to touch.
 			]]
 			WasActive = entry:IsA("GuiButton") and entry.Active,
 			WasAutoButtonColor = entry:IsA("GuiButton") and entry.AutoButtonColor,
@@ -238,11 +240,11 @@ function ChooseMapsController:_buildEntries(scroll : Instance, template : Instan
 end
 
 --[=[
-	Quantas vitorias o jogador tem, ou zero enquanto a replica nao chegou.
+	How many wins the player has, or zero until the replica arrives.
 
-	Zero e o chute seguro: com ele so o que e livre aparece livre. Errar para o outro
-	lado abriria um mapa por um instante e o fecharia na cara do jogador quando o
-	perfil chegasse.
+	Zero is the safe guess: with it only what is free shows as free. Erring the other way
+	would open a map for an instant and shut it in the player's face when the profile
+	arrived.
 ]=]
 function ChooseMapsController:_getWins() : number
 	local replica = self.Replica
@@ -252,14 +254,15 @@ function ChooseMapsController:_getWins() : number
 end
 
 --[=[
-	Pinta o cadeado de cada carta a partir das vitorias de agora.
+	Paints each card's lock from the current wins.
 
-	Tres coisas mudam juntas, e por isso moram na mesma funcao: o `Locked` aparece, o
-	botao para de responder e o rotulo diz quanto falta. Deixar o botao vivo por baixo
-	de um cadeado desenhado seria um mapa que parece trancado e abre no clique.
+	Three things change together, which is why they live in the same function: `Locked`
+	appears, the button stops responding, and the label says how much is missing. Leaving
+	the button alive under a drawn lock would be a map that looks locked and opens on
+	click.
 
-	`Active = false` ja e o bastante para o `Activated` nao disparar -- o `Select`
-	confere de novo mesmo assim, porque ele tambem e chamado de fora.
+	`Active = false` is already enough for `Activated` not to fire; `Select` checks again
+	anyway, because it is also called from outside.
 ]=]
 function ChooseMapsController:_renderLocks()
 	local wins = self:_getWins()
@@ -283,10 +286,10 @@ function ChooseMapsController:_renderLocks()
 	end
 
 	--[[
-		Uma vitoria nao tranca mapa nenhum -- o numero so sobe --, entao a selecao nunca
-		fica presa num mapa que fechou. A rede existe para o caso de o `WinsRequired`
-		subir num patch com o painel aberto: o `Confirm` some junto com a selecao, em vez
-		de mandar ao servidor um mapa que ele vai recusar.
+		A win locks no map (the number only goes up), so the selection never gets stuck on
+		a map that closed. The safety net exists for the case of `WinsRequired` going up in
+		a patch with the panel open: `Confirm` goes away with the selection, instead of
+		sending the server a map it will refuse.
 	]]
 	if self.Selected and not MapConfig.isUnlocked(self.Selected, wins) then
 		self.Selected = nil
@@ -296,12 +299,12 @@ function ChooseMapsController:_renderLocks()
 end
 
 --[=[
-	Segura a replica do jogador e repinta os cadeados a cada mudanca em `Stats`.
+	Holds the player's replica and repaints the locks on every change to `Stats`.
 
-	Mesmo formato do contador do HUD e do da loja: o `DataService` escreve a chave
-	`Stats` inteira, mas a escuta e o `OnChange` para que qualquer escrita mais funda
-	(`Stats.Wins`) tambem conte. O jogador volta da partida com uma vitoria a mais e o
-	mapa destranca sem ele reabrir o painel.
+	The same shape as the HUD counter and the shop's: `DataService` writes the whole
+	`Stats` key, but the listener is `OnChange` so any deeper write (`Stats.Wins`) also
+	counts. The player returns from a match with one more win and the map unlocks without
+	reopening the panel.
 ]=]
 function ChooseMapsController:_watchWins()
 	task.spawn(function()
@@ -428,11 +431,11 @@ function ChooseMapsController:_setOpen(open : boolean)
 			if state == Enum.PlaybackState.Completed and not self.IsOpenState then
 				panel.Visible = false
 				--[[
-					Pelo `SetEnabled`, e não no `Enabled` direto: o painel fecha em 0.18s, e
-					nesse intervalo o portal pode pedir a tela para a contagem regressiva.
-					Escrevendo direto, o pedido já teria desligado a `ScreenGui` antes, esta
-					linha não mudaria nada — e o controller continuaria achando que o dono a
-					queria ligada, reacendendo um painel vazio quando o pedido saísse.
+					Through `SetEnabled`, not `Enabled` directly: the panel closes in 0.18s, and in
+					that interval the portal may ask for the screen for the countdown. Writing
+					directly, the request would already have disabled the `ScreenGui`, this line
+					would change nothing, and the controller would keep thinking the owner wanted
+					it enabled, relighting an empty panel when the request left.
 				]]
 				self.Controllers.InterfaceController:SetEnabled(self.ScreenGui, false)
 			end
@@ -461,7 +464,7 @@ function ChooseMapsController:_bindUI(screenGui : ScreenGui)
 	local template = scroll and scroll:WaitForChild(TEMPLATE_NAME, 10)
 
 	if not panel or not scroll or not template then
-		warn(`[ChooseMapsController]: Could not find {CHOOSE_MAPS_UI_NAME}.{PANEL_NAME}.{SCROLL_NAME}.{TEMPLATE_NAME}.`)
+		log:StudioWarn(`could not find {CHOOSE_MAPS_UI_NAME}.{PANEL_NAME}.{SCROLL_NAME}.{TEMPLATE_NAME}.`)
 		return
 	end
 
@@ -565,11 +568,11 @@ function ChooseMapsController:GetSelected() : string?
 end
 
 --[=[
-	Picks a map. Nothing is sent yet -- Confirm is what closes the deal.
+	Picks a map. Nothing is sent yet: Confirm is what closes the deal.
 
-	Mapa trancado nao e escolhido: o botao dele ja esta morto (`_renderLocks`), e a
-	conferencia aqui e para quem chama de fora -- o `Select` e API publica, e o
-	`PortalController` pode pedir um mapa por nome.
+	A locked map is not picked: its button is already dead (`_renderLocks`), and the check
+	here is for outside callers: `Select` is public API, and `PortalController` may ask for
+	a map by name.
 ]=]
 function ChooseMapsController:Select(mapName : string?)
 	local resolvedMap = MapConfig.resolveMap(mapName)

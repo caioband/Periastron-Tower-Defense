@@ -12,6 +12,7 @@ local Util = Shared:WaitForChild("Util")
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local Signal = require(Packages.Signal)
 
 local SharedConfig = require(Configs.SharedConfig)
@@ -24,6 +25,7 @@ local RoundCardConfig = SharedConfig.RoundCardConfig
 local RoundCardShopConfig = SharedConfig.RoundCardShopConfig
 
 local Framework = Me.new()
+local log = Log.new("RoundCardShopController")
 
 local GUI = RoundCardShopConfig.Gui
 local ANIM = RoundCardConfig.Animation
@@ -32,97 +34,96 @@ local ANIM = RoundCardConfig.Animation
 
 local CHARACTER_ROOT = "HumanoidRootPart"
 
--- Quantas vezes a vitrine e pedida ao servidor antes de desistir, e de quanto em
--- quanto tempo. Ver o `_requestStock`.
+-- How many times the storefront is requested from the server before giving up, and how
+-- often. See `_requestStock`.
 local STOCK_REQUEST_ATTEMPTS = 5
 local STOCK_REQUEST_INTERVAL = 2
 
 --[=[
-	O nome do pedido ao `InterfaceController`: enquanto a loja esta aberta, a tela e
-	so dela.
+	The name of the `InterfaceController` request: while the shop is open, the screen is
+	its alone.
 
-	Pedido com nome, e nao um interruptor global: a loja de caixas, a cutscene e o
-	painel de mapas pedem a mesma coisa, e uma GUI so volta quando o **ultimo** pedido
-	sai. Nome proprio, e nao o `"Shop"` da loja de caixas -- as duas nunca estao
-	abertas juntas, mas dividir o nome faria uma devolver a tela que a outra pediu.
+	A named request, not a global switch: the crate shop, the cutscene, and the maps panel
+	ask for the same thing, and a GUI only comes back when the **last** request leaves.
+	Its own name, not the crate shop's `"Shop"`: the two are never open together, but
+	sharing the name would let one give back the screen the other asked for.
 ]=]
 local HIDE_REASON = "CardShop"
 
 --[=[
-	O som da compra: o mesmo `Shards` da loja de caixas, em `SoundService.BuySFX`.
+	The purchase sound: the same `Shards` as the crate shop, in `SoundService.BuySFX`.
 
-	Toca no **resultado** do servidor, e nao no clique: o preco e a carteira sao
-	conferidos la, e um clique sem saldo nao comprou nada.
+	It plays on the server's **result**, not the click: price and wallet are checked there,
+	and a click without balance bought nothing.
 
-	A `Key` e propria, e nao a da loja de caixas: as duas nunca tocam ao mesmo tempo,
-	e uma `Key` compartilhada faria uma cortar o som da outra sem razao nenhuma.
+	The `Key` is its own, not the crate shop's: the two never play at the same time, and a
+	shared `Key` would let one cut the other's sound for no reason.
 ]=]
 local BUY_SOUND = "Shards"
 local BUY_SOUND_KEY = "RoundCardShopBuy"
 
--- De quanto em quanto tempo o `ResetText` e reescrito. Um segundo porque a contagem
--- e em segundos: reescrever mais rapido escreveria o mesmo texto.
+-- How often `ResetText` is rewritten. One second because the countdown is in
+-- seconds: rewriting faster would write the same text.
 local COUNTDOWN_INTERVAL = 1
 
 --[=[
-	O botao da HUD que leva o jogador ate a vitrine.
+	The HUD button that takes the player to the storefront.
 
-	Ele mora no proprio `Wrapper` dentro do `HUDFrame`, ao lado do `Shop` (que faz o
-	mesmo pela loja de caixas), e por isso e procurado **em profundidade**: a HUD muda
-	de forma com o tempo, e um botao que hoje esta dentro de um wrapper pode estar
-	solto no frame amanha.
+	It lives in its own `Wrapper` inside `HUDFrame`, next to `Shop` (which does the same for
+	the crate shop), which is why it is looked up **by depth**: the HUD changes shape over
+	time, and a button inside a wrapper today may be loose in the frame tomorrow.
 
-	O nome nao colide com o `Shop` do vizinho: `FindFirstChild` casa o nome inteiro, e
-	nao um pedaco dele. E o `CardShop` do `RoundCardConfig.Gui` (o botao da beirada da
-	tela, na Game) e outra `ScreenGui` de outra place -- a busca daqui comeca no
-	`HUDFrame` do Lobby e nunca alcanca aquele.
+	The name does not collide with the neighbor's `Shop`: `FindFirstChild` matches the
+	whole name, not part of it. And `RoundCardConfig.Gui`'s `CardShop` (the edge-of-screen
+	button, in Game) is another `ScreenGui` in another place: the lookup here starts at the
+	Lobby's `HUDFrame` and never reaches it.
 
-	**O crescer e o afundar dele nao sao daqui.** Quem cuida disso e o
-	`HUDButtonController`, que liga todo `GuiButton` debaixo do `HUDFrame` -- o botao
-	novo entra na animacao dos outros sem uma linha de codigo. Daqui sai so o clique.
+	**Its grow and sink are not handled here.** `HUDButtonController` handles them, hooking
+	up every `GuiButton` under `HUDFrame`: the new button joins the others' animation
+	without a line of code. Only the click comes from here.
 ]=]
 local HUD_UI_NAME = "HUD"
 local HUD_FRAME_NAME = "HUDFrame"
 local HUD_BUTTON_NAME = "CardShop"
 
 --[=[
-	A loja de cartas do lobby: `StarterGui.ShopUI.RCSS`.
+	The Lobby card shop: `StarterGui.ShopUI.RCSS`.
 
-	Ela vende **acesso** as cartas de round. A carta comprada aqui nao vai para mao
-	nenhuma: ela entra no `RoundCards` do perfil e passa a poder ser sorteada na oferta
-	de round dentro da partida. E por isso que a carta que este jogador ja destravou
-	aparece com o veu de `SOLD` em vez de sair da vitrine -- a vitrine e a mesma para
-	todo mundo (tres cartas por bloco de quatro horas), e o que muda de jogador para
-	jogador e o que ele ja tem.
+	It sells **access** to round cards. A card bought here goes into no hand: it enters
+	the profile's `RoundCards` and becomes eligible for the round offer draw inside the
+	match. That is why a card this player already unlocked shows the `SOLD` veil instead of
+	leaving the storefront: each player's storefront is three cards per four-hour block,
+	and what the veil tracks is what they already own.
 
-	**Este controller nao sorteia nada.** As tres cartas chegam do
-	`RoundCardShopService` ja sorteadas e com preco, ele desenha, e o clique manda
-	"quero a carta X". Quem confere que X esta na vitrine de agora, que o jogador nao a
-	tem e que os shards dao e o servidor.
+	**This controller draws nothing.** The three cards arrive from `RoundCardShopService`
+	already drawn and priced, it draws them, and the click sends "I want card X". The
+	server checks that X is in the current storefront, that the player does not own it,
+	and that the shards are enough.
 
-	**O reroll tambem nao e creditado aqui.** O dado (`RerollDice`) abre o prompt do
-	developer product e para por ai: quem credita e o `ProcessReceipt` do servidor, e o
-	que volta e a prateleira nova pelo `RoundCardStock` -- que este controller desenha
-	como desenharia uma rotacao. Cancelar o prompt nao produz nada, que e o certo.
+	**The reroll is not credited here either.** The die (`RerollDice`) opens the developer
+	product prompt and stops there: the server's `ProcessReceipt` credits it, and what
+	comes back is the new shelf through `RoundCardStock`, which this controller draws as
+	it would draw a rotation. Canceling the prompt produces nothing, which is right.
 
-	Cada carta e um clone do `CardWrapper` autorado, e a carta dentro do wrapper e que
-	anima: ela cai de cima com a imagem aparecendo e, quando isso termina, o conteudo
-	(titulo, descricao, preco, contornos) sobe de transparente ate o valor autorado. O
-	wrapper existe justamente para isso -- ele e quem ocupa a vaga no `UIListLayout`,
-	entao a carta se mexe a vontade sem o layout arrasta-la de volta a cada quadro. Os
-	tempos sao os da loja de round (`RoundCardConfig.Animation`), porque e a mesma carta
-	entrando na tela pelo mesmo gesto.
+	Each card is a clone of the authored `CardWrapper`, and the card inside the wrapper is
+	what animates: it drops from above with its image appearing and, when that ends, the
+	content (title, description, price, outlines) goes from transparent to the authored
+	value. The wrapper exists precisely for that: it occupies the slot in the
+	`UIListLayout`, so the card moves freely without the layout dragging it back every
+	frame. The timings are the round shop's (`RoundCardConfig.Animation`), because it is
+	the same card entering the screen with the same gesture.
 
-	Andar a menos de `RoundCardShopConfig.OPEN_RADIUS` do marcador abre, e sair fecha.
-	O botao `CardShop` da HUD leva o jogador ate la (`TeleportToShop`), do mesmo jeito
-	que o `Shop` ao lado dele leva ate a loja de caixas. `Open`/`Close`/`Toggle` sao
-	publicos, entao qualquer outra coisa (um comando do Cmdr, por exemplo) move o mesmo
-	painel.
+	Walking within `RoundCardShopConfig.OPEN_RADIUS` of the marker opens it, and leaving
+	closes it. The HUD's `CardShop` button takes the player there (`TeleportToShop`), the
+	same way the `Shop` next to it goes to the crate shop. `Open`/`Close`/`Toggle` are
+	public, so anything else (a Cmdr command, for example) moves the same panel.
 
-	**A `ShopUI` e dividida com a loja de caixas e a de Robux.** As tres sao irmas
-	dentro dela, e nenhuma manda no `Enabled` sozinha: quem diz qual painel esta na
-	tela e o `Visible` do wrapper de cada uma. O painel (moldura, animacao, borrao,
-	proximidade) e do `ProximityPanel`; ver o `CanDisable` no `construct`.
+	**`ShopUI` is shared with the crate shop and the Robux shop.** The three are siblings
+	inside it, and none controls `Enabled` alone: each one's wrapper `Visible` says which
+	panel is on screen. The panel (frame, animation, blur, proximity) belongs to
+	`ProximityPanel`; see `CanDisable` in `construct`.
+
+	See docs/lobby/round-card-shop.md.
 ]=]
 local RoundCardShopController = {
 	Controllers = {
@@ -130,13 +131,13 @@ local RoundCardShopController = {
 		InterfaceController = {},
 		MusicController = {},
 
-		-- As outras lojas da mesma `ScreenGui`. So para saber se alguma esta aberta
-		-- antes de apagar a ScreenGui das tres -- ver o `CanDisable` no `construct`.
+		-- The other shops in the same `ScreenGui`. Only to know whether any is open
+		-- before disabling the ScreenGui of all three; see `CanDisable` in `construct`.
 		ShopController = {},
 		RobuxShopController = {},
 
-		-- O selo `New` do botao da HUD: quem o apaga e a vitrine ser aberta. Ver o
-		-- `BeforeOpen` no `construct`.
+		-- The HUD button's `New` badge: the storefront opening clears it. See
+		-- `BeforeOpen` in `construct`.
 		HUDBadgeController = {},
 	},
 
@@ -144,16 +145,16 @@ local RoundCardShopController = {
 		-- (isOpen : boolean)
 		OpenChanged = Signal.new(),
 
-		-- (cardId : string) -- disparado junto com o `RequestBuyRoundCard`, para o que
-		-- for do cliente poder reagir ao clique.
+		-- (cardId : string) -- fired along with `RequestBuyRoundCard`, so anything
+		-- client side can react to the click.
 		PurchaseRequested = Signal.new(),
 
-		-- () -- o prompt do reroll foi aberto. Nao quer dizer que ele foi pago: quem
-		-- confirma isso e a prateleira nova chegando pelo `RoundCardStock`.
+		-- () -- the reroll prompt was opened. It does not mean it was paid: the new shelf
+		-- arriving through `RoundCardStock` confirms that.
 		RerollRequested = Signal.new(),
 
-		-- (cardId : string, success : boolean, reason : string?) -- o que o
-		-- `RoundCardShopService` decidiu. `reason` e um de NotLoaded, NotInStock,
+		-- (cardId : string, success : boolean, reason : string?) -- what
+		-- `RoundCardShopService` decided. `reason` is one of NotLoaded, NotInStock,
 		-- AlreadyOwned, NotEnoughCurrency, GrantFailed.
 		PurchaseResult = Signal.new(),
 	},
@@ -162,12 +163,12 @@ local RoundCardShopController = {
 --[[ INTERNAL ]]
 
 --[=[
-	As cartas que este jogador ja destravou, lidas da propria replica.
+	The cards this player already unlocked, read from their own replica.
 
-	Vem da replica e nao do servidor de propósito: o `RoundCards` do perfil ja e
-	replicado para o dono dele, e mandar a lista junto com a vitrine daria ao cliente
-	uma segunda versao de uma coisa que ele ja tem -- e que ficaria velha na primeira
-	compra.
+	It comes from the replica and not the server on purpose: the profile's `RoundCards` is
+	already replicated to its owner, and sending the list with the storefront would give
+	the client a second version of something it already has, which would go stale at the
+	first purchase.
 ]=]
 function RoundCardShopController:_unlocked() : { [string] : boolean }
 	local replica = self.Replica
@@ -176,12 +177,12 @@ function RoundCardShopController:_unlocked() : { [string] : boolean }
 end
 
 --[=[
-	O molde de uma carta: o `CardWrapper` autorado sai da fileira e volta clonado, um
-	por carta da vitrine.
+	A card's template: the authored `CardWrapper` leaves the row and comes back cloned, one
+	per storefront card.
 
-	Ele e clonado **e** destruido porque o autorado e a primeira vaga do
-	`UIListLayout`: deixa-lo la daria uma quarta carta parada, com o texto de exemplo
-	que o designer escreveu.
+	It is cloned **and** destroyed because the authored one is the `UIListLayout`'s first
+	slot: leaving it there would give a fourth idle card, with the sample text the designer
+	wrote.
 ]=]
 function RoundCardShopController:_template() : Frame?
 	if self.Template then
@@ -190,7 +191,7 @@ function RoundCardShopController:_template() : Frame?
 
 	local authored = self.Row and self.Row:FindFirstChild(GUI.Wrapper_Card)
 	if not authored then
-		warn(`[RoundCardShopController]: nao achei o {GUI.Wrapper_Card} autorado em {GUI.Row}.`)
+		log:StudioWarn(`could not find the authored {GUI.Wrapper_Card} in {GUI.Row}.`)
 		return nil
 	end
 
@@ -201,11 +202,11 @@ function RoundCardShopController:_template() : Frame?
 end
 
 --[=[
-	Escreve o que muda numa carta: titulo, descricao, arte e preco.
+	Writes what changes on a card: title, description, art, and price.
 
-	Carta sem arte propria fica com a autorada no molde -- carta com a arte errada e
-	melhor do que carta invisivel. O icone da shard e a cor do contorno do preco ja
-	estao autorados no botao, porque esta loja cobra numa moeda so.
+	A card without its own art keeps the template's authored art: a card with the wrong art
+	beats an invisible card. The shard icon and the price outline color are already
+	authored on the button, because this shop charges in a single currency.
 ]=]
 function RoundCardShopController:_writeCard(card : GuiObject, definition, price : number)
 	local title = card:FindFirstChild(GUI.Title)
@@ -231,11 +232,11 @@ function RoundCardShopController:_writeCard(card : GuiObject, definition, price 
 end
 
 --[=[
-	Acende ou apaga o veu de `SOLD` de uma carta, e liga ou desliga o botao dela.
+	Turns a card's `SOLD` veil on or off, and enables or disables its button.
 
-	Chamado no desenho e a cada mudanca do `RoundCards` na replica. **Nao redesenha a
-	carta**: comprar com a loja aberta so acende o veu, e refazer a fileira faria as
-	tres cartas caírem de novo na frente de quem acabou de clicar numa delas.
+	Called on draw and on every `RoundCards` change in the replica. **It does not redraw the
+	card**: buying with the shop open only lights the veil, and rebuilding the row would
+	make all three cards drop again in front of someone who just clicked one.
 ]=]
 function RoundCardShopController:_applySold(entry)
 	local sold = self:_unlocked()[entry.Id] == true
@@ -247,21 +248,20 @@ function RoundCardShopController:_applySold(entry)
 	end
 
 	--[[
-		Titulo e descricao somem debaixo do veu.
+		Title and description disappear under the veil.
 
-		O veu e um escurecido com `SOLD` escrito por cima, e o texto da carta atravessava
-		os dois -- a descricao encavalava no `SOLD` e o painel virava um borrao de letras.
-		Uma carta ja destravada nao precisa se explicar: o que ela e o jogador ja sabe, e
-		o que importa ali e que ela nao esta a venda.
+		The veil is a darkening with `SOLD` written on top, and the card text would cross
+		both: the description would overlap `SOLD` and the panel would become a smear of
+		letters. An already unlocked card does not need to explain itself: the player
+		already knows what it is, and what matters there is that it is not for sale.
 
-		E `Visible`, e nao transparencia: a revelacao da carta (`UIUtil.applyFades`)
-		escreve nas transparencias destas mesmas labels, e as duas brigariam pela mesma
-		propriedade. `Visible` esconde por fora e deixa a animacao rodar por baixo sem
-		saber de nada.
+		It is `Visible`, not transparency: the card reveal (`UIUtil.applyFades`) writes to
+		these same labels' transparencies, and the two would fight over the same property.
+		`Visible` hides from outside and lets the animation run underneath without knowing.
 
-		Escrito nos **dois** sentidos porque o clone nasce com os textos acesos: sem o
-		`not sold`, uma carta que deixasse de estar vendida (um `_render` novo reusando o
-		molde) ficaria muda.
+		Written **both** ways because the clone is born with the texts on: without
+		`not sold`, a card that stopped being sold (a new `_render` reusing the template)
+		would stay mute.
 	]]
 	if entry.Title and entry.Title:IsA("GuiObject") then
 		entry.Title.Visible = not sold
@@ -272,10 +272,9 @@ function RoundCardShopController:_applySold(entry)
 	end
 
 	--[[
-		O botao apagado, e nao escondido: a carta ja destravada continua mostrando o
-		preco que ela custou. O clique nela nao faz nada de qualquer jeito -- o servidor
-		recusa com `AlreadyOwned` --, e o `Active` e o que impede o jogador de descobrir
-		isso clicando.
+		The button dimmed, not hidden: an unlocked card still shows the price it cost. The
+		click does nothing anyway (the server refuses with `AlreadyOwned`), and `Active` is
+		what keeps the player from finding that out by clicking.
 	]]
 	local button = entry.Button
 	if button and button:IsA("GuiButton") then
@@ -284,7 +283,7 @@ function RoundCardShopController:_applySold(entry)
 	end
 end
 
---- Passa o veu de `SOLD` por todas as cartas na tela.
+--- Runs the `SOLD` veil over every card on screen.
 function RoundCardShopController:_refreshSold()
 	for _, entry in self.CardEntries do
 		self:_applySold(entry)
@@ -294,17 +293,17 @@ function RoundCardShopController:_refreshSold()
 end
 
 --[=[
-	Liga ou desliga o dado do reroll.
+	Enables or disables the reroll die.
 
-	Ele so faz sentido enquanto sobrar carta para destravar: o reroll pago sorteia do
-	que **falta** (ver `REROLL_EXCLUDES_UNLOCKED`), entao para quem ja tem o catalogo
-	inteiro ele nao teria o que oferecer. Deixa-lo clicavel ali seria vender Robux por
-	nada -- e a Roblox ja cobrou quando o recibo chega, entao a hora de impedir e antes
-	do prompt.
+	It only makes sense while there are cards left to unlock: the paid reroll draws from
+	what is **missing** (see `REROLL_EXCLUDES_UNLOCKED`), so for someone who owns the whole
+	catalog it would have nothing to offer. Leaving it clickable there would sell Robux for
+	nothing, and Roblox has already charged when the receipt arrives, so the time to stop
+	it is before the prompt.
 
-	Roda junto com o veu de `SOLD` porque as duas coisas respondem a mesma pergunta: o
-	que este jogador ja destravou. A ultima compra do catalogo apaga o botao no mesmo
-	instante em que acende o ultimo `SOLD`.
+	It runs along with the `SOLD` veil because both answer the same question: what this
+	player already unlocked. The catalog's last purchase dims the button the same instant
+	it lights the last `SOLD`.
 ]=]
 function RoundCardShopController:_refreshReroll()
 	local button = self.RerollButton
@@ -328,22 +327,22 @@ function RoundCardShopController:_refreshReroll()
 end
 
 --[=[
-	Abre o prompt do developer product do reroll.
+	Opens the reroll developer product prompt.
 
-	O cliente **abre** a compra, e nao a credita: quem credita e o `ProcessReceipt` do
-	servidor, e o que chega de volta e a prateleira nova pelo `RoundCardStock`. Nao ha
-	resposta a esperar aqui -- se o jogador cancelar, nada acontece, que e exatamente o
-	certo.
+	The client **opens** the purchase, and does not credit it: the server's
+	`ProcessReceipt` credits it, and what comes back is the new shelf through
+	`RoundCardStock`. There is no answer to wait for here: if the player cancels, nothing
+	happens, which is exactly right.
 
-	Sem debounce: `PromptProductPurchase` nao empilha janelas, e clicar de novo com a
-	janela aberta nao faz nada. Um debounce so criaria um estado para destravar quando
-	o jogador fechasse o prompt por fora.
+	No debounce: `PromptProductPurchase` does not stack windows, and clicking again with
+	the window open does nothing. A debounce would only create a state to unlock when the
+	player closed the prompt from outside.
 ]=]
 function RoundCardShopController:_promptReroll()
 	local button = self.RerollButton
 
-	-- Desligado quer dizer que nao ha carta para sortear (ver `_refreshReroll`). O
-	-- `Active = false` ja engole o clique; isto e a rede para quem chamar na mao.
+	-- Disabled means there is no card to draw (see `_refreshReroll`). `Active = false`
+	-- already swallows the click; this is the safety net for callers invoking it by hand.
 	if button and not button.Active then
 		return
 	end
@@ -357,17 +356,17 @@ function RoundCardShopController:_promptReroll()
 end
 
 --[=[
-	Desenha as tres cartas da vitrine.
+	Draws the storefront's three cards.
 
-	Cada carta tem duas metades, nesta ordem: ela **cai** de `DropOffset` alturas acima
-	do lugar dela enquanto a imagem sai de transparente (`CardDrop`), e so quando isso
-	termina o conteudo -- titulo, descricao, preco, contornos, sombra -- sobe de 1 ate o
-	valor autorado (`CardReveal`). Revelar tudo junto faria o texto aparecer boiando
-	antes de a carta existir por tras dele.
+	Each card has two halves, in this order: it **drops** from `DropOffset` heights above
+	its place while its image fades in (`CardDrop`), and only when that ends does the
+	content (title, description, price, outlines, shadow) go from 1 to the authored value
+	(`CardReveal`). Revealing everything together would make the text float before the
+	card exists behind it.
 
-	As tres nao saem juntas: a segunda comeca `CardStagger` depois da primeira. O atraso
-	e um `task.delay` guardado no maid da fileira, entao fechar a loja no meio cancela o
-	que ainda nao comecou.
+	The three do not go out together: the second starts `CardStagger` after the first. The
+	delay is a `task.delay` kept in the row's maid, so closing the shop midway cancels
+	whatever has not started.
 ]=]
 function RoundCardShopController:_render()
 	local row = self.Row
@@ -388,7 +387,7 @@ function RoundCardShopController:_render()
 	for index, offer in stock.Cards do
 		local definition = RoundCardConfig.Get(offer.Id)
 		if not definition then
-			warn(`[RoundCardShopController]: a vitrine trouxe a carta '{tostring(offer.Id)}', que nao esta no config.`)
+			log:StudioWarn(`the stock brought card '{tostring(offer.Id)}', which is not in the config.`)
 			continue
 		end
 
@@ -398,7 +397,7 @@ function RoundCardShopController:_render()
 
 		local card = wrapper:FindFirstChild(GUI.Card)
 		if not card or not card:IsA("GuiObject") then
-			warn(`[RoundCardShopController]: o molde nao tem um {GUI.Card} dentro do {GUI.Wrapper_Card}.`)
+			log:StudioWarn(`the template has no {GUI.Card} inside {GUI.Wrapper_Card}.`)
 			wrapper:Destroy()
 			continue
 		end
@@ -413,9 +412,9 @@ function RoundCardShopController:_render()
 			Veil = card:FindFirstChild(GUI.Sold),
 			Button = card:FindFirstChild(GUI.Buy),
 
-			-- Os dois textos apagam debaixo do véu de `SOLD`. Guardados na entry porque o
-			-- `_applySold` roda de novo a cada compra, e procurá-los toda vez seria uma
-			-- busca por nome por carta por escrita na replica.
+			-- Both texts hide under the `SOLD` veil. Kept in the entry because
+			-- `_applySold` runs again on every purchase, and looking them up every time would be
+			-- a lookup by name per card per replica write.
 			Title = card:FindFirstChild(GUI.Title),
 			Description = card:FindFirstChild(GUI.Description),
 
@@ -423,14 +422,14 @@ function RoundCardShopController:_render()
 		}
 
 		--[[
-			O veu entra **antes** do `captureFades`: ele e a unica peca cujo estado
-			depende do jogador, e capturar com ele apagado guardaria o `SOLD` como uma
-			coisa que a revelacao tem de acender.
+			The veil goes on **before** `captureFades`: it is the only piece whose state
+			depends on the player, and capturing with it off would store `SOLD` as something
+			the reveal has to light.
 		]]
 		self:_applySold(entry)
 
-		-- Lido do clone intocado: e para ca que a revelacao leva tudo de volta. Precisa
-		-- vir antes de qualquer escrita de transparencia.
+		-- Read from the untouched clone: this is where the reveal takes everything back. It must
+		-- come before any transparency write.
 		local fades = UIUtil.captureFades(card)
 		local basePosition = card.Position
 
@@ -439,8 +438,8 @@ function RoundCardShopController:_render()
 
 		table.insert(self.CardEntries, entry)
 
-		-- Estado de partida: a carta acima do lugar dela, a imagem e o conteudo
-		-- transparentes.
+		-- Starting state: the card above its place, the image and content
+		-- transparent.
 		card.Position = UDim2.new(
 			basePosition.X.Scale, basePosition.X.Offset,
 			basePosition.Y.Scale - ANIM.DropOffset, basePosition.Y.Offset
@@ -460,10 +459,10 @@ function RoundCardShopController:_render()
 		if button and button:IsA("GuiButton") then
 			self.RowMaid:GiveTask(button.Activated:Connect(function()
 				--[[
-					A carta so aceita clique depois de comecar a cair. Ela existe na tela
-					desde o `Parent`, transparente e fora do lugar, e sem isto a terceira
-					carta -- que so entra um segundo depois -- poderia ser comprada enquanto
-					ainda nao ha nada para o jogador ver.
+					The card only accepts clicks after it starts falling. It exists on screen
+					from `Parent` on, transparent and out of place, and without this the third
+					card (which only comes in a second later) could be bought while there is
+					nothing for the player to see.
 				]]
 				if not entry.Ready or entry.Sold then
 					return
@@ -513,17 +512,16 @@ function RoundCardShopController:_render()
 end
 
 --[=[
-	Escreve quanto falta para a vitrine trocar.
+	Writes how long until the storefront changes.
 
-	A conta e contra o `ResetsAt` que o **servidor** mandou, e nao contra o relogio
-	local: os dois sao segundos de UTC, mas so o do servidor concorda com o bloco em
-	que a vitrine foi sorteada.
+	The math is against the `ResetsAt` the **server** sent, not the local clock: both are
+	UTC seconds, but only the server's agrees with the block the storefront was drawn in.
 
-	Chegar a zero pede a vitrine nova. O servidor tambem a empurra sozinho na troca
-	(ver `_watchRotation` la), e as duas coisas juntas sao de proposito: o empurrao
-	cobre quem esta com a loja aberta, e este pedido cobre a diferenca de relogio entre
-	as duas pontas -- sem ele, um cliente meio minuto adiantado ficaria com a contagem
-	parada em `0:00:00` esperando um evento que, para ele, ja devia ter chegado.
+	Reaching zero asks for the new storefront. The server also pushes it on its own at the
+	switch (see its `_watchRotation`), and having both is on purpose: the push covers
+	players with the shop open, and this request covers the clock difference between the
+	two ends: without it, a client half a minute ahead would sit at `0:00:00` waiting for
+	an event that, for it, should already have arrived.
 ]=]
 function RoundCardShopController:_updateCountdown()
 	local label = self.ResetLabel
@@ -549,25 +547,25 @@ function RoundCardShopController:_updateCountdown()
 end
 
 --[=[
-	Pede a vitrine ao servidor, e insiste ate ela chegar.
+	Asks the server for the storefront, and insists until it arrives.
 
-	A insistencia existe porque o **identificador do evento nasce no servidor** (ver a
-	nota sobre eventos no README da raiz): o cliente pode ligar a loja antes de o
-	`RoundCardShopService` ter registrado o `Listen` do `RequestRoundCardStock`, e um
-	pedido feito nessa janela se perde. Sem repetir, a loja ficaria sem carta nenhuma
-	pelo resto da sessao por causa de meio segundo de ordem de boot.
+	The insisting exists because **the event identifier is created on the server** (see
+	docs/architecture/me-framework.md): the client may hook up the shop before
+	`RoundCardShopService` registered its `RequestRoundCardStock` `Listen`, and a request
+	made in that window is lost. Without retrying, the shop would have no cards for the
+	rest of the session because of half a second of boot order.
 
-	`renew` e o pedido da contagem que chegou a zero, e nao o do boot: ele passa mesmo
-	com vitrine na mao, porque o que ele quer e a **proxima**. Ele existe para o caso de
-	o relogio do cliente estar adiantado em relacao ao do servidor -- o servidor empurra
-	a vitrine nova sozinho na troca (ver o `_watchRotation` la), e sem este pedido um
-	cliente meio minuto na frente ficaria parado em `0:00:00` esperando um evento que,
-	para ele, ja devia ter chegado.
+	`renew` is the request from a countdown that reached zero, not the boot one: it goes
+	through even with a storefront in hand, because what it wants is the **next** one. It
+	exists for the client clock running ahead of the server's: the server pushes the new
+	storefront on its own at the switch (see its `_watchRotation`), and without this
+	request a client half a minute ahead would sit at `0:00:00` waiting for an event that,
+	for it, should already have arrived.
 
-	O laco desiste depois de `STOCK_REQUEST_ATTEMPTS` e **libera a marca**: quem
-	desistiu foi esta tentativa, e nao a loja. Uma vitrine que continua vencida tenta de
-	novo no segundo seguinte, e o aviso sai so no caso do boot -- na renovacao ele viria
-	a cada dez segundos e enterraria o output.
+	The loop gives up after `STOCK_REQUEST_ATTEMPTS` and **releases the mark**: this
+	attempt gave up, not the shop. A storefront still expired tries again the next second,
+	and the warning only goes out in the boot case: on renewal it would come every ten
+	seconds and bury the output.
 ]=]
 function RoundCardShopController:_requestStock(renew : boolean?)
 	if self.StockRequested then
@@ -581,8 +579,8 @@ function RoundCardShopController:_requestStock(renew : boolean?)
 	self.StockRequested = true
 
 	task.spawn(function()
-		-- A vitrine que ja esta na mao. Chegar uma com outro indice e o que encerra o
-		-- laco: no boot ela e nil, e qualquer resposta serve.
+		-- The storefront already in hand. One arriving with another index is what ends the
+		-- loop: at boot it is nil, and any answer will do.
 		local before = self.Stock and self.Stock.Index or nil
 
 		for _ = 1, STOCK_REQUEST_ATTEMPTS do
@@ -597,7 +595,7 @@ function RoundCardShopController:_requestStock(renew : boolean?)
 		self.StockRequested = false
 
 		if not self.Stock then
-			warn("[RoundCardShopController]: nenhuma vitrine veio do servidor -- a loja de cartas fica vazia.")
+			log:StudioWarn("no stock came from the server; the card shop stays empty.")
 		end
 	end)
 end
@@ -605,17 +603,16 @@ end
 function RoundCardShopController:_requestPurchase(cardId : string)
 	self.Signals.PurchaseRequested:Fire(cardId)
 
-	-- O servidor confere a vitrine e a carteira e escreve no perfil -- o cliente so
-	-- pede.
+	-- The server checks the storefront and the wallet and writes to the profile: the client
+	-- only asks.
 	Framework:Fire("RequestBuyRoundCard", cardId)
 end
 
 --[=[
-	Segue a replica: o veu de `SOLD` acompanha o `RoundCards` do perfil.
+	Follows the replica: the `SOLD` veil tracks the profile's `RoundCards`.
 
-	Escutado pelo `OnChange` inteiro, e nao so pela chave: a compra escreve
-	`RoundCards`, e qualquer escrita mais funda ali dentro tambem tem de reacender o
-	veu.
+	Listened to through the whole `OnChange`, not only the key: the purchase writes
+	`RoundCards`, and any deeper write in there must also relight the veil.
 ]=]
 function RoundCardShopController:_watchProfile()
 	task.spawn(function()
@@ -641,9 +638,9 @@ function RoundCardShopController:_watchProfile()
 end
 
 --[=[
-	Um dos marcadores da loja no mapa, guardado ate ele sair do mundo. Ver o
-	`MarkerUtil` -- a busca e recursiva dentro do mapa, porque os dois marcadores vivem
-	dentro do modelo da casa e nao soltos na raiz dele.
+	One of the shop's markers in the map, kept until it leaves the world. See `MarkerUtil`:
+	the lookup is recursive inside the map, because both markers live inside the house
+	model, not loose at its root.
 ]=]
 function RoundCardShopController:_getMapPart(partName : string) : Instance?
 	return MarkerUtil.find(
@@ -655,14 +652,14 @@ function RoundCardShopController:_getMapPart(partName : string) : Instance?
 	)
 end
 
---- Onde a loja fica, para quem precisa medir contra o mesmo centro que a proximidade.
+--- Where the shop is, for anyone who needs to measure against the same center as proximity.
 function RoundCardShopController:GetReferencePosition() : Vector3?
 	local pivot = MarkerUtil.pivotOf(self:_getMapPart(RoundCardShopConfig.REFERENCE_PART_NAME))
 
 	return pivot and pivot.Position or nil
 end
 
---- A contagem do `ResetText`, reescrita de segundo em segundo enquanto o cliente vive.
+--- The `ResetText` countdown, rewritten every second while the client lives.
 function RoundCardShopController:_watchCountdown()
 	self.Maid:GiveTask(RunService.Heartbeat:Connect(function(deltaTime : number)
 		self.CountdownClock += deltaTime
@@ -677,16 +674,16 @@ function RoundCardShopController:_watchCountdown()
 end
 
 --[=[
-	O conteudo da loja numa copia nova da `ShopUI`. O painel em si -- a moldura, a
-	`OpenShop`, o X, o borrao e o pedido de tela -- e do `ProximityPanel`, que chama
-	isto no fim do bind dele. A `ShopUI` e `ResetOnSpawn`, entao roda de novo a cada
-	respawn. `maid` e o do bind: limpo na proxima copia.
+	The shop's content on a new copy of `ShopUI`. The panel itself (the frame, `OpenShop`,
+	the X, the blur, and the screen request) belongs to `ProximityPanel`, which calls this at
+	the end of its bind. `ShopUI` is `ResetOnSpawn`, so this runs again on every respawn.
+	`maid` is the bind's: cleared on the next copy.
 ]=]
 function RoundCardShopController:_onBind(panel : GuiObject, maid : any)
 	local row = panel:WaitForChild(GUI.Row, 10)
 
 	if not row then
-		warn(`[RoundCardShopController]: nao achei {GUI.ScreenGui}.{GUI.Wrapper}.{GUI.Panel}.{GUI.Row}.`)
+		log:StudioWarn(`could not find {GUI.ScreenGui}.{GUI.Wrapper}.{GUI.Panel}.{GUI.Row}.`)
 		return
 	end
 
@@ -695,32 +692,31 @@ function RoundCardShopController:_onBind(panel : GuiObject, maid : any)
 	self.Row = row
 
 	--[[
-		O molde e por copia da `ShopUI`: a anterior foi destruida com a ScreenGui dela, e
-		guardar o clone velho poria cartas orfas na fileira nova.
+		The template is per `ShopUI` copy: the previous one was destroyed with its ScreenGui,
+		and keeping the old clone would put orphaned cards in the new row.
 	]]
 	self.Template = nil
 	self.CardEntries = {}
 
 	--[[
-		Filho **direto** do painel, e nao em profundidade: a contagem tem lugar fixo na
-		arte, e o botao de reroll carrega uma legenda propria dentro dele. Uma busca
-		recursiva escolheria entre labels pela ordem da arvore, e a contagem poderia
-		acabar escrita por cima da legenda de outra peca. Ver o comentario do
-		`Gui.ResetText`.
+		A **direct** child of the panel, not by depth: the countdown has a fixed spot in the
+		art, and the reroll button carries its own caption inside it. A recursive lookup
+		would choose between labels by tree order, and the countdown could end up written
+		over another piece's caption. See the `Gui.ResetText` comment.
 	]]
 	self.ResetLabel = panel:FindFirstChild(GUI.ResetText)
 
 	if not self.ResetLabel or not self.ResetLabel:IsA("TextLabel") then
 		self.ResetLabel = nil
-		warn(`[RoundCardShopController]: nao achei o {GUI.ResetText} como filho de {GUI.Panel} -- a loja abre sem a contagem.`)
+		log:StudioWarn(`could not find {GUI.ResetText} as a child of {GUI.Panel}; the shop opens without the countdown.`)
 	end
 
 	--[[
-		O dado do reroll. O `UIScale` dele foi autorado para isto, e quem anima e o
-		`ButtonUtil` -- o mesmo peso do botao `Buy` das cartas e do da loja de caixas.
+		The reroll die. Its `UIScale` was authored for this, and `ButtonUtil` animates it:
+		the same weight as the cards' `Buy` button and the crate shop's.
 
-		Vai no maid do bind porque ele e parte do painel: a `ShopUI` e `ResetOnSpawn`, e
-		a copia nova traz um botao novo.
+		It goes in the bind's maid because it is part of the panel: `ShopUI` is
+		`ResetOnSpawn`, and the new copy brings a new button.
 	]]
 	local reroll = panel:FindFirstChild(GUI.Reroll)
 
@@ -734,7 +730,7 @@ function RoundCardShopController:_onBind(panel : GuiObject, maid : any)
 		ButtonUtil.bindFeedback(reroll, maid)
 	else
 		self.RerollButton = nil
-		warn(`[RoundCardShopController]: nao achei o {GUI.Reroll} em {GUI.Panel} -- a loja abre sem o reroll.`)
+		log:StudioWarn(`could not find {GUI.Reroll} in {GUI.Panel}; the shop opens without the reroll.`)
 	end
 
 	self:_render()
@@ -744,17 +740,17 @@ function RoundCardShopController:_onBind(panel : GuiObject, maid : any)
 end
 
 --[=[
-	Liga o botao da HUD, que leva o jogador ate a vitrine.
+	Hooks up the HUD button that takes the player to the storefront.
 
-	Maid proprio: a `HUD` e a `ShopUI` sao `ScreenGui` diferentes e a engine as refaz
-	em momentos diferentes, entao o bind de uma nao pode desconectar o da outra.
+	Its own maid: `HUD` and `ShopUI` are different `ScreenGui`s and the engine rebuilds
+	them at different times, so one's bind must not disconnect the other's.
 ]=]
 function RoundCardShopController:_bindHud(screenGui : ScreenGui)
 	local hudFrame = screenGui:WaitForChild(HUD_FRAME_NAME, 10)
 	local button = hudFrame and UIUtil.waitForDescendant(hudFrame, HUD_BUTTON_NAME, 10)
 
 	if not button or not button:IsA("GuiButton") then
-		warn(`[RoundCardShopController]: nao achei {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
+		log:StudioWarn(`could not find {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
 		return
 	end
 
@@ -764,7 +760,7 @@ function RoundCardShopController:_bindHud(screenGui : ScreenGui)
 	end))
 end
 
---- A HUD, pelo botao que leva ate a vitrine. A `ShopUI` e seguida pelo `ProximityPanel`.
+--- The HUD, through the button that goes to the storefront. `ProximityPanel` follows `ShopUI`.
 function RoundCardShopController:_observeUI()
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
@@ -787,7 +783,7 @@ function RoundCardShopController:IsOpen() : boolean
 	return self.Proximity ~= nil and self.Proximity:IsOpen()
 end
 
---- A vitrine de agora como o cliente a conhece, ou nil enquanto ela nao chegou.
+--- The current storefront as the client knows it, or nil until it arrives.
 function RoundCardShopController:GetStock()
 	return self.Stock
 end
@@ -805,15 +801,15 @@ function RoundCardShopController:Close()
 end
 
 --[=[
-	Larga o jogador no marcador de pouso ao lado da loja.
+	Drops the player on the landing marker next to the shop.
 
-	O pouso fica a 18,8 studs da referencia, ou seja **fora** do `OPEN_RADIUS` (que sao
-	5, o balcao). Entao o teleporte abre a loja na mao, pelo `EnterRange` -- que marca
-	a entrada junto, senao a travessia de saida nunca aconteceria e a loja aberta pelo
-	teleporte ficaria pendurada na tela por mais longe que ele andasse.
+	The landing is 18.8 studs from the reference, that is, **outside** `OPEN_RADIUS` (which
+	is 5, the counter). So the teleport opens the shop by hand, through `EnterRange`, which
+	marks the entry too, or the exit crossing would never happen and the shop opened by the
+	teleport would stay stuck on screen however far they walked.
 
-	Quem chama e o botao `CardShop` da HUD (ver `_bindHud`), do mesmo jeito que o
-	`Shop` ao lado dele chama o teleporte da loja de caixas.
+	The HUD's `CardShop` button calls it (see `_bindHud`), the same way the `Shop` next to
+	it calls the crate shop's teleport.
 ]=]
 function RoundCardShopController:TeleportToShop() : boolean
 	local character = Players.LocalPlayer.Character
@@ -834,8 +830,8 @@ function RoundCardShopController:TeleportToShop() : boolean
 
 	character:PivotTo(pivot * CFrame.new(0, halfHeight + RoundCardShopConfig.TELEPORT_HEIGHT_OFFSET, 0))
 
-	-- Sem isto o jogador mantem a velocidade que tinha e escorrega para fora do
-	-- marcador.
+	-- Without this the player keeps the velocity they had and slides off the
+	-- marker.
 	root.AssemblyLinearVelocity = Vector3.zero
 
 	if self.Proximity then
@@ -853,9 +849,9 @@ end
 
 function RoundCardShopController:construct()
 	--[[
-		A vitrine e ouvida antes de a UI ser observada de proposito: a resposta pode
-		chegar antes de o primeiro bind terminar, e o `_render` desenha do zero -- chegar
-		cedo demais so significa que a loja ja abre com as cartas prontas.
+		The storefront is listened to before the UI is observed on purpose: the answer may
+		arrive before the first bind finishes, and `_render` draws from scratch: arriving
+		too early only means the shop opens with the cards ready.
 	]]
 	Framework:Listen("RoundCardStock", function(stock)
 		if typeof(stock) ~= "table" or typeof(stock.Cards) ~= "table" then
@@ -863,9 +859,9 @@ function RoundCardShopController:construct()
 		end
 
 		--[[
-			`Index` **e** `Rolls`: a rotacao troca o bloco, e o reroll troca a prateleira
-			dentro do mesmo bloco. Comparando so o indice, as cartas pagas chegariam e nao
-			seriam desenhadas -- que e exatamente o que o jogador acabou de comprar.
+			`Index` **and** `Rolls`: rotation changes the block, and the reroll changes the
+			shelf within the same block. Comparing only the index, the paid cards would arrive
+			and not be drawn, which is exactly what the player just bought.
 		]]
 		local rotated = self.Stock == nil
 			or self.Stock.Index ~= stock.Index
@@ -873,15 +869,15 @@ function RoundCardShopController:construct()
 
 		self.Stock = stock
 
-		-- Liberado para o proximo pedido: o `_updateCountdown` volta a poder insistir
-		-- quando **esta** vitrine vencer.
+		-- Released for the next request: `_updateCountdown` can insist again
+		-- when **this** storefront expires.
 		self.StockRequested = false
 
 		--[[
-			A vitrine nova so redesenha a fileira se ela for outra. A troca de bloco pode
-			cair com a loja aberta na frente do jogador, e ai as cartas novas caem por
-			cima das velhas -- que e o que a troca quer dizer. Uma vitrine repetida (o
-			pedido que o boot repetiu) nao pode fazer as tres cartas caírem de novo.
+			The new storefront only redraws the row if it is a different one. The block switch
+			may happen with the shop open in front of the player, and then the new cards drop
+			over the old ones, which is what the switch means. A repeated storefront (the
+			request the boot repeated) must not make the three cards drop again.
 		]]
 		if rotated then
 			self:_render()
@@ -893,13 +889,13 @@ function RoundCardShopController:construct()
 	Framework:Listen("RoundCardPurchaseResult", function(cardId : string, success : boolean, reason : string?)
 		if success then
 			--[[
-				O som e a primeira coisa que acontece com a resposta: o `PurchaseResult` sai
-				depois, porque quem escuta o sinal pode fazer qualquer coisa, e nada disso
-				pode entrar na frente do som.
+				The sound is the first thing that happens with the response: `PurchaseResult`
+				goes out afterward, because listeners to the signal may do anything, and none of
+				it may get ahead of the sound.
 
-				O veu de `SOLD` nao e aceso aqui -- ele acompanha o `RoundCards` da replica
-				(ver `_watchProfile`), que e a mesma escrita que o servidor acabou de fazer.
-				Acender nos dois lugares so daria duas fontes para o mesmo estado.
+				The `SOLD` veil is not lit here: it tracks the replica's `RoundCards` (see
+				`_watchProfile`), which is the same write the server just made. Lighting it in
+				both places would give two sources for the same state.
 			]]
 			local music = self.Controllers.MusicController
 			if music then
@@ -911,9 +907,9 @@ function RoundCardShopController:construct()
 	end)
 
 	--[[
-		O som da compra baixa agora, e nao no primeiro clique: `Sound:Play()` num asset
-		que ainda nao chegou espera o download, e num som que confirma uma acao essa
-		espera e a resposta inteira.
+		The purchase sound downloads now, not on the first click: `Sound:Play()` on an asset
+		that has not arrived waits for the download, and for a sound confirming an action that
+		wait is the whole response.
 	]]
 	local music = self.Controllers.MusicController
 	if music then
@@ -921,9 +917,8 @@ function RoundCardShopController:construct()
 	end
 
 	--[[
-		O painel: a moldura, a `OpenShop`, o borrao, o pedido de tela e a proximidade
-		do marcador. O que esta loja tem de proprio entra pelo `OnBind` e pelo
-		`BeforeOpen`.
+		The panel: the frame, `OpenShop`, the blur, the screen request, and marker
+		proximity. What is specific to this shop comes in through `OnBind` and `BeforeOpen`.
 	]]
 	self.Proximity = ProximityPanel.new({
 		Name = "RoundCardShopController",
@@ -939,8 +934,8 @@ function RoundCardShopController:construct()
 		Interval = RoundCardShopConfig.PROXIMITY_INTERVAL,
 		InterfaceController = self.Controllers.InterfaceController,
 
-		-- A `ShopUI` e dividida com a loja de caixas e a de Robux: fechar esta com
-		-- uma delas aberta nao pode apagar a ScreenGui das tres.
+		-- `ShopUI` is shared with the crate shop and the Robux shop: closing this one with
+		-- one of them open must not disable the ScreenGui of all three.
 		CanDisable = function()
 			local crateShop = self.Controllers.ShopController
 			local robuxShop = self.Controllers.RobuxShopController
@@ -953,16 +948,16 @@ function RoundCardShopController:construct()
 		end,
 
 		--[[
-			As cartas caem a cada abertura, e nao uma vez por vitrine: a queda e a
-			apresentacao da oferta, e um painel que abrisse com as tres cartas ja paradas
-			pareceria uma tela que estava aberta o tempo todo.
+			The cards drop on every opening, not once per storefront: the drop is the offer's
+			presentation, and a panel opening with the three cards already still would look
+			like a screen that was open all along.
 		]]
 		BeforeOpen = function()
 			self:_render()
 			self:_updateCountdown()
 
-			-- A vitrine foi vista: o selo de "a loja resetou" se encerra, e volta quando o
-			-- bloco de quatro horas virar de novo.
+			-- The storefront was seen: the "the shop reset" badge ends, and comes back when the
+			-- four-hour block turns over again.
 			local badges = self.Controllers.HUDBadgeController
 			if badges then
 				badges:NoteSeen(HUD_BUTTON_NAME)
@@ -997,35 +992,35 @@ end
 function RoundCardShopController:init()
 	self.Maid = Maid.new()
 
-	-- O botao da HUD, que vive numa `ScreenGui` propria e e refeito em outro momento
-	-- que o painel.
+	-- The HUD button, which lives in its own `ScreenGui` and is rebuilt at a different time
+	-- from the panel.
 	self.HudMaid = Maid.new()
 
-	-- A fileira das cartas: os clones, os cliques deles e os atrasos da entrada.
+	-- The card row: the clones, their clicks, and the entrance delays.
 	self.RowMaid = Maid.new()
 
 	self.Maid:GiveTask(self.HudMaid)
 	self.Maid:GiveTask(self.RowMaid)
 
-	-- O `ProximityPanel` desta loja, criado no `construct`.
+	-- This shop's `ProximityPanel`, created in `construct`.
 	self.Proximity = nil
 
-	-- A vitrine vinda do servidor -- nil enquanto a resposta nao chega.
+	-- The storefront from the server: nil until the answer arrives.
 	self.Stock = nil
 	self.StockRequested = false
 
-	-- Uma entrada por carta desenhada: o `Id`, o clone dela e o que a revelacao precisa
-	-- saber para levar as transparencias de volta.
+	-- One entry per drawn card: the `Id`, its clone, and what the reveal needs to
+	-- know to take the transparencies back.
 	self.CardEntries = {}
 
-	-- O molde clonado do `CardWrapper` autorado, por copia da `ShopUI`.
+	-- The template cloned from the authored `CardWrapper`, per `ShopUI` copy.
 	self.Template = nil
 
-	-- O dado do reroll, por copia da `ShopUI`. Desligado quando nao sobrou carta para
-	-- destravar (ver `_refreshReroll`).
+	-- The reroll die, per `ShopUI` copy. Disabled when there is no card left to
+	-- unlock (see `_refreshReroll`).
 	self.RerollButton = nil
 
-	-- Os marcadores do mapa, por nome, e os nomes de que ja se avisou a falta.
+	-- The map markers, by name, and the names already warned about as missing.
 	self.MapParts = {}
 	self.WarnedMissing = {}
 

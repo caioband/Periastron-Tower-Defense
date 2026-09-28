@@ -1,27 +1,22 @@
 --[[
-	A arte da carta de cada unidade, na hotbar da partida.
+	Each unit's card art in the match hotbar.
 
-	O `Card` do `CardWrapper` é um ImageLabel e a arte dele é a **carta inteira** —
-	moldura, ilustração e fundo numa imagem só. Por isso a chave aqui é a unidade, e
-	não a classe: o `ClassConfig` é o ícone de Melee/Ranged/Magic que entra no card
-	de upgrade, uma coisa diferente.
+	The `CardWrapper`'s `Card` is an ImageLabel whose art is the **whole card**:
+	frame, illustration, and background in one image. So the key is the unit, not
+	the class; `ClassConfig` is the Melee/Ranged/Magic icon on the upgrade card,
+	a different thing.
 
-	Quem escreve é o componente `Card`
-	(`Game/src/Controllers/UILibraryController/Components`), na mesma passada em que
-	ele escreve o nome e o custo — o `CardController` decide *quais* cartas aparecem,
-	o componente é quem desenha cada uma.
+	The `Card` component (`Game/src/Controllers/UILibraryController/Components`)
+	writes it in the same pass as the name and cost; `CardController` decides
+	*which* cards appear.
 
-	> As chaves são os nomes de `UnitStats`, que nem sempre são o nome que o jogador
-	> lê na arte: a carta do **Rocketeer** é da unidade `Rocket`, e a do **Gladiator**
-	> é da `Sword`. Errar isso não estoura nada — a unidade só fica sem arte própria,
-	> que é o sintoma mais difícil de ligar à causa.
+	> Keys are `UnitStats` names, which are not always the name on the art: the
+	> **Rocketeer** card belongs to `Rocket`, and the **Gladiator** to `Sword`. A
+	> wrong key breaks nothing; the unit just lacks its own art, which is the
+	> hardest symptom to trace back.
 
-	Unidade sem entrada aqui fica com a arte que o `CardWrapper` trouxe autorada do
-	StarterGui: carta com a arte errada é melhor do que carta invisível na hotbar.
-	Hoje é o caso do `Subspace Tripminer` e do `Archer` — e como a arte autorada é a
-	do Slasher, os dois aparecem com a carta dele até o id chegar. É aqui que se
-	conserta, uma linha por unidade.
-
+	A unit without an entry keeps the art authored on the `CardWrapper` in
+	StarterGui: a card with the wrong art is better than an invisible card.
 ]]
 
 local CardConfig = {}
@@ -44,8 +39,7 @@ CardConfig.Images = {
 }
 
 --[=[
-	O `rbxassetid` da carta da unidade, ou `nil` quando ela ainda não tem arte
-	própria.
+	The unit's card `rbxassetid`, or `nil` when it has no art of its own yet.
 ]=]
 function CardConfig.GetImage(unitName : string?) : string?
 	if not unitName then
@@ -56,21 +50,20 @@ function CardConfig.GetImage(unitName : string?) : string?
 end
 
 --[[
-	O retrato da unidade no card de upgrade — o `Info` de
-	`Interface.CardUpgrade`, a moldura onde ficam o nome e o nível.
+	The unit's portrait on the upgrade card: the `Info` of `Interface.CardUpgrade`,
+	the frame that holds the name and level.
 
-	É outra arte que a de `Images`: aquela é a carta inteira da hotbar, esta é só o
-	rosto, num quadrado pequeno. Elas vivem no mesmo módulo porque são a mesma
-	pergunta ("como esta unidade aparece na tela?") e erram pelo mesmo motivo — a
-	chave é o nome de `UnitStats`, e não o nome que o jogador lê na arte: o retrato
-	do **Gladiator** é da unidade `Sword`, e o do **Rocketeer** é da `Rocket`.
+	It is different art from `Images`: that is the whole hotbar card, this is just
+	the face in a small square. They live in the same module because they answer
+	the same question ("how does this unit look on screen?") and go wrong the same
+	way: the key is the `UnitStats` name, not the name on the art (the
+	**Gladiator** portrait belongs to `Sword`, the **Rocketeer** to `Rocket`).
 
-	Unidade sem entrada aqui fica com a arte que o designer deixou autorada no
-	`Info` — quem desenha guarda esse padrão e volta para ele. Esconder não é opção
-	como no `ClassIcon`: o `Info` carrega o nome e o nível da unidade dentro dele, e
-	sumir com a moldura levaria os dois junto.
+	A unit without an entry keeps the art authored on `Info`; the UI keeps that
+	default and falls back to it. Hiding is not an option as with `ClassIcon`:
+	`Info` holds the unit's name and level.
 
-	Falta o Azure. É aqui que se conserta, uma linha por unidade.
+	The Azure is missing. Fix it here, one line per unit.
 ]]
 CardConfig.Icons = {
 	Slasher = "rbxassetid://77799937837921",
@@ -89,8 +82,7 @@ CardConfig.Icons = {
 }
 
 --[=[
-	O `rbxassetid` do retrato da unidade no card de upgrade, ou `nil` quando ela
-	ainda não tem um.
+	The `rbxassetid` of the unit's upgrade card portrait, or `nil` when it has none.
 ]=]
 function CardConfig.GetIcon(unitName : string?) : string?
 	if not unitName then
@@ -101,25 +93,23 @@ function CardConfig.GetIcon(unitName : string?) : string?
 end
 
 --[[
-	A arte da unidade no index, nos dois estados.
+	The unit's index art, in both states.
 
-	É a terceira arte da mesma pergunta que as outras duas deste módulo ("como esta
-	unidade aparece na tela?"), e a única que vem em par: `Unlocked` é a unidade
-	como ela é, `Locked` é a silhueta de quem ainda não a descobriu. Quem decide
-	qual das duas vale é o `Index` do perfil (`SharedConfig.IndexConfig`) — a arte
-	não sabe de nada, ela só tem as duas caras.
+	The third art for the same question as the other two in this module, and the
+	only one in a pair: `Unlocked` is the unit as it is, `Locked` is the silhouette
+	for a player who has not discovered it. The profile's `Index`
+	(`SharedConfig.IndexConfig`) decides which applies; the art knows nothing.
 
-	Quem lê hoje é o carretel do unboxing, que mostra o elenco do pool enquanto gira
-	e passa preta a unidade que o jogador ainda não viu. Uma tela de index propriamente
-	dita lê exatamente daqui também.
+	Today the unboxing reel reads it, showing the pool's cast while it spins and
+	blacking out units the player has not seen. An index screen would read from
+	here too.
 
-	A chave é o nome de `UnitStats`, como nas outras tabelas — o par do **Rocketeer**
-	é da unidade `Rocket`, o do **Gladiator** é da `Sword`.
+	The key is the `UnitStats` name, as in the other tables (the **Rocketeer** pair
+	belongs to `Rocket`, the **Gladiator** to `Sword`).
 
-	Unidade sem entrada aqui não recebe imagem nenhuma, e a carta do carretel fica
-	só com a moldura na cor da raridade. Hoje é o caso da `Azure`, que também não sai
-	de caixa (`ServerScriptService.Config.Crate.EXCLUDED_UNITS`) — quando ela ganhar
-	uma porta de entrada, é uma linha aqui.
+	A unit without an entry gets no image, and its reel card keeps only the frame
+	in its rarity color. Today that is the `Azure`, which also does not drop from
+	crates (`ServerScriptService.Config.Crate.EXCLUDED_UNITS`).
 ]]
 CardConfig.IndexImages = {
 	Archer = { Locked = "rbxassetid://121305756386879", Unlocked = "rbxassetid://126669235258665" },
@@ -137,10 +127,10 @@ CardConfig.IndexImages = {
 }
 
 --[=[
-	A arte de index da unidade no estado pedido, ou `nil` quando ela nao tem par.
+	The unit's index art in the requested state, or `nil` when it has no pair.
 
-	`discovered` e o que o `Index` do perfil responde: verdadeiro mostra a unidade,
-	falso mostra a silhueta.
+	`discovered` is what the profile's `Index` answers: true shows the unit, false
+	shows the silhouette.
 ]=]
 function CardConfig.GetIndexImage(unitName : string?, discovered : boolean?) : string?
 	if not unitName then

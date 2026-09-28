@@ -20,15 +20,17 @@ local DifficultyConfig = ServerConfig.Difficulty
 
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("MobService")
 
 local BASE_MAX_HEALTH = 100
 local MOB_DAMAGE = 20
 
--- De quanto em quanto tempo se reprocura o node mais perto de um mob. O mesmo
--- valor esta no `TargetingController`: os dois lados tem que enxergar o mob no
--- mesmo trecho do caminho, senao a torre mira num e o dano vai para outro.
+-- How often an enemy's nearest node is looked up again. The same value is in
+-- `TargetingController`: both sides must see the enemy on the same stretch of
+-- path, or the tower aims at one and the damage goes to another.
 local NODE_PROGRESS_REFRESH = 0.1
 
 local function computeTurnDistances(positions)
@@ -46,22 +48,24 @@ local function computeTurnDistances(positions)
 end
 
 --[=[
-	Velocidade de um mob agora: a base do spawn, vezes o que os gimmicks dele
-	acumularam, vezes o que o clima faz, vezes o que as cartas fazem.
+	An enemy's speed now: the spawn base, times what its gimmicks accumulated, times what
+	weather does, times what cards do.
 
-	Os fatores sao guardados separados de proposito. O clima entra e sai no
-	meio da wave, e um mob que ja ganhou 30% por curva tem que manter esse ganho
-	quando o vento parar — o que so funciona se a conta for refeita a partir da
-	base em vez de ir multiplicando o valor corrente.
+	The factors are kept separate on purpose. Weather comes and goes mid-wave, and an
+	enemy that already gained 30% per turn must keep that gain when the wind stops, which
+	only works if the math is redone from the base instead of multiplying the current
+	value.
 
-	As cartas somam dois fatores pelo mesmo motivo, e sao dois porque as duas
-	lentidoes tem donos diferentes: `CardSpeedScale` e da sala (o Staff of Azure
-	Ever Ice, que pega todo mundo de uma vez) e `SlowScale` e do mob (a lentidao que
-	uma unidade de gelo deixou naquele inimigo). Uma nao pode apagar a outra.
+	Cards add two factors for the same reason, and there are two because the two slows
+	have different owners: `CardSpeedScale` belongs to the room (the Staff of Azure Ever
+	Ice, which hits everyone at once) and `SlowScale` to the enemy (the slow an ice unit
+	left on that enemy). One must not erase the other.
 
-	`RushScale` e o arranque que o proprio inimigo se da (o `HealthThresholdRush` do
-	Astral Sentinel). Fator separado pela mesma razao: ele dura tres segundos e tem
-	de sumir sozinho sem levar junto a lentidao do gelo que entrou no meio dele.
+	`RushScale` is the burst the enemy gives itself (the Astral Sentinel's
+	`HealthThresholdRush`). A separate factor for the same reason: it lasts three seconds
+	and must go away on its own without taking along an ice slow that came in during it.
+
+	See docs/game/enemies.md.
 ]=]
 local function computeSpeed(self, mob)
 	return mob.BaseSpeed
@@ -73,12 +77,12 @@ local function computeSpeed(self, mob)
 end
 
 --[=[
-	Manda a velocidade de agora deste mob para todo mundo.
+	Sends this enemy's current speed to everyone.
 
-	Mob parado fica de fora: para ele o cliente ja recebeu zero, e quem o solta
-	(`StunMob`, `FreezeAll`, o gimmick do chefe) reenvia a velocidade certa na
-	hora de soltar. Mandar aqui faria o boneco voltar a andar na tela com o
-	servidor ainda segurando o inimigo no lugar.
+	A stopped enemy is left out: its client already got zero, and whatever releases it
+	(`StunMob`, `FreezeAll`, the boss gimmick) resends the right speed when releasing.
+	Sending here would make the model start walking on screen with the server still
+	holding the enemy in place.
 ]=]
 local function broadcastSpeed(self, mobId, mob)
 	if (mob.StunnedUntil or 0) > GameClock.Now() then return end
@@ -108,18 +112,18 @@ local GimmickHandlers = {
 	},
 
 	--[=[
-		O arranque na metade da vida: toca a animacao e, quando ela chega no
-		marcador, o inimigo acelera por um tempo.
+		The half-health burst: plays the animation and, when it reaches the marker, the
+		enemy speeds up for a while.
 
-		O marcador **nao** e escutado no cliente. Quem conta e o servidor, com o
-		`MarkerTime` que a config traz medido do asset, pelo mesmo motivo que o
-		`AnimTime` do gimmick do Champion aqui embaixo: a velocidade e estado de
-		partida, e estado de partida nao pode nascer de um aviso de cliente -- seriam
-		N avisos numa sala de N jogadores, cada um no seu ping, e um deles bastaria
-		para acelerar o chefe de todo mundo.
+		The marker is **not** listened to on the client. The server counts, with the
+		`MarkerTime` the config carries measured from the asset, for the same reason as
+		the Champion gimmick's `AnimTime` below: speed is match state, and match state
+		must not come from a client notification: that would be N notifications in a room
+		of N players, each at its own ping, and one of them would be enough to speed up
+		everyone's boss.
 
-		Os dois prazos correm no relogio da partida, entao no 2x o arranque chega na
-		metade do tempo -- e a animacao no cliente tambem, que roda em `TimeScale`.
+		Both deadlines run on the match clock, so at 2x the burst arrives in half the time,
+		and so does the animation on the client, which runs at `TimeScale`.
 	]=]
 	HealthThresholdRush = {
 		OnDamage = function(self, mobId, mob, gimmick)
@@ -133,8 +137,8 @@ local GimmickHandlers = {
 				Framework:Fire("MobPlayAnim", player, mobId, animation)
 			end
 
-			-- Um token por arranque: com `Once` so existe um, mas sem ele um segundo
-			-- arranque teria o fim do primeiro apagando o dele no meio.
+			-- One token per burst: with `Once` there is only one, but without it a second
+			-- burst would have the first one's end erasing it midway.
 			mob.RushToken = (mob.RushToken or 0) + 1
 			local token = mob.RushToken
 
@@ -174,8 +178,8 @@ local GimmickHandlers = {
 			GameClock.Delay(freezeTime, function()
 				if self.ActiveMobs[mobId] ~= mob then return end
 
-				-- Um Time Stop ou um gelo mais longo pode ter entrado no meio: ai quem
-				-- solta o boneco e ele, e o `broadcastSpeed` fica calado.
+				-- A Time Stop or a longer ice may have come in meanwhile: then it releases
+				-- the model, and `broadcastSpeed` stays quiet.
 				broadcastSpeed(self, mobId, mob)
 
 				local unitService = self.Services.UnitService
@@ -200,7 +204,7 @@ local MobService = {
 	DebugParts = {},
 	PositionCache = {},
 
-	-- Onde cada mob estava no comeco do quadro. Ver `getPreviousMobPosition`.
+	-- Where each enemy was at the start of the frame. See `getPreviousMobPosition`.
 	PreviousPositionCache = {},
 
 	FrameId = 0,
@@ -209,20 +213,20 @@ local MobService = {
 	ActiveMobCount = 0,
 	HealthScale = 1,
 
-	-- Clima no ar e o que ele faz com a velocidade dos inimigos. A vida nao tem
-	-- campo equivalente porque ela so vale no spawn — ver `SpawnWave`.
+	-- The active weather and what it does to enemy speed. Health has no
+	-- equivalent field because it only applies at spawn; see `SpawnWave`.
 	Weather = nil,
 	WeatherSpeedScale = 1,
 
 	--[[
-		O que as cartas de round estao fazendo com a sala inteira.
+		What round cards are doing to the whole room.
 
-		`CardSpeedScale` e a lentidao global do Staff of Azure Ever Ice, e
-		`BrittleMultiplier` e o "quebradico" que ele deixa quando e usado durante a
-		neve: todo dano que entra num inimigo passa por ele.
+		`CardSpeedScale` is the Staff of Azure Ever Ice's global slow, and
+		`BrittleMultiplier` is the "brittle" it leaves when used during snow: all damage
+		entering an enemy goes through it.
 
-		Os dois vivem no service, e nao no mob, porque valem para quem nascer no meio
-		da janela tambem -- a mesma razao do `FreezeUntil` la embaixo.
+		Both live in the service, not the enemy, because they also apply to enemies
+		spawned during the window: the same reason as `FreezeUntil` below.
 	]]
 	CardSpeedScale = 1,
 	CardSlowToken = 0,
@@ -232,44 +236,43 @@ local MobService = {
 	SessionDamage = {},
 
 	--[[
-		O placar da partida que os contratos leem, por UserId:
+		The match scoreboard contracts read, by UserId:
 		`{ Kills, BossKills, Stuns, Earned, Spent }`.
 
-		So conta o que e **do jogador**: o kill e o atordoamento sao de quem era a
-		unidade, e `Earned`/`Spent` sao o caixa da partida dele. Zera junto com o
-		`SessionDamage`, no comeco de cada partida -- e por isso `Earned` e `Spent` sao
-		"numa partida so", que e o que os contratos de gasto e ganho pedem.
+		It only counts what is **the player's**: kills and stuns belong to whoever owned the
+		unit, and `Earned`/`Spent` are their match cash. It resets along with
+		`SessionDamage`, at the start of each match, which is why `Earned` and `Spent` are
+		"within a single match", which is what spending and earning contracts ask for.
 
-		Quem le e o `ContractTrackerService`, de tempos em tempos e no fim do round
-		(`GetSessionStats`). Um sinal por golpe seria um evento por dano; um contador
-		lido em lote custa uma soma.
+		`ContractTrackerService` reads it, every so often and at the end of the round
+		(`GetSessionStats`). A signal per hit would be one event per damage; a counter read
+		in batches costs one sum.
 	]]
 	SessionStats = {},
 
 	--[[
-		Ate quando o Time Stop segura todo mundo, no relogio da partida, e o token
-		do congelamento que esta valendo. Nil fora de um congelamento. Ver
-		`FreezeAll`.
+		Until when Time Stop holds everyone, on the match clock, and the token of the
+		freeze in effect. Nil outside a freeze. See `FreezeAll`.
 	]]
 	FreezeUntil = nil,
 	FreezeToken = 0,
 
-	-- A sobra fracionaria do bonus da aura, por jogador. Ver `applyCashBonus`.
+	-- The fractional remainder of the aura bonus, per player. See `applyCashBonus`.
 	BonusRemainder = {},
 }
 
 --[=[
-	Liga (ou desliga, com nil) os efeitos do clima sobre os inimigos.
+	Turns weather effects on enemies on (or off, with nil).
 
-	Quem chama e o `WeatherRoundService`, no comeco da wave em que o clima entra ou
-	sai. A velocidade e recalculada para todos os mobs que ja estao andando e
-	replicada na hora — sem isso, quem nasceu antes do vento continuaria no ritmo
-	antigo ate o fim do caminho, e dois mobs iguais andariam em velocidades
-	diferentes na mesma wave.
+	`WeatherRoundService` calls it, at the start of the wave where the weather comes in or
+	leaves. Speed is recomputed for every enemy already walking and replicated right
+	away: without that, enemies born before the wind would keep the old pace until the
+	end of the path, and two identical enemies would walk at different speeds in the same
+	wave.
 
-	A vida nao e mexida aqui de proposito: mudar `MaxHealth` no meio da caminhada
-	significaria ou curar o mob ou mata-lo na hora, e as duas coisas sao piores do
-	que a wave seguinte ja nascer com o valor certo.
+	Health is not touched here on purpose: changing `MaxHealth` mid-walk would either heal
+	the enemy or kill it on the spot, and both are worse than the next wave simply being
+	born with the right value.
 ]=]
 function MobService:ApplyWeather(weatherName : string?)
 	self.Weather = weatherName
@@ -280,7 +283,7 @@ function MobService:ApplyWeather(weatherName : string?)
 		if speed ~= mob.CurrentSpeed then
 			mob.CurrentSpeed = speed
 
-			-- Mob parado so guarda a velocidade nova: quem o soltar manda ela.
+			-- A stopped enemy only stores the new speed: whatever releases it sends it.
 			broadcastSpeed(self, mobId, mob)
 		end
 	end
@@ -291,23 +294,22 @@ function MobService:GetWeather() : string?
 end
 
 --[=[
-	Para todos os inimigos do mapa por `duration`. Quem chama e o `CardShopService`
-	(carta Time Stop).
+	Stops every enemy on the map for `duration`. `CardShopService` calls it (the Time
+	Stop card).
 
-	O congelamento e o mesmo `StunnedUntil` que o gimmick do boss ja usava: o laco
-	do Heartbeat so soma distancia quando o relogio da partida passa dele. Isso
-	significa que o tempo do congelamento e **de partida**, e nao de tela -- quatro
-	segundos no 2x sao dois segundos reais, do mesmo jeito que todo o resto do
-	gameplay. E o unico jeito de o congelamento valer o mesmo tanto de caminho
-	andado em qualquer velocidade.
+	The freeze is the same `StunnedUntil` the boss gimmick uses: the Heartbeat loop only
+	adds distance once the match clock passes it. That means the freeze time is **match**
+	time, not screen time: four seconds at 2x are two real seconds, the same as the rest
+	of gameplay. It is the only way for the freeze to be worth the same amount of path
+	walked at any speed.
 
-	`FreezeUntil` fica guardado no service porque a wave pode continuar nascendo
-	durante o congelamento: mob que nasce dentro da janela ja nasce parado, em vez
-	de o Time Stop virar "para quem ja estava no mapa".
+	`FreezeUntil` is stored in the service because the wave may keep spawning during the
+	freeze: an enemy born inside the window is born stopped, instead of Time Stop
+	becoming "for those already on the map".
 
-	O `UpdateMobSpeed` para zero e o outro lado da mesma coisa: quem move o modelo
-	na tela e o `MobController`, e sem isso o boneco continuaria andando ate o
-	servidor entregar a posicao de volta.
+	`UpdateMobSpeed` to zero is the other side of the same thing: `MobController` moves
+	the model on screen, and without it the model would keep walking until the server
+	sent the position back.
 ]=]
 function MobService:FreezeAll(duration : number?) : number
 	duration = math.max(0, duration or 0)
@@ -326,10 +328,9 @@ function MobService:FreezeAll(duration : number?) : number
 	end
 
 	--[[
-		Um token por congelamento. Dois Time Stops sobrepostos estendem a janela
-		(`FreezeUntil` e um max), e ai so o ultimo degelo pode valer: sem isso o
-		primeiro terminaria no meio do segundo e devolveria a velocidade dos mobs
-		com a janela ainda aberta.
+		One token per freeze. Two overlapping Time Stops extend the window (`FreezeUntil`
+		is a max), and then only the last thaw may count: without that the first would end
+		in the middle of the second and restore enemy speed with the window still open.
 	]]
 	self.FreezeToken = (self.FreezeToken or 0) + 1
 	local token = self.FreezeToken
@@ -339,8 +340,8 @@ function MobService:FreezeAll(duration : number?) : number
 
 		self.FreezeUntil = nil
 
-		-- Quem levou um gelo ou um choque que vai alem do Time Stop continua parado:
-		-- o `broadcastSpeed` o pula, e o `StunMob` dele o solta na hora certa.
+		-- An enemy hit by an ice or a shock that goes beyond the Time Stop stays stopped:
+		-- `broadcastSpeed` skips it, and its `StunMob` releases it at the right time.
 		for mobId, mob in self.ActiveMobs do
 			broadcastSpeed(self, mobId, mob)
 		end
@@ -349,13 +350,13 @@ function MobService:FreezeAll(duration : number?) : number
 	return frozen
 end
 
---[[ O QUE AS CARTAS FAZEM COM OS INIMIGOS ]]
+--[[ WHAT CARDS DO TO ENEMIES ]]
 
 --[=[
-	O multiplicador global de uma estatistica de carta (`Slow`, `Burn`).
+	The global multiplier for a card stat (`Slow`, `Burn`).
 
-	Atalho para nao espalhar o `CardModifier` por aqui: o que interessa a este
-	service e um numero, e nao a gramatica que o produziu.
+	A shortcut so `CardModifier` does not spread around here: what this service cares
+	about is a number, not the grammar that produced it.
 ]=]
 function MobService:cardStat(stat : string) : number
 	local service = self.Services.CardModifierService
@@ -364,14 +365,14 @@ function MobService:cardStat(stat : string) : number
 end
 
 --[=[
-	Manda a velocidade de agora de todo mundo para os clientes.
+	Sends everyone's current speed to the clients.
 
-	Quem move o boneco na tela e o `MobController`, com a velocidade que o servidor
-	mandou por ultimo: sem isso o mob continuaria andando no ritmo antigo ate a
-	proxima vez que alguma outra coisa mexesse nele.
+	`MobController` moves the model on screen, with the speed the server sent last:
+	without this the enemy would keep walking at the old pace until something else
+	touched it.
 
-	Mob congelado fica de fora: para ele o cliente ja recebeu zero, e mandar a
-	velocidade "de verdade" no meio de um Time Stop o poria a andar.
+	A frozen enemy is left out: its client already got zero, and sending the "real" speed
+	in the middle of a Time Stop would make it walk.
 ]=]
 function MobService:_broadcastSpeeds()
 	local now = GameClock.Now()
@@ -389,21 +390,21 @@ function MobService:_broadcastSpeeds()
 end
 
 --[=[
-	Esfria a sala inteira: todo inimigo anda `slow` mais devagar por `duration`, e
-	com `brittle` todo dano que entrar neles no periodo vale mais. E o Staff of
+	Chills the whole room: every enemy walks `slow` slower for `duration`, and with
+	`brittle` all damage entering them in the period is worth more. It is the Staff of
 	Azure Ever Ice.
 
-	`slow` e a **fracao tirada**: 0.5 e "anda pela metade", 0.75 e "anda a um
-	quarto". Escrito assim porque e assim que a carta se descreve para o jogador, e
-	traduzir para escala num lugar so evita a confusao de ler "0.25" e achar que a
-	carta e fraca.
+	`slow` is the **fraction removed**: 0.5 is "walks at half speed", 0.75 is "walks at a
+	quarter". Written this way because that is how the card describes itself to the
+	player, and translating to a scale in a single place avoids the confusion of reading
+	"0.25" and thinking the card is weak.
 
-	Vale para quem nascer no meio da janela tambem -- a escala mora no service e
-	entra no `computeSpeed` de todo mundo, como o clima.
+	It also applies to enemies born during the window: the scale lives in the service and
+	enters everyone's `computeSpeed`, like weather.
 
-	Duas cartas sobrepostas: a **mais forte** manda, e o prazo e o token de quem
-	entrou por ultimo. Multiplicar as duas faria um segundo uso durante o primeiro
-	parar a sala inteira, que nao e o que nenhuma das duas prometeu.
+	Two overlapping cards: the **stronger** rules, and the deadline and token are the last
+	one's. Multiplying both would make a second use during the first stop the whole room,
+	which neither promised.
 ]=]
 function MobService:ChillAll(slow : number?, duration : number?, brittle : number?) : number
 	duration = math.max(0, duration or 0)
@@ -421,10 +422,9 @@ function MobService:ChillAll(slow : number?, duration : number?, brittle : numbe
 	self:_broadcastSpeeds()
 
 	--[[
-		Tempo de partida, e nao real: os dez segundos da carta sao dez segundos de
-		jogo, do mesmo jeito que o Time Stop e o atordoamento. No 3x eles passam em
-		pouco mais de tres segundos de relogio de parede, e e isso que faz a carta
-		valer o mesmo tanto de caminho andado em qualquer velocidade.
+		Match time, not real time: the card's ten seconds are ten seconds of play, the same
+		as Time Stop and stuns. At 3x they pass in a little over three wall-clock seconds,
+		and that is what makes the card worth the same amount of path walked at any speed.
 	]]
 	GameClock.Delay(duration, function()
 		if self.CardSlowToken ~= slowToken then return end
@@ -450,20 +450,20 @@ function MobService:ChillAll(slow : number?, duration : number?, brittle : numbe
 end
 
 --[=[
-	A lentidao que uma unidade deixa num inimigo so.
+	The slow a unit leaves on a single enemy.
 
-	`amount` e a fracao tirada, como no `ChillAll`, e a carta Chill Out entra por
-	cima dela: `Slow` e um multiplicador global, entao 0.2 com a carta no campo vira
-	0.22. O teto de 0.95 existe para nenhuma soma de cartas parar um inimigo de vez
-	-- parar inimigo e o Time Stop, e ele custa outra carta.
+	`amount` is the fraction removed, as in `ChillAll`, and the Chill Out card applies on
+	top: `Slow` is a global multiplier, so 0.2 with the card on the field becomes 0.22.
+	The 0.95 cap exists so no sum of cards stops an enemy for good: stopping enemies is
+	Time Stop's job, and that costs another card.
 
-	A **mais forte manda**, e nao a mais recente: um respingo fraco no meio de uma
-	lentidao forte nao pode encurtar a forte. O prazo, esse sim, e sempre do ultimo
-	golpe, senao lentidoes iguais em sequencia nunca renovariam.
+	The **strongest rules**, not the most recent: a weak splash in the middle of a strong
+	slow must not shorten the strong one. The deadline, however, is always the last hit's,
+	or equal slows in sequence would never refresh.
 
-	> Quem usa isto hoje e o Frostione, por dentro do `ApplyFrost`: a lentidao dos
-	> acumulos de gelo e esta, e e por aqui que a carta Chill Out a alcanca. O campo
-	> `UnitStats[nome].Slow`, que chama isto direto, continua sem nenhuma unidade.
+	> Today the Frostione uses this, through `ApplyFrost`: the frost stacks' slow is this
+	> one, and that is how the Chill Out card reaches it. The `UnitStats[name].Slow`
+	> field, which calls this directly, still has no unit.
 ]=]
 function MobService:ApplySlow(mobId : string, amount : number?, duration : number?)
 	local mob = self.ActiveMobs[mobId]
@@ -492,7 +492,7 @@ function MobService:ApplySlow(mobId : string, amount : number?, duration : numbe
 	end
 
 	GameClock.Delay(duration, function()
-		-- O mob pode ter morrido, e a tabela dele ja nao esta em lugar nenhum.
+		-- The enemy may have died, and its table is no longer anywhere.
 		if self.ActiveMobs[mobId] ~= mob or mob.SlowToken ~= token then return end
 
 		mob.SlowScale = 1
@@ -507,32 +507,31 @@ function MobService:ApplySlow(mobId : string, amount : number?, duration : numbe
 end
 
 --[=[
-	Um acumulo de gelo num inimigo: o `Frost` do `UnitStats` de quem acertou.
+	A frost stack on an enemy: the hitting unit's `Frost` from `UnitStats`.
 
-	**A conta e por unidade.** Cada Frostione tem os acumulos dela neste inimigo
-	(`mob.FrostStacks[unitId]`), e o acerto dela so renova o prazo dos dela
-	(`Frost.Duration`): duas Frostione no mesmo alvo nao fecham os quatro na metade
-	do tempo, cada uma fecha a sua.
+	**The count is per unit.** Each Frostione has its own stacks on this enemy
+	(`mob.FrostStacks[unitId]`), and its hit only refreshes its own stacks' timer
+	(`Frost.Duration`): two Frostiones on the same target do not close the four in half
+	the time; each closes its own.
 
-	A lentidao, essa, e uma so: o inimigo fica `Frost.Slow` mais lento enquanto
-	**qualquer** Frostione tiver acumulo nele. E a do `ApplySlow`, renovada a cada
-	acerto de qualquer uma com o mesmo prazo, entao ela acaba junto com os acumulos
-	do ultimo acerto -- e a carta Chill Out entra por la.
+	The slow, however, is a single one: the enemy is `Frost.Slow` slower while **any**
+	Frostione has a stack on it. It is `ApplySlow`'s, refreshed on any one's hit with the
+	same deadline, so it ends with the last hit's stacks, and the Chill Out card enters
+	through there.
 
-	Quando a conta de uma unidade chega a `FreezeStacks`, o inimigo congela por
-	`FreezeDuration` (o `StunMob`, que conta para os contratos de atordoar do dono
-	dela) e a conta de **todas** zera, lentidao inclusive: descongelado, ele volta a
-	andar no ritmo de sempre.
+	When a unit's count reaches `FreezeStacks`, the enemy freezes for `FreezeDuration`
+	(`StunMob`, which counts toward its owner's stun contracts) and **every** count
+	resets, slow included: once thawed, it walks at its usual pace.
 
-	Depois disso ele fica imune a gelo por mais `FreezeImmunity` segundos
-	(`mob.FrostImmuneUntil`): acerto nenhum soma acumulo enquanto ele esta congelado
-	**nem** durante a folga que vem logo em seguida, venha de quem vier. E o que
-	impede o congelamento sem fim -- sem a folga, a janela em que o inimigo anda e so
-	o tempo de refazer os quatro acumulos, que encolhe junto com o cooldown da
-	unidade (upgrade, clima de neve, cartas de cadencia) ate quase nada.
+	After that it is immune to frost for `FreezeImmunity` more seconds
+	(`mob.FrostImmuneUntil`): no hit adds a stack while it is frozen **nor** during the
+	grace period right after, whoever it comes from. That is what prevents an endless
+	freeze: without the grace period, the window in which the enemy walks is only the
+	time to rebuild the four stacks, which shrinks with the unit's cooldown (upgrades,
+	snow weather, attack speed cards) to almost nothing.
 
-	O desenho do congelamento sai daqui pelo `MobFrozen`, porque so o servidor sabe
-	quando a conta fechou.
+	The freeze visual comes from here through `MobFrozen`, because only the server knows
+	when the count completed.
 ]=]
 function MobService:ApplyFrost(mobId : string, frost, sourceUserId : number?, sourceUnitId : string?)
 	local mob = self.ActiveMobs[mobId]
@@ -540,7 +539,7 @@ function MobService:ApplyFrost(mobId : string, frost, sourceUserId : number?, so
 
 	local now = GameClock.Now()
 
-	-- Congelado, ou na folga logo depois do degelo: o acerto nao deixa acumulo.
+	-- Frozen, or in the grace period right after thawing: the hit leaves no stack.
 	if now < (mob.FrostImmuneUntil or 0) then return end
 
 	local stacks = mob.FrostStacks
@@ -549,7 +548,7 @@ function MobService:ApplyFrost(mobId : string, frost, sourceUserId : number?, so
 		mob.FrostStacks = stacks
 	end
 
-	-- Sem id, quem chamou nao disse de onde veio o acerto: cai numa conta comum.
+	-- Without an id, the caller did not say where the hit came from: it goes to a shared count.
 	local key = sourceUnitId or "_"
 	local state = stacks[key]
 	if not state then
@@ -566,14 +565,14 @@ function MobService:ApplyFrost(mobId : string, frost, sourceUserId : number?, so
 
 		table.clear(stacks)
 
-		-- A imunidade cobre o congelamento inteiro mais a folga: enquanto ela nao
-		-- vencer, `ApplyFrost` sai na primeira linha.
+		-- The immunity covers the whole freeze plus the grace period: until it
+		-- expires, `ApplyFrost` exits on the first line.
 		mob.FrostImmuneUntil = now + duration + immunity
 
-		-- A lentidao sai junto com os acumulos. O token novo invalida o fim que o
-		-- ultimo `ApplySlow` agendou, que senao mexeria na velocidade de novo depois.
-		-- Vem antes do `StunMob` de proposito: e o `CurrentSpeed` que ele devolve para
-		-- a tela quando o congelamento acaba.
+		-- The slow leaves with the stacks. The new token invalidates the end the last
+		-- `ApplySlow` scheduled, which would otherwise touch the speed again later.
+		-- Comes before `StunMob` on purpose: `CurrentSpeed` is what it restores to the
+		-- screen when the freeze ends.
 		mob.SlowToken = (mob.SlowToken or 0) + 1
 		mob.SlowScale = 1
 		mob.CurrentSpeed = computeSpeed(self, mob)
@@ -591,8 +590,8 @@ function MobService:ApplyFrost(mobId : string, frost, sourceUserId : number?, so
 
 	local token = state.token
 	GameClock.Delay(math.max(0, frost.Duration or 0), function()
-		-- Morreu, a conta zerou num congelamento (a tabela desta unidade saiu), ou esta
-		-- mesma unidade acertou de novo no meio: o prazo agora e o desse acerto.
+		-- Died, the count reset in a freeze (this unit's table left), or this same unit
+		-- hit again meanwhile: the deadline now is that hit's.
 		if self.ActiveMobs[mobId] ~= mob or stacks[key] ~= state or state.token ~= token then return end
 
 		stacks[key] = nil
@@ -600,21 +599,21 @@ function MobService:ApplyFrost(mobId : string, frost, sourceUserId : number?, so
 end
 
 --[=[
-	Para um inimigo de vez, por `duration` segundos de partida.
+	Stops an enemy completely, for `duration` match seconds.
 
-	E o mesmo `StunnedUntil` do Time Stop e do gimmick do boss -- o laco de movimento
-	so anda com `now >= StunnedUntil` --, so que num inimigo so. Nao e lentidao: a
-	lentidao mexe na velocidade, e isto tira o mob do laco. Uma unidade pode deixar as
-	duas no mesmo golpe, embora nenhuma deixe hoje: o Electro so para.
+	It is the same `StunnedUntil` as Time Stop and the boss gimmick (the movement loop only
+	advances with `now >= StunnedUntil`), but on a single enemy. It is not a slow: a slow
+	changes speed, and this takes the enemy out of the loop. A unit can leave both on the
+	same hit, though none does today: the Electro only stops.
 
-	**O prazo maior manda, e o mais curto nao encosta nele.** Um choque de 0,3s no meio
-	de um Time Stop de 5s nao pode devolver o inimigo ao caminho quando os 0,3s
-	acabarem -- por isso a saida antecipada la em cima e a conferencia do prazo na hora
-	de soltar. Renovar um choque que ainda esta correndo so estende o prazo.
+	**The longer deadline rules, and the shorter does not touch it.** A 0.3s shock in the
+	middle of a 5s Time Stop must not return the enemy to the path when the 0.3s end:
+	hence the early exit above and the deadline check when releasing. Refreshing a shock
+	that is still running only extends the deadline.
 
-	O `UpdateMobSpeed` para zero e o outro lado disto: quem move o boneco na tela e o
-	`MobController`, e sem o aviso ele continuaria andando ate o servidor mandar a
-	posicao de volta.
+	`UpdateMobSpeed` to zero is the other side of this: `MobController` moves the model on
+	screen, and without the notification it would keep walking until the server sent the
+	position back.
 ]=]
 function MobService:StunMob(mobId : string, duration : number?, sourceUserId : number?)
 	local mob = self.ActiveMobs[mobId]
@@ -625,14 +624,14 @@ function MobService:StunMob(mobId : string, duration : number?, sourceUserId : n
 
 	local stunnedUntil = GameClock.Now() + duration
 
-	-- Ja esta parado por mais tempo do que este choque pediria: nao ha o que fazer,
-	-- e mexer aqui seria encurtar o congelamento de quem chegou antes.
+	-- Already stopped for longer than this shock would ask: there is nothing to do,
+	-- and touching it would shorten the freeze of whoever came first.
 	if stunnedUntil <= (mob.StunnedUntil or 0) then return end
 
 	mob.StunnedUntil = stunnedUntil
 
-	-- So o choque que de fato parou o inimigo conta para o dono da unidade: o que
-	-- saiu pela linha de cima nao atordoou ninguem.
+	-- Only the shock that actually stopped the enemy counts for the unit's owner: one
+	-- that left through the line above stunned nobody.
 	local stats = self:_sessionStatsOf(sourceUserId)
 	if stats then
 		stats.Stuns += 1
@@ -643,10 +642,10 @@ function MobService:StunMob(mobId : string, duration : number?, sourceUserId : n
 	end
 
 	GameClock.Delay(duration, function()
-		-- Morreu, ou a tabela dele ja e de outro mob com o mesmo id.
+		-- Died, or its table now belongs to another enemy with the same id.
 		if self.ActiveMobs[mobId] ~= mob then return end
 
-		-- Um congelamento mais longo assumiu no meio deste: quem solta o mob e ele.
+		-- A longer freeze took over during this one: it releases the enemy.
 		if GameClock.Now() < (mob.StunnedUntil or 0) then return end
 
 		for _, player in Players:GetPlayers() do
@@ -656,25 +655,24 @@ function MobService:StunMob(mobId : string, duration : number?, sourceUserId : n
 end
 
 --[=[
-	Poe fogo num inimigo: `damage` de dano a cada `interval` segundos, `ticks`
-	vezes.
+	Sets an enemy on fire: `damage` every `interval` seconds, `ticks` times.
 
-	Cada tique passa pelo `DamageMob` como qualquer outro dano -- ele paga caixa,
-	conta para o placar da unidade e mata se der. A carta Fire Hazard entra em cada
-	tique, e nao no total: uma queimadura que ja esta no ar cobra mais assim que a
-	carta e usada, em vez de esperar a proxima.
+	Each tick goes through `DamageMob` like any other damage: it pays cash, counts toward
+	the unit's scoreboard, and kills if it can. The Fire Hazard card applies to each tick,
+	not the total: a burn already in the air charges more as soon as the card is used,
+	instead of waiting for the next one.
 
-	**Nao acumula nem renova**: acerto de fogo em quem ja esta queimando e ignorado,
-	venha da mesma unidade ou de outra -- nem soma dano, nem recomeca o prazo. So
-	depois de a queimadura acabar um acerto novo acende outra. Sem isso uma unidade
-	de fogo rapida multiplicaria o proprio DPS, e varias no mesmo alvo manteriam o
-	fogo aceso para sempre.
+	**It neither stacks nor refreshes**: a fire hit on an enemy already burning is ignored,
+	whether from the same unit or another: it neither adds damage nor restarts the
+	deadline. Only after the burn ends does a new hit light another. Without this, a fast
+	fire unit would multiply its own DPS, and several on the same target would keep the
+	fire lit forever.
 
-	Os tiques cobram em nome de quem **acendeu** o fogo: e o `ownerUserId` dele que
-	leva a caixa ate o fim, mesmo que outro jogador acerte o alvo no meio.
+	The ticks charge on behalf of whoever **lit** the fire: its `ownerUserId` takes the
+	cash to the end, even if another player hits the target meanwhile.
 
-	O desenho sai daqui pelo `MobBurning`, porque so o servidor sabe se o acerto
-	acendeu fogo novo ou caiu em quem ja queimava. Hoje quem queima e o Pyre.
+	The visual comes from here through `MobBurning`, because only the server knows whether
+	the hit lit a new fire or landed on something already burning. Today the Pyre burns.
 ]=]
 function MobService:ApplyBurn(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?)
 	self:applyDamageOverTime(mobId, damage, ticks, interval, ownerUserId, {
@@ -685,23 +683,23 @@ function MobService:ApplyBurn(mobId : string, damage : number?, ticks : number?,
 end
 
 --[=[
-	Faz um inimigo sangrar. E a queimadura com outro nome e outro desenho: as mesmas
-	regras de tique, dono e **nao acumula nem renova** do `ApplyBurn`, com prazo
-	proprio (`BleedingUntil`) -- sangrar e queimar convivem no mesmo alvo.
+	Makes an enemy bleed. It is burn under another name and visual: the same tick, owner,
+	and **neither stacks nor refreshes** rules as `ApplyBurn`, with its own deadline
+	(`BleedingUntil`): bleeding and burning coexist on the same target.
 
-	O que o sangramento tem a mais e a **ferida aberta**: enquanto o prazo corre, todo
-	dano que entra no inimigo vale `vulnerability` vezes mais (1.3 e "+30%"). Isso nao
-	e um buff de torre -- e o inimigo que esta mais fragil --, entao quem cobra e o
-	`DamageMob`, junto com o "quebradico" da carta, e vale para qualquer fonte: outra
-	unidade, respingo de area, tripmine, e os proprios tiques do sangramento.
+	What bleeding adds is the **open wound**: while the deadline runs, all damage entering
+	the enemy is worth `vulnerability` times more (1.3 is "+30%"). This is not a tower
+	buff (it is the enemy that is more fragile), so `DamageMob` charges it, along with the
+	card's "brittle", and it applies to any source: another unit, area splash, tripmines,
+	and the bleed's own ticks.
 
-	O multiplicador mora no mob (`BleedVulnerability`) e nao no prazo porque o valor e
-	de quem abriu o corte: quem renovar o sangramento depois (so quando o prazo acabar,
-	pela regra de nao acumular) escreve o seu por cima.
+	The multiplier lives on the enemy (`BleedVulnerability`), not on the deadline, because
+	the value belongs to whoever opened the wound: whoever refreshes the bleed later (only
+	once the deadline ends, by the no-stacking rule) writes theirs on top.
 
-	Nenhuma carta mexe no sangramento: a Fire Hazard e do fogo. O desenho sai pelo
-	`MobBleeding` (`BleedVFX`). Hoje sangram o Slasher e o Berserker, com a mesma
-	ferida de 30% -- e, pela regra de nao acumular, os dois juntos abrem um corte so.
+	No card changes bleeding: Fire Hazard is for fire. The visual comes through
+	`MobBleeding` (`BleedVFX`). Today the Slasher and the Berserker bleed, with the same 30%
+	wound, and by the no-stacking rule the two together open a single wound.
 ]=]
 function MobService:ApplyBleed(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?, vulnerability : number?)
 	self:applyDamageOverTime(mobId, damage, ticks, interval, ownerUserId, {
@@ -713,16 +711,16 @@ function MobService:ApplyBleed(mobId : string, damage : number?, ticks : number?
 end
 
 --[=[
-	O dano ao longo do tempo por baixo do `ApplyBurn` e do `ApplyBleed`.
+	The damage over time underneath `ApplyBurn` and `ApplyBleed`.
 
-	`kind.UntilKey` e o campo do prazo no mob (um por efeito, para os dois nao se
-	bloquearem), `kind.Event` e o aviso do desenho, e `kind.CardStat` e a carta global
-	que multiplica cada tique, quando houver. O tique na tela e o mesmo
-	`MobDamageTick` para todos: numero e barra de vida nao dependem do efeito.
+	`kind.UntilKey` is the deadline field on the enemy (one per effect, so the two do not
+	block each other), `kind.Event` is the visual's notification, and `kind.CardStat` is
+	the global card that multiplies each tick, when there is one. The on-screen tick is
+	the same `MobDamageTick` for all: number and health bar do not depend on the effect.
 
-	`kind.VulnerabilityKey` e `kind.Vulnerability` sao o efeito que tambem deixa o alvo
-	mais fragil enquanto dura (hoje so o sangramento): o numero fica gravado no mob e
-	quem cobra e o `DamageMob`, pelo mesmo prazo do `kind.UntilKey`.
+	`kind.VulnerabilityKey` and `kind.Vulnerability` are for an effect that also makes the
+	target more fragile while it lasts (today only bleeding): the number is stored on the
+	enemy and `DamageMob` charges it, by the same `kind.UntilKey` deadline.
 ]=]
 function MobService:applyDamageOverTime(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?, kind)
 	local mob = self.ActiveMobs[mobId]
@@ -740,8 +738,8 @@ function MobService:applyDamageOverTime(mobId : string, damage : number?, ticks 
 	local duration = ticks * interval
 	mob[kind.UntilKey] = now + duration
 
-	-- Escrito junto com o prazo, e nunca apagado: quem le confere o prazo antes, entao
-	-- um valor velho de um sangramento que ja acabou nao cobra nada.
+	-- Written along with the deadline, and never erased: readers check the deadline first,
+	-- so a stale value from a bleed that already ended charges nothing.
 	if kind.VulnerabilityKey then
 		mob[kind.VulnerabilityKey] = math.max(1, kind.Vulnerability or 1)
 	end
@@ -760,8 +758,8 @@ function MobService:applyDamageOverTime(mobId : string, damage : number?, ticks 
 			local tick = math.max(1, math.floor(damage * multiplier + 0.5))
 			local dealt = self:DamageMob(mobId, tick, ownerUserId)
 
-			-- O `DamageMob` nao avisa a tela: o numero e a barra de vida de um golpe
-			-- comum saem do `AttackVisual` da unidade, e o tique nao tem unidade.
+			-- `DamageMob` does not notify the screen: a regular hit's number and health bar
+			-- come from the unit's `AttackVisual`, and a tick has no unit.
 			if dealt > 0 then
 				for _, player in Players:GetPlayers() do
 					Framework:Fire("MobDamageTick", player, mobId, dealt)
@@ -772,11 +770,11 @@ function MobService:applyDamageOverTime(mobId : string, damage : number?, ticks 
 end
 
 --[=[
-	Todas as rotas do mapa atual, com as distancias de curva ja calculadas.
+	Every route of the current map, with the turn distances already computed.
 
-	Mapa sem bifurcacao devolve uma rota so, e tudo que consome isso continua
-	igual. Com bifurcacao, cada combinacao vira uma rota linear propria — o mob
-	sorteia um indice no spawn e carrega ele pelo resto da vida.
+	A map without a fork returns a single route, and everything that consumes this stays
+	the same. With a fork, each combination becomes its own linear route: the enemy draws
+	an index at spawn and carries it for the rest of its life.
 ]=]
 function MobService:getRoutes()
 	if not self.Routes then
@@ -790,8 +788,8 @@ function MobService:getRoutes()
 end
 
 --[=[
-	Os nodes do caminho com a distancia de cada um ate o primeiro, para a
-	prioridade `Farthest`. Cai junto com as rotas quando o mapa muda.
+	The path nodes with each one's distance to the first, for the `Farthest` priority. It
+	drops with the routes when the map changes.
 ]=]
 function MobService:getNodeDistances()
 	if not self.NodeDistances then
@@ -801,11 +799,11 @@ function MobService:getNodeDistances()
 end
 
 --[=[
-	O quanto o mob ja andou do caminho, em cache.
+	How far the enemy has gone along the path, cached.
 
-	A varredura de nodes e barata, mas ela roda por unidade e por mob: numa wave
-	grande com muitas torres no `Farthest` isso vira o produto dos dois. Como o
-	mob nao muda de node a cada quadro, a conta vale por `NODE_PROGRESS_REFRESH`.
+	The node sweep is cheap, but it runs per unit and per enemy: in a big wave with many
+	towers on `Farthest` that becomes the product of the two. Since an enemy does not
+	change node every frame, the math holds for `NODE_PROGRESS_REFRESH`.
 ]=]
 function MobService:getMobPathProgress(mob, position : Vector3, nodeDistances)
 	local now = GameClock.Now()
@@ -821,15 +819,13 @@ function MobService:getMobPathProgress(mob, position : Vector3, nodeDistances)
 end
 
 --[=[
-	A distancia de cada node da rota ao longo do caminho **suavizado**, que e a regua
-	do `mob.Distance`.
+	Each route node's distance along the **smoothed** path, which is `mob.Distance`'s ruler.
 
-	As curvas arredondadas deixam o suavizado um pouco mais curto que a polilinha
-	crua, entao somar os trechos crus poria o node alguns studs a frente de onde o
-	mob de fato passa por ele. A distancia de um node e a do ponto do suavizado mais
-	perto dele.
+	Rounded turns make the smoothed path a bit shorter than the raw polyline, so adding the
+	raw segments would put the node a few studs ahead of where the enemy actually passes
+	it. A node's distance is that of the smoothed point nearest to it.
 
-	Em cache na propria rota, que cai inteira quando o mapa muda.
+	Cached on the route itself, which drops entirely when the map changes.
 ]=]
 local function nodeDistancesAlongSmooth(route)
 	if route.nodeSmoothDistances then
@@ -856,16 +852,15 @@ local function nodeDistancesAlongSmooth(route)
 end
 
 --[=[
-	Joga um inimigo de volta para o node anterior do caminho: o ultimo que ele ja
-	passou, ou o comeco se ainda nao passou de nenhum. E o `Teleport` do Archmage, e
-	vale para boss tambem.
+	Throws an enemy back to the path's previous node: the last one it passed, or the start
+	if it has not passed any. It is the Archmage's `Teleport`, and it applies to bosses too.
 
-	So a `Distance` volta. O `NextTurnIndex` fica onde estava de proposito, para os
-	gimmicks de curva (o Wall Smasher acelerando) nao dispararem de novo quando ele
-	passar pela mesma curva. O cliente simula a caminhada por conta propria, entao o
-	`MobTeleported` leva a distancia nova para ele pular junto.
+	Only `Distance` goes back. `NextTurnIndex` stays where it was on purpose, so turn
+	gimmicks (the Wall Smasher speeding up) do not fire again when it passes the same turn.
+	The client simulates the walk on its own, so `MobTeleported` carries the new distance
+	for it to jump along.
 
-	Devolve se o inimigo de fato voltou.
+	Returns whether the enemy actually went back.
 ]=]
 function MobService:TeleportMobBack(mobId : string) : boolean
 	local mob = self.ActiveMobs[mobId]
@@ -875,8 +870,8 @@ function MobService:TeleportMobBack(mobId : string) : boolean
 	local route = routes[mob.RouteIndex or 1] or routes[1]
 	if not route then return false end
 
-	-- Um node a menos de meio stud atras e "onde ele esta", e nao o anterior: o mob
-	-- parado em cima de um node volta para o de antes dele.
+	-- A node less than half a stud behind is "where it is", not the previous one: an
+	-- enemy standing on a node goes back to the one before it.
 	local target = 0
 	for _, distance in nodeDistancesAlongSmooth(route) do
 		if distance < mob.Distance - 0.5 and distance > target then
@@ -919,7 +914,7 @@ function MobService:ApplyDifficulty(preset)
 	self.BaseHealth = self.MaxBaseHealth
 	self:broadcastBaseHealth()
 
-	-- A partida comeca aqui: zera o placar de dano que decide o MVP, e o dos contratos.
+	-- The match starts here: resets the damage scoreboard that decides the MVP, and the contracts' one.
 	table.clear(self.SessionDamage)
 	table.clear(self.SessionStats)
 
@@ -961,7 +956,7 @@ function MobService:spendCash(player, amount)
 	end
 end
 
---- O placar de contratos do jogador nesta partida, criado na primeira vez.
+--- The player's contract scoreboard for this match, created the first time.
 function MobService:_sessionStatsOf(userId : number?)
 	if not userId then return nil end
 
@@ -975,8 +970,8 @@ function MobService:_sessionStatsOf(userId : number?)
 end
 
 --[=[
-	O placar de contratos do jogador nesta partida (ver `SessionStats`). Zeros para
-	quem ainda nao fez nada -- nunca nil, para quem le poder subtrair direto.
+	The player's contract scoreboard for this match (see `SessionStats`). Zeros for those
+	who have done nothing yet, never nil, so readers can subtract directly.
 ]=]
 function MobService:GetSessionStats(userId : number)
 	return self.SessionStats[userId] or { Kills = 0, BossKills = 0, Stuns = 0, Earned = 0, Spent = 0 }
@@ -1035,14 +1030,13 @@ function MobService:onGameOver()
 	end
 
 	--[[
-		A vida **nao** volta ao cheio aqui: a base fica no zero ate o proximo round
+		Health does **not** return to full here: the base stays at zero until the next round
 		(`ResetRound`/`ApplyDifficulty`).
 
-		Ela ja foi zerada e transmitida pelo `mobEscaped`, e curar de volta escrevia
-		o numero cheio no billboard logo depois do fim de jogo. Pior que isso: todo
-		guarda de `BaseHealth <= 0` do service -- o corte do laco de movimento, o do
-		`SpawnWave` -- virava letra morta, porque a vida ja estava cheia quando eles
-		eram lidos.
+		It was already zeroed and broadcast by `mobEscaped`, and healing it back would write
+		the full number on the billboard right after game over. Worse: every
+		`BaseHealth <= 0` guard in the service (the movement loop's cutoff, `SpawnWave`'s)
+		would become dead code, because health would already be full when they were read.
 	]]
 
 	local waveService = self.Services.WaveService
@@ -1053,11 +1047,11 @@ function MobService:onGameOver()
 end
 
 --[=[
-	Devolve o service ao estado de antes da partida. Chamado pelo WaveService em
-	`ResetRound()`; nao mexe em nada que seja de outro service.
+	Returns the service to its pre-match state. Called by WaveService in `ResetRound()`;
+	it touches nothing that belongs to another service.
 
-	Diferente de `onGameOver`, aqui nao ha aviso de fim de jogo: os mobs somem dos
-	clientes e o placar de dano zera, sem disparar `GameOver`.
+	Unlike `onGameOver`, there is no game-over notification here: enemies vanish from the
+	clients and the damage scoreboard resets, without firing `GameOver`.
 ]=]
 function MobService:ResetRound()
 	for mobId, _ in self.ActiveMobs do
@@ -1075,20 +1069,20 @@ function MobService:ResetRound()
 	self.ActiveMobCount = 0
 	self.AllMobsSpawned = false
 
-	-- Um Time Stop do round anterior nao pode congelar a primeira wave do proximo.
-	-- O `FreezeToken` sobe para o degelo agendado nao mexer mais em nada.
+	-- A Time Stop from the previous round must not freeze the next round's first wave.
+	-- `FreezeToken` goes up so the scheduled thaw touches nothing anymore.
 	self.FreezeUntil = nil
 	self.FreezeToken = (self.FreezeToken or 0) + 1
 
-	-- E o mesmo para as cartas: a lentidao e o quebradico do Azure Ever Ice sao de
-	-- partida, e os tokens sobem para o fim agendado de cada um nao acordar depois.
+	-- The same for cards: the Azure Ever Ice's slow and brittle belong to the
+	-- match, and the tokens go up so each one's scheduled end does not wake later.
 	self.CardSpeedScale = 1
 	self.CardSlowToken = (self.CardSlowToken or 0) + 1
 	self.BrittleMultiplier = 1
 	self.BrittleToken = (self.BrittleToken or 0) + 1
 
-	-- As rotas sao reconstruidas no proximo SpawnWave; largar o cache evita
-	-- carregar geometria velha caso o mapa mude entre rounds.
+	-- Routes are rebuilt on the next SpawnWave; dropping the cache avoids
+	-- carrying stale geometry if the map changes between rounds.
 	self.Routes = nil
 	self.NodeDistances = nil
 
@@ -1108,14 +1102,13 @@ function MobService:PredictPosition(mobId)
 end
 
 --[=[
-	Onde o mob estava no comeco deste quadro.
+	Where the enemy was at the start of this frame.
 
-	Cacheado por quadro pelo mesmo motivo do `getMobPosition`: quem pergunta e o
-	gatilho das tripmines, uma vez por mina, e sem cache a conta viraria o produto
-	de minas por mobs.
+	Cached per frame for the same reason as `getMobPosition`: the tripmine trigger asks,
+	once per mine, and without a cache the math would become mines times enemies.
 
-	Sem `LastDistance` (o mob nasceu neste quadro), a resposta e a posicao de agora
-	-- ele nao andou nada ainda, entao o "segmento" dele e um ponto.
+	Without `LastDistance` (the enemy spawned this frame), the answer is the current
+	position: it has not moved yet, so its "segment" is a point.
 ]=]
 function MobService:getPreviousMobPosition(mobId)
 	local cached = self.PreviousPositionCache[mobId]
@@ -1136,8 +1129,8 @@ function MobService:getPreviousMobPosition(mobId)
 end
 
 --[=[
-	A menor distancia de `point` ate o segmento `a`-`b`. So o plano XZ interessa:
-	tudo aqui anda no chao, e a mina fica 0.35 stud acima dele.
+	The shortest distance from `point` to segment `a`-`b`. Only the XZ plane matters:
+	everything here moves on the ground, and the mine sits 0.35 stud above it.
 ]=]
 local function distanceToSegment(point : Vector3, a : Vector3, b : Vector3) : number
 	local flatPoint = Vector3.new(point.X, 0, point.Z)
@@ -1155,21 +1148,21 @@ local function distanceToSegment(point : Vector3, a : Vector3, b : Vector3) : nu
 end
 
 --[=[
-	Um mob cujo **caminho percorrido neste quadro** passou a menos de `radius` de
-	`position`, ou nil. Qual deles nao importa: quem pergunta e o gatilho da
-	tripmine, que so quer saber se alguem cruzou.
+	An enemy whose **path walked this frame** passed within `radius` of `position`, or
+	nil. Which one does not matter: the tripmine trigger asks, and it only wants to know
+	whether someone crossed.
 
-	E diferente de perguntar quem esta perto agora, e a diferenca so aparece rapido:
-	um mob anda `CurrentSpeed * dt` por quadro, e nesse pulo ele pode entrar e sair
-	do raio sem nunca ser visto parado dentro dele. Com o jogo em 3x e o servidor a
-	30Hz, o inimigo mais rapido do Nightmare da passos de quase 6 studs -- mais que
-	o diametro do gatilho de uma tripmine, que ele entao atravessa intacto.
+	It differs from asking who is near now, and the difference only shows at speed: an
+	enemy walks `CurrentSpeed * dt` per frame, and in that jump it can enter and leave the
+	radius without ever being seen inside it. With the game at 3x and the server at 30Hz,
+	Nightmare's fastest enemy takes steps of almost 6 studs, more than a tripmine
+	trigger's diameter, which it then crosses unharmed.
 
-	Testar o segmento em vez do ponto tira o quadro da conta: a mina explode pela
-	**distancia**, e nao pela sorte de o quadro ter caido em cima dela.
+	Testing the segment instead of the point takes the frame out of the equation: the
+	mine explodes by **distance**, not by the luck of the frame landing on it.
 
-	Devolve o primeiro que servir, sem montar lista: isto roda uma vez por mina por
-	quadro, e uma tabela por chamada seria lixo a coletar em cada um deles.
+	Returns the first that qualifies, without building a list: this runs once per mine per
+	frame, and a table per call would be garbage to collect on each.
 ]=]
 function MobService:GetMobCrossing(position : Vector3, radius : number) : string?
 	for mobId, _ in self.ActiveMobs do
@@ -1218,24 +1211,23 @@ function MobService:SpawnWave(waveNumber)
 	local healthScale = preset.HealthMultiplier * (preset.HealthGrowth ^ (waveNumber - 1))
 
 	--[[
-		A vida do clima entra na mesma escala da dificuldade, e por isso tambem
-		desconta no premio por dano (ver `awardDamageReward`): sem isso a seca faria
-		bater no inimigo pagar 40% a mais, e o clima que era para apertar viraria
-		bonus de economia.
+		Weather health goes into the same scale as difficulty, which is why it also
+		discounts the damage reward (see `awardDamageReward`): without that, drought would
+		make hitting enemies pay 40% more, and the weather meant to squeeze would become an
+		economy bonus.
 
-		Lido uma vez, no comeco da wave: o clima que valeu para o primeiro mob vale
-		para todos os da wave, mesmo que ele saia no meio da caminhada.
+		Read once, at the start of the wave: the weather in effect for the first enemy
+		applies to all of the wave's, even if it leaves mid-walk.
 	]]
 	healthScale *= SharedConfig.WeatherConfig.GetMobMultiplier(self.Weather, "Health")
 
-	-- Guardado porque o premio em caixa por dano desconta esta mesma escala.
+	-- Stored because the cash-per-damage reward discounts this same scale.
 	self.HealthScale = healthScale
 
 	--[[
-		Velocidade tambem sobe com a wave, mas com teto: sem o `SpeedGrowthCap` um
-		preset longo acabaria com mobs rapidos demais para as torres acompanharem, e
-		os gimmicks que ja multiplicam velocidade (o Wall Smasher ganha 30% por
-		curva) entrariam por cima disso.
+		Speed also rises with the wave, but with a cap: without `SpeedGrowthCap` a long
+		preset would end with enemies too fast for towers to keep up, and the gimmicks that
+		already multiply speed (the Wall Smasher gains 30% per turn) would stack on top.
 	]]
 	local speedScale = math.min(
 		preset.SpeedMultiplier * (preset.SpeedGrowth ^ (waveNumber - 1)),
@@ -1248,33 +1240,33 @@ function MobService:SpawnWave(waveNumber)
 
 	self.AllMobsSpawned = false
 
-	print(string.format("[DEBUG/SpawnWave] wave=%d preset=%s spawns=%d base=%d rotas=%d clock=%s",
+	log:Debug(string.format("SpawnWave: wave=%d preset=%s spawns=%d base=%d routes=%d clock=%s",
 		waveNumber, tostring(preset.Name), #spawnList, self.BaseHealth, #routes, tostring(GameClock.GetScale and GameClock.GetScale() or "?")))
 
 	--[[
-		A contagem **nao** e zerada aqui: uma wave pulada (`WaveService:SkipWave`)
-		nasce por cima dos mobs da anterior, e zerar faria os que sobraram
-		descontarem da conta da wave nova — o `Ended` sairia com inimigos vivos no
-		mapa. O numero ja e o de mobs vivos: o spawn soma, o `removeMob` subtrai, e
-		o reset de round zera.
+		The count is **not** reset here: a skipped wave (`WaveService:SkipWave`) spawns on
+		top of the previous one's enemies, and resetting would make the leftovers subtract
+		from the new wave's count: `Ended` would fire with living enemies on the map. The
+		number is already the count of living enemies: spawning adds, `removeMob`
+		subtracts, and the round reset zeroes it.
 	]]
 
 	task.spawn(function()
 		for _, spawnEntry in spawnList do
 			local entityDefinition = mobConfig.Entities[spawnEntry.Entity]
 			if entityDefinition then
-				-- Uma vez por entrada da wave, e nao por mob: a lista e a mesma para
-				-- todos deste tipo, e o que e por mob (`GimmickState`) e a outra tabela.
+				-- Once per wave entry, not per enemy: the list is the same for all of
+				-- this type, and what is per enemy (`GimmickState`) is the other table.
 				local gimmicks = mobConfig.GetGimmicks(modelSet, spawnEntry.Entity)
-				-- Sem o clima: ele entra em `computeSpeed`, para poder sair depois sem
-				-- levar junto o que os gimmicks somaram.
+				-- Without weather: it enters in `computeSpeed`, so it can leave later without
+				-- taking along what the gimmicks added.
 				local baseSpeed = mobConfig.BaseSpeed * (entityDefinition.SpeedMultiplier or 1) * speedScale
 
 				--[[
-					O chefe pode ter uma escala só dele (`BossHealthMultiplier`), por cima
-					da escala da dificuldade. É o que permite ao tutorial ter um chefe de
-					verdade — com o gimmick dele, a lentidão dele, a barra dele — sem que
-					ele seja a parede de novecentos de vida que ele é numa partida real.
+					The boss can have a scale of its own (`BossHealthMultiplier`), on top of the
+					difficulty's. That is what lets the tutorial have a real boss (with its
+					gimmick, its slowness, its bar) without it being the nine-hundred-health wall
+					it is in a real match.
 				]]
 				local entityScale = healthScale
 				if WaveConfig.IsBoss(spawnEntry.Entity) then
@@ -1287,14 +1279,14 @@ function MobService:SpawnWave(waveNumber)
 					if self.BaseHealth <= 0 then break end
 					local mobId = HttpService:GenerateGUID(false)
 
-					-- A bifurcacao e resolvida aqui: o mob sorteia por qual
-					-- combinacao de caminhos vai passar. Como cada rota ja e uma
-					-- polilinha completa, nada precisa acontecer no ponto onde
-					-- os caminhos se separam.
+					-- The fork is resolved here: the enemy draws which combination of paths
+					-- it will take. Since each route is already a complete
+					-- polyline, nothing needs to happen at the point where
+					-- the paths split.
 					local routeIndex = math.random(1, #routes)
 					local route = routes[routeIndex]
 
-					-- Nascer dentro de um Time Stop e nascer parado: ver `FreezeAll`.
+					-- Spawning inside a Time Stop means spawning stopped: see `FreezeAll`.
 					local frozenUntil = self.FreezeUntil or 0
 					local spawnSpeed = baseSpeed * self.WeatherSpeedScale * (self.CardSpeedScale or 1)
 
@@ -1305,7 +1297,7 @@ function MobService:SpawnWave(waveNumber)
 						BaseSpeed = baseSpeed,
 						SpeedScale = 1,
 
-						-- A lentidao que uma unidade de gelo deixa neste inimigo. Ver
+						-- The slow an ice unit leaves on this enemy. See
 						-- `ApplySlow`.
 						SlowScale = 1,
 						CurrentSpeed = spawnSpeed,
@@ -1330,14 +1322,13 @@ function MobService:SpawnWave(waveNumber)
 							Route = routeIndex,
 
 							--[[
-								De que pasta de `Assets.Entities.Difficulties` o cliente tira o
-								boneco. O nome da entidade continua sendo o mesmo em toda
-								dificuldade — e ele que carrega vida, velocidade e gimmick —, e so
-								a roupa muda.
+								Which `Assets.Entities.Difficulties` folder the client takes the model
+								from. The entity name stays the same on every difficulty (it carries
+								health, speed, and gimmick), and only the outfit changes.
 
-								Vai no payload em vez de o cliente perguntar a dificuldade porque
-								`Config.Difficulty` e de servidor: o que atravessa e o apelido do
-								conjunto, que e o nome de uma pasta que o cliente ja enxerga.
+								It goes in the payload instead of the client asking for the difficulty
+								because `Config.Difficulty` is server-only: what crosses is the set's
+								alias, which is the name of a folder the client already sees.
 							]]
 							ModelSet = modelSet,
 						})
@@ -1366,15 +1357,15 @@ function MobService:getMobPosition(mobId)
 end
 
 --[=[
-	O mob que a unidade escolhe dentro do alcance, pelo criterio que o dono dela
-	deixou no botao `Priority` do card. A comparacao mora no `TargetPriority`,
-	compartilhado com o cliente — ver o modulo.
+	The enemy the unit picks within range, by the criterion its owner left on the card's
+	`Priority` button. The comparison lives in `TargetPriority`, shared with the client;
+	see the module.
 ]=]
 function MobService:GetBestMobInRange(position : Vector3, range : number, priority : string?)
 	local bestId = nil
 	local best = nil
 
-	-- So o `Farthest` olha o caminho; nos outros modos nem se monta a lista.
+	-- Only `Farthest` looks at the path; the other modes do not even build the list.
 	local nodeDistances = TargetPriority.UsesPathProgress(priority) and self:getNodeDistances() or nil
 
 	for mobId, mob in self.ActiveMobs do
@@ -1399,31 +1390,30 @@ function MobService:GetBestMobInRange(position : Vector3, range : number, priori
 	return bestId
 end
 
--- Sem prioridade nenhuma: o mais perto. Quem so quer "quem esta ai" — a mina que
--- pergunta quem pisou nela — continua chamando por aqui.
+-- With no priority at all: the nearest. Callers that only want "who is there" (the
+-- mine asking who stepped on it) still call through here.
 function MobService:GetNearestMobInRange(position : Vector3, range : number)
 	return self:GetBestMobInRange(position, range, TargetPriority.Default)
 end
 
 --[=[
-	A corrente do raio: o alvo mirado e os vizinhos por onde ela salta.
+	The bolt's chain: the aimed target and the neighbors it jumps through.
 
-	Comeca no `startMobId` e, a cada passo, pula para o inimigo **mais proximo do
-	ultimo tocado** que ainda nao esta na corrente e esta a no maximo `radius` dele.
-	Para quando a corrente chega a `maxTargets` ou quando nao ha mais ninguem ao
-	alcance do ultimo salto.
+	It starts at `startMobId` and, at each step, jumps to the enemy **nearest to the last
+	one touched** that is not in the chain yet and is at most `radius` from it. It stops
+	when the chain reaches `maxTargets` or when nobody is left within the last jump's reach.
 
-	**O raio e medido do ultimo inimigo, e nao da unidade** -- e o que separa isto de
-	um `GetMobsInRadius`. A corrente anda junto com a fila do caminho e chega bem alem
-	do alcance de quem a disparou, enquanto uma area do mesmo tamanho so pegaria quem
-	estivesse amontoado em volta do alvo.
+	**The radius is measured from the last enemy, not the unit**: that is what separates
+	this from `GetMobsInRadius`. The chain moves along the path's queue and reaches well
+	past the range of whoever fired it, while an area of the same size would only catch
+	those bunched around the target.
 
-	Sai na ordem em que o raio passa, que e a ordem que o cliente desenha (um arco de
-	cada um para o seguinte) e a que uma queda de dano por salto usaria, se um dia
-	existir -- a unidade de hoje nao tem nenhuma.
+	It comes out in the order the bolt passes, which is the order the client draws (an arc
+	from each to the next) and the one a per-jump damage falloff would use, if one ever
+	exists; today's unit has none.
 
-	O alvo mirado vem sempre na corrente, mesmo sozinho: quem chama ja resolveu que
-	ele leva o golpe, e uma corrente vazia significaria um golpe perdido.
+	The aimed target always comes in the chain, even alone: the caller already decided it
+	takes the hit, and an empty chain would mean a lost hit.
 ]=]
 function MobService:GetChainTargets(startMobId : string, maxTargets : number?, radius : number?) : { string }
 	local chain = { startMobId }
@@ -1458,7 +1448,7 @@ function MobService:GetChainTargets(startMobId : string, maxTargets : number?, r
 			end
 		end
 
-		-- O ultimo da corrente esta sozinho: o raio morre nele, mesmo faltando salto.
+		-- The last in the chain is alone: the bolt dies there, even with jumps left.
 		if not nextId then break end
 
 		visited[nextId] = true
@@ -1481,22 +1471,21 @@ function MobService:GetMobsInRadius(position, radius)
 end
 
 --[=[
-	Quem esta na linha que sai de `origin` passando por `through`, ate `length`
-	studs de distancia e a no maximo `width` studs da linha.
+	Who is on the line from `origin` through `through`, up to `length` studs away and at
+	most `width` studs from the line.
 
-	E a conta do projetil que atravessa: ele nao para no alvo, entao quem vem
-	**atras** dele na mesma linha leva junto. A linha nao para no alvo tambem --
-	ela vai ate o alcance da unidade, que e o que decide quem ainda esta perto o
-	bastante para ser acertado.
+	It is the piercing projectile's math: it does not stop at the target, so whoever comes
+	**behind** it on the same line takes damage too. The line does not stop at the target
+	either: it goes to the unit's range, which decides who is still close enough to be hit.
 
-	**A conta e no plano, ignorando o Y.** A unidade fica numa plataforma e o mob
-	anda no chao, entao a linha entre os dois desce; medindo em 3D, um inimigo no
-	caminho ficaria "longe da linha" so por estar mais baixo que a torre, e a
-	flecha o atravessaria sem tirar vida.
+	**The math is on the plane, ignoring Y.** The unit stands on a platform and the enemy
+	walks on the ground, so the line between them slopes down; measuring in 3D, an enemy
+	on the path would be "far from the line" just for being lower than the tower, and the
+	arrow would pass through it without taking health.
 
-	Sai ordenado pela distancia ao longo da linha: e a ordem em que a flecha passa
-	por eles, que e a ordem que o cliente desenha e a que um dano decrescente por
-	inimigo atravessado usaria, se um dia existir.
+	It comes out sorted by distance along the line: the order the arrow passes them, the
+	order the client draws, and the one a decreasing per-enemy damage would use, if one
+	ever exists.
 ]=]
 function MobService:GetMobsAlongLine(origin : Vector3, through : Vector3, length : number, width : number)
 	local flat = Vector3.new(1, 0, 1)
@@ -1516,7 +1505,7 @@ function MobService:GetMobsAlongLine(origin : Vector3, through : Vector3, length
 		local offset = (pos - origin) * flat
 		local along = offset:Dot(direction)
 
-		-- Atras da unidade, ou passado o alcance dela.
+		-- Behind the unit, or past its range.
 		if along < 0 or along > length then continue end
 
 		if (offset - direction * along).Magnitude <= width then
@@ -1536,8 +1525,8 @@ function MobService:GetMobsAlongLine(origin : Vector3, through : Vector3, length
 	return result
 end
 
--- Placar de dano da partida. Guarda o nome junto porque o MVP e reportado no
--- fim do round, quando o jogador pode ja ter saido do servidor.
+-- The match damage scoreboard. It keeps the name because the MVP is reported at the
+-- end of the round, when the player may have already left the server.
 function MobService:addDamageStat(userId, damage)
 	if not userId or not damage or damage <= 0 then return end
 
@@ -1552,9 +1541,9 @@ function MobService:addDamageStat(userId, damage)
 end
 
 --[=[
-	Quanto dano um jogador ja causou nesta partida. Zero para quem ainda nao bateu
-	em nada, e para todo mundo depois que o round reinicia -- o placar e limpo junto
-	com a partida.
+	How much damage a player has dealt this match. Zero for those who have hit nothing
+	yet, and for everyone after the round restarts: the scoreboard is cleared with the
+	match.
 ]=]
 function MobService:GetDamageDealt(userId : number?) : number
 	local entry = userId and self.SessionDamage[userId]
@@ -1581,38 +1570,38 @@ function MobService:GetMVP()
 end
 
 --[=[
-	Paga o dano que entrou, descontando a inflacao de vida da wave.
+	Pays the damage that landed, discounting the wave's health inflation.
 
-	A vida dos mobs cresce por dificuldade e por wave (`HealthScale`), e sem o
-	desconto a renda cresceria junto: no Impossivel a wave 27 tem inimigos 24x mais
-	gordos que a wave 1, entao bater neles pagaria 24x mais pelo mesmo trabalho, e
-	o dano voltava a ser a economia inteira. Dividindo pela mesma escala, um ponto
-	de dano vale o mesmo em qualquer wave e em qualquer preset.
+	Enemy health grows by difficulty and by wave (`HealthScale`), and without the discount
+	income would grow with it: on Impossible, wave 27 has enemies 24x beefier than wave 1,
+	so hitting them would pay 24x more for the same work, and damage would become the
+	whole economy again. Dividing by the same scale, a point of damage is worth the same on
+	any wave and any preset.
 ]=]
 --[=[
-	Soma o bonus da aura do Entrepreneur a um premio, sem perder a parte quebrada.
+	Adds the Entrepreneur aura's bonus to a reward, without losing the fractional part.
 
-	Os premios sao inteiros e quase todos pequenos: 15% de um kill de 3 da 0,45, e
-	15% do piso de 1 do premio por dano da 0,15 -- arredondados na hora, os dois
-	sumiriam, e a aura pareceria nao fazer nada justamente onde ela mais aparece.
+	Rewards are integers and almost all small: 15% of a kill worth 3 is 0.45, and 15% of
+	the damage reward's floor of 1 is 0.15: rounded on the spot, both would vanish, and the
+	aura would seem to do nothing exactly where it shows most.
 
-	Entao a sobra fica guardada por jogador e vira caixa assim que passa de 1. Um
-	bonus pequeno paga devagar em vez de nao pagar nunca, e ao longo de uma wave o
-	total sai igual a porcentagem cheia.
+	So the remainder is stored per player and becomes cash as soon as it passes 1. A small
+	bonus pays slowly instead of never, and over a wave the total comes out equal to the
+	full percentage.
 
-	`bonus` e fracao: 0.15 e "+15%". Sem bonus, o premio volta intocado.
+	`bonus` is a fraction: 0.15 is "+15%". With no bonus, the reward comes back untouched.
 ]=]
 function MobService:applyCashBonus(player, amount : number, bonus : number?, scale : number?) : number
 	--[[
-		A escala das cartas entra **antes** do bonus da aura, e nao somada a ele: a
-		aura e uma fracao que se acumula entre farms (15% + 15% = 30%), e o anel do
-		Robux Royalty e um multiplicador em cima do premio. Somar os dois faria
-		"1.1x" virar "+10 pontos percentuais", que e outro numero.
+		The card scale applies **before** the aura bonus, not added to it: the aura is a
+		fraction that stacks between farms (15% + 15% = 30%), and the Robux Royalty ring is
+		a multiplier on the reward. Adding the two would turn "1.1x" into "+10 percentage
+		points", which is another number.
 
-		A sobra quebrada da escala cai no mesmo balde da aura, e por isso ela e
-		aplicada aqui dentro em vez de no premio ja arredondado: 1.1 de um premio de
-		1 e 1,1, e arredondar por fora jogaria os 10% fora em todo golpe pequeno --
-		que sao quase todos.
+		The scale's fractional remainder goes into the same bucket as the aura, which is why
+		it is applied in here instead of on the already rounded reward: 1.1 of a reward of 1
+		is 1.1, and rounding outside would throw the 10% away on every small hit, which is
+		almost all of them.
 	]]
 	scale = scale or 1
 
@@ -1650,30 +1639,30 @@ function MobService:awardKillReward(killerUserId, reward, bonus : number?, cashS
 end
 
 --[=[
-	Devolve o dano que de fato entrou, para quem chamou poder creditar a unidade
-	(o card de upgrade mostra o total por unidade em `DmgDone`).
+	Returns the damage that actually landed, so the caller can credit the unit (the
+	upgrade card shows the per-unit total in `DmgDone`).
 ]=]
 --[=[
-	`cashBonus` e a aura do Entrepreneur em cima da unidade que bateu -- uma fracao
-	que o `UnitService` congela no comeco do golpe, junto com o dano e o alcance.
-	Ela entra nos dois premios, o de dano e o de morte.
+	`cashBonus` is the Entrepreneur aura on the hitting unit: a fraction `UnitService`
+	freezes at the start of the attack, along with damage and range. It applies to both
+	rewards, damage and kill.
 ]=]
 function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?, cashScale : number?)
 	local mob = self.ActiveMobs[mobId]
 	if not mob then return 0 end
 
 	--[[
-		O "quebradico" do Staff of Azure Ever Ice usado durante a neve: todo dano que
-		entra num inimigo vale mais enquanto ele durar.
+		The Staff of Azure Ever Ice's "brittle" when used during snow: all damage entering
+		an enemy is worth more while it lasts.
 
-		E aqui, no unico caminho de dano do jogo, e nao em cada unidade: ele nao e um
-		buff de torre — o inimigo e que esta mais fragil, e um tiro de tripmine ou um
-		respingo de area conta igual.
+		It is here, on the game's single damage path, not on each unit: it is not a tower
+		buff; the enemy is more fragile, and a tripmine shot or an area splash counts the
+		same.
 
-		A ferida aberta do sangramento (`ApplyBleed`) entra aqui pelo mesmo motivo, so
-		que por inimigo em vez de por sala: enquanto o `BleedingUntil` correr, tudo que
-		acertar aquele alvo vale `BleedVulnerability` vezes mais — inclusive os tiques
-		do proprio sangramento, que passam por aqui como qualquer outro dano.
+		The bleed's open wound (`ApplyBleed`) enters here for the same reason, but per enemy
+		instead of per room: while `BleedingUntil` runs, everything hitting that target is
+		worth `BleedVulnerability` times more, including the bleed's own ticks, which go
+		through here like any other damage.
 	]]
 	local vulnerability = 1
 	if GameClock.Now() < (mob.BleedingUntil or 0) then
@@ -1686,9 +1675,9 @@ function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?, 
 		incoming = math.max(1, math.floor(incoming + 0.5))
 	end
 
-	-- Conta o dano que de fato entrou: um golpe de 70 num mob com 5 de vida vale 5.
-	-- Vale tanto para o MVP quanto para a caixa — pagar o valor cheio do golpe
-	-- premiava o excedente e transformava o dano na economia inteira da partida.
+	-- Counts the damage that actually landed: a 70-damage hit on an enemy with 5 health is worth 5.
+	-- It applies to both the MVP and cash: paying the hit's full value would reward
+	-- overkill and turn damage into the match's whole economy.
 	local effectiveDamage = math.min(mob.Health, incoming)
 	self:addDamageStat(killerUserId, effectiveDamage)
 
@@ -1739,11 +1728,11 @@ function MobService:construct()
 	Framework:Listen("UpdateBaseHealth", function() end)
 
 	--[=[
-		O valor de agora, para quem acabou de achar o billboard da base no mapa.
+		The current value, for a client that just found the base billboard on the map.
 
-		O `UpdateBaseHealth` so sai quando a vida muda, e o mapa chega ao cliente
-		muito antes do primeiro vazamento -- sem este pedido o numero ficaria no texto
-		que veio autorado na GUI ate um inimigo passar. Mesmo motivo do `RequestCash`.
+		`UpdateBaseHealth` only goes out when health changes, and the map reaches the client
+		long before the first leak: without this request the number would stay at the text
+		authored in the GUI until an enemy got through. Same reason as `RequestCash`.
 	]=]
 	Framework:Listen("RequestBaseHealth", function(player)
 		Framework:Fire("UpdateBaseHealth", player, self.BaseHealth, self.MaxBaseHealth)
@@ -1774,23 +1763,22 @@ function MobService:construct()
 		self.FrameId += 1
 
 		--[[
-			O quadro em tempo de partida. Acelerado o mob anda mais por segundo real
-			sem ninguem mexer na velocidade dele: e o mesmo `CurrentSpeed`, so que
-			multiplicado por um `dt` maior. O cliente faz a mesma conta no
-			`MobController`, com a escala que o `SpeedService` mandou.
+			The frame in match time. Sped up, the enemy walks more per real second without
+			anyone touching its speed: it is the same `CurrentSpeed`, just multiplied by a
+			larger `dt`. The client does the same math in `MobController`, with the scale
+			`SpeedService` sent.
 		]]
 		dt = GameClock.Scaled(dt)
 
 		local now = GameClock.Now()
 
 		--[[
-			O clima e conferido aqui em vez de ser empurrado por quem o liga.
+			Weather is checked here instead of being pushed by whoever turns it on.
 
-			Sao duas leituras de tabela por quadro, e em troca a velocidade dos
-			inimigos acompanha qualquer troca de clima — a do round e a do comando
-			`weather`, que nao passa pelo `WeatherRoundService`. Um empurrao explicito
-			so cobriria a primeira, e testar o vento na mao daria uma partida
-			diferente da de verdade.
+			It is two table reads per frame, and in exchange enemy speed follows any weather
+			change: the round's and the `weather` command's, which does not go through
+			`WeatherRoundService`. An explicit push would only cover the first, and testing
+			wind by hand would give a different match from the real one.
 		]]
 		local weatherService = self.Services.WeatherService
 		local currentWeather = weatherService and weatherService:GetCurrent() or nil
@@ -1800,13 +1788,13 @@ function MobService:construct()
 
 		for mobId, mob in self.ActiveMobs do
 			--[[
-				De onde ele saiu neste quadro. E o que deixa o gatilho da tripmine testar
-				o **trecho andado** em vez da posicao parada -- acelerado, o passo de um
-				quadro passa do diametro do gatilho e o mob atravessaria a mina intacto.
-				Ver `GetMobCrossing`.
+				Where it came from this frame. It is what lets the tripmine trigger test the
+				**stretch walked** instead of the standing position: sped up, one frame's step
+				exceeds the trigger's diameter and the enemy would cross the mine unharmed. See
+				`GetMobCrossing`.
 
-				Escrito mesmo com o mob parado (congelado ou atordoado): ai o segmento e
-				um ponto, que e a resposta certa para quem nao andou.
+				Written even with the enemy stopped (frozen or stunned): then the segment is a
+				point, which is the right answer for something that did not move.
 			]]
 			mob.LastDistance = mob.Distance
 
@@ -1815,8 +1803,8 @@ function MobService:construct()
 				self:processTurnGimmicks(mobId, mob)
 			end
 
-			-- Comprimento por mob: com bifurcacao os dois lados nao precisam ter
-			-- o mesmo tamanho.
+			-- Length per enemy: with a fork, the two sides need not have
+			-- the same length.
 			if mob.Distance >= mob.PathLength then
 				self:mobEscaped(mobId)
 				if self.BaseHealth <= 0 then break end

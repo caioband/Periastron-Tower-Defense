@@ -12,34 +12,35 @@ local Framework = Me.new()
 
 --[[ CONSTANTS ]]
 
--- ScreenGui com este atributo nunca é escondida. É para a GUI que só existe
--- justamente enquanto tudo está escondido — o flash branco do portal, que nasce no
--- meio da cutscene e é o que cobre o teleporte.
+-- A ScreenGui with this attribute is never hidden. It is for the GUI that only
+-- exists while everything else is hidden: the portal's white flash, which is born
+-- mid-cutscene and is what covers the teleport.
 local IGNORE_ATTRIBUTE = "IgnoreInterfaceHide"
 
 --[[
-	Quem manda no que fica na tela.
+	Decides what stays on screen.
 
-	Cada dono de UI continua ligando e desligando a própria `ScreenGui` como sempre;
-	o que passa por aqui é o "some com o resto": o painel de mapas quer a tela só
-	para ele, a cutscene quer a tela limpa. São **pedidos com nome**
-	(`Hide("Cutscene")`), e não um interruptor global, porque os dois se sobrepõem —
-	o painel pode estar aberto quando a cena começa, e cada um sai do seu jeito.
+	Each UI owner keeps turning its own `ScreenGui` on and off as always; what goes
+	through here is "hide everything else": the maps panel wants the screen to
+	itself, the cutscene wants a clean screen. They are **named requests**
+	(`Hide("Cutscene")`), not a global switch, because the two overlap: the panel
+	may be open when the scene starts, and each one leaves in its own way.
 
-	Uma GUI fica escondida enquanto **algum** pedido a esconder, e volta ao que o
-	dono dela queria quando o último sai. "O que o dono queria" é lido ao vivo: se
-	alguém liga uma GUI escondida no meio de um pedido, o valor é guardado e ela
-	continua desligada — e quando o pedido sair é esse valor novo que volta, não o de
-	antes.
+	A GUI stays hidden while **any** request hides it, and returns to what its owner
+	wanted when the last one leaves. "What the owner wanted" is read live: if someone
+	turns on a hidden GUI during a request, the value is stored and it stays off, and
+	when the request leaves it is that new value that returns, not the old one.
 
-	O que nós mesmos escrevemos nunca entra nessa conta: ver `_write`, que é onde o
-	eco da própria escrita é separado do dono da GUI.
+	What we write ourselves never enters that count: see `_write`, which is where the
+	echo of our own write is separated from the GUI's owner.
 
 		InterfaceController:Hide("ChooseMaps", { Except = { "ChooseMaps" } })
 		InterfaceController:Show("ChooseMaps")
 
-	`HideCore` leva junto a interface da própria Roblox (chat, playerlist, mochila e
-	a topbar), que é o que a cutscene precisa e o painel não.
+	`HideCore` also takes Roblox's own interface (chat, player list, backpack, and
+	the top bar), which the cutscene needs and the panel does not.
+
+	See docs/common/interface-visibility.md.
 ]]
 local InterfaceController = {
 	Controllers = {},
@@ -48,15 +49,17 @@ local InterfaceController = {
 --[[ INTERNAL ]]
 
 --[=[
-	Escreve no `Enabled` de uma GUI marcando o aviso que essa escrita vai gerar, para
-	ele não voltar como se fosse o dono da GUI mexendo nela.
+	Writes to a GUI's `Enabled` while marking the notification that write will
+	produce, so it does not come back as if the GUI's owner were changing it.
 
-	É contagem, e não uma flag ligada e desligada em volta da escrita: o `Changed` de
-	uma propriedade chega no fim do frame (`SignalBehavior.Deferred`, o padrão), muito
-	depois de a flag ter sido baixada. Era isso que fazia o `false` que nós forçamos
-	ser guardado como o estado que o dono queria — e aí não havia mais a que voltar.
+	It is a count, not a flag set and cleared around the write: a property's
+	`Changed` arrives at the end of the frame (`SignalBehavior.Deferred`, the
+	default), long after the flag would have been cleared. With a flag, the `false`
+	we forced would be stored as the state the owner wanted, and there would be
+	nothing to return to.
 
-	A escrita que não muda nada não gera aviso nenhum, então também não conta.
+	A write that changes nothing produces no notification, so it does not count
+	either.
 ]=]
 function InterfaceController:_write(screenGui : LayerCollector, enabled : boolean)
 	local entry = self.Tracked[screenGui]
@@ -69,8 +72,8 @@ function InterfaceController:_write(screenGui : LayerCollector, enabled : boolea
 end
 
 --[=[
-	Se algum pedido em curso esconde esta GUI. Um pedido esconde tudo o que não está
-	no `Except` dele.
+	Whether any active request hides this GUI. A request hides everything not in its
+	`Except`.
 ]=]
 function InterfaceController:_shouldHide(screenGui : LayerCollector) : boolean
 	if screenGui:GetAttribute(IGNORE_ATTRIBUTE) == true then
@@ -106,7 +109,7 @@ function InterfaceController:_applyAll()
 end
 
 --[=[
-	Se algum pedido em curso pede a interface da Roblox junto.
+	Whether any active request also asks for Roblox's interface.
 ]=]
 function InterfaceController:_wantsCoreHidden() : boolean
 	for _, request in self.Requests do
@@ -119,9 +122,9 @@ function InterfaceController:_wantsCoreHidden() : boolean
 end
 
 --[=[
-	Liga e desliga a interface da própria Roblox. O estado de antes é guardado por
-	tipo na primeira vez que ela sai — a mochila, por exemplo, já vem desligada pelo
-	Satchel, e devolvê-la ligada traria de volta a mochila stock por cima da dele.
+	Turns Roblox's own interface on and off. The previous state is stored per type
+	the first time it leaves: the backpack, for example, already comes disabled by
+	Satchel, and turning it back on would bring the stock backpack back over Satchel's.
 ]=]
 function InterfaceController:_applyCore()
 	local hide = self:_wantsCoreHidden()
@@ -149,15 +152,15 @@ function InterfaceController:_applyCore()
 		end
 	end
 
-	-- A topbar não é um CoreGuiType: some por SetCore, que pode nem existir ainda.
+	-- The top bar is not a CoreGuiType: it goes away through SetCore, which may not exist yet.
 	pcall(function()
 		StarterGui:SetCore("TopbarEnabled", not hide)
 	end)
 end
 
 --[=[
-	Passa a acompanhar uma GUI. O `Desired` nasce do valor que ela tinha ao chegar e é
-	reescrito toda vez que alguém que não seja nós mexe no `Enabled` dela.
+	Starts tracking a GUI. `Desired` starts from the value it had on arrival and is
+	rewritten every time someone other than us changes its `Enabled`.
 ]=]
 function InterfaceController:_track(screenGui : LayerCollector)
 	if self.Tracked[screenGui] then
@@ -167,11 +170,11 @@ function InterfaceController:_track(screenGui : LayerCollector)
 	local entry = { Desired = screenGui.Enabled, Pending = 0 }
 	self.Tracked[screenGui] = entry
 
-	-- A conexão morre com a GUI, não com o controller: as ScreenGuis com
-	-- `ResetOnSpawn` são refeitas a cada respawn, e guardá-las todas no Maid deixaria
-	-- uma conexão por vida de personagem para trás.
+	-- The connection dies with the GUI, not with the controller: ScreenGuis with
+	-- `ResetOnSpawn` are rebuilt on every respawn, and keeping them all in the Maid would
+	-- leave one connection behind per character life.
 	entry.Connection = screenGui:GetPropertyChangedSignal("Enabled"):Connect(function()
-		-- Aviso de escrita nossa: um por `_write`, na ordem em que saíram.
+		-- Notification of our own write: one per `_write`, in the order they went out.
 		if entry.Pending > 0 then
 			entry.Pending -= 1
 			return
@@ -223,26 +226,26 @@ end
 --[[ EXTERNAL ]]
 
 --[=[
-	Liga ou desliga uma GUI **como dono dela**, sem depender do aviso que chega no fim
-	do frame.
+	Turns a GUI on or off **as its owner**, without depending on the notification
+	that arrives at the end of the frame.
 
-	`Desired` normalmente é descoberto escutando o `Enabled` de cada GUI, e esse aviso
-	é `Deferred`: entre a escrita do dono e a chegada dele, o valor guardado aqui
-	ainda é o antigo. Qualquer `Hide`/`Show` que caia nessa janela — e um `_applyAll`
-	varre todas as GUIs — reaplica o valor velho por cima do que o dono acabou de
-	escrever.
+	`Desired` is normally discovered by listening to each GUI's `Enabled`, and that
+	notification is `Deferred`: between the owner's write and its arrival, the value
+	stored here is still the old one. Any `Hide`/`Show` that lands in that window
+	(and `_applyAll` sweeps every GUI) reapplies the old value on top of what the
+	owner just wrote.
 
-	Para quase toda GUI isso nunca acontece: ela muda por conta própria, longe de
-	qualquer pedido. Para a que muda **junto** com um pedido é o caso normal, não a
-	exceção — o botão de sair do portal liga no mesmo instante em que a contagem
-	esconde a lobby, e escrever direto no `Enabled` dele significava ver o pedido
-	desligá-lo de volta no mesmo frame.
+	For almost every GUI that never happens: it changes on its own, far from any
+	request. For one that changes **together** with a request it is the normal case,
+	not the exception: the portal's leave button turns on at the same instant the
+	countdown hides the Lobby, and writing directly to its `Enabled` meant watching
+	the request turn it back off in the same frame.
 
-	Aqui o `Desired` é escrito na hora, então não existe janela. Quem chama não
-	precisa se preocupar com ordem.
+	Here `Desired` is written immediately, so there is no window. Callers do not need
+	to worry about order.
 
-	GUI que este controller ainda não acompanha leva a escrita direta: o `_track` que
-	vier depois lê justamente esse valor como o que o dono queria.
+	A GUI this controller does not track yet gets the direct write: the `_track` that
+	comes later reads exactly that value as what the owner wanted.
 ]=]
 function InterfaceController:SetEnabled(screenGui : LayerCollector, enabled : boolean)
 	local entry = self.Tracked[screenGui]
@@ -256,11 +259,11 @@ function InterfaceController:SetEnabled(screenGui : LayerCollector, enabled : bo
 end
 
 --[=[
-	Esconde as GUIs até o `Show` do mesmo `reason`. Pedir duas vezes com o mesmo nome
-	só troca as opções — não empilha, então um `Show` sempre desfaz.
+	Hides GUIs until the `Show` with the same `reason`. Asking twice with the same
+	name only replaces the options; it does not stack, so a `Show` always undoes it.
 
-	- `Except` : nomes de `ScreenGui` que este pedido deixa em paz.
-	- `HideCore` : leva junto chat, playerlist, mochila e topbar.
+	- `Except`: names of `ScreenGui`s this request leaves alone.
+	- `HideCore`: also takes chat, player list, backpack, and top bar.
 ]=]
 function InterfaceController:Hide(reason : string, options : { Except : { string }?, HideCore : boolean? }?)
 	local except = nil
@@ -282,8 +285,8 @@ function InterfaceController:Hide(reason : string, options : { Except : { string
 end
 
 --[=[
-	Desfaz o pedido deste `reason`. As GUIs que nenhum outro pedido esconde voltam ao
-	que o dono delas queria.
+	Undoes this `reason`'s request. GUIs no other request hides return to what their
+	owner wanted.
 ]=]
 function InterfaceController:Show(reason : string)
 	if not self.Requests[reason] then
@@ -297,7 +300,7 @@ function InterfaceController:Show(reason : string)
 end
 
 --[=[
-	Se há algum pedido em curso, ou se há um com este nome.
+	Whether any request is active, or whether one with this name is.
 ]=]
 function InterfaceController:IsHidden(reason : string?) : boolean
 	if reason then

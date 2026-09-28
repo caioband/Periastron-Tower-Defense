@@ -14,9 +14,9 @@ local Framework = Me.new()
 local Config = SharedConfig.LightingConfig
 
 --[[
-	Conta quantos atributos da pasta o service vai de fato escrever no Lighting —
-	que não é o total de atributos: nome fora da lista de `LightingConfig.Properties`
-	é ignorado na aplicação, e mostrar o total daria a entender que ele conta.
+	Counts how many of the folder's attributes the service will actually write to
+	Lighting, which is not the total: a name outside `LightingConfig.Properties` is
+	ignored when applying, and showing the total would suggest it counts.
 ]]
 local function countDeclared(preset : Folder) : number
 	local total = 0
@@ -56,16 +56,16 @@ return function(_context)
 		local declared = countDeclared(preset)
 		local children = #preset:GetChildren()
 
-		table.insert(lines, string.format("%s %-24s %d propriedade(s), %d instância(s)%s",
+		table.insert(lines, string.format("%s %-24s %d propert(ies), %d instance(s)%s",
 			preset.Name == current and ">" or " ",
 			preset.Name,
 			declared,
 			children,
-			-- Aplicar um preset assim é legítimo e não muda nada; dizer isso aqui
-			-- evita a caçada por um bug que não existe.
-			(declared == 0 and children == 0) and "  <- vazio, aplicar não faz nada" or ""))
+			-- Applying a preset like this is legitimate and changes nothing; saying so here
+			-- avoids a hunt for a bug that does not exist.
+			(declared == 0 and children == 0) and "  <- empty, applying it does nothing" or ""))
 	end
 
-	return string.format("Presets em Assets.Lighting (> = atual, transição padrão %.4gs):\n%s",
+	return string.format("Presets in Assets.Lighting (> = current, default transition %.4gs):\n%s",
 		Config.Transition.Time, table.concat(lines, "\n"))
 end

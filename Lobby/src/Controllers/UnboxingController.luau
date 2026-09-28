@@ -13,6 +13,7 @@ local SharedConfig = require(Configs.SharedConfig)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local Signal = require(Packages.Signal)
 
 local CardConfig = SharedConfig.CardConfig
@@ -23,6 +24,7 @@ local IndexConfig = SharedConfig.IndexConfig
 local RANDOM = Random.new()
 
 local Framework = Me.new()
+local log = Log.new("UnboxingController")
 
 --[[ CONSTANTS ]]
 local CRATES_FOLDER_NAME = "UnboxingCrates"
@@ -30,25 +32,27 @@ local TARGET_PART_NAME = "TargetPart"
 local HEAD_PART_NAME = "Head"
 
 --[[
-	VFX do estouro e da aura, e o display que fica sobre a cabeça da unidade.
+	The burst and aura VFX, and the display above the unit's head.
 
-	O estouro é um Emit único que vive só o tempo pedido; a aura fica ligada
-	enquanto a unidade estiver em cena, pintada com a cor da raridade dela.
+	The burst is a single Emit that lives only for the requested time; the aura stays on
+	while the unit is on stage, painted with its rarity's color.
+
+	See docs/lobby/crates-and-unboxing.md.
 ]]
 local CRATE_OPEN_VFX_NAME = "CrateOpen"
 local UNIT_AURA_VFX_NAME = "CrateUnitAura"
 local UNIT_DISPLAY_NAME = "UnitCrateDisplay"
 
--- Acima do maior Lifetime dos emissores do CrateOpen (o "Pixel smoke" vai até
--- 1s): destruir antes disso mataria as partículas ainda vivas no meio do voo.
+-- Above the CrateOpen emitters' longest Lifetime (the "Pixel smoke" goes up to
+-- 1s): destroying earlier would kill particles still in mid-flight.
 local CRATE_OPEN_LIFETIME = 1
 
--- Quanto a caixa ainda fica no ar depois do estouro. Ela some por baixo do
--- efeito, em vez de o efeito aparecer sobre um lugar já vazio.
+-- How long the crate stays up after the burst. It disappears under the
+-- effect, instead of the effect appearing over an already empty spot.
 local CRATE_BURST_LEAD = 0.2
 
--- Quantas partículas cada emissor solta no estouro. Um emissor pode pedir outro
--- número com o atributo `EmitCount`, sem precisar mexer aqui.
+-- How many particles each emitter releases in the burst. An emitter can ask for another
+-- number with the `EmitCount` attribute, without touching this.
 local CRATE_OPEN_EMIT_COUNT = 16
 
 -- Placement: the crate lands this far in front of the character, on whatever ground
@@ -80,13 +84,13 @@ local MIN_PLAYER_DISTANCE = 4
 -- ones already playing. Measured against the billboard (5 studs wide), not the crate
 -- bounds -- two reels overlapping reads worse than two crates touching.
 --
--- Vale contra as aberturas do lobby inteiro, e nao so contra as do jogador local:
--- duas pessoas lado a lado abrindo ao mesmo tempo sao o caso comum de sobreposicao.
+-- It applies against the whole Lobby's openings, not only the local player's:
+-- two people side by side opening at the same time is the common overlap case.
 local MIN_CRATE_SPACING = 6
 
 -- Past this many at once the ring sweep runs out of spots that respect the spacing
--- above, and crates would start landing on top of each other. Conta as aberturas de
--- todo mundo; a do proprio jogador passa por cima do teto (ver :Open).
+-- above, and crates would start landing on top of each other. It counts everyone's
+-- openings; the player's own goes over the cap (see :Open).
 local MAX_ACTIVE_UNBOXINGS = 5
 
 local CRATE_CAN_COLLIDE = false
@@ -127,7 +131,7 @@ local SETTLE_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Sine, Enum.EasingDirect
 -- fraction of one entry's width.
 local OVERSHOOT_FRACTION = 0.08
 
--- Tocado cada vez que uma carta cruza o Clipper (SoundService, via MusicController).
+-- Played every time a card crosses the Clipper (SoundService, via MusicController).
 local REEL_TICK_SOUND = "UIHover"
 
 -- Beat between a reel landing on an upgrade and the next one starting, so the crate
@@ -143,22 +147,22 @@ local IDLE_ANIMATION_NAME = "Idle"
 -- How long the revealed unit stays up before the whole session is cleaned up.
 local RESULT_HOLD = 4
 
--- A unit de cada carta do carretel: uma imagem por cima da arte da carta, na
--- versao liberada ou na silhueta, conforme o Index do jogador (`CardConfig`).
+-- The unit on each reel card: an image over the card art, in the unlocked
+-- version or the silhouette, depending on the player's Index (`CardConfig`).
 local ENTRY_IMAGE_NAME = "UnitImage"
 
 local UnboxingController = {
 	Controllers = {
-		-- O Index do jogador (quais units ele ja descobriu) mora no perfil.
+		-- The player's Index (which units they discovered) lives in the profile.
 		DataController = {},
-		-- O tick de cada carta que passa pelo Clipper.
+		-- The tick of each card passing the Clipper.
 		MusicController = {},
 	},
 
 	--[[
-		Toda abertura do servidor toca em todas as telas, então os sinais são sobre a
-		caixa de qualquer um: `owner` é quem abriu, e é por ele que um ouvinte separa
-		a abertura do jogador local das que ele está só assistindo.
+		Every server opening plays on every screen, so the signals are about anyone's crate:
+		`owner` is who opened it, and it is how a listener separates the local player's
+		opening from those they are only watching.
 	]]
 	Signals = {
 		-- (result : UnboxingResult, crate : Model, owner : Player)
@@ -224,10 +228,10 @@ local function buildCandidates(idealPosition : Vector3, forward : Vector3) : { V
 end
 
 --[=[
-	A raiz do personagem de quem abriu a caixa -- não a do jogador local.
+	The root of the character of whoever opened the crate, not the local player's.
 
-	É dela que sai a caixa e é na frente dela que ela pousa, em todas as telas: quem
-	assiste vê a caixa nascer no dono, e não nos próprios pés.
+	The crate comes out of it and lands in front of it, on every screen: watchers see the
+	crate born from its owner, not from their own feet.
 ]=]
 function UnboxingController:_getRoot(player : Player) : BasePart?
 	local character = player and player.Character
@@ -370,7 +374,7 @@ function UnboxingController:_spawnCrate(session, rarity : string, cframe : CFram
 	local modelName = CrateConfig.getModelName(rarity)
 	local template = modelName and self.CrateModels:FindFirstChild(modelName)
 	if not template or not template:IsA("Model") then
-		warn(string.format("[UnboxingController]: No crate model named %q in Assets.CratesModel.", tostring(modelName)))
+		log:StudioWarn(string.format("no crate model named %q in Assets.CratesModel.", tostring(modelName)))
 		return nil
 	end
 
@@ -484,16 +488,15 @@ function UnboxingController:_playOpenAnimation(session, onComplete : () -> ())
 
 		crate:PivotTo(baseCFrame)
 
-		-- Junto com o início do estufão, não no fim dele: o efeito é o estouro.
+		-- Together with the start of the swell, not its end: the effect is the burst.
 		self:_playCrateBurstVFX(session)
 
 		self:_tweenScale(crate, OPEN_BURST_INFO, OPEN_BURST_SCALE, session.Maid)
 
 		--[[
-			O prazo conta do estouro, não do fim do estufão: é o estouro que a
-			caixa tem que sobreviver. O tween dura menos que `CRATE_BURST_LEAD`,
-			então ele termina de qualquer jeito antes daqui — e se a sessão fechar
-			no meio, o `Closed` segura.
+			The deadline counts from the burst, not the end of the swell: the burst is what
+			the crate must outlive. The tween lasts less than `CRATE_BURST_LEAD`, so it ends
+			before this anyway, and if the session closes midway, `Closed` holds it.
 		]]
 		task.delay(CRATE_BURST_LEAD, function()
 			if session.Closed then
@@ -506,12 +509,11 @@ function UnboxingController:_playOpenAnimation(session, onComplete : () -> ())
 end
 
 --[=[
-	O estouro da caixa: um Emit único de tudo que houver dentro do CrateOpen,
-	no CFrame da caixa.
+	The crate's burst: a single Emit of everything inside CrateOpen, at the crate's CFrame.
 
-	A part vai para a pasta de unboxings, ao lado da caixa e não dentro dela: a
-	caixa é destruída logo depois, e levaria o efeito junto antes da hora. Fica
-	solta no CFrame dela, então continua no lugar certo quando a caixa some.
+	The part goes to the unboxings folder, next to the crate and not inside it: the crate
+	is destroyed right after, and would take the effect along too early. It stays loose at
+	the crate's CFrame, so it remains in the right place when the crate disappears.
 ]=]
 function UnboxingController:_playCrateBurstVFX(session)
 	local crate = session.Crate
@@ -530,7 +532,7 @@ function UnboxingController:_playCrateBurstVFX(session)
 		end
 	end
 
-	-- No maid também: fechar a sessão antes do prazo não pode deixar o efeito para trás.
+	-- In the maid too: closing the session before the deadline must not leave the effect behind.
 	session.Maid:GiveTask(vfx)
 	task.delay(CRATE_OPEN_LIFETIME, function()
 		vfx:Destroy()
@@ -540,16 +542,16 @@ function UnboxingController:_playCrateBurstVFX(session)
 end
 
 --[=[
-	A aura que fica na unidade revelada, na cor da raridade dela.
+	The aura that stays on the revealed unit, in its rarity's color.
 
-	Entra como filha da unidade de propósito: o giro do reveal é um `PivotTo` no
-	modelo inteiro, então a aura acompanha sem precisar de código próprio, e some
-	junto quando a unidade some.
+	It goes in as the unit's child on purpose: the reveal's spin is a `PivotTo` on the
+	whole model, so the aura follows with no code of its own, and disappears when the unit
+	does.
 ]=]
 function UnboxingController:_attachUnitAura(unit : Model, rarity : string?) : BasePart?
 	local rootPart = unit.PrimaryPart or unit:FindFirstChild("HumanoidRootPart")
 	if not rootPart or not rootPart:IsA("BasePart") then
-		warn(string.format("[UnboxingController]: %s has no root part for the aura VFX.", unit.Name))
+		log:StudioWarn(string.format("%s has no root part for the aura VFX.", unit.Name))
 		return nil
 	end
 
@@ -573,16 +575,15 @@ function UnboxingController:_attachUnitAura(unit : Model, rarity : string?) : Ba
 end
 
 --[=[
-	O display sobre a cabeça da unidade revelada.
+	The display above the revealed unit's head.
 
-	O template é um Attachment, então a cabeça é pai direto dele e o BillboardGui
-	de dentro se ancora sozinho. Os dois rótulos são preenchidos aqui — é para isso
-	que eles existem.
+	The template is an Attachment, so the head is its direct parent and the BillboardGui
+	inside anchors itself. Both labels are filled in here: that is what they exist for.
 ]=]
 function UnboxingController:_attachUnitDisplay(unit : Model, unitName : string, rarity : string?) : Attachment?
 	local head = unit:FindFirstChild(HEAD_PART_NAME)
 	if not head or not head:IsA("BasePart") then
-		warn(string.format("[UnboxingController]: %s has no %s for the crate display.", unit.Name, HEAD_PART_NAME))
+		log:StudioWarn(string.format("%s has no %s for the crate display.", unit.Name, HEAD_PART_NAME))
 		return nil
 	end
 
@@ -624,7 +625,7 @@ function UnboxingController:_swapCrate(session, crateRarity : string) : Model?
 
 	local targetPart = crate:FindFirstChild(TARGET_PART_NAME)
 	if not targetPart or not targetPart:IsA("BasePart") then
-		warn(string.format("[UnboxingController]: %s has no %s.", crate.Name, TARGET_PART_NAME))
+		log:StudioWarn(string.format("%s has no %s.", crate.Name, TARGET_PART_NAME))
 		crate:Destroy()
 		return nil
 	end
@@ -647,7 +648,7 @@ end
 function UnboxingController:_revealUnit(session, unitName : string) : Model?
 	local template = self.UnitModels:FindFirstChild(unitName)
 	if not template or not template:IsA("Model") then
-		warn(string.format("[UnboxingController]: No unit model named %q in Assets.Units.", tostring(unitName)))
+		log:StudioWarn(string.format("no unit model named %q in Assets.Units.", tostring(unitName)))
 		return nil
 	end
 
@@ -694,13 +695,13 @@ function UnboxingController:_revealUnit(session, unitName : string) : Model?
 	session.Maid:GiveTask(unit)
 
 	--[[
-		Os modelos das unidades sao rigs de Motor6D sem Humanoid nenhum -- quem toca
-		as faixas delas na partida e um `AnimationController`, criado na hora pela
-		classe `Unit`. Aqui e a mesma coisa: procurar um Humanoid so achava nada e
-		caia no `warn`, deixando a unidade parada no fim do unboxing.
+		The unit models are Motor6D rigs with no Humanoid at all: in the match an
+		`AnimationController`, created on the spot by the `Unit` class, plays their tracks.
+		Here it is the same: looking for a Humanoid would find nothing and fall into the
+		warning, leaving the unit frozen at the end of the unboxing.
 
-		A faixa so entra depois do `unit.Parent`: um Animator fora do DataModel nao e
-		avaliado, entao tocar antes de a unidade estar em cena nao mexia nada.
+		The track only goes in after `unit.Parent`: an Animator outside the DataModel is not
+		evaluated, so playing before the unit is on stage would move nothing.
 	]]
 	local idle = unit:FindFirstChild(IDLE_ANIMATION_NAME)
 
@@ -724,21 +725,21 @@ function UnboxingController:_revealUnit(session, unitName : string) : Model?
 			track:Stop()
 		end)
 	else
-		warn(string.format("[UnboxingController]: %s has no %s animation.", unitName, IDLE_ANIMATION_NAME))
+		log:StudioWarn(string.format("%s has no %s animation.", unitName, IDLE_ANIMATION_NAME))
 	end
 
-	-- A raridade sai do próprio catálogo da unidade, não do resultado do roll: é a
-	-- raridade dela que a aura e o display anunciam.
+	-- The rarity comes from the unit's own catalog, not the roll result: it is its
+	-- rarity that the aura and the display announce.
 	local stats = SharedConfig.UnitStats[unitName]
 	local rarity = RarityConfig.resolve(stats and stats.Rarity)
 	if not rarity then
-		warn(string.format("[UnboxingController]: %s has no valid Rarity in UnitStats.", unitName))
+		log:StudioWarn(string.format("%s has no valid Rarity in UnitStats.", unitName))
 	end
 
 	self:_attachUnitAura(unit, rarity)
 
-	-- A aura e o giro sao a unidade aparecendo, e isso todo mundo ve. O nome e a
-	-- raridade dela sao o resultado, e o resultado e de quem abriu.
+	-- The aura and the spin are the unit appearing, and everyone sees that. Its name and
+	-- rarity are the result, and the result belongs to the opener.
 	if session.IsOwner then
 		self:_attachUnitDisplay(unit, unitName, rarity)
 	end
@@ -759,7 +760,7 @@ end
 function UnboxingController:_attachBillboard(crate : Model, sessionMaid) : Attachment?
 	local targetPart = crate:FindFirstChild(TARGET_PART_NAME)
 	if not targetPart or not targetPart:IsA("BasePart") then
-		warn(string.format("[UnboxingController]: %s has no %s.", crate.Name, TARGET_PART_NAME))
+		log:StudioWarn(string.format("%s has no %s.", crate.Name, TARGET_PART_NAME))
 		return nil
 	end
 
@@ -770,15 +771,15 @@ function UnboxingController:_attachBillboard(crate : Model, sessionMaid) : Attac
 	return attachment
 end
 
---[[ UNITS NO CARRETEL ]]
+--[[ UNITS ON THE REEL ]]
 
 --[=[
-	O que o jogador ja descobriu em `Index.Units`, direto da replica.
+	What the player already discovered in `Index.Units`, straight from the replica.
 
-	Perfil que ainda nao chegou vale como "nada descoberto" -- o mesmo acordo do
-	`IndexConfig`. Na pratica isso nao acontece na propria caixa (para abrir uma o
-	perfil ja carregou), mas o carretel de quem esta so assistindo passa por aqui
-	tambem.
+	A profile that has not arrived counts as "nothing discovered", the same agreement as
+	`IndexConfig`. In practice that does not happen for one's own crate (to open one the
+	profile has already loaded), but the reel of someone only watching goes through here
+	too.
 ]=]
 function UnboxingController:_discoveredUnits() : { [string]: boolean }
 	local dataController = self.Controllers.DataController
@@ -794,14 +795,14 @@ function UnboxingController:_discoveredUnits() : { [string]: boolean }
 end
 
 --[=[
-	A unit da carta, por cima da arte dela.
+	The card's unit, over its art.
 
-	Duas artes por unit no `CardConfig`: a liberada e a silhueta. Qual entra e o
-	Index do jogador que diz -- e como o par vem pronto do config, "trancada" aqui
-	nao passa de escolher o outro id.
+	Two arts per unit in `CardConfig`: the unlocked one and the silhouette. The player's
+	Index says which goes in, and since the pair comes ready from the config, "locked" here
+	is just picking the other id.
 
-	Unit sem par no config nao ganha imagem: a carta fica so com a moldura na cor da
-	raridade, que e exatamente como o carretel era antes de existir arte de unit.
+	A unit with no pair in the config gets no image: the card keeps only the frame in the
+	rarity's color.
 ]=]
 function UnboxingController:_createEntryImage(entry : GuiObject, unitName : string, discovered : boolean)
 	local image = CardConfig.GetIndexImage(unitName, discovered)
@@ -817,12 +818,12 @@ function UnboxingController:_createEntryImage(entry : GuiObject, unitName : stri
 	label.BackgroundTransparency = 1
 	label.Image = image
 
-	-- A carta nao e quadrada e a arte da unit e: `Fit` deixa a proporcao dela em
-	-- paz, encaixando pelo lado que aperta primeiro em vez de esticar.
+	-- The card is not square and the unit art is: `Fit` leaves its proportion
+	-- alone, fitting by whichever side is tighter instead of stretching.
 	label.ScaleType = Enum.ScaleType.Fit
 
-	-- Pixel art: sem o `Pixelated` o filtro borra a arte ao escalar, e a carta do
-	-- carretel e pequena -- e o resto da UI do jogo ja usa este modo.
+	-- Pixel art: without `Pixelated` the filter blurs the art when scaling, and the reel
+	-- card is small; the rest of the game's UI already uses this mode.
 	label.ResampleMode = Enum.ResamplerMode.Pixelated
 	label.ZIndex = entry.ZIndex + 1
 	label.Parent = entry
@@ -836,9 +837,9 @@ end
 	`Upgrade` carries the crate it becomes -- the same thing the server rolls -- so an
 	entry can be read back off the reel.
 
-	`Unit` e quem aparece em 3D na carta. No filler e uma unit qualquer da raridade
-	sorteada; na carta premiada e exatamente a que o servidor deu. Face de upgrade
-	nao tem unit -- ali a carta e a caixa evoluindo, e nao uma unit.
+	`Unit` is who appears in 3D on the card. On a filler it is any unit of the drawn
+	rarity; on the winning card it is exactly the one the server gave. An upgrade face has
+	no unit: there the card is the crate upgrading, not a unit.
 ]=]
 export type ReelFace = {
 	Rarity : string?,
@@ -847,12 +848,12 @@ export type ReelFace = {
 }
 
 --[=[
-	Uma unit qualquer da raridade, para a carta de filler mostrar.
+	Any unit of the rarity, for a filler card to show.
 
-	As units de cada tier saem do proprio `UnitStats` (`getUnitsOfRarity`), que e o
-	que o servidor tambem usa para sortear o premio -- entao o carretel mostra o
-	mesmo elenco de onde o resultado sai. Raridade sem unit nenhuma devolve nil, e a
-	carta fica so com a arte e a cor do tier.
+	Each tier's units come from `UnitStats` itself (`getUnitsOfRarity`), which is what the
+	server also uses to draw the prize, so the reel shows the same cast the result comes
+	from. A rarity with no unit at all returns nil, and the card keeps only the tier's art
+	and color.
 ]=]
 local function rollFillerUnit(rarity : string) : string?
 	local units = RarityConfig.getUnitsOfRarity(rarity)
@@ -925,7 +926,7 @@ function UnboxingController:_buildReel(session, crateRarity : string, winnerFace
 	local scrollingFrame = frame and frame:FindFirstChild("ScrollingFrame")
 
 	if not scrollingFrame or not scrollingFrame:IsA("ScrollingFrame") then
-		warn("[UnboxingController]: UnboxingAttachment.BillboardGui.Frame.ScrollingFrame is missing.")
+		log:StudioWarn("UnboxingAttachment.BillboardGui.Frame.ScrollingFrame is missing.")
 		return nil
 	end
 
@@ -955,7 +956,7 @@ function UnboxingController:_buildReel(session, crateRarity : string, winnerFace
 	end
 
 	if #pool == 0 then
-		warn("[UnboxingController]: ScrollingFrame has no entries to build the reel from.")
+		log:StudioWarn("ScrollingFrame has no entries to build the reel from.")
 		return nil
 	end
 
@@ -1016,8 +1017,8 @@ function UnboxingController:_buildReel(session, crateRarity : string, winnerFace
 		entry:SetAttribute("Unit", face.Unit)
 		entry.Parent = scrollingFrame
 
-		-- So na tela de quem abriu: nas outras o billboard fica desligado o giro
-		-- inteiro, e o Roblox nao desenha nada dele.
+		-- Only on the opener's screen: on the others the billboard stays off for the whole
+		-- spin, and Roblox draws none of it.
 		if face.Unit and session.IsOwner then
 			self:_createEntryImage(entry, face.Unit, session.Discovered[face.Unit] == true)
 		end
@@ -1034,8 +1035,8 @@ function UnboxingController:_buildReel(session, crateRarity : string, winnerFace
 	end
 
 	--[=[
-		O inverso de `positionFor`: qual carta esta sob o Clipper com o frame em `x`.
-		Troca na borda entre duas cartas, que e o instante em que o tick soa.
+		The inverse of `positionFor`: which card is under the Clipper with the frame at `x`.
+		It switches at the border between two cards, which is the instant the tick sounds.
 	]=]
 	local function indexAt(x : number) : number
 		local offset = (targetCenter + anchorX * frameWidth - x) / frameWidth
@@ -1052,11 +1053,11 @@ function UnboxingController:_buildReel(session, crateRarity : string, winnerFace
 end
 
 --[=[
-	O tick do carretel: um som por carta que cruza o Clipper, do giro ao assentar.
+	The reel tick: one sound per card crossing the Clipper, from the spin to the settle.
 
-	Uma vez por frame no maximo -- no comeco do giro passam varias cartas num frame
-	so, e empilhar um som por carta viraria ruido. So na tela de quem abriu: nas
-	outras o carretel gira atras de um billboard desligado.
+	At most once per frame: at the start of the spin several cards pass in a single frame,
+	and stacking one sound per card would become noise. Only on the opener's screen: on
+	the others the reel spins behind a disabled billboard.
 ]=]
 function UnboxingController:_trackReelTicks(reel, maid)
 	local scrollingFrame = reel.ScrollingFrame
@@ -1116,8 +1117,8 @@ function UnboxingController:_spin(reel, sessionMaid, onFinished : (GuiObject) ->
 		settle:Play()
 	end)
 
-	-- Comeca depois do reposicionamento na primeira carta, para o salto ate ela
-	-- nao contar como carta passando.
+	-- It starts after repositioning onto the first card, so the jump to it
+	-- does not count as a card passing.
 	local ticks = withTicks and self:_trackReelTicks(reel, sessionMaid)
 
 	settle.Completed:Once(function(state : Enum.PlaybackState)
@@ -1138,10 +1139,10 @@ function UnboxingController:_spin(reel, sessionMaid, onFinished : (GuiObject) ->
 end
 
 --[=[
-	One unboxing = one session: its own maid, the spot it took, and quem abriu.
+	One unboxing = one session: its own maid, the spot it took, and who opened it.
 
-	`IsOwner` e o que decide o que essa tela mostra: quem abriu ve o carretel e o nome
-	da unidade, quem esta assistindo ve so a caixa, o estouro e o premio.
+	`IsOwner` decides what this screen shows: the opener sees the reel and the unit's name,
+	watchers see only the crate, the burst, and the prize.
 ]=]
 function UnboxingController:_openSession(owner : Player)
 	self.SessionCount += 1
@@ -1155,11 +1156,10 @@ function UnboxingController:_openSession(owner : Player)
 		IsOwner = owner == Players.LocalPlayer,
 
 		--[[
-			O Index do jogador local, lido uma vez: e ele que decide quais units
-			aparecem em silhueta. Uma leitura por sessao, e nao por carta -- a caixa
-			aberta agora nao muda o que ele ja descobriu no meio do giro (a unit
-			premiada e escrita no perfil pelo servidor, e o carretel dela ja esta
-			montado).
+			The local player's Index, read once: it decides which units appear as
+			silhouettes. One read per session, not per card: the crate opened now does not
+			change what they already discovered mid-spin (the server writes the winning unit
+			to the profile, and its reel is already built).
 		]]
 		Discovered = {},
 	}
@@ -1206,7 +1206,7 @@ export type UnboxingResult = {
 	Plays one spin of a session, then hands over to the next stage.
 
 	A stage that lands on an upgrade evolves the crate and lets the pool of the crate
-	it became take over -- that is the "a caixa pode evoluir" rule, played out one
+	it became take over -- that is the "a crate can upgrade" rule, played out one
 	reel at a time. The last stage is always the reward.
 ]=]
 function UnboxingController:_playStage(session, result : UnboxingResult, stages, index : number)
@@ -1278,21 +1278,22 @@ end
 	plays what it is told. Unboxings stack -- calling this again while others are
 	still rolling starts another one beside them, up to MAX_ACTIVE_UNBOXINGS.
 
-	`owner` e quem abriu a caixa, e o servidor manda a mesma abertura para todo mundo:
-	numa tela que nao e a dele, isso aqui roda igual, so sem o carretel e sem o nome da
-	unidade. Sem `owner` a abertura e do jogador local -- e como o console pede uma.
+	`owner` is who opened the crate, and the server sends the same opening to everyone: on a
+	screen that is not theirs, this runs the same, just without the reel and the unit's
+	name. Without `owner` the opening belongs to the local player: that is how the console
+	asks for one.
 
-	Cada cliente resolve o lugar da caixa por conta propria, a partir do personagem do
-	dono. O ponto pode sair um fio diferente de tela para tela (a posicao do personagem
-	de outro jogador chega interpolada), e isso e de proposito: o que a cena precisa
-	dizer e "a caixa e daquele jogador ali", e nao um centimetro exato.
+	Each client resolves the crate's spot on its own, from the owner's character. The
+	point may come out slightly different from screen to screen (another player's character
+	position arrives interpolated), and that is on purpose: what the scene needs to say is
+	"the crate belongs to that player over there", not an exact centimeter.
 
 	Returns false when it could not start (bad result, no character, missing asset,
 	or too many already playing).
 ]=]
 function UnboxingController:Open(result : UnboxingResult, owner : Player?) : boolean
 	if typeof(result) ~= "table" then
-		warn("[UnboxingController]: Open expects the result table rolled by CrateService.")
+		log:StudioWarn("open expects the result table rolled by CrateService.")
 		return false
 	end
 
@@ -1303,29 +1304,29 @@ function UnboxingController:Open(result : UnboxingResult, owner : Player?) : boo
 	-- and the crate is swapped mid-unboxing, one stage per step.
 	local crateRarity = CrateConfig.resolveRarity(result.Crate)
 	if not crateRarity then
-		warn(string.format("[UnboxingController]: %q is not a valid crate rarity.", tostring(result.Crate)))
+		log:StudioWarn(string.format("%q is not a valid crate rarity.", tostring(result.Crate)))
 		return false
 	end
 
 	local winnerRarity = RarityConfig.resolve(result.Rarity)
 	if not winnerRarity then
-		warn(string.format("[UnboxingController]: %q is not a valid rarity.", tostring(result.Rarity)))
+		log:StudioWarn(string.format("%q is not a valid rarity.", tostring(result.Rarity)))
 		return false
 	end
 
 	--[[
-		O teto vale para as caixas dos outros. A que o jogador local abriu e a que ele
-		pagou para ver, entao ela entra mesmo com o lobby cheio de abertura -- deixar de
-		fora justamente a dele seria o unico caso em que perder a cena importa.
+		The cap applies to other players' crates. The one the local player opened is the one
+		they paid to see, so it goes in even with the Lobby full of openings: leaving out
+		exactly theirs would be the only case where missing the scene matters.
 	]]
 	if not isOwner and #self.Sessions >= MAX_ACTIVE_UNBOXINGS then
 		return false
 	end
 
-	-- Personagem do dono, e nao o local: quem assiste pode ver a caixa de alguem que
-	-- ainda esta carregando na frente dele.
+	-- The owner's character, not the local one: a watcher may see the crate of someone
+	-- still loading in front of them.
 	if not self:_getRoot(owner :: Player) then
-		warn(string.format("[UnboxingController]: %s has no character spawned yet.", (owner :: Player).Name))
+		log:StudioWarn(string.format("%s has no character spawned yet.", (owner :: Player).Name))
 		return false
 	end
 
@@ -1362,7 +1363,7 @@ function UnboxingController:Open(result : UnboxingResult, owner : Player?) : boo
 	for _, upgradeTo in result.Upgrades or {} do
 		local resolvedUpgrade = CrateConfig.resolveRarity(upgradeTo)
 		if not resolvedUpgrade then
-			warn(string.format("[UnboxingController]: %q is not a valid crate rarity.", tostring(upgradeTo)))
+			log:StudioWarn(string.format("%q is not a valid crate rarity.", tostring(upgradeTo)))
 			continue
 		end
 
@@ -1376,11 +1377,10 @@ function UnboxingController:Open(result : UnboxingResult, owner : Player?) : boo
 		The reel is hidden while the crate grows in: the attachment offset scales with
 		the model, so an enabled billboard would climb up along with it.
 
-		Numa tela que nao e a do dono ela nunca chega a ser ligada. O carretel continua
-		sendo montado e girado do mesmo jeito -- e o giro dele que marca o tempo de toda
-		a abertura, do estufao ao premio --, so que atras de um BillboardGui desligado,
-		que o Roblox nao desenha. Um caminho so para as duas telas, e as duas terminam
-		no mesmo instante.
+		On a screen that is not the owner's it is never turned on. The reel is still built
+		and spun the same way (its spin sets the timing of the whole opening, from the swell
+		to the prize), just behind a disabled BillboardGui, which Roblox does not draw. A
+		single path for both screens, and both finish at the same instant.
 	]]
 	local billboard = attachment:FindFirstChildWhichIsA("BillboardGui")
 	if billboard then

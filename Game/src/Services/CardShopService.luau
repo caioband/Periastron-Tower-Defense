@@ -10,49 +10,52 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("CardShopService")
 
 local RoundCardConfig = SharedConfig.RoundCardConfig
 local RoundCardShopConfig = SharedConfig.RoundCardShopConfig
 
 --[[
-	Quanto o `EffectDelay` pode se afastar do marcador da animacao antes de virar
-	aviso, em segundos. Ver `_auditVisualDelays`.
+	How far `EffectDelay` may drift from the animation marker before it becomes a
+	warning, in seconds. See `_auditVisualDelays`.
 
-	Nao e zero porque o numero do config e escrito a mao, arredondado do que o Moon
-	Animator mostra: um milesimo de diferenca e transcricao, e nao desencontro.
+	It is not zero because the config number is written by hand, rounded from what Moon
+	Animator shows: a thousandth of difference is transcription, not a mismatch.
 ]]
 local EFFECT_DELAY_TOLERANCE = 0.05
 
 --[=[
-	A loja de cartas de round.
+	The round card shop.
 
-	De X em X waves (o intervalo e por dificuldade, ver `RoundCardConfig.Intervals`)
-	cada jogador recebe uma oferta propria de tres cartas sorteadas. Comprar tira o
-	dinheiro do caixa da partida (`MobService.SessionCash`, o mesmo que paga torre)
-	e poe a carta na hotbar dele; usar gasta a carta e dispara o efeito.
+	Every X waves (the interval is per difficulty; see `RoundCardConfig.Intervals`) each
+	player gets their own offer of three drawn cards. Buying takes the money from match
+	cash (`MobService.SessionCash`, the same that pays for towers) and puts the card in
+	their hotbar; using it spends the card and fires the effect.
 
-	**Tudo que decide alguma coisa mora aqui.** O cliente nao sorteia, nao cobra e
-	nao executa efeito nenhum -- ele manda "quero comprar a carta X da oferta com
-	token T" e "quero usar a carta de id U", e o servidor confere as duas coisas
-	contra o que ele mesmo guardou. Uma carta que o jogador nao tem, ou uma oferta
-	que ja fechou, simplesmente nao produz nada.
+	**Everything that decides anything lives here.** The client does not draw, charge, or
+	run any effect: it sends "I want to buy card X from the offer with token T" and "I
+	want to use card with id U", and the server checks both against what it stored
+	itself. A card the player does not have, or an offer that already closed, simply
+	produces nothing.
 
-	**A oferta e por jogador.** O caixa da partida e individual, entao um sorteio
-	comum faria a mesma carta ser disputada entre pessoas que nao competem por
-	dinheiro. Cada um sorteia o seu, compra o seu e usa o seu -- mas o **efeito** e
-	da sala: o Time Stop para os inimigos de todo mundo.
+	**The offer is per player.** Match cash is individual, so a shared draw would have the
+	same card fought over by people who do not compete for money. Each one draws their
+	own, buys their own, and uses their own, but the **effect** belongs to the room: Time
+	Stop stops everyone's enemies.
 
-	**E a pool tambem e por jogador.** O sorteio nao varre o catalogo: ele varre o que
-	aquele jogador destravou na loja de cartas do lobby (`Data.RoundCards`, ver o
-	`RoundCardShopService`). Antes ele varria o `RoundCardConfig.Cards` inteiro, ou
-	seja, todo mundo tinha as vinte e tantas cartas na primeira partida -- e a loja do
-	lobby nao teria o que vender.
+	**So is the pool.** The draw does not sweep the catalog: it sweeps what that player
+	unlocked in the Lobby card shop (`Data.RoundCards`; see `RoundCardShopService`).
+	Sweeping the whole `RoundCardConfig.Cards` would give everyone all twenty-odd cards on
+	their first match, and the Lobby shop would have nothing to sell.
 
-	**A oferta fecha na compra.** Uma compra por abertura: e por isso que o
-	`Offers[userId]` sai da tabela assim que a carta e paga, e nao so na tela do
-	comprador.
+	**The offer closes on purchase.** One purchase per opening: that is why
+	`Offers[userId]` leaves the table as soon as the card is paid for, not only on the
+	buyer's screen.
+
+	See docs/game/round-card-shop.md.
 ]=]
 local CardShopService = {
 	Services = {
@@ -64,83 +67,84 @@ local CardShopService = {
 		UnitService = {},
 		CardModifierService = {},
 
-		-- Para ler o `RoundCards` do perfil: e ele que diz quais cartas este jogador pode
-		-- sortear. Ver o `_poolFor`.
+		-- To read the profile's `RoundCards`: it says which cards this player can
+		-- draw. See `_poolFor`.
 		DataService = {},
 	},
 
 	--[[
-		A oferta aberta de cada jogador: `[UserId] = { Token, Wave, Cards = { id } }`.
-		Sai da tabela na compra, no fim do round e quando o jogador sai.
+		Each player's open offer: `[UserId] = { Token, Wave, Cards = { id } }`. It leaves
+		the table on purchase, at the end of the round, and when the player leaves.
 	]]
 	Offers = {},
 
 	--[[
-		As cartas compradas e ainda nao usadas:
+		Cards bought and not yet used:
 		`[UserId] = { [uid] = cardId }`.
 
-		O `uid` existe porque a mesma carta pode ser comprada duas vezes em ofertas
-		diferentes, e usar uma nao pode gastar a outra.
+		The `uid` exists because the same card can be bought twice in different offers,
+		and using one must not spend the other.
 	]]
 	Owned = {},
 
 	--[[
-		As cartas de prazo que estao descansando: `[UserId] = { [cardId] = Token }`.
+		Timed cards that are resting: `[UserId] = { [cardId] = Token }`.
 
-		O numero e a **ultima** abertura em que a carta ainda esta fora do sorteio daquele
-		jogador. Ver o `_rest`, que escreve, e o `_poolFor`, que le.
+		The number is the **last** opening in which the card is still out of that player's
+		draw. See `_rest`, which writes it, and `_poolFor`, which reads it.
 	]]
 	Resting = {},
 
 	--[[
-		As cartas de uma vez so que este jogador ja tirou da mesa: `[UserId] = { [cardId] = true }`.
+		One-time cards this player already took off the table: `[UserId] = { [cardId] = true }`.
 
-		Nao ha volta nesta tabela -- ela so e esvaziada no fim do round. Ver o `_isStacking`,
-		que diz quem entra aqui, e o `_spend`, que escreve.
+		There is no way back in this table: it is only emptied at the end of the round. See
+		`_isStacking`, which says what goes in here, and `_spend`, which writes it.
 	]]
 	Spent = {},
 
-	-- Sobe a cada abertura. E o que faz um clique atrasado numa oferta velha nao
-	-- comprar nada da nova.
+	-- Goes up on every opening. It is what keeps a late click on an old offer from
+	-- buying anything from the new one.
 	Token = 0,
 }
 
---[[ EFEITOS ]]
+--[[ EFFECTS ]]
 
 --[=[
-	O que cada carta faz, pelo nome que o `RoundCardConfig` declara em `Effect`.
+	What each card does, by the name `RoundCardConfig` declares in `Effect`.
 
-	Cada funcao recebe quem usou, os `Params` da carta e o `context` do uso (o alvo
-	escolhido, o `uid` da carta gasta e o `Id` dela), e devolve a frase que vai para
-	o log do servidor. Nenhuma delas conhece a loja: sao chamadas nos services que ja
-	sao donos daquele estado -- o congelamento e do `MobService`, o relogio e do
-	`SpeedService`, o ceu e do `WeatherRoundService`, as regras de campo sao do
-	`CardModifierService` e o tabuleiro e do `UnitService`.
+	Each function receives the user, the card's `Params`, and the use's `context` (the
+	chosen target, the spent card's `uid`, and its `Id`), and returns the sentence that
+	goes to the server log. None of them knows the shop: they call the services that
+	already own that state: freezing belongs to `MobService`, the clock to
+	`SpeedService`, the sky to `WeatherRoundService`, field rules to
+	`CardModifierService`, and the board to `UnitService`.
 
-	**Sao sete efeitos para vinte e tantas cartas**, e nao um por carta. Quase tudo
-	que uma carta de round faz e deixar uma regra valendo no campo, e a regra tem
-	gramatica propria (o `CardModifier`): dai o `Modifier`, que le a lista que a
-	carta declarou e a entrega ao service. Carta nova que so mexa em numeros nao
-	precisa de codigo nenhum -- ela e uma entrada no `RoundCardConfig` e mais nada.
+	**There are seven effects for twenty-odd cards**, not one per card. Almost everything
+	a round card does is leave a rule in effect on the field, and that rule has its own
+	grammar (`CardModifier`): hence `Modifier`, which reads the list the card declared and
+	hands it to the service. A new card that only changes numbers needs no code at all:
+	it is an entry in `RoundCardConfig` and nothing else.
 
-	Carta com efeito que nao exista nesta tabela e descartada do sorteio com aviso
-	(ver `_pool`), em vez de virar uma carta que o jogador paga e nao faz nada.
+	A card whose effect does not exist in this table is dropped from the draw with a
+	warning (see `_pool`), instead of becoming a card the player pays for that does
+	nothing.
 ]=]
 CardShopService.Effects = {
 	--[=[
-		O efeito de quase todo o catalogo: por as regras da carta no campo.
+		The effect of almost the whole catalog: putting the card's rules on the field.
 
-		Os registros vem do config; o que o **uso** acrescenta e o alvo (a zona onde o
-		jogador desenhou o anel, ou a torre que ele escolheu) e o prazo. Quem guarda,
-		poda e replica e o `CardModifierService`.
+		The records come from the config; what the **use** adds is the target (the zone
+		where the player drew the ring, or the tower they chose) and the deadline.
+		`CardModifierService` stores, prunes, and replicates them.
 	]=]
 	Modifier = function(self, player : Player, params, context)
 		local service = self.Services.CardModifierService
-		if not service then return "sem CardModifierService" end
+		if not service then return "no CardModifierService" end
 
 		local records = params.Modifiers
 		if typeof(records) ~= "table" or #records == 0 then
-			return "a carta nao declarou modificador nenhum"
+			return "the card declared no modifier"
 		end
 
 		local target = context.Target
@@ -157,58 +161,58 @@ CardShopService.Effects = {
 			Zone = zone,
 			UnitId = target and target.UnitId or nil,
 
-			-- Para o proximo anel deste jogador saber que este lugar esta ocupado. Ver o
+			-- So this player's next ring knows this spot is taken. See
 			-- `FindZoneOverlap`.
 			OwnerUserId = player.UserId,
 		})
 
-		return string.format("%d regra(s) no campo%s", applied,
-			params.Duration and string.format(" por %ss", tostring(params.Duration)) or " ate o fim do round")
+		return string.format("%d field rule(s)%s", applied,
+			params.Duration and string.format(" for %ss", tostring(params.Duration)) or " until the end of the round")
 	end,
 
 	--[=[
-		Caixa direto na mao de quem usou.
+		Cash straight into the user's hand.
 
-		E do caixa da **partida** (`roundcash`), o mesmo que paga torre e que pagou a
-		propria carta -- e nao o `Cash` do perfil. Uma carta de round nao pode virar
-		uma torneira de moeda de progressao.
+		It is **match** cash (`roundcash`), the same that pays for towers and paid for the
+		card itself, not the profile's `Cash`. A round card must not become a tap of
+		progression currency.
 	]=]
 	GrantCash = function(self, player : Player, params)
 		local mobService = self.Services.MobService
-		if not mobService then return "sem MobService" end
+		if not mobService then return "no MobService" end
 
 		local amount = math.max(0, params.Amount or 0)
 		mobService:addCash(player, amount)
 
-		return string.format("%d de caixa para %s", amount, player.Name)
+		return string.format("%d cash to %s", amount, player.Name)
 	end,
 
 	--[=[
-		O Staff of Healing: tira o atordoamento de quem esta no circulo e deixa essas
-		unidades imunes por alguns segundos.
+		The Staff of Healing: removes the stun from units in the circle and makes them
+		immune for a few seconds.
 
-		Vale para as torres de **todo mundo** dentro do circulo, e nao so para as de
-		quem usou. E a mesma regra do resto das cartas: quem paga e uma pessoa, mas o
-		efeito e da sala.
+		It applies to **everyone's** towers inside the circle, not only the user's. The
+		same rule as the rest of the cards: one person pays, but the effect belongs to the
+		room.
 	]=]
 	Cleanse = function(self, player : Player, params, context)
 		local unitService = self.Services.UnitService
-		if not unitService then return "sem UnitService" end
+		if not unitService then return "no UnitService" end
 
 		local target = context.Target
-		if not target or not target.Position then return "sem area escolhida" end
+		if not target or not target.Position then return "no area picked" end
 
 		local radius = RoundCardConfig.GetRadius(context.Card)
 		local touched = unitService:CleanseUnits(target.Position, radius, params.Immunity or 0)
 
 		--[[
-			O circulo no chao enquanto a imunidade dura.
+			The circle on the ground while the immunity lasts.
 
-			Ele entra pelo mesmo caminho das zonas dos cajados -- um modificador com
-			`Zone`, guardado no `CardModifierService` -- e por isso ele nasce, e some,
-			e reaparece para quem entrou no meio da partida sem nenhum desenho proprio.
-			O modificador nao mexe em estatistica nenhuma: ele **e** o anel. Ver o
-			`Modifiers` desta carta no `RoundCardConfig`.
+			It comes in the same way as the staffs' zones (a modifier with `Zone`, stored
+			in `CardModifierService`), which is why it appears, disappears, and reappears
+			for players joining mid-match without any drawing of its own. The modifier
+			changes no stat: it **is** the ring. See this card's `Modifiers` in
+			`RoundCardConfig`.
 		]]
 		local modifiers = self.Services.CardModifierService
 		if modifiers and params.Modifiers then
@@ -221,19 +225,19 @@ CardShopService.Effects = {
 			})
 		end
 
-		return string.format("%d unidade(s) curadas e imunes por %ss", touched, tostring(params.Immunity or 0))
+		return string.format("%d unit(s) healed and immune for %ss", touched, tostring(params.Immunity or 0))
 	end,
 
 	--[=[
-		O Staff of Azure Ever Ice: a sala inteira mais lenta por alguns segundos.
+		The Staff of Azure Ever Ice: the whole room slower for a few seconds.
 
-		O clima e lido **no uso**, e nao na compra: comprar a carta e segurar ate a
-		neve chegar e a jogada, e decidir o bonus na compra tiraria a decisao do
-		jogador.
+		The weather is read **on use**, not on purchase: buying the card and holding it
+		until snow arrives is the play, and deciding the bonus on purchase would take the
+		decision away from the player.
 	]=]
 	ChillEnemies = function(self, player : Player, params)
 		local mobService = self.Services.MobService
-		if not mobService then return "sem MobService" end
+		if not mobService then return "no MobService" end
 
 		local slow = params.Slow or 0.5
 		local brittle = nil
@@ -246,87 +250,87 @@ CardShopService.Effects = {
 
 		local chilled = mobService:ChillAll(slow, params.Duration, brittle)
 
-		return string.format("%d inimigos a -%d%% por %ss%s", chilled, math.floor(slow * 100 + 0.5),
-			tostring(params.Duration), brittle and " (quebradicos)" or "")
+		return string.format("%d enemies at -%d%% for %ss%s", chilled, math.floor(slow * 100 + 0.5),
+			tostring(params.Duration), brittle and " (brittle)" or "")
 	end,
 
 	--[=[
-		O Zippers: a unidade escolhida muda de lugar.
+		Zippers: the chosen unit moves.
 
-		O destino passa pelas mesmas conferencias do `PlaceUnit`. Recusado, o efeito
-		devolve o motivo -- mas a carta **ja foi gasta**, e por isso o destino e
-		conferido antes, no `Use`: quando este efeito roda, o lugar ja tinha sido
-		aceito.
+		The destination goes through the same checks as `PlaceUnit`. If refused, the
+		effect returns the reason, but the card **is already spent**, which is why the
+		destination is checked beforehand, in `Use`: when this effect runs, the spot has
+		already been accepted.
 	]=]
 	MoveUnit = function(self, player : Player, params, context)
 		local unitService = self.Services.UnitService
-		if not unitService then return "sem UnitService" end
+		if not unitService then return "no UnitService" end
 
 		local target = context.Target
 		if not target or not target.UnitId or not target.Position then
-			return "faltou a unidade ou o destino"
+			return "missing the unit or the destination"
 		end
 
 		local entry, reason = unitService:MoveUnit(target.UnitId, target.Position, target.Rotation)
 		if not entry then
-			return string.format("mudanca recusada (%s)", tostring(reason))
+			return string.format("move refused (%s)", tostring(reason))
 		end
 
-		return string.format("%s mudou de lugar", entry.unitName)
+		return string.format("%s moved", entry.unitName)
 	end,
 
 	TimeStop = function(self, player : Player, params)
 		local mobService = self.Services.MobService
-		if not mobService then return "sem MobService" end
+		if not mobService then return "no MobService" end
 
 		local duration = params.Duration or 4
 		local frozen = mobService:FreezeAll(duration)
 
-		return string.format("%d inimigos congelados por %ss", frozen, tostring(duration))
+		return string.format("%d enemies frozen for %ss", frozen, tostring(duration))
 	end,
 
 	TimeAcceleration = function(self, player : Player, params)
 		local speedService = self.Services.SpeedService
-		if not speedService then return "sem SpeedService" end
+		if not speedService then return "no SpeedService" end
 
 		local scale = params.Scale or 3
 		local duration = params.Duration or 15
 
 		speedService:SetOverride(scale, duration)
 
-		return string.format("partida a %sx por %ss", tostring(scale), tostring(duration))
+		return string.format("match at %sx for %ss", tostring(scale), tostring(duration))
 	end,
 
 	--[[
-		A carta pula o clima **desta** wave, e nao adia o clima inteiro: uma nevasca
-		de tres waves comprada na primeira volta na segunda. Ver
+		The card skips **this** wave's weather, not the whole weather: a three-wave
+		blizzard bought on the first returns on the second. See
 		`WeatherRoundService:SkipCurrentWave`.
 
-		Sem `Params`: nao ha mais numero de waves para ajustar, e a unica wave que a
-		carta conhece e a que esta no ar.
+		No `Params`: there is no wave count to tune, and the only wave the card knows is
+		the one in progress.
 	]]
 	WeatherReport = function(self, player : Player)
 		local weatherRound = self.Services.WeatherRoundService
-		if not weatherRound then return "sem WeatherRoundService" end
+		if not weatherRound then return "no WeatherRoundService" end
 
 		if not weatherRound:SkipCurrentWave() then
-			return "nao havia clima no ar"
+			return "there was no weather on"
 		end
 
-		return "ceu limpo nesta wave"
+		return "clear sky this wave"
 	end,
 }
 
 --[[ INTERNAL ]]
 
 --[=[
-	As cartas que este servidor sabe executar: as do catalogo cujo `Effect` existe de
-	fato.
+	The cards this server knows how to run: those in the catalog whose `Effect` actually
+	exists.
 
-	E o primeiro dos dois filtros do sorteio, e o unico que fala do **jogo**: uma carta
-	sem efeito registrado nao pode sair para ninguem. O aviso sai uma vez por carta
-	quebrada, e nao a cada sorteio: config escrito a mao erra nome, e uma carta que o
-	jogador paga e nao faz nada e pior do que uma carta que nunca aparece.
+	It is the first of the draw's two filters, and the only one about the **game**: a card
+	with no registered effect must not go out to anyone. The warning goes out once per
+	broken card, not on every draw: hand-written config gets names wrong, and a card the
+	player pays for that does nothing is worse than a card that never appears.
 ]=]
 function CardShopService:_pool()
 	local pool = {}
@@ -339,7 +343,7 @@ function CardShopService:_pool()
 
 		if not self.WarnedEffects[card.Id] then
 			self.WarnedEffects[card.Id] = true
-			warn(string.format("[CardShopService]: a carta '%s' pede o efeito '%s', que nao existe em Effects.",
+			log:StudioWarn(string.format("card '%s' asks for effect '%s', which does not exist in Effects.",
 				card.Id, tostring(card.Effect)))
 		end
 	end
@@ -348,16 +352,16 @@ function CardShopService:_pool()
 end
 
 --[=[
-	A carta e de prazo?
+	Is the card timed?
 
-	E a pergunta que decide quem descansa depois de usada, e a resposta e o proprio
-	`Params.Duration`: a carta cujo efeito **vence sozinho** e uma janela, e a que nao
-	tem prazo e uma decisao que vale o round inteiro.
+	It is the question that decides who rests after use, and the answer is
+	`Params.Duration` itself: a card whose effect **expires on its own** is a window, and
+	one without a deadline is a decision that lasts the whole round.
 
-	A regra e derivada do config, e nao uma lista escrita a mao, de proposito: carta
-	nova com `Duration` ja nasce descansando, e uma carta que perde o prazo num ajuste
-	de balanceamento para de descansar no mesmo commit. Uma lista paralela divergiria
-	do catalogo no primeiro numero que alguem mexesse.
+	The rule is derived from the config, not a hand-written list, on purpose: a new card
+	with `Duration` starts resting from day one, and a card that loses its deadline in a
+	balance tweak stops resting in the same commit. A parallel list would diverge from the
+	catalog at the first number someone changed.
 ]=]
 function CardShopService:_isTemporary(card) : boolean
 	local duration = card and card.Params and card.Params.Duration
@@ -366,19 +370,19 @@ function CardShopService:_isTemporary(card) : boolean
 end
 
 --[=[
-	Poe a carta para descansar uma abertura na mao deste jogador.
+	Puts the card to rest for one opening in this player's hand.
 
-	O prazo e escrito em **aberturas da loja**, e nao em waves ou em segundos: o que a
-	regra promete e "nao sai na proxima oferta", e a proxima oferta e a proxima vez que
-	o `Open` roda -- numa dificuldade de intervalo 6 isso e mais tempo do que numa de
-	4, que e exatamente o certo, porque a oferta e o recurso escasso, e nao o relogio.
+	The deadline is written in **shop openings**, not waves or seconds: what the rule
+	promises is "not in the next offer", and the next offer is the next time `Open` runs:
+	on a difficulty with interval 6 that is longer than on one with 4, which is exactly
+	right, because the offer is the scarce resource, not the clock.
 
-	`Token + 1` e a abertura seguinte a esta, e a comparacao do `_poolFor` e `<=`:
-	usada depois da oferta da wave 4 (Token 1), a carta fica fora da wave 8 (Token 2) e
-	volta na wave 12 (Token 3).
+	`Token + 1` is the opening after this one, and `_poolFor`'s comparison is `<=`: used
+	after the wave 4 offer (Token 1), the card stays out of wave 8 (Token 2) and returns on
+	wave 12 (Token 3).
 
-	Descansa **por jogador**, junto com a pool: quem usou o Time Stop nao o ve na
-	proxima oferta, e quem nao usou continua podendo sortea-lo.
+	It rests **per player**, along with the pool: whoever used Time Stop does not see it in
+	the next offer, and whoever did not can still draw it.
 ]=]
 function CardShopService:_rest(player : Player, cardId : string)
 	local resting = self.Resting[player.UserId]
@@ -391,24 +395,24 @@ function CardShopService:_rest(player : Player, cardId : string)
 end
 
 --[=[
-	A carta empilha em cima de si mesma para sempre?
+	Does the card stack on itself forever?
 
-	Sao tres coisas ao mesmo tempo, e a resposta cai do proprio config:
+	It is three things at once, and the answer comes from the config itself:
 
-	1. o efeito dela e uma **regra no campo** (`Effect = "Modifier"`) -- e a lista do
-	   `CardModifierService` aceita duas copias do mesmo registro, que se multiplicam;
-	2. ela **nao tem prazo**, entao a regra vale ate o fim do round;
-	3. ela **nao desenha area**, entao o que ela muda e o mapa inteiro.
+	1. its effect is a **field rule** (`Effect = "Modifier"`), and `CardModifierService`'s
+	   list accepts two copies of the same record, which multiply;
+	2. it **has no deadline**, so the rule lasts until the end of the round;
+	3. it **draws no area**, so what it changes is the whole map.
 
-	As tres juntas sao o unico caso em que comprar a mesma carta de novo e sempre a
-	melhor jogada possivel: o Overcharge duas vezes e 1.56x de dano em Electric, tres
-	vezes e 1.95x, e nada no jogo freia isso. A que tem prazo se resolve sozinha (ela
-	vence), a de area se resolve pelo chao (duas nao podem se tocar) e a que nao e
-	`Modifier` nao empilha regra nenhuma -- o Money Bag da dinheiro, o Zippers move uma
-	torre, o Weather Report limpa o ceu de uma wave.
+	All three together are the only case where buying the same card again is always the
+	best possible play: Overcharge twice is 1.56x damage on Electric, three times 1.95x,
+	and nothing in the game brakes that. A timed one solves itself (it expires), an area
+	one solves itself through the ground (two cannot touch), and a non-`Modifier` one
+	stacks no rule: Money Bag gives money, Zippers moves a tower, Weather Report clears one
+	wave's sky.
 
-	Quem responde sim sai do sorteio daquele jogador **na compra**, e nao volta nesta
-	partida. Ver o `_spend`.
+	Whatever answers yes leaves that player's draw **on purchase**, and does not return
+	this match. See `_spend`.
 ]=]
 function CardShopService:_isStacking(card) : boolean
 	if not card or card.Effect ~= "Modifier" then return false end
@@ -425,19 +429,18 @@ function CardShopService:_isStacking(card) : boolean
 end
 
 --[=[
-	Tira a carta da mesa deste jogador pelo resto da partida.
+	Takes the card off this player's table for the rest of the match.
 
-	Chamado na **compra**, e nao so no uso: a carta comprada e uma decisao ja tomada,
-	mesmo que ela passe a wave inteira na hotbar. Sem isso o jogador guardaria tres
-	copias do Overcharge na mao e as usaria de uma vez -- que e exatamente o
-	empilhamento que a regra tira do jogo.
+	Called on **purchase**, not only on use: a bought card is a decision already made,
+	even if it spends the whole wave in the hotbar. Without this the player would keep
+	three copies of Overcharge in hand and use them at once, exactly the stacking the rule
+	removes from the game.
 
-	Chamado tambem no uso, para o caso de uma carta ter chegado a mao por fora da loja
-	(um comando de Cmdr, um presente). E barato, e escrever `true` duas vezes na mesma
-	chave nao custa nada.
+	Also called on use, for a card that reached the hand outside the shop (a Cmdr command,
+	a gift). It is cheap, and writing `true` twice to the same key costs nothing.
 
-	Vale a partida, e nao o perfil: a proxima partida comeca com a mesa limpa, do mesmo
-	jeito que o caixa e a hotbar. Ver o `ResetRound`.
+	It lasts the match, not the profile: the next match starts with a clean table, like
+	cash and the hotbar. See `ResetRound`.
 ]=]
 function CardShopService:_spend(player : Player, cardId : string)
 	local spent = self.Spent[player.UserId]
@@ -450,27 +453,27 @@ function CardShopService:_spend(player : Player, cardId : string)
 end
 
 --[=[
-	As cartas que **este jogador** pode sortear: as de `_pool` que ele destravou na loja
-	de cartas do lobby.
+	The cards **this player** can draw: those in `_pool` they unlocked in the Lobby card
+	shop.
 
-	O segundo filtro, e o unico que fala do **jogador**. O que ele destravou mora no
-	`RoundCards` do perfil e e escrito la, no Lobby, pelo `RoundCardShopService` -- aqui
-	so se le.
+	The second filter, and the only one about the **player**. What they unlocked lives in
+	the profile's `RoundCards` and is written there, in the Lobby, by
+	`RoundCardShopService`; here it is only read.
 
-	Perfil que ainda nao carregou vale como vazio, e nao como catalogo inteiro: liberar
-	tudo enquanto o dado nao chegou daria ao jogador uma oferta que ele nao pagou, e a
-	primeira wave de loja e cedo o bastante para a corrida acontecer de verdade.
+	A profile that has not loaded counts as empty, not as the whole catalog: unlocking
+	everything while the data has not arrived would give the player an offer they did not
+	pay for, and the first shop wave is early enough for that race to really happen.
 
-	Carta de prazo que ele acabou de usar fica de fora desta abertura (ver o `_rest`):
-	ela esta destravada, mas descansando. Nao ha aviso na tela -- de uma oferta de tres
-	cartas nao da para deduzir quais nao foram sorteadas, e a carta volta sozinha.
+	A timed card they just used is left out of this opening (see `_rest`): it is unlocked,
+	but resting. There is no notice on screen: from a three-card offer you cannot tell
+	which were not drawn, and the card comes back on its own.
 
-	Carta de uma vez so que ele ja comprou fica de fora **do resto da partida** (ver o
-	`_spend`). Essa nao volta: a pool dele encolhe conforme ele monta a build, e e isso
-	que faz cada uma dessas cartas ser uma escolha em vez de um numero para repetir.
+	A one-time card they already bought is left out **for the rest of the match** (see
+	`_spend`). That one does not come back: their pool shrinks as they build, which is
+	what makes each of those cards a choice instead of a number to repeat.
 
-	Pool vazia nao e erro: e o jogador que gastou os shards em outra coisa e nao tem
-	carta nenhuma destravada. A oferta simplesmente nao abre para ele -- ver o `Open`.
+	An empty pool is not an error: it is the player who spent their shards on something
+	else and has no card unlocked. The offer simply does not open for them; see `Open`.
 ]=]
 function CardShopService:_poolFor(player : Player, pool : { any })
 	local dataService = self.Services.DataService
@@ -487,7 +490,7 @@ function CardShopService:_poolFor(player : Player, pool : { any })
 		if not unlocked[card.Id] then continue end
 		if spent[card.Id] then continue end
 
-		-- O numero e a ultima abertura em que ela ainda descansa, e esta e a de agora.
+		-- The number is the last opening in which it still rests, and this is the current one.
 		local restingUntil = resting[card.Id]
 		if restingUntil and self.Token <= restingUntil then continue end
 
@@ -498,23 +501,23 @@ function CardShopService:_poolFor(player : Player, pool : { any })
 end
 
 --[=[
-	Confere o alvo que o cliente mandou contra o tipo de uso da carta. Devolve o
-	alvo ja limpo, ou `nil` e o motivo.
+	Checks the target the client sent against the card's use type. Returns the cleaned
+	target, or `nil` and the reason.
 
-	O cliente escolhe o alvo, e por isso **nada** do que ele manda entra sem passar
-	por aqui: um `Id` de unidade que nao existe, um ponto a dez mil studs daqui, um
-	`Vector3` que na verdade e uma string. Nenhum desses e erro de programa -- e o
-	que chega de um cliente adulterado, e o que chega de um clique legitimo numa
-	torre que foi vendida no mesmo quadro.
+	The client chooses the target, which is why **nothing** it sends gets in without going
+	through here: a unit `Id` that does not exist, a point ten thousand studs away, a
+	`Vector3` that is actually a string. None of these is a program error: it is what
+	arrives from a tampered client, and what arrives from a legitimate click on a tower
+	sold on the same frame.
 
-	O alvo devolvido e **remontado**, campo por campo, em vez de repassado: assim
-	nada mais do que estas duas chaves atravessa para o efeito, por mais que o
-	cliente tenha enfiado na tabela.
+	The returned target is **rebuilt**, field by field, instead of passed through: that
+	way nothing beyond these two keys crosses to the effect, however much the client
+	stuffed into the table.
 
-	A ultima conferencia de uma carta de area e o lugar estar livre das outras areas
-	**deste jogador** (ver `CardModifierService:FindZoneOverlap`). Ela e feita aqui, e
-	nao dentro do efeito, pelo mesmo motivo das outras: alvo recusado nao gasta a
-	carta, e o jogador volta para a mira com ela ainda na mao.
+	The last check for an area card is that the spot is free of **this player's** other
+	areas (see `CardModifierService:FindZoneOverlap`). It is done here, not inside the
+	effect, for the same reason as the others: a refused target does not spend the card,
+	and the player returns to aiming with it still in hand.
 ]=]
 function CardShopService:_checkTarget(player : Player, card, target : any)
 	local use = RoundCardConfig.GetUse(card.Id)
@@ -524,7 +527,7 @@ function CardShopService:_checkTarget(player : Player, card, target : any)
 	end
 
 	if typeof(target) ~= "table" then
-		return nil, "sem alvo"
+		return nil, "no target"
 	end
 
 	local checked = {}
@@ -532,11 +535,11 @@ function CardShopService:_checkTarget(player : Player, card, target : any)
 	if use == RoundCardConfig.Use.Unit or use == RoundCardConfig.Use.Move then
 		local unitService = self.Services.UnitService
 		if not unitService then
-			return nil, "sem UnitService"
+			return nil, "no UnitService"
 		end
 
 		if typeof(target.UnitId) ~= "string" or not unitService.UnitsById[target.UnitId] then
-			return nil, "unidade fora do mapa"
+			return nil, "unit is not on the map"
 		end
 
 		checked.UnitId = target.UnitId
@@ -546,49 +549,49 @@ function CardShopService:_checkTarget(player : Player, card, target : any)
 		local position = target.Position
 
 		if typeof(position) ~= "Vector3" then
-			return nil, "sem posicao"
+			return nil, "no position"
 		end
 
-		-- NaN passa por qualquer comparacao de tamanho, entao ele e pego pelo unico
-		-- teste que ele nao passa: ser igual a si mesmo.
+		-- NaN passes any size comparison, so it is caught by the only test it does
+		-- not pass: being equal to itself.
 		if position.X ~= position.X or position.Y ~= position.Y or position.Z ~= position.Z then
-			return nil, "posicao NaN"
+			return nil, "NaN position"
 		end
 
 		if position.Magnitude > RoundCardConfig.Targeting.MaxDistance then
-			return nil, "posicao longe demais"
+			return nil, "position too far away"
 		end
 
 		checked.Position = position
 	end
 
 	--[[
-		O giro que o jogador escolheu no fantasma, em radianos, so no eixo Y -- as
-		torres ficam de pe, e o posicionamento nunca ofereceu outro eixo.
+		The rotation the player chose on the ghost, in radians, on the Y axis only: towers
+		stand upright, and placement never offered another axis.
 
-		Ele e **opcional**: um cliente que nao mande nada continua valendo, e a torre
-		fica com o giro que ja tinha. O que nao vale e mandar lixo, e por isso o
-		numero passa pelos mesmos tres testes da posicao -- ser numero, nao ser NaN e
-		nao ser infinito -- antes de ser dobrado para uma volta.
+		It is **optional**: a client that sends nothing is still valid, and the tower keeps
+		its current rotation. What is not valid is sending garbage, which is why the number
+		goes through the same three tests as the position (being a number, not NaN, and not
+		infinite) before being wrapped to one turn.
 	]]
 	if use == RoundCardConfig.Use.Move and target.Rotation ~= nil then
 		local rotation = target.Rotation
 
 		if typeof(rotation) ~= "number" or rotation ~= rotation or math.abs(rotation) == math.huge then
-			return nil, "giro invalido"
+			return nil, "invalid rotation"
 		end
 
 		checked.Rotation = rotation % (2 * math.pi)
 	end
 
 	--[[
-		Area encostando em area, so no `Use.Area`: o `Move` tambem manda uma posicao, mas
-		ela e o destino de uma torre, e nao um anel -- quem confere aquilo e o
-		`PlacementUtil`, pelas regras de posicionamento.
+		Area touching area, only for `Use.Area`: `Move` also sends a position, but it is a
+		tower's destination, not a ring: `PlacementUtil` checks that, by the placement
+		rules.
 
-		O cliente ja pinta a mira de vermelho aqui e nao deixa confirmar, entao chegar
-		neste ramo e cliente adulterado ou corrida de verdade: duas cartas de area usadas
-		no mesmo quadro, a segunda em cima da primeira.
+		The client already paints the aim red here and does not allow confirming, so
+		reaching this branch is a tampered client or a real race: two area cards used on the
+		same frame, the second on top of the first.
 	]]
 	if use == RoundCardConfig.Use.Area then
 		local modifiers = self.Services.CardModifierService
@@ -599,14 +602,14 @@ function CardShopService:_checkTarget(player : Player, card, target : any)
 		)
 
 		if overlap then
-			return nil, string.format("area encostando na do %s", tostring(overlap.Card))
+			return nil, string.format("area touches the one from %s", tostring(overlap.Card))
 		end
 	end
 
 	return checked
 end
 
---- A dificuldade em uso, pelo nome. E ela que decide o intervalo da loja.
+--- The difficulty in use, by name. It decides the shop interval.
 function CardShopService:_difficultyName() : string?
 	local waveService = self.Services.WaveService
 	local preset = (waveService and waveService.Difficulty)
@@ -615,7 +618,7 @@ function CardShopService:_difficultyName() : string?
 	return preset and preset.Name
 end
 
---- As cartas que este jogador tem na mao, como lista de `{ Uid, Id }`.
+--- The cards this player has in hand, as a list of `{ Uid, Id }`.
 function CardShopService:_ownedList(player : Player)
 	local owned = self.Owned[player.UserId]
 	if not owned then return {} end
@@ -629,11 +632,11 @@ function CardShopService:_ownedList(player : Player)
 end
 
 --[=[
-	O estado da loja como este jogador o ve: a oferta aberta dele (se houver) e as
-	cartas que ele ja comprou e ainda nao usou.
+	The shop state as this player sees it: their open offer (if any) and the cards they
+	already bought and have not used.
 
-	As duas coisas juntas de proposito: e este pacote que reconstroi a tela inteira
-	de quem acabou de carregar a interface, e nao so a parte que mudou.
+	Both together on purpose: this bundle is what rebuilds the whole screen of a player
+	who just loaded the interface, not only the part that changed.
 ]=]
 function CardShopService:_sendState(player : Player)
 	local offer = self.Offers[player.UserId]
@@ -647,23 +650,23 @@ function CardShopService:_sendState(player : Player)
 end
 
 --[=[
-	Abre uma oferta para estes jogadores. Sem lista, para a sala inteira.
+	Opens an offer for these players. Without a list, for the whole room.
 
-	Cada um sorteia o seu, da **pool dele** (as cartas que ele destravou no lobby), mas
-	o `Token` e o mesmo da abertura: e ele que invalida de uma vez as ofertas
-	anteriores, inclusive as de quem nao comprou nada na rodada passada.
+	Each one draws their own, from **their pool** (the cards they unlocked in the Lobby),
+	but the `Token` is the same for the opening: it invalidates previous offers at once,
+	including those of players who bought nothing last round.
 
-	Jogador sem carta destravada nao recebe oferta, e a dele e **apagada** em vez de
-	deixada como estava: sem isso ele ficaria com a oferta da wave de loja anterior na
-	tela, e o `Token` novo faria cada clique nela ser recusado como "oferta vencida".
+	A player with no unlocked card gets no offer, and theirs is **erased** instead of left
+	as it was: without that they would keep the previous shop wave's offer on screen, and
+	the new `Token` would make every click on it be refused as an "expired offer".
 
-	Devolve true quando pelo menos um jogador recebeu oferta.
+	Returns true when at least one player got an offer.
 ]=]
 function CardShopService:Open(players : { Player }?, waveNumber : number?)
 	local tutorialService = Framework:Get("TutorialMatchService", false, false)
 	local pool = self:_pool()
 	if #pool == 0 then
-		warn("[CardShopService]: nenhuma carta com efeito registrado; a loja nao abriu.")
+		log:Warn("no card has a registered effect; the shop did not open.")
 		return false
 	end
 
@@ -692,11 +695,11 @@ function CardShopService:Open(players : { Player }?, waveNumber : number?)
 		end
 
 		--[[
-			O tutorial planta a carta do passo na rotação.
+			The tutorial plants the step's card in the rotation.
 
-			Ela **substitui** a primeira sorteada em vez de somar uma quarta: a oferta
-			tem três vagas na tela, e uma quarta carta ficaria fora do desenho. Estando
-			ela já sorteada, nada muda.
+			It **replaces** the first drawn card instead of adding a fourth: the offer has
+			three slots on screen, and a fourth card would fall outside the drawing. If it
+			was already drawn, nothing changes.
 		]]
 		local forcedCard = tutorialService and tutorialService:ForcedCard(wave)
 		if forcedCard and not table.find(cards, forcedCard) then
@@ -719,47 +722,47 @@ end
 --[[ API ]]
 
 --[=[
-	A compra. Devolve a carta comprada e o `uid` dela, ou nil e o motivo.
+	The purchase. Returns the bought card and its `uid`, or nil and the reason.
 
-	As quatro conferencias sao as quatro maneiras de o pedido estar velho ou
-	torto: oferta que nao existe, oferta de outra abertura, carta que nao estava
-	naquela oferta e dinheiro que nao da. Nenhuma delas e erro de programa -- e o
-	que chega quando o jogador clica duas vezes rapido, quando duas abas de loja
-	se cruzam ou quando alguem manda o evento na mao.
+	The four checks are the four ways the request can be stale or off: an offer that does
+	not exist, an offer from another opening, a card that was not in that offer, and
+	money that is not enough. None of them is a program error: it is what arrives when
+	the player double-clicks, when two shop tabs cross, or when someone sends the event by
+	hand.
 ]=]
 function CardShopService:Buy(player : Player, token : any, cardId : any)
 	local offer = self.Offers[player.UserId]
 	if not offer then
-		return nil, "sem oferta aberta"
+		return nil, "no open offer"
 	end
 
 	if offer.Token ~= token then
-		return nil, "oferta vencida"
+		return nil, "expired offer"
 	end
 
 	if not table.find(offer.Cards, cardId) then
-		return nil, "carta fora da oferta"
+		return nil, "card is not in the offer"
 	end
 
 	local card = RoundCardConfig.Get(cardId)
 	if not card then
-		return nil, "carta desconhecida"
+		return nil, "unknown card"
 	end
 
-	-- Com um passo de compra aberto, o tutorial só deixa passar a carta dele.
+	-- With a purchase step open, the tutorial only lets its card through.
 	local tutorialService = Framework:Get("TutorialMatchService", false, false)
 	if tutorialService and not tutorialService:CanBuy(cardId) then
-		return nil, "fora do passo do tutorial"
+		return nil, "outside the tutorial step"
 	end
 
 	local mobService = self.Services.MobService
 	if not mobService then
-		return nil, "sem MobService"
+		return nil, "no MobService"
 	end
 
 	local price = math.max(0, card.Price or 0)
 	if mobService:getCash(player) < price then
-		return nil, "dinheiro insuficiente"
+		return nil, "not enough cash"
 	end
 
 	mobService:spendCash(player, price)
@@ -777,14 +780,14 @@ function CardShopService:Buy(player : Player, token : any, cardId : any)
 	owned[uid] = card.Id
 
 	--[[
-		A carta que empilha sai da mesa dele aqui, na compra: dai para a frente ela nao e
-		mais sorteada nesta partida, tenha sido usada ou nao. Ver o `_isStacking`.
+		A stacking card leaves their table here, on purchase: from then on it is not drawn
+		again this match, used or not. See `_isStacking`.
 	]]
 	if self:_isStacking(card) then
 		self:_spend(player, card.Id)
 	end
 
-	-- Uma compra por abertura: a oferta fecha para quem comprou.
+	-- One purchase per opening: the offer closes for the buyer.
 	self.Offers[player.UserId] = nil
 
 	Framework:Fire("RoundCardBought", player, {
@@ -793,26 +796,26 @@ function CardShopService:Buy(player : Player, token : any, cardId : any)
 		uid = uid,
 	})
 
-	print(string.format("[CardShopService]: %s comprou '%s' por %d.", player.Name, card.Id, price))
+	log:Debug(string.format("%s bought '%s' for %d.", player.Name, card.Id, price))
 
 	return card, uid
 end
 
 --[=[
-	O uso. A carta e gasta **antes** do efeito rodar: se o efeito estourar, a carta
-	nao volta para a mao do jogador com o estado da sala ja meio mexido.
+	The use. The card is spent **before** the effect runs: if the effect errors, the card
+	does not return to the player's hand with the room's state already half changed.
 
-	**O efeito espera o gesto.** Carta com `Visual.EffectDelay` roda o efeito aquele
-	tanto de segundos depois, que e o instante do marcador `VFX` da animacao: o
-	congelamento cai junto com o estouro das particulas, e nao no clique. O que **nao**
-	espera e nada disso: a carta sai da mao e o `RoundCardUsed` e disparado na hora,
-	senao o jogador clicaria de novo achando que o primeiro clique nao pegou.
+	**The effect waits for the gesture.** A card with `Visual.EffectDelay` runs the effect
+	that many seconds later, the instant of the animation's `VFX` marker: the freeze lands
+	with the particle burst, not on the click. What does **not** wait is everything else:
+	the card leaves the hand and `RoundCardUsed` fires immediately, or the player would
+	click again thinking the first click did not register.
 
-	O atraso e daqui, e nao do cliente que esta tocando a animacao. Ele e quem tem o
-	marcador na mao, mas quem executa efeito e o servidor -- deixar o cliente dizer
-	"agora" seria deixa-lo escolher a hora de congelar a sala inteira.
+	The delay lives here, not on the client playing the animation. The client holds the
+	marker, but the server runs effects: letting the client say "now" would let it choose
+	when to freeze the whole room.
 
-	Devolve a carta usada, ou nil e o motivo.
+	Returns the used card, or nil and the reason.
 ]=]
 function CardShopService:Use(player : Player, uid : any, target : any)
 	local tutorialService = Framework:Get("TutorialMatchService", false, false)
@@ -820,33 +823,33 @@ function CardShopService:Use(player : Player, uid : any, target : any)
 	local cardId = owned and owned[uid]
 
 	if not cardId then
-		return nil, "carta nao esta com o jogador"
+		return nil, "the player does not hold the card"
 	end
 
 	local card = RoundCardConfig.Get(cardId)
 	if not card then
 		owned[uid] = nil
-		return nil, "carta desconhecida"
+		return nil, "unknown card"
 	end
 
 	local effect = self.Effects[card.Effect]
 	if not effect then
-		return nil, "carta sem efeito"
+		return nil, "card has no effect"
 	end
 
-	-- O tutorial tranca a carta dele até o passo que a pede abrir.
+	-- The tutorial locks its card until the step that asks for it opens.
 	if tutorialService and not tutorialService:CanUse(cardId) then
-		return nil, "a carta ainda nao pode ser usada no tutorial"
+		return nil, "the card cannot be used in the tutorial yet"
 	end
 
 	--[[
-		O alvo e conferido **antes** de a carta sair da mao. Errar o lugar -- clicar
-		no ceu, escolher uma torre que acabou de ser vendida -- devolve a mira ao
-		jogador com a carta ainda na hotbar; so um alvo aceito gasta a compra.
+		The target is checked **before** the card leaves the hand. Getting the spot wrong
+		(clicking the sky, choosing a tower that was just sold) returns aiming to the player
+		with the card still in the hotbar; only an accepted target spends the purchase.
 
-		E a unica coisa que e conferida antes: o resto (o efeito estourar, por
-		exemplo) acontece com a carta ja gasta, de proposito, para o estado da sala
-		nunca ficar meio mexido com a carta de volta na mao.
+		It is the only thing checked beforehand: the rest (the effect erroring, for
+		example) happens with the card already spent, on purpose, so the room's state is
+		never half changed with the card back in hand.
 	]]
 	local checked, reason = self:_checkTarget(player, card, target)
 	if not checked then
@@ -855,20 +858,20 @@ function CardShopService:Use(player : Player, uid : any, target : any)
 
 	owned[uid] = nil
 
-	-- O passo do tutorial que pedia esta carta fecha aqui: a carta saiu da mão com
-	-- alvo aceito, que é o que "usar" quer dizer.
+	-- The tutorial step that asked for this card closes here: the card left the hand
+	-- with an accepted target, which is what "using" means.
 	if tutorialService then
 		tutorialService:NoteUse(cardId)
 	end
 
 	--[[
-		A carta de prazo sai do sorteio dele por uma abertura, e e aqui que isso e
-		marcado -- no **uso**, e nao na compra. Comprar e guardar na hotbar nao gastou
-		janela nenhuma; o que a regra cobra e ter tido o efeito no campo.
+		A timed card leaves their draw for one opening, and this is where that is marked:
+		on **use**, not purchase. Buying and keeping it in the hotbar spent no window; what
+		the rule charges is having had the effect on the field.
 
-		A que empilha ja saiu da mesa na compra, e e remarcada aqui so pelo caminho de
-		fora da loja: uma carta que chegou a mao sem passar pelo `Buy` nunca viu o
-		`_spend`.
+		A stacking card already left the table on purchase, and is marked again here only
+		for the path outside the shop: a card that reached the hand without going through
+		`Buy` never saw `_spend`.
 	]]
 	if self:_isTemporary(card) then
 		self:_rest(player, card.Id)
@@ -882,21 +885,20 @@ function CardShopService:Use(player : Player, uid : any, target : any)
 	})
 
 	--[[
-		O gesto vai para a sala inteira, e nao so para quem pagou.
+		The gesture goes to the whole room, not only the payer.
 
-		`RoundCardUsed` continua sendo particular porque ele mexe na **mao** de quem
-		usou (tira a carta do deck dele), e isso nao e da conta de mais ninguem. O que
-		e da conta de todo mundo e a cena: o Time Stop congela os inimigos da sala, e
-		ate agora so o dono ouvia e via isso acontecer.
+		`RoundCardUsed` stays private because it changes the user's **hand** (removes the
+		card from their deck), and that is nobody else's business. What is everyone's
+		business is the scene: Time Stop freezes the room's enemies, and without this only
+		the owner would hear and see it happen.
 
-		Sai so para os outros: quem usou ja recebeu o `RoundCardUsed`, e e ele que
-		dispara o gesto completo na tela dele -- animacao, trava e o marcador da
-		propria animacao no comando. Mandar os dois para a mesma pessoa faria o som
-		tocar duas vezes.
+		It only goes to the others: the user already received `RoundCardUsed`, which fires
+		the full gesture on their screen (animation, lock, and their own animation's marker
+		in charge). Sending both to the same person would play the sound twice.
 
-		A animacao em si nao viaja aqui: ela toca no personagem de quem usou, e o
-		`Animator` replica isso sozinho para todo mundo. O que falta nas outras telas,
-		e o que este evento leva, e o som e as particulas.
+		The animation itself does not travel here: it plays on the user's character, and
+		the `Animator` replicates that to everyone on its own. What the other screens lack,
+		and what this event carries, is the sound and the particles.
 	]]
 	if card.Visual then
 		for _, plr in Players:GetPlayers() do
@@ -915,26 +917,26 @@ function CardShopService:Use(player : Player, uid : any, target : any)
 		local ok, result = pcall(effect, self, player, card.Params or {}, context)
 
 		if not ok then
-			warn(string.format("[CardShopService]: o efeito de '%s' estourou (%s).", card.Id, tostring(result)))
+			log:Warn(string.format("the effect of '%s' errored (%s).", card.Id, tostring(result)))
 			return
 		end
 
-		print(string.format("[CardShopService]: %s usou '%s' -- %s.", player.Name, card.Id, tostring(result)))
+		log:Debug(string.format("%s used '%s': %s.", player.Name, card.Id, tostring(result)))
 
 		--[[
-			O estouro na torre que a carta pegou.
+			The burst on the tower the card took.
 
-			Junto com o efeito, e nao no clique: carta com `EffectDelay` entra depois do
-			gesto, e o estouro tem que cair com ela. E depois do efeito ter dado certo --
-			um efeito que estourou nao encostou em torre nenhuma, e o estouro estaria
-			prometendo uma coisa que nao aconteceu.
+			Together with the effect, not on the click: a card with `EffectDelay` comes in
+			after the gesture, and the burst must land with it. And after the effect
+			succeeded: an effect that errored touched no tower, and the burst would promise
+			something that did not happen.
 
-			Fica aqui, e nao dentro de cada efeito, porque quem sabe que a carta tinha
-			uma torre por alvo e o alvo dela: um efeito novo de alvo unico ja nasce com
-			o estouro sem escrever nada.
+			It lives here, not inside each effect, because what knows the card had a tower
+			as its target is its target: a new single-target effect gets the burst without
+			writing anything.
 
-			Vai para **todos**: a carta e comprada por uma pessoa, mas a sala inteira ve
-			a torre reagir.
+			It goes to **everyone**: the card is bought by one person, but the whole room
+			sees the tower react.
 		]]
 		if checked.UnitId then
 			for _, plr in Players:GetPlayers() do
@@ -944,9 +946,9 @@ function CardShopService:Use(player : Player, uid : any, target : any)
 	end
 
 	--[[
-		Tempo real, e nao `GameClock`: o gesto e uma animacao tocando no personagem, e
-		ela nao acelera com a partida. Passar pelo relogio acelerado faria o efeito
-		entrar antes do estouro justamente quando o jogo esta a 3x.
+		Real time, not `GameClock`: the gesture is an animation playing on the character,
+		and it does not speed up with the match. Going through the sped-up clock would make
+		the effect land before the burst exactly when the game is at 3x.
 	]]
 	local delay = card.Visual and card.Visual.EffectDelay
 
@@ -960,20 +962,20 @@ function CardShopService:Use(player : Player, uid : any, target : any)
 end
 
 --[=[
-	Zera junto com o round. As cartas sao de partida: nao ha o que carregar para a
-	proxima, nem oferta aberta que sobreviva a tela de resultado.
+	Resets with the round. Cards belong to the match: there is nothing to carry to the
+	next one, nor an open offer that survives the results screen.
 ]=]
 function CardShopService:ResetRound()
 	table.clear(self.Offers)
 	table.clear(self.Owned)
 
-	-- O descanso e contado em aberturas desta partida, e a mesa e desta partida: a
-	-- proxima comeca do zero, com o catalogo inteiro de volta na pool de cada um.
+	-- Rest is counted in this match's openings, and the table is this match's: the
+	-- next one starts from zero, with the whole catalog back in each player's pool.
 	table.clear(self.Resting)
 	table.clear(self.Spent)
 
-	-- As regras que as cartas deixaram no campo saem junto: um anel de cajado nao
-	-- pode sobreviver a tela de resultado.
+	-- The rules cards left on the field go too: a staff's ring must not
+	-- survive the results screen.
 	local modifiers = self.Services.CardModifierService
 	if modifiers then
 		modifiers:ResetRound()
@@ -984,37 +986,36 @@ function CardShopService:ResetRound()
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 --[=[
-	Confere se o `EffectDelay` e o `SoundDelay` das cartas ainda batem com a animacao
-	delas.
+	Checks whether the cards' `EffectDelay` and `SoundDelay` still match their animation.
 
-	Os numeros no config sao **copias** dos instantes dos marcadores `VFX` e `Sound`,
-	e copia envelhece: reanimar a carta no Moon Animator move os marcadores e deixa o
-	efeito entrando fora do gesto -- sem erro nenhum no log, so torto na tela. E o
-	mesmo tipo de desencontro silencioso que os nomes dos botoes de dificuldade ja
-	causaram, e a resposta e a mesma: conferir na subida e avisar.
+	The config numbers are **copies** of the `VFX` and `Sound` marker instants, and copies
+	go stale: reanimating the card in Moon Animator moves the markers and leaves the
+	effect landing off the gesture, with no error in the log, just off on screen. It is
+	the same kind of silent mismatch mislabeled difficulty buttons can cause, and the
+	answer is the same: check on startup and warn.
 
-	Os dois numeros valem para **quem nao esta tocando a animacao**: o `EffectDelay`
-	cronometra o efeito aqui no servidor, e os dois cronometram o som e as particulas
-	na tela de quem esta assistindo o gesto de outro jogador (o marcador so chega em
-	quem carregou a track). Um desvio aqui sai como o som da sala fora do gesto do
-	dono, e por isso os dois sao conferidos e nao so um.
+	Both numbers apply to **whoever is not playing the animation**: `EffectDelay` times the
+	effect here on the server, and both time the sound and particles on the screen of
+	someone watching another player's gesture (the marker only reaches whoever loaded the
+	track). A drift here shows up as the room's sound off the owner's gesture, which is
+	why both are checked and not just one.
 
-	**So avisa.** Ele nao corrige o numero com o que baixou: cronometrar o efeito da
-	sala por uma chamada web que pode falhar ou demorar seria pior do que o desvio
-	que ele pega. Falha de download tambem passa calada -- o jogo nao depende dela.
+	**It only warns.** It does not correct the number with what it downloaded: timing the
+	room's effect by a web call that may fail or lag would be worse than the drift it
+	catches. A download failure also passes quietly: the game does not depend on it.
 ]=]
 function CardShopService:_auditVisualDelays()
 	--[[
-		Cada linha e "o campo do config" contra "o parametro do marcador que ele
-		copia". Um `Visual` que declare so um dos dois e conferido so nele: o
-		`SoundDelay` nao e obrigatorio, uma carta que nao toca som nao precisa dele.
+		Each line is "the config field" against "the marker parameter it copies". A
+		`Visual` that declares only one of the two is checked only on it: `SoundDelay` is
+		not required, and a card that plays no sound does not need it.
 	]]
 	local MIRRORED = {
-		{ Field = "EffectDelay", Parameter = RoundCardConfig.Markers.VFX, What = "aplica o efeito" },
-		{ Field = "SoundDelay", Parameter = RoundCardConfig.Markers.Sound, What = "toca o som" },
+		{ Field = "EffectDelay", Parameter = RoundCardConfig.Markers.VFX, What = "applies the effect" },
+		{ Field = "SoundDelay", Parameter = RoundCardConfig.Markers.Sound, What = "plays the sound" },
 	}
 
 	for _, card in RoundCardConfig.Cards do
@@ -1041,15 +1042,15 @@ function CardShopService:_auditVisualDelays()
 			end
 
 			if not markedAt then
-				warn(string.format(
-					"[CardShopService]: a animacao de '%s' nao tem marcador '%s' com o parametro '%s'; o %s vai entrar em %.3fs sem nada acontecendo na tela.",
+				log:StudioWarn(string.format(
+					"the animation of '%s' has no '%s' marker with the '%s' parameter; %s will fire at %.3fs with nothing happening on screen.",
 					card.Id, tostring(visual.Marker), mirrored.Parameter, mirrored.Field, copied))
 				continue
 			end
 
 			if math.abs(markedAt - copied) > EFFECT_DELAY_TOLERANCE then
-				warn(string.format(
-					"[CardShopService]: '%s' %s em %.3fs, mas o marcador '%s' da animacao esta em %.3fs. Acerte o %s no RoundCardConfig.",
+				log:StudioWarn(string.format(
+					"'%s' %s at %.3fs, but the animation's '%s' marker is at %.3fs. Fix %s in RoundCardConfig.",
 					card.Id, mirrored.What, copied, mirrored.Parameter, markedAt, mirrored.Field))
 			end
 		end
@@ -1059,8 +1060,8 @@ end
 function CardShopService:construct()
 	local tutorial = Framework:Get("TutorialMatchService", false, false)
 
-	-- Num fio proprio: ele baixa as animacoes das cartas, e a loja nao tem por que
-	-- esperar isso para existir.
+	-- On its own thread: it downloads the cards' animations, and the shop has no reason
+	-- to wait for that to exist.
 	task.spawn(function()
 		self:_auditVisualDelays()
 	end)
@@ -1070,11 +1071,11 @@ function CardShopService:construct()
 	if waveService and waveService.Signals and waveService.Signals.WaveStarted then
 		waveService.Signals.WaveStarted:Connect(function(waveNumber, preset)
 			--[[
-				O tutorial abre a loja na wave que o roteiro dele mandar -- o passo da
-				wave 2, que e justamente aprender a comprar -- e **so** nela: no
-				tutorial o calendario nao conta (`ShopIsScripted`). Sem isso a wave 4
-				caia no intervalo de 4 do `RoundCardConfig` e a oferta voltava sozinha
-				no meio do passo do 2x, sem o roteiro ter pedido.
+				The tutorial opens the shop on the wave its script says (the wave 2 step, which
+				is exactly learning to buy) and **only** there: in the tutorial the calendar
+				does not count (`ShopIsScripted`). Without this, wave 4 would fall on
+				`RoundCardConfig`'s interval of 4 and the offer would come back on its own in
+				the middle of the 2x step, without the script asking.
 			]]
 			local scripted = tutorial and tutorial:ShopIsScripted()
 			local forced = tutorial and tutorial:ShouldOpenShop(waveNumber)
@@ -1088,18 +1089,18 @@ function CardShopService:construct()
 			self:Open(nil, waveNumber)
 		end)
 	else
-		warn("[CardShopService]: WaveService sem o sinal WaveStarted; a loja nao vai abrir sozinha.")
+		log:Warn("WaveService has no WaveStarted signal; the shop will not open on its own.")
 	end
 
 	Framework:Listen("BuyRoundCard", function(player : Player, token : any, cardId : any)
 		local card, reason = self:Buy(player, token, cardId)
 
 		if not card then
-			-- O cliente ja tinha recolhido a loja no clique; o estado devolve a
-			-- verdade para a tela dele.
+			-- The client had already closed the shop on the click; the state returns the
+			-- truth to its screen.
 			self:_sendState(player)
 
-			print(string.format("[CardShopService]: compra de %s recusada (%s).", player.Name, tostring(reason)))
+			log:Debug(string.format("purchase by %s refused (%s).", player.Name, tostring(reason)))
 		end
 	end)
 
@@ -1109,14 +1110,14 @@ function CardShopService:construct()
 		if not card then
 			self:_sendState(player)
 
-			print(string.format("[CardShopService]: uso de %s recusado (%s).", player.Name, tostring(reason)))
+			log:Debug(string.format("use by %s refused (%s).", player.Name, tostring(reason)))
 		end
 	end)
 
 	--[[
-		O cliente pergunta quando termina de ligar a interface. Sem isso, quem
-		recarrega a GUI no meio de uma oferta aberta so a veria na proxima abertura
-		-- e as cartas ja compradas sumiriam da hotbar dele.
+		The client asks when it finishes setting up the interface. Without this, a player
+		reloading the GUI in the middle of an open offer would only see it at the next
+		opening, and the cards already bought would vanish from their hotbar.
 	]]
 	Framework:Listen("RequestRoundCardState", function(player : Player)
 		self:_sendState(player)
@@ -1141,8 +1142,8 @@ end
 function CardShopService:init()
 	self.WarnedEffects = {}
 
-	-- So o servidor dispara estes; sem o Listen vazio o cliente ficaria dez
-	-- segundos esperando o identificador aparecer (ver o README da raiz).
+	-- Only the server fires these; without the empty Listen the client would wait ten
+	-- seconds for the identifier to appear (see docs/architecture/me-framework.md).
 	Framework:Listen("RoundCardState", function() end)
 	Framework:Listen("RoundCardBought", function() end)
 	Framework:Listen("RoundCardUsed", function() end)

@@ -13,24 +13,23 @@ local Me = require(Vendor.Me)
 
 local Framework = Me.new()
 
--- O som de carta escolhida, em SoundService.SharedSounds.SFX.
+-- The card-selected sound, in SoundService.SharedSounds.SFX.
 local CARD_SOUND = "CardFlip"
 
 --[=[
-	A ponte entre o deck do perfil e a hotbar da partida.
+	The bridge between the profile's deck and the match hotbar.
 
-	Aqui nao se desenha nada: quem desenha e o componente `Card`
-	(`UILibraryController/Components/Card.luau`), que clona o `CardWrapper` autorado
-	no `TowerContainer` e acomoda as cartas no arco. Este controller decide **o
-	que** aparece, **quantas** cartas cada uma tem e **qual esta escolhida**.
+	Nothing is drawn here: the `Card` component draws
+	(`UILibraryController/Components/Card.luau`), cloning the `CardWrapper` authored in
+	`TowerContainer` and fitting the cards into the arc. This controller decides
+	**what** appears, **how many** of each card there are, and **which is selected**.
 
-	- a lista de cartas e o deck montado no lobby (`EquippedUnits`), na ordem dos
-	  slots e sem os buracos -- ver `DeckConfig.resolve`/`unitList` e o README do
-	  Game;
-	- a quantidade de cada carta vem do servidor (`UpdateCardCounts`), que tambem
-	  sai do deck;
-	- a carta escolhida cresce e apaga as outras, entao toda troca de `Equipped`
-	  avisa o componente -- e e nela que o `CardFlip` toca.
+	- the card list is the deck built in the Lobby (`EquippedUnits`), in slot order and
+	  without gaps; see `DeckConfig.resolve`/`unitList` and docs/game/hotbar.md;
+	- each card's count comes from the server (`UpdateCardCounts`), which also derives
+	  it from the deck;
+	- the selected card grows and dims the others, so every `Equipped` change notifies
+	  the component, and that is where `CardFlip` plays.
 ]=]
 local CardController = {
 	Controllers = {
@@ -45,7 +44,7 @@ local CardController = {
 	Cash = 0,
 	Equipped = nil,
 
-	-- A hotbar imposta pelo tutorial, quando há uma. Nil numa partida comum.
+	-- The hotbar imposed by the tutorial, when there is one. Nil in a regular match.
 	TutorialDeck = nil,
 }
 
@@ -56,12 +55,12 @@ function CardController:_component(func : string, ...)
 end
 
 --[=[
-	Guarda qual unidade esta na mao e conta para a hotbar, que cresce essa carta e
-	apaga as outras. E o unico caminho para mexer no `Equipped` -- assim a tela
-	nunca discorda do que o `UnitPlacementController` esta mostrando no chao.
+	Stores which unit is in hand and tells the hotbar, which grows that card and dims
+	the others. It is the only way to change `Equipped`, so the screen never disagrees
+	with what `UnitPlacementController` shows on the ground.
 
-	O som toca so quando uma carta **entra** na mao: largar a unidade e o mesmo
-	caminho com `nil`, e ai nao ha carta nenhuma para virar.
+	The sound only plays when a card **enters** the hand: dropping the unit is the same
+	path with `nil`, and then there is no card to flip.
 ]=]
 function CardController:_setEquipped(unitName : string?)
 	if self.Equipped == unitName then
@@ -77,7 +76,7 @@ function CardController:_setEquipped(unitName : string?)
 end
 
 --[=[
-	O som de carta virando, o mesmo do painel de deck no lobby
+	The card-flip sound, the same as the Lobby deck panel's
 	(`SoundService.SharedSounds.SFX`).
 ]=]
 function CardController:_playCardSound()
@@ -89,19 +88,19 @@ function CardController:_playCardSound()
 end
 
 --[=[
-	Um clique numa carta.
+	A click on a card.
 
-	Clicar na carta que ja esta na mao larga a unidade; clicar em outra troca. Sem
-	unidade sobrando na carta, nao acontece nada -- a carta ja esta apagada na tela
-	por conta do proprio contador.
+	Clicking the card already in hand drops the unit; clicking another switches. With
+	no units left on the card, nothing happens: the card is already dimmed on screen
+	because of its own counter.
 ]=]
 function CardController:_onCardActivated(unitName : string)
 	if (self.CardCounts[unitName] or 0) <= 0 then
 		return
 	end
 
-	-- O tutorial pede uma carta específica em alguns passos. Aqui é só educação de
-	-- interface: quem recusa de verdade é o `TutorialMatchService`, no servidor.
+	-- The tutorial asks for a specific card on some steps. This is only interface
+	-- courtesy: `TutorialMatchService` does the real refusing, on the server.
 	local tutorial = self.Controllers.TutorialStepController
 	if tutorial and not tutorial:AllowsCard(unitName) then
 		return
@@ -123,12 +122,12 @@ function CardController:_onCardActivated(unitName : string)
 end
 
 --[=[
-	Redesenha a hotbar a partir do perfil. Roda no boot e a cada escrita do
-	servidor em `Units`, `EquippedUnits` ou `CardLimit`.
+	Redraws the hotbar from the profile. Runs at boot and on every server write to
+	`Units`, `EquippedUnits`, or `CardLimit`.
 
-	Quem nunca montou deck recebe um automatico, o mesmo que o `UnitService` monta
-	do outro lado: as duas pontas leem o mesmo perfil pelas mesmas funcoes, entao a
-	hotbar e as contagens sempre falam da mesma coisa.
+	A player who never built a deck gets an automatic one, the same `UnitService`
+	builds on the other side: both ends read the same profile through the same
+	functions, so the hotbar and the counts always talk about the same thing.
 ]=]
 function CardController:_render()
 	local replica = self.Controllers.DataController:GetReplica()
@@ -138,15 +137,15 @@ function CardController:_render()
 		return
 	end
 
-	-- No tutorial as cartas não saem do perfil: elas são as que o servidor mandou.
+	-- In the tutorial the cards do not come from the profile: they are the ones the server sent.
 	local hotbar = self.TutorialDeck or DeckConfig.unitList(DeckConfig.resolve(profile))
 
 	self:_component("set", hotbar, self.CardCounts, function(unitName : string)
 		self:_onCardActivated(unitName)
 	end)
 
-	-- O deck mudou debaixo da unidade que estava na mao: se ela nao esta mais no
-	-- deck, a mao esvazia; se continua, a hotbar precisa saber que ela e o vertice.
+	-- The deck changed under the unit in hand: if it is no longer in the deck, the
+	-- hand empties; if it still is, the hotbar needs to know it is the apex.
 	if self.Equipped and not table.find(hotbar, self.Equipped) then
 		self.Equipped = nil
 		self.Controllers.UnitPlacementController:unequip()
@@ -158,16 +157,16 @@ end
 --[[ EXTERNAL ]]
 
 --[=[
-	Chamado pelo `UnitPlacementController` quando a unidade sai da mao por fora da
-	hotbar -- depois de colocar, ao cancelar, ao trocar de round.
+	Called by `UnitPlacementController` when the unit leaves the hand outside the
+	hotbar: after placing, on cancel, on round change.
 ]=]
 function CardController:setUnequipState()
 	self:_setEquipped(nil)
 end
 
 function CardController:construct()
-	-- `Gamepasses` esta na lista porque a pass +5 Total Cards muda o teto do deck
-	-- (`DeckConfig.limitFor`), e comprar no meio da partida tem de aparecer.
+	-- `Gamepasses` is in the list because the +5 Total Cards pass changes the deck cap
+	-- (`DeckConfig.limitFor`), and buying it mid-match must show.
 	for _, key in { "Units", "EquippedUnits", "CardLimit", "Gamepasses" } do
 		self.Controllers.DataController:OnConnectChange({ key }, function()
 			self:_render()
@@ -175,9 +174,9 @@ function CardController:construct()
 	end
 
 	--[[
-		O deck do tutorial chega pelo servidor, e não pelo perfil — ele é da partida,
-		não do jogador. Chegando, a hotbar é redesenhada com ele; o `_render` de
-		sempre passa a usá-lo no lugar da leitura do perfil.
+		The tutorial deck arrives from the server, not the profile: it belongs to the
+		match, not the player. When it arrives, the hotbar is redrawn with it; the usual
+		`_render` uses it in place of the profile read.
 	]]
 	Framework:Listen("TutorialDeck", function(units : any)
 		if type(units) ~= "table" then return end
@@ -192,7 +191,7 @@ function CardController:construct()
 	end)
 	Framework:Fire("RequestCardCounts")
 
-	-- O dinheiro da sessao decide se a carta aparece em vermelho (sem grana).
+	-- Session money decides whether the card shows in red (not enough cash).
 	Framework:Listen("UpdateCash", function(amount : number)
 		self.Cash = amount or 0
 		self:_component("setCash", self.Cash)
@@ -200,14 +199,14 @@ function CardController:construct()
 	Framework:Fire("RequestCash")
 
 	--[[
-		O clima pode mexer no preco de colocar (a chuva desconta 25% do Ice), e o
-		preco esta escrito na carta: sem isto o jogador veria o valor antigo ate a
-		hotbar ser redesenhada por outro motivo.
+		Weather can change the placement price (rain discounts Ice by 25%), and the
+		price is written on the card: without this the player would see the old value
+		until the hotbar was redrawn for another reason.
 
-		O `task.defer` e pelo mesmo motivo do `WeatherFeedbackController`: quem guarda
-		o clima atual e o `WeatherController`, que escuta o mesmo evento, e a ordem
-		entre os dois nao e garantida. Um passo de espera e o suficiente para o
-		`GetCurrent` ja responder o clima novo.
+		`task.defer` for the same reason as in `WeatherFeedbackController`:
+		`WeatherController` keeps the current weather and listens to the same event,
+		and the order between the two is not guaranteed. One deferred step is enough
+		for `GetCurrent` to already answer the new weather.
 	]]
 	Framework:Listen("WeatherChanged", function()
 		task.defer(function()

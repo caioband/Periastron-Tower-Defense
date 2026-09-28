@@ -4,24 +4,29 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local RobloxBadges = game:GetService("BadgeService")
 
 local ServerConfig = require(ServerScriptService:WaitForChild("Config"))
+local Log = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Util"):WaitForChild("Log"))
+
+local log = Log.new("BadgeService")
 
 --[[
-	Entrega os badges da Roblox listados em `ServerConfig.Badges`. É a única porta:
-	quem quiser dar um badge chama `BadgeService:Award(player, "Nome")` e não fala
-	com a API da Roblox direto.
+	Awards the Roblox badges listed in `ServerConfig.Badges`. It is the only door:
+	code that wants to award a badge calls `BadgeService:Award(player, "Name")` and
+	does not talk to the Roblox API directly.
 
-	**Por que perguntar antes de dar.** `AwardBadge` num badge que o jogador já tem
-	não quebra nada, mas gasta a mesma cota; o `UserHasBadgeAsync` é barato e a
-	maioria das chamadas é de quem já ganhou. A resposta fica guardada pela sessão,
-	então o mesmo badge não é consultado duas vezes para o mesmo jogador.
+	**Why ask before awarding.** `AwardBadge` on a badge the player already has breaks
+	nothing, but spends the same quota; `UserHasBadgeAsync` is cheap, and most calls
+	are for players who already earned it. The answer is cached for the session, so
+	the same badge is not queried twice for the same player.
 
-	**Retry.** A API de badges falha de vez em quando sob carga; cada chamada tenta
-	`MAX_ATTEMPTS` vezes antes de desistir com um `warn`.
+	**Retry.** The badges API fails now and then under load; each call tries
+	`MAX_ATTEMPTS` times before giving up with a warning.
 
-	**Studio.** A Roblox não entrega badge no Studio, então `Award` não faz nada lá.
+	**Studio.** Roblox does not award badges in Studio, so `Award` does nothing there.
 
-	`Award` pode esperar (é uma chamada de rede); quem não quer esperar chama dentro
-	de um `task.spawn`.
+	`Award` may yield (it is a network call); callers that do not want to wait call
+	it inside a `task.spawn`.
+
+	See docs/common/badges.md.
 ]]
 
 local MAX_ATTEMPTS = 3
@@ -45,21 +50,21 @@ local function withRetry(label : string, callback : () -> any) : (boolean, any)
 		end
 	end
 
-	warn(`[BadgeService]: {label} falhou {MAX_ATTEMPTS}x: {result}`)
+	log:Warn(`{label} failed {MAX_ATTEMPTS}x: {result}`)
 	return false, result
 end
 
 --[[ API ]]
 
 --[=[
-	Dá o badge `name` (a chave em `ServerConfig.Badges`) ao jogador, se ele ainda
-	não tiver. Devolve `true` se o jogador termina com o badge — seja porque ganhou
-	agora, seja porque já tinha.
+	Awards badge `name` (the key in `ServerConfig.Badges`) to the player if they do
+	not have it yet. Returns `true` if the player ends up with the badge, whether they
+	just earned it or already had it.
 ]=]
 function BadgeService:Award(player : Player, name : string) : boolean
 	local badgeId = ServerConfig.Badges[name]
 	if not badgeId then
-		warn(`[BadgeService]: badge "{name}" não existe em ServerConfig.Badges.`)
+		log:StudioWarn(`badge "{name}" is not in ServerConfig.Badges.`)
 		return false
 	end
 
@@ -83,7 +88,7 @@ function BadgeService:Award(player : Player, name : string) : boolean
 		return false
 	end
 
-	-- O jogador pode ter saído durante a consulta.
+	-- The player may have left during the query.
 	if player.Parent ~= Players then
 		return false
 	end
@@ -97,7 +102,7 @@ function BadgeService:Award(player : Player, name : string) : boolean
 		end
 	end
 
-	-- Só grava se a sessão do jogador ainda for a mesma tabela (não saiu no meio).
+	-- Only stores it if the player's session is still the same table (they did not leave midway).
 	if self.Owned[player] == owned then
 		owned[badgeId] = true
 	end
@@ -105,7 +110,7 @@ function BadgeService:Award(player : Player, name : string) : boolean
 	return true
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function BadgeService:construct()
 	Players.PlayerRemoving:Connect(function(player : Player)
@@ -117,7 +122,7 @@ function BadgeService:start()
 end
 
 function BadgeService:init()
-	-- [Player] = { [badgeId] = true }: o que já se sabe que o jogador tem.
+	-- [Player] = { [badgeId] = true }: what the player is already known to have.
 	self.Owned = {}
 
 	self:construct()

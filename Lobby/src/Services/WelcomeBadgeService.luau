@@ -5,22 +5,26 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("WelcomeBadgeService")
 
 --[[
-	O badge `Welcome`: a primeira vez que o jogador entra no jogo.
+	The `Welcome` badge: the player's first time in the game.
 
-	"Primeira vez" é o próprio badge quem guarda — a Roblox sabe se o jogador já tem,
-	e o `BadgeService` pergunta antes de dar. Por isso isto roda em toda entrada, e
-	não depende de nenhuma marca no perfil (que zera quando a `PROFILE_KEY` muda).
+	The badge itself keeps "first time": Roblox knows whether the player already has it,
+	and `BadgeService` asks before awarding. That is why this runs on every join, and
+	depends on no mark on the profile (which resets when `PROFILE_KEY` changes).
 
-	**Por que no `PlayerAdded` e não no `PlayerDataLoaded`.** O badge não depende do
-	perfil; esperar por ele só atrasaria o badge para quem cai com o perfil travado
-	em outra sessão.
+	**Why `PlayerAdded` and not `PlayerDataLoaded`.** The badge does not depend on the
+	profile; waiting for it would only delay the badge for a player whose profile is
+	stuck in another session.
 
-	**Por que fica só na Lobby.** A Game nunca é a primeira place que o jogador vê:
-	ele sempre passa pelo lobby antes.
+	**Why Lobby only.** Game is never the first place the player sees: they always go
+	through the Lobby first.
+
+	See docs/common/badges.md.
 ]]
 
 local BADGE_NAME = "Welcome"
@@ -31,12 +35,12 @@ local WelcomeBadgeService = {
 	}
 }
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function WelcomeBadgeService:construct()
 	local badgeService = self.Services.BadgeService
 	if not badgeService then
-		warn("[WelcomeBadgeService]: sem BadgeService; o badge de boas-vindas não sai.")
+		log:Warn("no BadgeService; the welcome badge will not be awarded.")
 		return
 	end
 
@@ -48,7 +52,7 @@ function WelcomeBadgeService:construct()
 		task.spawn(award, player)
 	end)
 
-	-- Quem entrou antes do `PlayerAdded` estar ligado.
+	-- Players who joined before `PlayerAdded` was connected.
 	for _, player in Players:GetPlayers() do
 		task.spawn(award, player)
 	end

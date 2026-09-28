@@ -1,9 +1,9 @@
 --[[
-	Configuração compartilhada — replicada para o cliente.
+	Shared configuration, replicated to the client.
 
-	Só entra aqui o que o cliente legitimamente precisa ler. O que é sigiloso
-	(chave de DataStore, template de perfil, tabelas de wave, odds de summon,
-	lista de admins) vive em `ServerScriptService.Config`.
+	Only what the client legitimately needs to read goes here. Anything secret
+	(DataStore key, profile template, wave tables, summon odds, admin list) lives
+	in `ServerScriptService.Config`. See docs/architecture/configuration.md.
 ]]
 
 type Shared = {

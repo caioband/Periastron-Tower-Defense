@@ -31,17 +31,19 @@ local ExampleController = {
 local TWEEN_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
 --[[
-	O rotulo de gamepass antes do nome de quem falou: `[VIP] Fulano: oi`.
+	The gamepass tag before the speaker's name: `[VIP] Someone: hi`.
 
-	**Por que o atributo e nao o perfil.** O rotulo precisa aparecer na mensagem dos
-	**outros**, e a replica do perfil so chega ao dono dela -- este cliente nao tem
-	como ler o `Gamepasses` de mais ninguem. O `MonetizationService` publica um
-	atributo por pass com `ChatTag` no `Player`, e atributo replica para a sala
-	inteira; continua sendo o servidor quem escreve, e aqui so se le.
+	**Why the attribute and not the profile.** The tag must appear on **other**
+	players' messages, and the profile replica only reaches its owner: this client
+	cannot read anyone else's `Gamepasses`. `MonetizationService` publishes one
+	attribute per pass with a `ChatTag` on the `Player`, and attributes replicate to
+	the whole room; the server still writes, and this only reads.
 
-	**Por que no cliente.** O `OnIncomingMessage` do `TextChatService` e client-side
-	por natureza -- ele so decora o que ja chegou. Nada aqui decide quem e VIP; a
-	pergunta a Roblox foi feita no servidor uma vez, e isto e a tinta.
+	**Why on the client.** `TextChatService`'s `OnIncomingMessage` is client-side by
+	nature: it only decorates what already arrived. Nothing here decides who is VIP;
+	the question to Roblox was asked once on the server, and this is the paint.
+
+	See docs/common/gamepasses.md.
 ]]
 local TAG_FORMAT = "[%s] "
 
@@ -77,14 +79,15 @@ function ExampleController:start()
 end
 
 --[=[
-	Poe o rotulo de gamepass na frente do nome de quem falou.
+	Puts the gamepass tag in front of the speaker's name.
 
-	So mensagem de jogador e decorada: `TextSource` nulo e o sistema falando (entrou,
-	saiu, um comando), e o `[VIP]` ali seria o servidor parecendo ter comprado a pass.
+	Only player messages are decorated: a nil `TextSource` is the system speaking
+	(joined, left, a command), and a `[VIP]` there would look like the server bought
+	the pass.
 
-	Devolver `nil` deixa a mensagem exatamente como ela chegou, que e o que acontece
-	com quem nao tem pass nenhuma com rotulo. O `PrefixText` autorado ja traz o nome
-	do jogador -- o rotulo entra **antes** dele, e nao no lugar.
+	Returning `nil` leaves the message exactly as it arrived, which is what happens
+	for players with no tagged pass. The authored `PrefixText` already carries the
+	player's name: the tag goes **before** it, not in its place.
 ]=]
 function ExampleController:_bindChatTags()
 	TextChatService.OnIncomingMessage = function(message : TextChatMessage)
@@ -99,9 +102,9 @@ function ExampleController:_bindChatTags()
 		end
 
 		--[[
-			O que o servidor publicou: um atributo por pass com `ChatTag`. Le-se a lista
-			do config em vez de procurar `Pass_VIP` na mao, para uma pass nova com rotulo
-			nao precisar de linha nenhuma aqui.
+			What the server published: one attribute per pass with a `ChatTag`. The
+			config list is read instead of looking for `Pass_VIP` by hand, so a new
+			tagged pass needs no line here.
 		]]
 		local owned = {}
 		for key, pass in GamepassConfig.PASSES do

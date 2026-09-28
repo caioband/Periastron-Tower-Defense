@@ -10,61 +10,65 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 local Signal = require(Packages.Signal)
 
 local RoundCardConfig = SharedConfig.RoundCardConfig
 local RoundCardShopConfig = SharedConfig.RoundCardShopConfig
 
 local Framework = Me.new()
+local log = Log.new("RoundCardShopService")
 
 --[=[
-	A loja de cartas do lobby: quem sorteia a vitrine e quem cobra por ela.
+	The Lobby card shop: it draws the storefront and charges for it.
 
-	Ela vende **acesso** às cartas de round: a compra escreve o `Id` no `RoundCards`
-	do perfil, e é essa tabela que a oferta de round da partida sorteia (ver o
-	`_pool` do `CardShopService`). Regras e preços estão no
-	`SharedConfig.RoundCardShopConfig` — daqui saem só o sorteio e a cobrança.
+	It sells **access** to round cards: a purchase writes the `Id` into the profile's
+	`RoundCards`, and that table is what the match's round offer draws from (see
+	`CardShopService`'s `_pool`). Rules and prices are in
+	`SharedConfig.RoundCardShopConfig`; only the draw and the charge come from here.
 
-	**A vitrine é de cada jogador, e sai da hora.** As três cartas são recalculadas do
-	bloco de quatro horas em que o relógio está mais o `UserId`
-	(`RoundCardShopConfig.stockFor`), então um restart no meio do bloco não troca a
-	oferta de ninguém e dois jogadores no mesmo lobby veem cartas diferentes. Nada disso
-	é guardado em DataStore: a hora e o dono já respondem.
+	**The storefront belongs to each player, and comes from the time.** The three cards are
+	recomputed from the current four-hour block plus the `UserId`
+	(`RoundCardShopConfig.stockFor`), so a restart mid-block does not change anyone's offer
+	and two players in the same Lobby see different cards. None of it is stored in a
+	DataStore: the time and the owner already answer.
 
-	O cliente nunca decide nada aqui. Ele pede a vitrine, desenha, e manda "quero a
-	carta X" — e este service confere que X está na vitrine **da hora atual**, que o
-	jogador ainda não a tem, e que os shards dão.
+	The client decides nothing here. It asks for the storefront, draws it, and sends "I
+	want card X", and this service checks that X is in the storefront **of the current
+	time**, that the player does not have it yet, and that the shards are enough.
 
-	**O reroll troca as três cartas daquele jogador.** A vitrine já é de cada um, então
-	comprar o developer product (`REROLL_PRODUCT_ID`) só muda a origem delas: em vez de
-	saírem do sorteio do bloco, passam a sair do perfil, até o bloco virar. As três cartas sorteadas ficam **gravadas** no `RoundCardRoll` do
-	perfil, e é por isso que elas não mudam quando ele compra uma delas — ver o
-	comentário do `createEmptyRoll`, que conta o que acontecia quando elas eram
-	recalculadas.
+	**The reroll replaces that player's three cards.** The storefront is already
+	per-player, so buying the developer product (`REROLL_PRODUCT_ID`) only changes where
+	they come from: instead of the block draw, they come from the profile, until the block
+	turns over. The three drawn cards are **saved** in the profile's `RoundCardRoll`, which
+	is why they do not change when the player buys one of them; see the
+	`createEmptyRoll` comment.
+
+	See docs/lobby/round-card-shop.md.
 ]=]
 local RoundCardShopService = {
 	Services = {
 		DataService = {},
 
-		-- Para registrar o developer product do reroll. Quem chama o callback é o
-		-- `ProcessReceipt` de lá.
+		-- To register the reroll developer product. The `ProcessReceipt` over there calls
+		-- the callback.
 		MonetizationService = {},
 	},
 
 	Signals = {
 		-- (Player, cardId : string, price : number, remaining : number) -- `remaining`
-		-- é o saldo de shards depois da cobrança.
+		-- is the shards balance after the charge.
 		CardUnlocked = Signal.new(),
 
-		-- (Player, rolls : number) -- o reroll foi creditado; `rolls` é o número dele
-		-- dentro deste bloco de quatro horas.
+		-- (Player, rolls : number) -- the reroll was credited; `rolls` is its number
+		-- within this four-hour block.
 		Rerolled = Signal.new(),
 	},
 }
 
 --[[ INTERNAL ]]
 
---- O perfil aberto do jogador, ou nil enquanto ele não carregou.
+--- The player's open profile, or nil while it has not loaded.
 function RoundCardShopService:_profileOf(player : Player) : any
 	local dataService = self.Services.DataService
 	local profiles = dataService and dataService.Profiles
@@ -74,19 +78,19 @@ function RoundCardShopService:_profileOf(player : Player) : any
 end
 
 --[=[
-	As cartas que a loja pode vender: as do catálogo, na ordem em que ele as declara.
+	The cards the shop can sell: the catalog's, in the order it declares them.
 
-	A ordem importa porque o sorteio da vitrine é semeado: mudar a ordem das entradas
-	no `RoundCardConfig` muda quais três cartas cada bloco de quatro horas oferece.
-	Não é um problema — é só o que acontece quando o catálogo muda —, mas é a razão
-	pela qual a pool é montada de uma vez e guardada, em vez de filtrada por jogador:
-	a vitrine é a mesma para todo mundo.
+	Order matters because the storefront draw is seeded: changing the order of entries in
+	`RoundCardConfig` changes which three cards each four-hour block offers. That is not a
+	problem (it is just what happens when the catalog changes), but it is why the pool is
+	built once and cached instead of filtered per player: the base is the same for
+	everyone.
 
-	**Sem filtro de efeito.** O lobby não tem a tabela `Effects` (ela é do
-	`CardShopService`, na Game), então uma carta cujo efeito não exista lá poderia ser
-	vendida aqui e nunca sair no sorteio de round. Esse é o mesmo erro de config que a
-	Game já avisa quando sobe, e é lá que ele tem de ser corrigido — silenciá-lo aqui
-	só esconderia metade do sintoma.
+	**No effect filter.** The Lobby does not have the `Effects` table (it belongs to
+	`CardShopService`, in Game), so a card whose effect does not exist there could be sold
+	here and never come up in the round draw. That is the same config error Game already
+	warns about on startup, and that is where it must be fixed: silencing it here would
+	only hide half the symptom.
 ]=]
 function RoundCardShopService:_pool() : { any }
 	if self.Pool then
@@ -103,12 +107,12 @@ function RoundCardShopService:_pool() : { any }
 end
 
 --[=[
-	Devolve os shards cobrados por uma compra que não pôde ser entregue.
+	Refunds the shards charged for a purchase that could not be delivered.
 
-	Uma escrita própria, e não um `Update` de `Stats` de volta a mão em cada chamada,
-	porque a cobrança e a devolução precisam ler o saldo no mesmo instante em que
-	escrevem — o `Update` não cede o controle no meio, e é isso que impede duas
-	compras simultâneas de gastarem o mesmo saldo.
+	Its own write, not an `Update` of `Stats` back by hand in each call, because the charge
+	and the refund must read the balance at the same instant they write: `Update` does not
+	yield midway, and that is what keeps two simultaneous purchases from spending the same
+	balance.
 ]=]
 function RoundCardShopService:_refund(player : Player, amount : number)
 	self.Services.DataService:Update(player, "Stats", function(stats)
@@ -122,11 +126,11 @@ function RoundCardShopService:_refund(player : Player, amount : number)
 end
 
 --[=[
-	Manda para o jogador a vitrine **dele** (a global, ou a que ele rerolou).
+	Sends the player **their** storefront (the global one, or the one they rerolled).
 
-	Não manda nada enquanto o perfil não carregou: o `PlayerDataLoaded` empurra a
-	vitrine assim que ele chega, e é melhor a loja abrir vazia por um segundo do que
-	abrir com a prateleira errada e ficar nela.
+	It sends nothing while the profile has not loaded: `PlayerDataLoaded` pushes the
+	storefront as soon as it arrives, and it is better for the shop to open empty for a
+	second than to open with the wrong shelf and stay on it.
 ]=]
 function RoundCardShopService:_sendStock(player : Player)
 	local stock = self:GetStockFor(player)
@@ -139,29 +143,31 @@ function RoundCardShopService:_sendStock(player : Player)
 end
 
 --[=[
-	As duas pools do reroll deste perfil: o que falta destravar, e o que ele já tem.
+	The two reroll pools for this profile: what is left to unlock, and what they already
+	have.
 
-	O sorteio enche as vagas com a primeira e só completa com a segunda — é o que separa
-	o reroll pago do sorteio do bloco, que mostra carta já destravada com o véu `SOLD`
-	sem distinguir nada. Ver `REROLL_EXCLUDES_UNLOCKED` e `drawReroll`.
+	The draw fills the slots from the first and only tops up from the second: that is what
+	separates the paid reroll from the block draw, which shows already unlocked cards with
+	the `SOLD` veil without distinguishing anything. See `REROLL_EXCLUDES_UNLOCKED` and
+	`drawReroll`.
 ]=]
 function RoundCardShopService:_rerollPools(profile : any) : ({ any }, { any })
 	return RoundCardShopConfig.splitByUnlocked(profile, self:_pool())
 end
 
 --[=[
-	Vira a vitrine quando o bloco de quatro horas acaba.
+	Turns the storefront over when the four-hour block ends.
 
-	O laço dorme até o próximo reset em vez de checar a cada segundo: o instante da
-	troca é uma conta (`secondsUntilReset`), e não uma coisa a descobrir. O `+ 1` é
-	folga para o `os.time()` já ter passado do limite quando ele acordar — acordar no
-	segundo exato deixaria o `rotationIndex` ainda no bloco antigo e a espera se
-	repetiria com zero de espera.
+	The loop sleeps until the next reset instead of checking every second: the switch
+	instant is a computation (`secondsUntilReset`), not something to discover. The `+ 1`
+	is slack so `os.time()` has already passed the limit when it wakes: waking on the exact
+	second would leave `rotationIndex` still on the old block and the wait would repeat
+	with zero wait.
 
-	Quem já está no lobby recebe a vitrine nova sem pedir nada: a loja pode estar
-	aberta na frente dele na hora da troca, e um painel que continuasse mostrando as
-	cartas velhas venderia o que a loja não vende mais (o servidor recusaria, e o
-	jogador leria isso como um bug).
+	Players already in the Lobby receive the new storefront without asking: the shop may
+	be open in front of them at switch time, and a panel still showing the old cards would
+	sell what the shop no longer sells (the server would refuse, and the player would read
+	that as a bug).
 ]=]
 function RoundCardShopService:_watchRotation()
 	task.spawn(function()
@@ -175,8 +181,8 @@ function RoundCardShopService:_watchRotation()
 
 			self.Block = nil
 
-			-- Quem ainda não carregou não perde nada: o `PlayerDataLoaded` manda a vitrine
-			-- nova para ele assim que o perfil chegar.
+			-- Players not loaded yet lose nothing: `PlayerDataLoaded` sends them the new
+			-- storefront as soon as the profile arrives.
 			for _, player in Players:GetPlayers() do
 				self:_sendStock(player)
 			end
@@ -187,13 +193,13 @@ end
 --[[ API ]]
 
 --[=[
-	O bloco de quatro horas em que o relógio está: `{ Index, ResetsAt }`.
+	The four-hour block the clock is in: `{ Index, ResetsAt }`.
 
-	É a única parte da loja que é de todo mundo. As cartas são de cada jogador (ver
-	`GetStockFor`); o que eles compartilham é o instante em que todas viram.
+	It is the only part of the shop that belongs to everyone. The cards are per player
+	(see `GetStockFor`); what they share is the instant they all turn over.
 
-	Guardado por bloco, e não por chamada: são duas divisões de `os.time()`, e o cache
-	morre sozinho quando o índice muda.
+	Cached per block, not per call: it is two divisions of `os.time()`, and the cache dies
+	on its own when the index changes.
 ]=]
 function RoundCardShopService:GetBlock()
 	local index = RoundCardShopConfig.rotationIndex()
@@ -211,12 +217,12 @@ function RoundCardShopService:GetBlock()
 end
 
 --[=[
-	A vitrine **deste** jogador: a global, ou a que ele rerolou neste bloco.
+	**This** player's storefront: the global one, or the one they rerolled this block.
 
-	As duas respostas são montadas na hora, e nenhuma é guardada. Montar é barato — um
-	sorteio semeado de três cartas, ou a leitura do preço de três `Id` — e não há o que
-	invalidar: o que poderia mudar entre duas chamadas (o que o jogador destravou) de
-	propósito **não** entra em nenhuma das duas contas.
+	Both answers are built on the spot, and neither is cached. Building is cheap (a seeded
+	draw of three cards, or reading three `Id`s' prices) and there is nothing to
+	invalidate: what could change between two calls (what the player unlocked) is on
+	purpose **not** part of either computation.
 ]=]
 function RoundCardShopService:GetStockFor(player : Player)
 	local block = self:GetBlock()
@@ -224,15 +230,15 @@ function RoundCardShopService:GetStockFor(player : Player)
 	local profile = self:_profileOf(player)
 
 	--[[
-		**Sem perfil não há resposta.** Perfil ainda carregando não é "este jogador não
-		rerolou": é "ainda não dá para saber". A vitrine depende do `UserId` **e** do
-		reroll gravado, então responder sem perfil é chutar as duas coisas.
+		**No profile, no answer.** A profile still loading is not "this player did not
+		reroll": it is "cannot tell yet". The storefront depends on the `UserId` **and** the
+		saved reroll, so answering without a profile guesses both.
 
-		Foi exatamente esse o bug: o cliente pede a vitrine quando a `ShopUI` monta, o
-		que acontece antes de o `StartSessionAsync` voltar. O servidor respondia a
-		global, o cliente guardava, e nada mais corrigia -- a prateleira paga só voltava
-		no reroll seguinte. Quem chama trata o nil esperando o perfil; ver o
-		`RequestRoundCardStock` e o `PlayerDataLoaded` no `construct`.
+		The client asks for the storefront when `ShopUI` builds, which happens before
+		`StartSessionAsync` returns. Answering with the global one there would stick: the
+		client would store it, nothing would correct it, and the paid shelf would only come
+		back on the next reroll. Callers handle nil by waiting for the profile; see
+		`RequestRoundCardStock` and `PlayerDataLoaded` in `construct`.
 	]]
 	if not profile then
 		return nil
@@ -241,9 +247,9 @@ function RoundCardShopService:GetStockFor(player : Player)
 	local rolls = RoundCardShopConfig.rollsOf(profile, block.Index)
 
 	--[[
-		Sem reroll, a vitrine é o sorteio do bloco para **este** jogador -- recalculado,
-		e não guardado. Ele é estável porque a pool é o catálogo inteiro: comprar uma
-		carta não a tira do sorteio, ela só ganha o véu `SOLD`.
+		Without a reroll, the storefront is the block draw for **this** player: recomputed,
+		not stored. It is stable because the pool is the whole catalog: buying a card does
+		not remove it from the draw, it only gets the `SOLD` veil.
 	]]
 	if rolls <= 0 then
 		return {
@@ -255,19 +261,19 @@ function RoundCardShopService:GetStockFor(player : Player)
 	end
 
 	--[[
-		As cartas saem do perfil, e não de um sorteio refeito agora.
+		The cards come from the profile, not from a draw redone now.
 
-		É o que mantém a prateleira paga parada enquanto o jogador compra dela: o sorteio
-		varre só o que falta destravar, então refazê-lo depois de uma compra encheria a
-		vaga vendida com uma carta nova em vez de deixá-la `SOLD`.
+		That is what keeps the paid shelf still while the player buys from it: the draw only
+		sweeps what is left to unlock, so redoing it after a purchase would fill the sold slot
+		with a new card instead of leaving it `SOLD`.
 	]]
 	local cards = RoundCardShopConfig.entriesFor(
 		RoundCardShopConfig.rolledCardsOf(profile, block.Index)
 	)
 
-	-- Prateleira gravada vazia (perfil de antes de ela ser gravada, ou cartas que
-	-- sairam do catálogo) vale como não ter rerolado: o sorteio do bloco é o estado que
-	-- a tela sempre sabe desenhar.
+	-- An empty saved shelf (a profile from before it was saved, or cards that
+	-- left the catalog) counts as not having rerolled: the block draw is the state
+	-- the screen always knows how to draw.
 	if #cards == 0 then
 		return {
 			Index = block.Index,
@@ -286,40 +292,40 @@ function RoundCardShopService:GetStockFor(player : Player)
 end
 
 --[=[
-	Destrava uma carta da vitrine para o jogador: cobra os shards e escreve o `Id` no
-	`RoundCards` do perfil.
+	Unlocks a storefront card for the player: charges the shards and writes the `Id` into
+	the profile's `RoundCards`.
 
-	Devolve true, ou false mais o motivo ("NotLoaded", "NotInStock", "AlreadyOwned",
-	"NotEnoughCurrency", "GrantFailed"). Nenhum deles é erro de programa: são as
-	maneiras de o pedido estar velho ou repetido — o clique duplo, a vitrine que virou
-	entre o desenho e o clique, o evento mandado à mão.
+	Returns true, or false plus the reason ("NotLoaded", "NotInStock", "AlreadyOwned",
+	"NotEnoughCurrency", "GrantFailed"). None is a program error: they are the ways the
+	request can be stale or repeated: the double click, the storefront that turned over
+	between drawing and clicking, the event sent by hand.
 
-	A conferência e a cobrança acontecem dentro de um único `:Update`, que não cede o
-	controle: dois cliques seguidos não têm como gastar o mesmo saldo. E a **posse**
-	é conferida de novo dentro da escrita do `RoundCards`, e não só antes da cobrança:
-	sem isso, dois cliques no mesmo quadro cobrariam duas vezes pela mesma carta.
+	The check and the charge happen inside a single `:Update`, which does not yield: two
+	clicks in a row cannot spend the same balance. And **ownership** is checked again inside
+	the `RoundCards` write, not only before the charge: without that, two clicks on the same
+	frame would charge twice for the same card.
 ]=]
 function RoundCardShopService:Purchase(player : Player, cardId : any) : (boolean, string?)
 	local DataService = self.Services.DataService
 	local profile = self:_profileOf(player)
 
 	if not DataService or not DataService.Update or not profile then
-		warn(string.format("[RoundCardShopService]: %s não tem perfil carregado; compra ignorada.", player.Name))
+		log:StudioWarn(string.format("%s has no profile loaded; purchase ignored.", player.Name))
 		return false, "NotLoaded"
 	end
 
 	--[[
-		O preço sai da **vitrine deste jogador**, e não do `priceOf` direto: é ela que diz
-		o que está à venda para ele agora, e cobrar por um `Id` qualquer venderia o
-		catálogo inteiro a quem mandasse o evento na mão.
+		The price comes from **this player's storefront**, not `priceOf` directly: it says
+		what is for sale to them now, and charging for any `Id` would sell the whole catalog
+		to whoever sent the event by hand.
 
-		`GetStockFor`, e não `GetStock`: quem rerolou está olhando para outra prateleira,
-		e conferir contra a global recusaria justamente as cartas que ele pagou para ver.
+		`GetStockFor`, not `GetStock`: a player who rerolled is looking at another shelf,
+		and checking against the global one would refuse exactly the cards they paid to see.
 	]]
 	local stock = self:GetStockFor(player)
 
-	-- O `profile` acima já garante que ela não é nil; a guarda é porque `GetStockFor`
-	-- passou a poder devolver nil e um deref aqui derrubaria a compra inteira.
+	-- The `profile` above already guarantees it is not nil; the guard is because `GetStockFor`
+	-- can return nil, and a deref here would take down the whole purchase.
 	if not stock then
 		return false, "NotLoaded"
 	end
@@ -334,7 +340,7 @@ function RoundCardShopService:Purchase(player : Player, cardId : any) : (boolean
 	end
 
 	if not price then
-		warn(string.format("[RoundCardShopService]: %s pediu %q, que não está na vitrine dele agora.",
+		log:StudioWarn(string.format("%s asked for %q, which is not in their stock right now.",
 			player.Name, tostring(cardId)))
 		return false, "NotInStock"
 	end
@@ -383,8 +389,8 @@ function RoundCardShopService:Purchase(player : Player, cardId : any) : (boolean
 	end)
 
 	if not granted then
-		-- A carta já estava destravada quando a escrita chegou: dois cliques no mesmo
-		-- quadro. O segundo devolve o que cobrou.
+		-- The card was already unlocked when the write arrived: two clicks on the same
+		-- frame. The second refunds what it charged.
 		self:_refund(player, price)
 		return false, "GrantFailed"
 	end
@@ -394,44 +400,43 @@ function RoundCardShopService:Purchase(player : Player, cardId : any) : (boolean
 end
 
 --[=[
-	Credita um reroll: sobe o contador do bloco atual e manda a prateleira nova.
+	Credits a reroll: increments the current block's counter and sends the new shelf.
 
-	Devolve `false` quando não deu para escrever no perfil — e é por isso que o retorno
-	importa: quem chama é o `ProcessReceipt`, e um `false` faz o receipt voltar como
-	`NotProcessedYet`. A Roblox então tenta de novo mais tarde, em vez de dar a compra
-	por entregue sem ela ter acontecido. O jogador já foi cobrado; o que não pode é o
-	dinheiro sumir sem prateleira.
+	Returns `false` when it could not write to the profile, and that is why the return
+	matters: `ProcessReceipt` calls it, and `false` makes the receipt come back as
+	`NotProcessedYet`. Roblox then retries later, instead of counting the purchase as
+	delivered without it having happened. The player was already charged; what must not
+	happen is the money vanishing without a shelf.
 
-	**Não cobra nada e não confere preço**: quem cobrou foi a Roblox. Aqui é só a
-	entrega.
+	**It charges nothing and checks no price**: Roblox charged. This is only the delivery.
 
-	O registro zera sozinho na virada do bloco, pelo `Index`: o `Update` reescreve os
-	campos quando o que estava lá é de um bloco anterior, então a prateleira paga hoje
-	não sobrevive à rotação de amanhã.
+	The record resets on its own when the block turns over, through `Index`: `Update`
+	rewrites the fields when what was there belongs to an earlier block, so today's paid
+	shelf does not survive tomorrow's rotation.
 ]=]
 function RoundCardShopService:Reroll(player : Player) : boolean
 	local DataService = self.Services.DataService
 
 	if not DataService or not DataService.Update or not self:_profileOf(player) then
-		warn(string.format("[RoundCardShopService]: %s não tem perfil carregado; o reroll não foi creditado.", player.Name))
+		log:Warn(string.format("%s has no profile loaded; the reroll was not credited.", player.Name))
 		return false
 	end
 
 	local index = RoundCardShopConfig.rotationIndex()
 
 	--[[
-		O sorteio acontece **antes** do `Update`, e não dentro dele: o callback do
-		`Update` não pode ceder o fio, e sortear ali dentro só esconderia o trabalho num
-		lugar onde ele não pode crescer.
+		The draw happens **before** `Update`, not inside it: the `Update` callback must not
+		yield, and drawing inside it would only hide the work in a place where it cannot
+		grow.
 
-		A pool é lida do perfil de agora — as cartas que ele ainda não tem. Daí para a
-		frente o resultado está gravado e não é mais recalculado.
+		The pool is read from the current profile: the cards they do not have yet. From then
+		on the result is saved and no longer recomputed.
 	]]
 	local locked, owned = self:_rerollPools(self:_profileOf(player))
 	local cards = RoundCardShopConfig.drawReroll(locked, owned)
 
 	if #cards == 0 then
-		warn(string.format("[RoundCardShopService]: %s rerolou sem carta nenhuma para sortear.", player.Name))
+		log:Warn(string.format("%s rerolled with no card left to draw.", player.Name))
 		return false
 	end
 
@@ -463,19 +468,19 @@ function RoundCardShopService:Reroll(player : Player) : boolean
 	return true
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function RoundCardShopService:construct()
 	--[[
-		O cliente pede a vitrine quando liga a loja, em vez de o servidor mandar no
-		join: a `ShopUI` é `ResetOnSpawn`, então o painel é reconstruído a cada respawn,
-		e um envio único no join se perderia na primeira morte. O pedido também cobre o
-		jogador que entrou antes de este service subir.
+		The client asks for the storefront when it hooks up the shop, instead of the server
+		sending it on join: `ShopUI` is `ResetOnSpawn`, so the panel is rebuilt on every
+		respawn, and a single send on join would be lost at the first death. The request also
+		covers a player who joined before this service started.
 	]]
 	--[[
-		O pedido **espera o perfil**. O `DataService:Get` responde quando ele estiver
-		carregado (e não trava este handler: ele agenda), então um pedido que chegou cedo
-		demais é respondido tarde em vez de ser respondido errado.
+		The request **waits for the profile**. `DataService:Get` answers when it is loaded
+		(and does not block this handler: it schedules), so a request that arrived too early
+		is answered late instead of answered wrong.
 	]]
 	Framework:Listen("RequestRoundCardStock", function(player : Player)
 		local dataService = self.Services.DataService
@@ -490,11 +495,13 @@ function RoundCardShopService:construct()
 	end)
 
 	--[[
-		E a vitrine também sai sozinha quando o perfil chega, sem ninguém pedir.
+		And the storefront also goes out on its own when the profile arrives, without anyone
+		asking.
 
-		São os dois lados da mesma corrida: o `Get` acima cobre o pedido que chegou antes
-		do perfil, e isto cobre o pedido que se perdeu inteiro (o cliente pode ter ligado
-		a loja antes de este service registrar o `Listen`, e o retry dele tem teto).
+		They are two sides of the same race: the `Get` above covers the request that arrived
+		before the profile, and this covers a request lost entirely (the client may have
+		hooked up the shop before this service registered its `Listen`, and its retry has a
+		cap).
 	]]
 	local dataService = self.Services.DataService
 
@@ -503,12 +510,12 @@ function RoundCardShopService:construct()
 			self:_sendStock(player)
 		end)
 
-		-- Quem já estava dentro quando este service subiu: o sinal deles já passou.
+		-- Players already in when this service started: their signal already fired.
 		for _, player in Players:GetPlayers() do
 			self:_sendStock(player)
 		end
 	else
-		warn("[RoundCardShopService]: sem PlayerDataLoaded; a vitrine só sai por pedido do cliente.")
+		log:Warn("no PlayerDataLoaded; the stock is only sent when the client asks for it.")
 	end
 
 	Framework:Listen("RequestBuyRoundCard", function(player : Player, cardId : any)
@@ -518,17 +525,17 @@ function RoundCardShopService:construct()
 	end)
 
 	--[[
-		O reroll é vendido pela Roblox, e não por este service: o cliente abre o prompt do
-		developer product e quem chega aqui é o **recibo**, pelo `ProcessReceipt` do
-		`MonetizationService`.
+		The reroll is sold by Roblox, not by this service: the client opens the developer
+		product prompt and what arrives here is the **receipt**, through
+		`MonetizationService`'s `ProcessReceipt`.
 
-		Não há evento de "quero rerolar" de propósito. Um pedido do cliente só poderia
-		abrir o prompt (que o cliente já abre sozinho) ou creditar sem pagamento — e a
-		única prova de que houve pagamento é o recibo.
+		There is no "I want to reroll" event on purpose. A client request could only open the
+		prompt (which the client already opens on its own) or credit without payment, and the
+		only proof there was a payment is the receipt.
 
-		O `MonetizationService` cuida do resto do contrato: ele não credita o mesmo
-		`PurchaseId` duas vezes (`PurchaseHistory`) e só confirma a compra depois de o
-		perfil estar gravado em disco.
+		`MonetizationService` handles the rest of the contract: it does not credit the same
+		`PurchaseId` twice (`PurchaseHistory`) and only confirms the purchase after the
+		profile is saved to disk.
 	]]
 	local monetization = self.Services.MonetizationService
 
@@ -537,7 +544,7 @@ function RoundCardShopService:construct()
 			return self:Reroll(player)
 		end)
 	else
-		warn("[RoundCardShopService]: sem MonetizationService; o reroll da loja de cartas não vai ser creditado.")
+		log:Warn("no MonetizationService; card shop rerolls will not be credited.")
 	end
 
 	self:_watchRotation()
@@ -552,17 +559,17 @@ function RoundCardShopService:start()
 end
 
 function RoundCardShopService:init()
-	-- O cliente conecta nos dois durante o `init` dele, mas o servidor só criaria o
-	-- evento na primeira vez que o disparasse -- e o Warp reclama que ele "is taking
-	-- too long to retrieve". Declarados aqui como os outros eventos de servidor.
+	-- The client connects to both during its `init`, but the server would only create the
+	-- event the first time it fired it, and Warp complains that it "is taking
+	-- too long to retrieve". Declared here like the other server events.
 	Framework:Listen("RoundCardStock", function() end)
 	Framework:Listen("RoundCardPurchaseResult", function() end)
 
-	-- O bloco de quatro horas de agora, `{ Index, ResetsAt }`. As cartas não moram aqui:
-	-- elas são de cada jogador (ver `GetStockFor`).
+	-- The current four-hour block, `{ Index, ResetsAt }`. The cards do not live here:
+	-- they belong to each player (see `GetStockFor`).
 	self.Block = nil
 
-	-- O catálogo à venda, montado uma vez. Ver `_pool`.
+	-- The catalog for sale, built once. See `_pool`.
 	self.Pool = nil
 end
 

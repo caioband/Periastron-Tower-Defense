@@ -23,14 +23,14 @@ local UnitVFXConfig = {
 	["Slingshot"] = { PLACEMENT_EFFECT },
 	["Archer"] = { PLACEMENT_EFFECT },
 	--[[
-		Nem a queimadura nem o estouro entram aqui, e por motivos diferentes.
+		Neither the burn nor the burst belongs here, for different reasons.
 
-		A queimadura porque so o servidor sabe se o alvo ja queimava: o desenho chega
-		pelo evento `MobBurning` (`VFXController:PlayBurning`).
+		The burn, because only the server knows whether the target was already
+		burning: the drawing arrives through `MobBurning` (`VFXController:PlayBurning`).
 
-		O estouro porque ele mora no proprio projetil -- o attachment `Explosion` do
-		`PyreProjectile`, que o `ProjectileController` dispara quando o tiro chega.
-		Repetir aqui daria duas explosoes na mesma bolinha.
+		The burst, because it lives in the projectile itself: the `Explosion`
+		attachment of `PyreProjectile`, fired by `ProjectileController` on arrival.
+		Repeating it here would give two explosions on the same ball.
 	]]
 	["Pyre"] = { PLACEMENT_EFFECT },
 	["Subspace Tripminer"] = { PLACEMENT_EFFECT },
@@ -38,22 +38,22 @@ local UnitVFXConfig = {
 	["Azure"] = { PLACEMENT_EFFECT },
 
 	--[[
-		So o efeito de colocar. O raio dela nao entra aqui de proposito: este config e
-		para efeito que o **cliente** dispara sozinho a partir do golpe (`OnAttack`,
-		`OnHit`), e o raio precisa da lista de inimigos que a corrente tocou -- uma
-		coisa que so o servidor tem. Ele vem pelo evento `ChainLightning`, no
+		Only the placement effect. Its lightning is left out on purpose: this config
+		is for effects the **client** fires by itself from an attack (`OnAttack`,
+		`OnHit`), and the lightning needs the list of enemies the chain touched,
+		which only the server has. It arrives through `ChainLightning`, in
 		`VFXController`.
 	]]
 	["Electro"] = { PLACEMENT_EFFECT },
 
 	--[[
-		O `FrozenVFX` estoura no inimigo quando o projetil chega nele: `OnAttack` e o
-		evento da chegada do projetil (`Unit:playAttackVisual`). O alvo `MobRoot`
-		pendura o asset no `HumanoidRootPart` do inimigo e o solda, para ele seguir
-		quem anda -- ver `VFXController:attachToMob`.
+		`FrozenVFX` bursts on the enemy when the projectile reaches it: `OnAttack` is
+		the projectile's arrival (`Unit:playAttackVisual`). The `MobRoot` target
+		attaches the asset to the enemy's `HumanoidRootPart` and welds it, so it
+		follows a walking enemy; see `VFXController:attachToMob`.
 
-		O congelamento nao entra aqui: ele depende da conta de acumulos, que so o
-		servidor tem, e chega pelo evento `MobFrozen` (`VFXController:PlayIced`).
+		The freeze is not here: it depends on the stack count, which only the server
+		has, and arrives through `MobFrozen` (`VFXController:PlayIced`).
 	]]
 	["Frostione"] = {
 		PLACEMENT_EFFECT,

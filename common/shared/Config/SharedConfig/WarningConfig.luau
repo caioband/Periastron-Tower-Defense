@@ -1,23 +1,24 @@
 --[[
-	O aviso grande no meio da tela: `StarterGui.Interface.WeatherWarning`, um
-	TextLabel com um UIStroke dentro.
+	The big center-screen warning: `StarterGui.Interface.WeatherWarning`, a
+	TextLabel with a UIStroke inside.
 
-	O nome do label é o do clima por herança — foi para o clima que ele nasceu —,
-	mas o label é **um só** e serve a quem precisar de uma frase curta e urgente na
-	tela. Hoje são dois donos: o clima que vem vindo (`WeatherWarningController`) e
-	o restart do servidor (`ServerRestartController`). Quem os coloca lá é o
-	`WarningController`, o único que encosta no label.
+	The label is named after weather because it was born for it, but there is
+	**one** label for anyone who needs a short, urgent sentence on screen. Today it
+	has two owners: the upcoming weather (`WeatherWarningController`) and the server
+	restart (`ServerRestartController`). `WarningController` is the only code that
+	touches the label.
 
-	`Label` é a animação: o texto desce de `SlideOffset` acima do destino enquanto a
-	transparência (do texto **e** do stroke) cai de 1 para 0, segura `Hold` segundos
-	e sai pelo mesmo caminho. O destino é a posição que o designer deixou no
-	StarterGui, então mover o label no Studio não exige tocar em código.
+	`Label` is the animation: the text slides down from `SlideOffset` above its
+	target while the transparency (of the text **and** the stroke) goes from 1 to
+	0, holds for `Hold` seconds, and leaves the same way. The target is the
+	position the designer left in StarterGui.
 
-	`Priority` resolve os dois donos disputando a tela: um aviso só derruba o que
-	estiver no ar se a prioridade dele for maior ou igual. É o que impede um clima
-	de apagar o "o servidor vai reiniciar em 1 minuto".
+	`Priority` settles the two owners: a warning only replaces the current one if
+	its priority is greater or equal, so weather never erases "the server will
+	restart in 1 minute".
 
-	Fica em `common/` porque o restart acontece nas duas places.
+	It lives in `common/` because restarts happen in both places. See
+	docs/common/screen-warnings.md.
 ]]
 
 local WarningConfig = {}
@@ -37,21 +38,20 @@ WarningConfig.Priority = {
 }
 
 --[[
-	Aviso de restart do servidor.
+	Server restart warning.
 
-	`Text` leva quem pediu o restart e quanto falta — "WARNING! SERVER RESTART FOR
-	GAME UPDATE IN 2 MINUTES". Faltando menos que `NowThreshold`, ou não vindo
-	horário nenhum, vale o `TextNow`, que não promete prazo que não tem.
+	`Text` says who asked for the restart and how long is left ("WARNING! SERVER
+	RESTART FOR GAME UPDATE IN 2 MINUTES"). Under `NowThreshold`, or with no time
+	at all, `TextNow` applies, which promises no deadline it does not have.
 
-	`Sources` traduz o `Enum.CloseReason` que o servidor recebeu. É o que separa o
-	restart do desenvolvedor (uma atualização do jogo, culpa nossa) do restart da
-	própria Roblox (manutenção, moderação, memória) — o jogador merece saber qual
-	dos dois é, porque só um deles significa "volte que tem coisa nova".
+	`Sources` translates the `Enum.CloseReason` the server received, separating a
+	developer restart (a game update) from a Roblox one (maintenance, moderation,
+	memory): only one of them means "come back, there is something new".
 
-	`Reminders` são as marcas, em segundos que faltam, em que o aviso volta à tela.
-	Um restart é agendado com minutos de antecedência: mostrar uma vez e sumir
-	deixaria de fora quem entrou depois ou estava olhando para o mapa. Marca que
-	cairia em cima do aviso anterior é descartada pelo controller.
+	`Reminders` are the marks, in seconds left, at which the warning returns. A
+	restart is scheduled minutes ahead; showing it once would miss players who
+	joined later or were looking at the map. A mark that would overlap the previous
+	warning is skipped by the controller.
 ]]
 WarningConfig.Restart = {
 	Text = "WARNING! SERVER RESTART FOR %s IN %s",
@@ -62,12 +62,12 @@ WarningConfig.Restart = {
 	NowThreshold = 5,
 
 	Sources = {
-		-- O desenvolvedor: `DeveloperUpdate` é o `UpdatePlace`, `DeveloperShutdown`
-		-- é o botão de desligar do painel.
+		-- The developer: `DeveloperUpdate` is `UpdatePlace`, `DeveloperShutdown` is the
+		-- dashboard's shutdown button.
 		DeveloperUpdate = "GAME UPDATE",
 		DeveloperShutdown = "GAME UPDATE",
 
-		-- A Roblox.
+		-- Roblox.
 		RobloxMaintenance = "ROBLOX MAINTENANCE",
 		Moderation = "MODERATION",
 		OutOfMemory = "SERVER MEMORY",
@@ -77,9 +77,9 @@ WarningConfig.Restart = {
 	DefaultSource = "MAINTENANCE",
 
 	--[[
-		Como o tempo que falta é escrito. A maior unidade que couber ganha: 90
-		segundos vira "2 MINUTES", não "1 MINUTE 30 SECONDS" — é um aviso de uma
-		linha, não um cronômetro.
+		How the remaining time is written. The largest unit that fits wins: 90
+		seconds becomes "2 MINUTES", not "1 MINUTE 30 SECONDS"; it is a one-line
+		warning, not a stopwatch.
 	]]
 	Durations = {
 		{ Seconds = 3600, One = "%d HOUR", Many = "%d HOURS" },
@@ -89,11 +89,11 @@ WarningConfig.Restart = {
 }
 
 --[=[
-	O que escrever para um `Enum.CloseReason`.
+	What to write for an `Enum.CloseReason`.
 
-	Recebe o **nome** do enum (é assim que ele atravessa a rede) e devolve o
-	`DefaultSource` para o que não estiver na tabela — motivo novo da Roblox vira um
-	aviso genérico em vez de nenhum aviso.
+	Takes the enum **name** (how it crosses the network) and returns
+	`DefaultSource` for anything not in the table: a new Roblox reason becomes a
+	generic warning instead of no warning.
 ]=]
 function WarningConfig.GetRestartSource(sourceName : string?) : string
 	local restart = WarningConfig.Restart
@@ -104,9 +104,9 @@ end
 --[=[
 	"2 MINUTES", "45 SECONDS", "1 HOUR".
 
-	Arredonda para a unidade mais próxima em vez de truncar: faltando 119 segundos,
-	"2 MINUTES" erra por um segundo e "1 MINUTE" erra por cinquenta e nove. Nunca
-	desce de 1 — "0 MINUTES" seria mentira nos dois sentidos.
+	Rounds to the nearest unit instead of truncating: at 119 seconds, "2 MINUTES"
+	is off by one second and "1 MINUTE" by fifty-nine. Never goes below 1; "0
+	MINUTES" would be wrong both ways.
 ]=]
 function WarningConfig.FormatDuration(seconds : number) : string
 	local remaining = math.max(seconds, 0)
@@ -119,8 +119,8 @@ function WarningConfig.FormatDuration(seconds : number) : string
 		return string.format(if amount == 1 then duration.One else duration.Many, amount)
 	end
 
-	-- Menos de um segundo: o `TextNow` é quem deveria ter falado, mas quem chamar
-	-- daqui mesmo assim recebe algo legível.
+	-- Under a second: `TextNow` should have spoken, but a caller that gets here
+	-- anyway still receives something readable.
 	local last = WarningConfig.Restart.Durations[#WarningConfig.Restart.Durations]
 
 	return string.format(last.One, 1)

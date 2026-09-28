@@ -8,47 +8,51 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("BaseHealthController")
 
 local MapConfig = SharedConfig.MapConfig
 
---[[ CONSTANTES ]]
+--[[ CONSTANTS ]]
 
--- O nome do clone que o `MapService` poe no Workspace. E o mesmo em todos os mapas:
--- o que ele clona la e o `Content.Map` de dentro da pasta, e todos se chamam "Map".
+-- The name of the clone `MapService` puts in the Workspace. It is the same on every
+-- map: what it clones there is the folder's `Content.Map`, and all are called "Map".
 local MAP_NAME = "Map"
 
 local WAIT_TIMEOUT = 60
 local POLL_STEP = 0.1
 
 --[[
-	O numero da vida da base, no billboard que cada mapa traz.
+	The base health number, on the billboard each map carries.
 
-	A Part `BaseHP` mora na raiz da pasta do mapa, em `ServerStorage.Maps`, e o
-	`MapService` a clona para dentro de `workspace.Map` junto com o resto -- sem isso
-	o cliente nem a veria, porque mapa nao replica. Daqui para a frente e so escrita
-	de texto: o `UpdateBaseHealth` do `MobService` chega com a vida de agora e ela vai
-	para o TextLabel.
+	The `BaseHP` Part lives at the root of the map folder, in `ServerStorage.Maps`, and
+	`MapService` clones it into `workspace.Map` with the rest; without that the client
+	would not even see it, because maps do not replicate. From there it is just text:
+	`MobService`'s `UpdateBaseHealth` arrives with the current health and it goes into
+	the TextLabel.
 
-	O valor e pedido uma vez, assim que o label aparece (`RequestBaseHealth`), porque
-	o evento so e disparado quando a vida muda -- quem entra e ainda nao viu nenhum
-	inimigo escapar ficaria olhando o texto que veio autorado na GUI.
+	The value is requested once, as soon as the label appears (`RequestBaseHealth`),
+	because the event only fires when health changes: a player who joins and has not
+	seen any enemy escape would be looking at the text authored in the GUI.
 
-	Nada aqui decide vida nenhuma: quem tira e o `MobService`, no servidor, quando um
-	inimigo chega ao fim do caminho. Este controller so mostra.
+	Nothing here decides any health: `MobService` removes it, on the server, when an
+	enemy reaches the end of the path. This controller only displays.
+
+	See docs/game/maps.md.
 ]]
 
 local BaseHealthController = {}
 
---[[ INTERNO ]]
+--[[ INTERNAL ]]
 
 --[=[
-	O TextLabel do billboard.
+	The billboard's TextLabel.
 
-	Procurado pelo nome que o `MapConfig` diz e caindo no primeiro TextLabel que a
-	Part tiver: o caminho dentro do billboard e coisa do designer, e reorganizar o
-	`Frame` la nao pode apagar o numero aqui.
+	Looked up by the name `MapConfig` gives, falling back to the Part's first
+	TextLabel: the path inside the billboard is the designer's business, and
+	reorganizing the `Frame` there must not erase the number here.
 ]=]
 local function findLabel(part : Instance) : TextLabel?
 	local fallback = nil
@@ -69,23 +73,23 @@ local function findLabel(part : Instance) : TextLabel?
 end
 
 --[=[
-	Espera o mapa chegar e devolve o label de dentro da `BaseHP`.
+	Waits for the map to arrive and returns the label inside `BaseHP`.
 
-	A Part replica antes dos filhos dela, entao achar a Part nao quer dizer que o
-	billboard ja esteja montado. `WaitForChild` so serve para nome fixo e o que se
-	procura aqui e um TextLabel qualquer, entao o jeito e reprocurar por alguns
-	quadros. E custo de uma vez so, no boot.
+	The Part replicates before its children, so finding the Part does not mean the
+	billboard is built. `WaitForChild` only works for a fixed name and what we look
+	for here is any TextLabel, so the way is to search again for a few frames. It is a
+	one-time cost, at boot.
 ]=]
 function BaseHealthController:_resolveLabel() : TextLabel?
 	local mapRoot = workspace:WaitForChild(MAP_NAME, WAIT_TIMEOUT)
 	if not mapRoot then
-		warn(`[BaseHealthController]: workspace.{MAP_NAME} nao chegou; a vida da base fica no texto autorado.`)
+		log:StudioWarn(`workspace.{MAP_NAME} did not arrive; the base health stays as the authored text.`)
 		return nil
 	end
 
 	local part = mapRoot:WaitForChild(MapConfig.BASE_HEALTH_PART, WAIT_TIMEOUT)
 	if not part then
-		warn(`[BaseHealthController]: o mapa carregado nao tem a Part "{MapConfig.BASE_HEALTH_PART}".`)
+		log:StudioWarn(`the loaded map has no "{MapConfig.BASE_HEALTH_PART}" Part.`)
 		return nil
 	end
 
@@ -100,14 +104,14 @@ function BaseHealthController:_resolveLabel() : TextLabel?
 		task.wait(POLL_STEP)
 	until os.clock() >= deadline
 
-	warn(`[BaseHealthController]: a Part "{MapConfig.BASE_HEALTH_PART}" nao tem TextLabel nenhum dentro.`)
+	log:StudioWarn(`the "{MapConfig.BASE_HEALTH_PART}" Part has no TextLabel inside.`)
 
 	return nil
 end
 
 --[=[
-	Escreve a vida no label. Fica quieto enquanto faltar um dos dois -- o label pode
-	chegar depois do primeiro evento, e o evento depois do label.
+	Writes the health to the label. It stays quiet while either is missing: the label
+	may arrive after the first event, and the event after the label.
 ]=]
 function BaseHealthController:_write()
 	local label = self.Label
@@ -119,18 +123,18 @@ function BaseHealthController:_write()
 	label.Text = tostring(math.max(0, math.floor(self.Current)))
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function BaseHealthController:construct()
-	-- Ligado antes de procurar o label: a procura cede a thread, e um vazamento no
-	-- meio dela seria um numero perdido.
+	-- Connected before looking for the label: the lookup yields, and a leak in the
+	-- middle of it would be a lost number.
 	Framework:Listen("UpdateBaseHealth", function(current : number, max : number)
 		self.Current = tonumber(current) or self.Current
 
-		-- O maximo nao aparece no label (ele mostra so o numero de agora), mas quem
-		-- pergunta a **fracao** precisa dele: a carta No Pain, No Gain so vale abaixo
-		-- de 20% da base, e o card tem que mostrar o mesmo bonus que o servidor esta
-		-- dando.
+		-- The maximum does not show on the label (it shows only the current number), but
+		-- code asking for the **fraction** needs it: the No Pain, No Gain card only applies
+		-- below 20% base health, and the card must show the same bonus the server is
+		-- granting.
 		self.Max = tonumber(max) or self.Max
 
 		self:_write()
@@ -143,18 +147,18 @@ function BaseHealthController:construct()
 
 	self:_write()
 
-	-- O primeiro valor. Se um `UpdateBaseHealth` chegou enquanto o mapa carregava,
-	-- este pedido so confirma o que ja esta escrito.
+	-- The first value. If an `UpdateBaseHealth` arrived while the map loaded, this
+	-- request only confirms what is already written.
 	Framework:Fire("RequestBaseHealth")
 end
 
 --[=[
-	A vida da base como fracao de 0 a 1, ou `nil` enquanto o primeiro
-	`UpdateBaseHealth` nao chegou.
+	Base health as a fraction from 0 to 1, or `nil` until the first `UpdateBaseHealth`
+	arrives.
 
-	`nil` de proposito, e nao 1: quem le e o `CardModifier`, e "ainda nao sei" tem
-	que ser diferente de "esta cheia" -- a diferenca entre as duas decide se um
-	bonus de ultima hora aparece no card.
+	`nil` on purpose, not 1: `CardModifier` reads it, and "I don't know yet" must differ
+	from "it is full": the difference decides whether a last-minute bonus shows on the
+	card.
 ]=]
 function BaseHealthController:GetHealthRatio() : number?
 	if not self.Current or not self.Max or self.Max <= 0 then

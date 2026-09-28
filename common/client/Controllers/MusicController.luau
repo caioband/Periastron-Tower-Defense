@@ -9,88 +9,91 @@ local Vendor = Shared:WaitForChild("Vendor")
 
 local Signal = require(Packages.Signal)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("MusicController")
 
 --[[
-	Áudio do jogo, compartilhado pelas duas places. O Package SharedSounds separa
-	os dois usos, e o controller trata cada um do jeito que ele pede:
+	Game audio, shared by both places. The SharedSounds Package separates the two
+	uses, and the controller handles each the way it asks:
 
 		SoundService.SharedSounds
-		├── Musics   uma faixa de cada vez, com fade/crossfade — :Play, :Transition
-		└── SFX      efeitos curtos e sobrepostos            — :PlaySFX
+		├── Musics   one track at a time, with fade/crossfade: :Play, :Transition
+		└── SFX      short, overlapping effects:             :PlaySFX
 
-	Pode haver subpasta nas duas (Musics.Maps.Forest, SFX.UI.Click...): a busca é
-	recursiva e usa só o nome do Sound, então o nome tem que ser único dentro da
-	pasta.
+	Both can have subfolders (Musics.Maps.Forest, SFX.UI.Click...): the lookup is
+	recursive and uses only the Sound's name, so the name must be unique within the
+	folder.
 
-	Música toca a própria instância, não um clone: Sound:Play() no cliente não
-	replica, e assim o Volume/SoundGroup ajustado no Studio continua valendo. O
-	volume que estava lá na primeira vez que a faixa é tocada vira o volume
-	"base"; tudo que o controller faz (fade, master, mute, duck) é multiplicador
-	em cima dele.
+	Music plays the instance itself, not a clone: Sound:Play() on the client does not
+	replicate, and this way the Volume/SoundGroup tuned in Studio still applies. The
+	volume it had the first time the track plays becomes the "base" volume;
+	everything the controller does (fade, master, mute, duck) is a multiplier on top.
 
 		local Sound = Framework:Get("MusicController")
 		Sound:Transition("Snowy", 2)
 		Sound:PlaySFX("UnitPlace")
 
-	Volume final de uma faixa = base * (override do :Play) * master * duck, ou 0
-	com mute. Qualquer mudança nesses fatores re-aplica em quem já está tocando.
+	A track's final volume = base * (the :Play override) * master * duck, or 0 when
+	muted. Any change to these factors is reapplied to whatever is already playing.
 
-	SFX é o contrário: sempre clone, porque dois tiros podem tocar juntos e o
-	original não pode ficar preso num Play. O clone se destrói sozinho no fim.
+	SFX is the opposite: always a clone, because two shots can play together and the
+	original must not get stuck in a Play. The clone destroys itself at the end.
 
-	Fica em common/ porque o Me varre Controllers.Common nas duas places — o nome
-	do módulo precisa ser único entre Common e a pasta da place.
+	It lives in common/ because Me scans Controllers.Common in both places; the
+	module name must be unique between Common and the place's folder.
+
+	See docs/common/audio.md.
 --]]
 
 local SHARED_SOUNDS = "SharedSounds"
 local MUSICS_FOLDER = "Musics"
 local SFX_FOLDER = "SFX"
 
--- Tempo dos fades quando quem chama não diz nada.
+-- Fade time when the caller does not say.
 local DEFAULT_FADE = 1.5
 local DEFAULT_VOLUME_FADE = 0.35
 
--- Quanto esperar pela pasta antes de desistir e avisar. Não pode ser
--- WaitForChild no topo do arquivo: isso travaria o Me:Load() do cliente inteiro.
+-- How long to wait for the folder before giving up and warning. It cannot be a
+-- WaitForChild at the top of the file: that would block the whole client's Me:Load().
 local FOLDER_TIMEOUT = 15
 
--- Um SFX que nunca carregou não dispara Ended; sem isso o clone ficaria pra
--- sempre pendurado no pai.
+-- An SFX that never loaded does not fire Ended; without this the clone would stay
+-- hanging on its parent forever.
 local SFX_FALLBACK_LIFETIME = 15
 
 export type PlayOptions = {
-	Fade: number?, -- fade in, em segundos (0 = entra seco)
-	Volume: number?, -- multiplicador em cima do volume do Studio
+	Fade: number?, -- fade in, in seconds (0 = no fade)
+	Volume: number?, -- multiplier on top of the Studio volume
 	Looped: boolean?, -- default true
 	Speed: number?, -- PlaybackSpeed
 	StartTime: number?, -- TimePosition inicial
-	Restart: boolean?, -- true = reinicia mesmo se a faixa já for a atual
+	Restart: boolean?, -- true = restart even if the track is already current
 }
 
 export type PlaylistOptions = {
-	Shuffle: boolean?, -- embaralha a ordem (e re-embaralha a cada volta)
-	Loop: boolean?, -- default true; false para a fila terminar em silêncio
+	Shuffle: boolean?, -- shuffles the order (and reshuffles every loop)
+	Loop: boolean?, -- default true; false makes the queue end in silence
 	Fade: number?,
 	Volume: number?,
 }
 
 export type SFXOptions = {
-	Parent: Instance?, -- Part/Attachment deixa o som 3D; default SoundService (2D)
-	Volume: number?, -- multiplicador em cima do volume do Studio
+	Parent: Instance?, -- a Part/Attachment makes the sound 3D; default SoundService (2D)
+	Volume: number?, -- multiplier on top of the Studio volume
 	Speed: number?, -- PlaybackSpeed
-	Looped: boolean?, -- exige Key ou Cut pra limpar depois
-	Cut: number?, -- corta em N segundos, mesmo que a faixa seja mais longa
-	Key: string?, -- só um som vivo por chave: o novo derruba o anterior
-	Fade: number?, -- fade in, em segundos (0 = entra seco)
-	FadeOut: number?, -- fade no fim, terminando junto com o som (ou com o Cut)
+	Looped: boolean?, -- requires Key or Cut to clean up afterward
+	Cut: number?, -- cuts at N seconds, even if the track is longer
+	Key: string?, -- only one live sound per key: the new one stops the previous
+	Fade: number?, -- fade in, in seconds (0 = no fade)
+	FadeOut: number?, -- fade at the end, finishing with the sound (or with Cut)
 }
 
 local MusicController = {}
 
--- Disparados como (nome, sound). TrackEnded só sai quando a faixa termina
--- sozinha; :Stop() não conta como fim.
+-- Fired as (name, sound). TrackEnded only fires when the track ends on its
+-- own; :Stop() does not count as an end.
 MusicController.TrackChanged = Signal.new()
 MusicController.TrackEnded = Signal.new()
 
@@ -99,9 +102,9 @@ MusicController.CurrentName = nil :: string?
 
 MusicController._Folders = {} :: { [string]: Instance }
 MusicController._SFXMaster = 1
-MusicController._ActiveSFX = {} :: { [string]: Sound } -- por Key
-MusicController._Base = {} :: { [Sound]: number } -- volume original do Studio
-MusicController._Override = {} :: { [Sound]: number } -- multiplicador do :Play
+MusicController._ActiveSFX = {} :: { [string]: Sound } -- by Key
+MusicController._Base = {} :: { [Sound]: number } -- original Studio volume
+MusicController._Override = {} :: { [Sound]: number } -- :Play multiplier
 MusicController._Fades = {} :: { [Sound]: Tween }
 MusicController._Master = 1
 MusicController._Duck = 1
@@ -111,13 +114,13 @@ MusicController._Playlist = nil :: { string }?
 MusicController._PlaylistIndex = 0
 MusicController._PlaylistOptions = nil :: PlaylistOptions?
 
--- Faixa guardada pelo PushTrack. nil = nada guardado; false = estava em silêncio
--- na hora do push, então o Pop volta pro silêncio.
+-- Track saved by PushTrack. nil = nothing saved; false = it was silent at push
+-- time, so Pop returns to silence.
 MusicController._PushedFrom = nil :: (string | boolean)?
 
---[[ PASTAS ]]
+--[[ FOLDERS ]]
 
--- Resolve SoundService.SharedSounds.<pasta> só na primeira vez que precisa.
+-- Resolves SoundService.SharedSounds.<folder> only the first time it is needed.
 function MusicController:_getFolder(folderName: string): Instance?
 	local cached = self._Folders[folderName]
 	if cached and cached.Parent then
@@ -126,13 +129,13 @@ function MusicController:_getFolder(folderName: string): Instance?
 
 	local sharedSounds = SoundService:WaitForChild(SHARED_SOUNDS, FOLDER_TIMEOUT)
 	if not sharedSounds then
-		warn(`[MusicController]: SoundService.{SHARED_SOUNDS} não apareceu.`)
+		log:StudioWarn(`SoundService.{SHARED_SOUNDS} did not show up.`)
 		return nil
 	end
 
 	local folder = sharedSounds:WaitForChild(folderName, FOLDER_TIMEOUT)
 	if not folder then
-		warn(`[MusicController]: SoundService.{SHARED_SOUNDS}.{folderName} não apareceu.`)
+		log:StudioWarn(`SoundService.{SHARED_SOUNDS}.{folderName} did not show up.`)
 		return nil
 	end
 
@@ -149,16 +152,18 @@ function MusicController:GetSFXFolder(): Instance?
 end
 
 --[=[
-	Baixa os SFX agora, para o primeiro `PlaySFX` deles não esperar o áudio.
+	Downloads the SFX now, so their first `PlaySFX` does not wait for the audio.
 
-	`Sound:Play()` num asset que ainda não chegou não falha: ele **espera**, e sai
-	quando o download termina. Num efeito de fundo isso passa despercebido, mas num
-	som que confirma uma ação (a compra da loja) o atraso é a resposta inteira —
-	o jogador clica, a caixa entra no inventário e o som chega depois.
+	`Sound:Play()` on an asset that has not arrived yet does not fail: it **waits**,
+	and plays when the download finishes. For a background effect that goes
+	unnoticed, but for a sound that confirms an action (a shop purchase) the delay is
+	the whole answer: the player clicks, the crate enters the inventory, and the
+	sound arrives later.
 
-	Não devolve nada e não trava quem chamou: roda numa thread própria, porque
-	`PreloadAsync` cede. Um nome que não existe avisa e os outros seguem — o preload
-	é uma otimização, e falhar nele não pode impedir o som de tocar mais tarde.
+	It returns nothing and does not block the caller: it runs on its own thread,
+	because `PreloadAsync` yields. A name that does not exist warns and the others
+	continue: preloading is an optimization, and failing at it must not stop the
+	sound from playing later.
 ]=]
 function MusicController:PreloadSFX(names: { string })
 	task.spawn(function()
@@ -170,7 +175,7 @@ function MusicController:PreloadSFX(names: { string })
 			if sound then
 				table.insert(sounds, sound)
 			else
-				warn(`[MusicController]: SFX "{name}" não existe, então não dá pra pré-carregar.`)
+				log:StudioWarn(`SFX "{name}" does not exist, so it cannot be preloaded.`)
 			end
 		end
 
@@ -183,32 +188,32 @@ function MusicController:PreloadSFX(names: { string })
 		end)
 
 		if not ok then
-			warn(`[MusicController]: falha ao pré-carregar SFX: {err}`)
+			log:StudioWarn(`failed to preload SFX: {err}`)
 			return
 		end
 
 		for _, sound in sounds do
 			if not sound.IsLoaded then
-				warn(`[MusicController]: {sound.Name} ({sound.SoundId}) não carregou; o primeiro toque dele pode sair atrasado.`)
+				log:StudioWarn(`{sound.Name} ({sound.SoundId}) did not load; its first play may be late.`)
 			end
 		end
 	end)
 end
 
 --[[
-	O que está na raiz do SoundService, **fora do Package**: um Sound solto ou um
-	Sound dentro de uma pasta solta.
+	What is at the root of SoundService, **outside the Package**: a loose Sound or a
+	Sound inside a loose folder.
 
-	A pasta existe porque um som de uma place só às vezes tem variante: o `BuySFX`
-	da loja do Lobby virou uma pasta com `Coins` e `Shards`, um para cada moeda que
-	a caixa pode custar. Uma pasta é o lugar natural disso, e sem estes dois níveis
-	de busca ela deixaria o efeito mudo — `BuySFX` passaria a achar uma `Folder`,
-	que não é um `Sound`.
+	The folder exists because a single-place sound sometimes has variants: the Lobby
+	shop's `BuySFX` is a folder with `Coins` and `Shards`, one for each currency a
+	crate can cost. A folder is the natural place for that, and without these two
+	lookup levels it would leave the effect silent: `BuySFX` would find a `Folder`,
+	which is not a `Sound`.
 
-	**O `SharedSounds` fica de fora da varredura, e é aí que ela para de ser
-	recursiva.** Entrar nele reencontraria o que a busca na pasta já cobre, e um
-	nome repetido nas duas pontas passaria a depender da ordem da árvore. Entre os
-	soltos vale a mesma regra que vale dentro do Package: o nome tem que ser único.
+	**`SharedSounds` is left out of the sweep, and that is where it stops being
+	recursive.** Going into it would find again what the folder lookup already
+	covers, and a name repeated on both ends would depend on tree order. Among loose
+	sounds the same rule applies as inside the Package: the name must be unique.
 ]]
 function MusicController:_findLoose(name: string): Sound?
 	local direct = SoundService:FindFirstChild(name)
@@ -231,17 +236,16 @@ function MusicController:_findLoose(name: string): Sound?
 end
 
 --[[
-	Acha o Sound pelo nome dentro da pasta e, se não estiver lá, **na raiz do
-	SoundService**.
+	Finds the Sound by name inside the folder and, if it is not there, **at the
+	SoundService root**.
 
-	A raiz é o segundo lugar de propósito. O `SharedSounds` é um Package, então
-	acrescentar um som lá dentro é uma mudança de package que as duas places
-	carregam — e um efeito que só uma place usa (o `BuySFX`, da loja do Lobby) não
-	precisa disso. O som fica solto ao lado do Package, e continua sendo achado por
-	nome como qualquer outro; ver o `_findLoose`.
+	The root is the second place on purpose. `SharedSounds` is a Package, so adding a
+	sound inside it is a package change both places load, and an effect only one place
+	uses (`BuySFX`, from the Lobby shop) does not need that. The sound sits loose next
+	to the Package and is still found by name like any other; see `_findLoose`.
 
-	Isto não abre exceção à regra de que nada lê o `SoundService` direto: quem lê a
-	raiz continua sendo só este controller, e quem toca continua pedindo pelo nome.
+	This does not make an exception to the rule that nothing reads `SoundService`
+	directly: only this controller reads the root, and callers still ask by name.
 ]]
 function MusicController:_find(folder: Instance?, name: string): Sound?
 	if folder then
@@ -254,7 +258,7 @@ function MusicController:_find(folder: Instance?, name: string): Sound?
 	return self:_findLoose(name)
 end
 
--- Busca recursiva: a faixa pode estar numa subpasta de Musics.
+-- Recursive lookup: the track may be in a subfolder of Musics.
 function MusicController:GetTrack(name: string): Sound?
 	return self:_find(self:GetFolder(), name)
 end
@@ -263,7 +267,7 @@ function MusicController:GetSFX(name: string): Sound?
 	return self:_find(self:GetSFXFolder(), name)
 end
 
--- Nomes de tudo que dá pra tocar, útil pra playlist/random.
+-- Names of everything that can play, useful for playlist/random.
 function MusicController:GetTrackNames(): { string }
 	local names = {}
 
@@ -302,10 +306,9 @@ function MusicController:_targetVolume(sound: Sound): number
 end
 
 --[[
-	Descarta o fade que estiver rodando na faixa. Importante antes de tocar de
-	novo: um fade de saída ainda pendente chamaria o :Stop dele em cima da faixa
-	que acabou de voltar. Tween cancelado não roda o Completed com Completed,
-	então o callback do fade antigo morre junto.
+	Discards the fade running on the track. Important before playing again: a pending
+	fade-out would call its :Stop on the track that just came back. A canceled tween
+	does not run Completed as Completed, so the old fade's callback dies with it.
 ]]
 function MusicController:_cancelFade(sound: Sound)
 	local existing = self._Fades[sound]
@@ -315,8 +318,8 @@ function MusicController:_cancelFade(sound: Sound)
 	end
 end
 
--- Fade cancelável: um fade novo na mesma Sound descarta o anterior, senão os
--- dois brigam pela propriedade e o volume termina em qualquer lugar.
+-- Cancelable fade: a new fade on the same Sound discards the previous one, or the
+-- two fight over the property and the volume ends up anywhere.
 function MusicController:_fade(sound: Sound, target: number, duration: number?, onComplete: (() -> ())?)
 	self:_cancelFade(sound)
 
@@ -344,7 +347,7 @@ function MusicController:_fade(sound: Sound, target: number, duration: number?, 
 	tween:Play()
 end
 
--- Re-aplica o volume de tudo que está tocando (depois de mudar master/duck/mute).
+-- Reapplies the volume of everything playing (after changing master/duck/mute).
 function MusicController:_refreshVolumes(fade: number?)
 	for sound in self._Base do
 		if sound.Parent and (sound.IsPlaying or sound.IsPaused) then
@@ -353,7 +356,7 @@ function MusicController:_refreshVolumes(fade: number?)
 	end
 end
 
---[[ REPRODUÇÃO ]]
+--[[ PLAYBACK ]]
 
 function MusicController:_clearEnded()
 	if self._EndedConn then
@@ -372,28 +375,28 @@ function MusicController:_setCurrent(sound: Sound?, name: string?)
 end
 
 --[[
-	Toca uma faixa. Se ela já for a atual e estiver tocando, não faz nada — a não
-	ser com Restart = true. É o que evita o mapa reiniciar a própria música toda
-	vez que o servidor reenvia o nome dela.
+	Plays a track. If it is already current and playing, does nothing, unless
+	Restart = true. That keeps the map from restarting its own music every time the
+	server resends its name.
 ]]
 function MusicController:Play(name: string, options: PlayOptions?): Sound?
 	return self:_play(name, options, "user")
 end
 
 --[[
-	`source` diz quem pediu, e é o que decide o que sobrevive à troca:
+	`source` says who asked, and it decides what survives the switch:
 
-		"user"      um :Play na mão — manda mais que tudo, cancela a fila e larga
-		            a faixa guardada pelo PushTrack
-		"playlist"  o avanço da própria fila, que não pode se cancelar
-		"push"/"pop" troca temporária, que não pode apagar o que guardou
+		"user"      a manual :Play: it outranks everything, cancels the queue, and
+		            drops the track saved by PushTrack
+		"playlist"  the queue advancing itself, which must not cancel itself
+		"push"/"pop" a temporary switch, which must not erase what it saved
 ]]
 function MusicController:_play(name: string, options: PlayOptions?, source: string?): Sound?
 	local opts: PlayOptions = options or {}
 
 	local sound = self:GetTrack(name)
 	if not sound then
-		warn(`[MusicController]: faixa "{name}" não existe em {SHARED_SOUNDS}.{MUSICS_FOLDER}.`)
+		log:StudioWarn(`track "{name}" does not exist in {SHARED_SOUNDS}.{MUSICS_FOLDER}.`)
 		return nil
 	end
 
@@ -444,8 +447,8 @@ function MusicController:_play(name: string, options: PlayOptions?, source: stri
 end
 
 --[[
-	Troca de faixa em crossfade: a atual sai enquanto a nova entra, no mesmo
-	tempo. Se não há nada tocando, é só um fade in.
+	Switches tracks with a crossfade: the current one fades out while the new one
+	fades in, over the same time. If nothing is playing, it is just a fade in.
 ]]
 function MusicController:Transition(name: string, fadeTime: number?, options: PlayOptions?): Sound?
 	local opts: PlayOptions = table.clone(options or {})
@@ -460,17 +463,16 @@ function MusicController:Transition(name: string, fadeTime: number?, options: Pl
 end
 
 --[[
-	Troca temporária: guarda a faixa que está tocando e entra por cima dela. É o
-	caso da música de boss — o :PopTrack devolve a de antes sem quem chamou
-	precisar lembrar qual era.
+	A temporary switch: saves the playing track and plays on top of it. That is the
+	boss music case: :PopTrack brings back the previous one without the caller
+	needing to remember which it was.
 
-		Music:PushTrack("Boss")   -- wave de boss começou
-		Music:PopTrack()          -- wave seguinte sem boss, volta a do mapa
+		Music:PushTrack("Boss")   -- a boss wave started
+		Music:PopTrack()          -- next wave without a boss, the map's returns
 
-	Push repetido não empilha: o segundo vê que a faixa já é a atual e sai sem
-	mexer no que foi guardado, então waves de boss seguidas continuam voltando
-	pra música certa. Se não havia nada tocando na hora do push, o Pop volta pro
-	silêncio.
+	Repeated pushes do not stack: the second sees the track is already current and
+	leaves without touching what was saved, so back-to-back boss waves still return
+	to the right music. If nothing was playing at push time, Pop returns to silence.
 ]]
 function MusicController:PushTrack(name: string, fadeTime: number?, options: PlayOptions?): Sound?
 	if self.CurrentName == name then
@@ -495,7 +497,7 @@ function MusicController:PopTrack(fadeTime: number?): Sound?
 
 	self._PushedFrom = nil
 
-	-- false: não tinha música quando o push aconteceu.
+	-- false: there was no music when the push happened.
 	if type(previous) ~= "string" then
 		self:Stop(fadeTime or DEFAULT_FADE)
 		return nil
@@ -509,14 +511,14 @@ function MusicController:IsPushed(): boolean
 end
 
 --[[
-	Fade out + Stop. No fim devolve o volume do Studio e larga o override daquele
-	:Play — a instância é compartilhada, então ela tem que voltar exatamente como
-	estava (senão a faixa volta muda, ou volta com o volume de outra chamada).
+	Fade out + Stop. At the end it restores the Studio volume and drops that :Play's
+	override: the instance is shared, so it must return exactly as it was (or the
+	track comes back muted, or with another call's volume).
 ]]
 function MusicController:_stopSound(sound: Sound, fadeTime: number?)
 	local restore = self:_baseVolume(sound)
 
-	-- Sem fade, o _fade resolve na hora e o callback roda antes de voltar.
+	-- Without a fade, _fade resolves immediately and the callback runs before returning.
 	self:_fade(sound, 0, fadeTime, function()
 		sound:Stop()
 		sound.TimePosition = 0
@@ -525,7 +527,7 @@ function MusicController:_stopSound(sound: Sound, fadeTime: number?)
 	end)
 end
 
--- Para a faixa atual. Sem fadeTime, corta seco.
+-- Stops the current track. Without fadeTime, it cuts.
 function MusicController:Stop(fadeTime: number?)
 	self:_stopPlaylist()
 	self:_clearEnded()
@@ -540,7 +542,7 @@ function MusicController:Stop(fadeTime: number?)
 	self:_setCurrent(nil, nil)
 end
 
--- Rede de segurança: para qualquer faixa que este controller tenha tocado.
+-- Safety net: stops any track this controller has played.
 function MusicController:StopAll(fadeTime: number?)
 	self:_stopPlaylist()
 	self:_clearEnded()
@@ -555,7 +557,7 @@ function MusicController:StopAll(fadeTime: number?)
 	self:_setCurrent(nil, nil)
 end
 
--- Pausa guardando a posição; :Resume() continua de onde parou.
+-- Pauses while keeping the position; :Resume() continues where it stopped.
 function MusicController:Pause(fadeTime: number?)
 	local current = self.Current
 	if not current or not current.IsPlaying then
@@ -601,7 +603,7 @@ function MusicController:TogglePause(fadeTime: number?)
 	end
 end
 
--- Volta do começo sem trocar de faixa.
+-- Restarts from the beginning without switching tracks.
 function MusicController:Restart(fadeTime: number?)
 	local current = self.Current
 	if not current then
@@ -640,7 +642,7 @@ end
 
 --[[ MASTER / MUTE / DUCK ]]
 
--- Volume geral da música, 0 a 1, multiplicado em cima do volume do Studio.
+-- Overall music volume, 0 to 1, multiplied on top of the Studio volume.
 function MusicController:SetVolume(scale: number, fadeTime: number?)
 	self._Master = math.max(scale, 0)
 	self:_refreshVolumes(fadeTime or DEFAULT_VOLUME_FADE)
@@ -683,8 +685,8 @@ function MusicController:IsMuted(): boolean
 end
 
 --[[
-	Abaixa a música temporariamente sem mexer no volume que o jogador escolheu —
-	pra cutscene, diálogo, boss spawn. :Unduck() devolve.
+	Lowers the music temporarily without touching the volume the player chose: for a
+	cutscene, dialog, boss spawn. :Unduck() restores it.
 ]]
 function MusicController:Duck(scale: number, fadeTime: number?)
 	self._Duck = math.clamp(scale, 0, 1)
@@ -696,7 +698,7 @@ function MusicController:Unduck(fadeTime: number?)
 	self:_refreshVolumes(fadeTime or DEFAULT_VOLUME_FADE)
 end
 
---[[ FILA ]]
+--[[ QUEUE ]]
 
 function MusicController:_stopPlaylist()
 	self._Playlist = nil
@@ -724,10 +726,10 @@ function MusicController:_advancePlaylist()
 			self:_shuffle(list)
 
 			--[[
-				A volta da fila é a única emenda em que a mesma faixa pode tocar
-				duas vezes seguidas: o embaralhamento novo não sabe qual foi a
-				última da rodada anterior e pode sortear justo ela para a posição
-				1. Com duas ou mais faixas, troca de lugar com outra qualquer.
+				The queue's wraparound is the only seam where the same track can play twice
+				in a row: the new shuffle does not know which was last in the previous round
+				and may draw exactly that one for position 1. With two or more tracks, it
+				swaps places with any other.
 			]]
 			if #list > 1 and list[1] == self.CurrentName then
 				local swap = math.random(2, #list)
@@ -753,16 +755,16 @@ function MusicController:_shuffle(list: { string })
 end
 
 --[[
-	Toca uma sequência de faixas, avançando sozinha quando cada uma termina.
-	Sem `names`, usa tudo que estiver em Musics. Loop = false para a fila acabar
-	em silêncio; Shuffle re-embaralha a cada volta.
+	Plays a sequence of tracks, advancing on its own when each ends. Without `names`,
+	it uses everything in Musics. Loop = false makes the queue end in silence;
+	Shuffle reshuffles every loop.
 ]]
 function MusicController:PlayPlaylist(names: { string }?, options: PlaylistOptions?)
 	local opts: PlaylistOptions = options or {}
 	local list = if names then table.clone(names) else self:GetTrackNames()
 
 	if #list == 0 then
-		warn("[MusicController]: playlist vazia.")
+		log:StudioWarn("empty playlist.")
 		return
 	end
 
@@ -777,7 +779,7 @@ function MusicController:PlayPlaylist(names: { string }?, options: PlaylistOptio
 	self:_advancePlaylist()
 end
 
--- Pula pra próxima da fila na mão.
+-- Skips to the next in the queue by hand.
 function MusicController:Next()
 	if not self._Playlist then
 		return
@@ -786,7 +788,7 @@ function MusicController:Next()
 	self:_advancePlaylist()
 end
 
--- Uma faixa aleatória, sem fila.
+-- A random track, no queue.
 function MusicController:PlayRandom(names: { string }?, options: PlayOptions?): Sound?
 	local list = names or self:GetTrackNames()
 	if #list == 0 then
@@ -799,25 +801,25 @@ end
 --[[ SFX ]]
 
 --[[
-	Toca um efeito de SoundService.SharedSounds.SFX. Sempre num clone, que se
-	destrói quando acaba — dois efeitos iguais podem se sobrepor sem um cortar o
-	outro, e o Sound original nunca fica preso tocando.
+	Plays an effect from SoundService.SharedSounds.SFX. Always on a clone that
+	destroys itself when done: two identical effects can overlap without one cutting
+	the other, and the original Sound never gets stuck playing.
 
 		Sound:PlaySFX("UnitPlace")                                  -- 2D
-		Sound:PlaySFX("Explosion", { Parent = mine.PrimaryPart })   -- 3D, no lugar
-		Sound:PlaySFX("Beep", { Key = "Tripmine" })                 -- derruba o anterior
+		Sound:PlaySFX("Explosion", { Parent = mine.PrimaryPart })   -- 3D, in place
+		Sound:PlaySFX("Beep", { Key = "Tripmine" })                 -- stops the previous
 
-	Com Looped, passe Key ou Cut: sem um dos dois nada limpa o clone depois.
+	With Looped, pass Key or Cut: without one of them nothing cleans up the clone.
 
 		Sound:PlaySFX("Thunderstorm", { Looped = true, Key = "Weather", Fade = 2 })
-		Sound:StopSFX("Weather", 2)                                 -- sai com fade
+		Sound:StopSFX("Weather", 2)                                 -- fades out
 ]]
 function MusicController:PlaySFX(name: string, options: SFXOptions?): Sound?
 	local opts: SFXOptions = options or {}
 
 	local template = self:GetSFX(name)
 	if not template then
-		warn(`[MusicController]: SFX "{name}" não existe em {SHARED_SOUNDS}.{SFX_FOLDER} nem solto na raiz do SoundService.`)
+		log:StudioWarn(`SFX "{name}" does not exist in {SHARED_SOUNDS}.{SFX_FOLDER} nor loose at the root of SoundService.`)
 		return nil
 	end
 
@@ -845,8 +847,8 @@ function MusicController:PlaySFX(name: string, options: SFXOptions?): Sound?
 	end
 
 	local function cleanup()
-		-- O fade morre junto: um tween pendurado numa Sound destruída não termina,
-		-- e a entrada dele em `_Fades` ficaria segurando a instância.
+		-- The fade dies too: a tween hanging on a destroyed Sound never finishes,
+		-- and its entry in `_Fades` would keep holding the instance.
 		self:_cancelFade(sound)
 
 		if opts.Key and self._ActiveSFX[opts.Key] == sound then
@@ -857,7 +859,7 @@ function MusicController:PlaySFX(name: string, options: SFXOptions?): Sound?
 		end
 	end
 
-	-- O fim, com o fade quando pedido. Sem FadeOut é o corte seco de sempre.
+	-- The end, with the fade when requested. Without FadeOut it is the usual hard cut.
 	local function finish()
 		if fadeOut > 0 and sound.Parent and sound.IsPlaying then
 			self:_fade(sound, 0, fadeOut, cleanup)
@@ -867,14 +869,14 @@ function MusicController:PlaySFX(name: string, options: SFXOptions?): Sound?
 	end
 
 	if opts.Cut then
-		-- O fade termina junto com o corte, não depois dele.
+		-- The fade ends together with the cut, not after it.
 		task.delay(math.max(0, opts.Cut - fadeOut), finish)
 	elseif not sound.Looped then
-		-- Acabou sozinho: não sobrou tail pra suavizar, então é limpeza direta.
+		-- Ended on its own: no tail left to smooth, so it is straight cleanup.
 		sound.Ended:Once(cleanup)
 
-		-- TimeLength só é confiável depois do som carregar; 0 significa que ainda
-		-- não deu, então cai no tempo fixo.
+		-- TimeLength is only reliable after the sound loads; 0 means it has not yet,
+		-- so it falls back to the fixed time.
 		local playFor = if sound.TimeLength > 0
 			then sound.TimeLength / math.max(sound.PlaybackSpeed, 0.01)
 			else SFX_FALLBACK_LIFETIME
@@ -889,11 +891,11 @@ function MusicController:PlaySFX(name: string, options: SFXOptions?): Sound?
 end
 
 --[[
-	Para o SFX que estiver vivo naquela Key (o de Looped mais longo, geralmente).
+	Stops the SFX alive on that Key (usually the longer Looped one).
 
-	`fadeTime` desliga com fade em vez de cortar — é o que um ambiente em loop
-	precisa ao sair. O `PlaySFX` chama sem fade de propósito: quando a mesma Key é
-	reusada, o som novo tem que entrar no lugar do antigo na hora.
+	`fadeTime` turns it off with a fade instead of cutting: that is what a looping
+	ambience needs when leaving. `PlaySFX` calls it without a fade on purpose: when
+	the same Key is reused, the new sound must replace the old one immediately.
 ]]
 function MusicController:StopSFX(key: string, fadeTime: number?)
 	local sound = self._ActiveSFX[key]
@@ -922,7 +924,7 @@ function MusicController:StopSFX(key: string, fadeTime: number?)
 	sound:Destroy()
 end
 
--- Volume geral dos efeitos, separado do da música. Vale pros próximos :PlaySFX.
+-- Overall effects volume, separate from music. Applies to the next :PlaySFX calls.
 function MusicController:SetSFXVolume(scale: number)
 	self._SFXMaster = math.max(scale, 0)
 end
@@ -931,7 +933,7 @@ function MusicController:GetSFXVolume(): number
 	return self._SFXMaster
 end
 
---[[ ESTADO ]]
+--[[ STATE ]]
 
 function MusicController:IsPlaying(name: string?): boolean
 	local current = self.Current
@@ -950,20 +952,20 @@ function MusicController:GetCurrent(): (string?, Sound?)
 	return self.CurrentName, self.Current
 end
 
---[[ COMPATIBILIDADE / EVENTOS ]]
+--[[ COMPATIBILITY / EVENTS ]]
 
--- O nome antigo, mantido pra não quebrar quem já chamava.
+-- The old name, kept so existing callers do not break.
 function MusicController:playMusic(name: string)
 	self:Play(name, { Fade = DEFAULT_FADE })
 end
 
--- Chamado pelo LoadingController do Game quando a tela de load sai.
+-- Called by Game's LoadingController when the loading screen leaves.
 function MusicController:OnLoadingComplete()
 	Framework:Fire("RequestMapMusic")
 end
 
 function MusicController:construct()
-	-- Só o Game responde: o MapService devolve o nome do mapa carregado.
+	-- Only Game answers: MapService returns the loaded map's name.
 	Framework:Listen("PlayMapMusic", function(name: string)
 		if type(name) ~= "string" then
 			return

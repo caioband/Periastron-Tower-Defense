@@ -3,40 +3,41 @@ local Difficulty = require(script.Parent.Difficulty)
 local Wave = {}
 
 --[[
-	A composicao de cada wave.
+	Each wave's composition.
 
-	A tabela abaixo e a planilha do Dificil (`Game/PTD - Hard Difficulty - Hard
-	Difficulty - Redcliff Knights.csv`) transcrita: 25 waves desenhadas a mao, com
-	a quantidade de cada inimigo por wave. E a fonte de verdade da composicao — o
-	Dificil usa a planilha linha por linha, sem multiplicar quantidade nenhuma.
+	The table below is the Hard spreadsheet ("PTD - Hard Difficulty - Redcliff
+	Knights", kept outside the repo) transcribed: 25 hand-designed waves, with the
+	count of each enemy per wave. It is the source of truth for composition: Hard
+	uses the spreadsheet row by row, without multiplying any count.
 
-	A coluna de vida total da planilha, porem, e so o piso: a vida de cada inimigo
-	ainda cresce com a wave (ver o item 3 abaixo), entao a wave 25 do Dificil pesa
-	mais do que os 1.925 que a planilha soma.
+	The spreadsheet's total-health column, however, is only the floor: each enemy's
+	health still grows with the wave (see item 3 below), so Hard's wave 25 weighs
+	more than the 1,925 the spreadsheet adds up to.
 
-	As outras dificuldades saem desta mesma tabela por duas vias, e so por elas:
+	The other difficulties come from this same table in two ways, and only these:
 
-	  1. A duracao. Cada preset tem o seu `MaxWaves`, e a wave N de um preset com M
-	     waves le a posicao `1 + (N-1)/(M-1) * 24` da tabela. O Facil atravessa as
-	     25 linhas em 15 waves (pulando composicoes), o Nightmare atravessa em 35
-	     (interpolando entre linhas vizinhas). Nas pontas isso sempre bate: a wave 1
-	     e a linha 1 e a ultima wave e a linha 25 — a do chefe.
+	  1. Length. Each preset has its own `MaxWaves`, and wave N of a preset with M
+	     waves reads position `1 + (N-1)/(M-1) * 24` of the table. Easy crosses the
+	     25 rows in 15 waves (skipping compositions), Nightmare in 35 (interpolating
+	     between neighboring rows). The ends always match: wave 1 is row 1 and the
+	     last wave is row 25, the boss row.
 
-	  2. Os multiplicadores do preset: `AmountMultiplier` na quantidade e
-	     `RewardMultiplier` na caixa por morte.
+	  2. The preset multipliers: `AmountMultiplier` on count and `RewardMultiplier`
+	     on cash per kill.
 
-	  3. A vida, que o MobService calcula a parte: `HealthMultiplier *
-	     HealthGrowth^(wave-1)`. O crescimento e por wave, entao a mesma linha da
-	     tabela pesa mais no fim da partida do que pesaria no comeco — e pesa mais
-	     ainda nos presets duros, que crescem mais rapido.
+	  3. Health, which MobService computes separately: `HealthMultiplier *
+	     HealthGrowth^(wave-1)`. Growth is per wave, so the same table row weighs
+	     more at the end of the match than at the start, and more still on the hard
+	     presets, which grow faster.
+
+	See docs/game/enemies.md.
 ]]
 
 local BOSS_ENTITY = "RedcliffChampion"
 
 --[[
-	Ordem de spawn dentro de uma wave. O loop do MobService percorre as entradas em
-	sequencia, entao esta lista decide quem entra primeiro: do mais fraco ao mais
-	forte, com o chefe por ultimo.
+	Spawn order within a wave. MobService's loop walks the entries in sequence, so
+	this list decides who enters first: weakest to strongest, with the boss last.
 ]]
 local SPAWN_ORDER = {
 	"Traveler",
@@ -51,12 +52,11 @@ local SPAWN_ORDER = {
 }
 
 --[[
-	Caixa por morte e intervalo entre um spawn e o proximo, por inimigo.
+	Cash per kill and the interval between one spawn and the next, per enemy.
 
-	As recompensas sao a fonte principal de renda (o pagamento por dano vale 0,15
-	por ponto efetivo, ver `Config.Data`), e estao calibradas para o Dificil render
-	cerca de 9.000 de caixa ao longo das 25 waves — o suficiente para umas dez
-	unidades com melhorias, comecando dos 400 iniciais.
+	Rewards are the main source of income (damage pays 0.15 per effective point; see
+	`Config.Data`), and they are tuned for Hard to yield about 9,000 cash over the
+	25 waves: enough for about ten upgraded units, starting from the initial 400.
 ]]
 local ENTITY_DATA = {
 	Traveler = { Reward = 3, SpawnDelay = 0.35 },
@@ -71,9 +71,9 @@ local ENTITY_DATA = {
 }
 
 --[[
-	Quantidade de cada inimigo por wave, direto da planilha do Dificil. O chefe so
-	aparece na ultima linha, e e o `BossAmountMultiplier` do preset que decide
-	quantos dele entram de fato.
+	Count of each enemy per wave, straight from the Hard spreadsheet. The boss only
+	appears on the last row, and the preset's `BossAmountMultiplier` decides how many
+	of it actually enter.
 ]]
 local WAVE_TABLE = {
 	{ Traveler = 4, RedcliffSquire = 2 },
@@ -106,24 +106,25 @@ local WAVE_TABLE = {
 local TABLE_LENGTH = #WAVE_TABLE
 
 --[=[
-	Onde a wave cai na tabela. Devolve um numero fracionario entre 1 e 25: a parte
-	inteira e a linha, e a fracao e o quanto ela ja andou na direcao da proxima.
+	Where the wave falls in the table. Returns a fractional number between 1 and 25:
+	the integer part is the row, and the fraction is how far it has moved toward the
+	next.
 ]=]
 --[[
-	O premio por wave concluida, pago a TODOS os jogadores da partida.
+	The reward per completed wave, paid to ALL players in the match.
 
-	E renda de time: nao depende de quem bateu, de quem matou nem de quem colocou
-	unidade. Sai uma vez, quando a wave termina de verdade -- wave perdida (game
-	over) nao paga.
+	It is team income: it does not depend on who hit, who killed, or who placed
+	units. It pays once, when the wave actually ends; a lost wave (game over) does
+	not pay.
 
-	O premio e **acumulativo**: cada faixa diz quanto uma wave soma sobre a
-	anterior, e o valor da wave N e a soma dos passos de todas as waves ate ela.
-	Com as faixas de hoje: 25, 50, 75... ate 250 na wave 10, e daí de 50 em 50 --
-	300 na 11, 1.250 na 30.
+	The reward is **cumulative**: each band says how much a wave adds over the
+	previous one, and wave N's value is the sum of the steps of every wave up to it.
+	With today's bands: 25, 50, 75... up to 250 on wave 10, then in steps of 50:
+	300 on 11, 1,250 on 30.
 
-	`UpTo` e a ultima wave da faixa; a ultima entrada nao tem `UpTo` e vale dali em
-	diante, o que importa porque o `MaxWaves` varia por dificuldade e o Nightmare
-	vai ate a wave 35 (1.500 la).
+	`UpTo` is the band's last wave; the last entry has no `UpTo` and applies from
+	there on, which matters because `MaxWaves` varies by difficulty and Nightmare
+	goes to wave 35 (1,500 there).
 ]]
 Wave.CASH_TIERS = {
 	{ UpTo = 10, Step = 25 },
@@ -131,7 +132,7 @@ Wave.CASH_TIERS = {
 }
 
 --[=[
-	Quanto a wave `waveNumber` paga a cada jogador. Wave invalida devolve 0.
+	How much wave `waveNumber` pays each player. An invalid wave returns 0.
 ]=]
 function Wave.GetWaveCash(waveNumber : number?) : number
 	if typeof(waveNumber) ~= "number" or waveNumber < 1 then
@@ -155,18 +156,18 @@ function Wave.GetWaveCash(waveNumber : number?) : number
 end
 
 --[=[
-	Onde esta wave cai na tabela de composição.
+	Where this wave falls in the composition table.
 
-	A conta normal espalha as waves do preset pela tabela **inteira**: a wave 1 é a
-	primeira linha e a última wave é a última linha, com o meio interpolado. É o que
-	faz o Easy (15 waves) e o Nightmare (35) percorrerem a mesma curva em ritmos
-	diferentes.
+	The normal math spreads the preset's waves over the **whole** table: wave 1 is
+	the first row and the last wave is the last row, with the middle interpolated.
+	That is what makes Easy (15 waves) and Nightmare (35) walk the same curve at
+	different paces.
 
-	`TableRows` encurta o trecho usado. É para preset curto que **não** é um jogo
-	inteiro acelerado: o tutorial tem 5 waves, e sem isto a wave 2 dele já caía na
-	linha 7 da tabela — doze inimigos com Guard e Pawn no segundo minuto de quem
-	nunca jogou. Com `TableRows = 5`, as cinco waves são as cinco primeiras linhas,
-	na ordem, que é a rampa que a tabela foi desenhada para ter.
+	`TableRows` shortens the stretch used. It is for a short preset that is **not** a
+	whole game sped up: the tutorial has 5 waves, and without this its wave 2 would
+	land on table row 7, twelve enemies with Guard and Pawn in the second minute of
+	someone who has never played. With `TableRows = 5`, the five waves are the first
+	five rows, in order, which is the ramp the table was designed to have.
 ]=]
 local function tablePosition(waveNumber : number, preset)
 	local total = preset.MaxWaves or TABLE_LENGTH
@@ -181,8 +182,8 @@ local function tablePosition(waveNumber : number, preset)
 end
 
 --[=[
-	Quantos inimigos deste tipo a wave traz, interpolando entre as duas linhas
-	vizinhas da tabela. Zero significa que o tipo nao aparece nesta wave.
+	How many enemies of this type the wave brings, interpolating between the two
+	neighboring table rows. Zero means the type does not appear in this wave.
 ]=]
 local function amountAt(entity : string, position : number, preset, scale : number?) : number
 	local lower = math.clamp(math.floor(position), 1, TABLE_LENGTH)
@@ -207,20 +208,20 @@ local function buildSpawnEntry(entity : string, amount : number, preset)
 end
 
 --[=[
-	Se a wave traz o chefe. O cliente nao ve esta config (ela e so de servidor),
-	entao quem precisa saber recebe a resposta junto do evento `SetWave` — e a
-	musica de boss depende disso.
+	Whether the wave brings the boss. The client does not see this config (it is
+	server-only), so whoever needs to know gets the answer along with the `SetWave`
+	event; the boss music depends on it.
 
-	O chefe fecha a partida: e a ultima linha da tabela, e a ultima wave de
-	qualquer preset cai nela.
+	The boss closes the match: it is the table's last row, and every preset's last
+	wave lands on it.
 ]=]
 function Wave.HasBoss(waveNumber : number, difficultyName : string?)
 	local preset = Difficulty.Get(difficultyName)
 	return waveNumber >= (preset.MaxWaves or TABLE_LENGTH)
 end
 
---- Se a entidade e o chefe. Quem pergunta e o `MobService`, que conta os chefes que
---- cada jogador derrubou (o contrato "Defeat 70 bosses").
+--- Whether the entity is the boss. `MobService` asks, since it counts the bosses
+--- each player took down (the "Defeat 70 bosses" contract).
 function Wave.IsBoss(entityName : string?) : boolean
 	return entityName == BOSS_ENTITY
 end
@@ -231,12 +232,12 @@ function Wave.GetSpawns(waveNumber : number, difficultyName : string?)
 	local spawns = {}
 
 	--[[
-		`BossWaveOnly` deixa a wave do chefe **só** com ele.
+		`BossWaveOnly` leaves the boss wave with **only** the boss.
 
-		É para o tutorial: a última wave dele é a primeira vez que o jogador vê um
-		chefe, e ensinar isso no meio de dez inimigos comuns é ensinar duas coisas ao
-		mesmo tempo. Nos presets normais a escolta faz parte do desafio, e por isso a
-		chave é opcional em vez de virar regra.
+		It is for the tutorial: its last wave is the first time the player sees a boss,
+		and teaching that amid ten regular enemies teaches two things at once. On
+		normal presets the escort is part of the challenge, which is why the key is
+		optional instead of a rule.
 	]]
 	local bossOnly = preset.BossWaveOnly == true and Wave.HasBoss(waveNumber, difficultyName)
 
@@ -247,10 +248,10 @@ function Wave.GetSpawns(waveNumber : number, difficultyName : string?)
 			end
 
 			--[[
-				`WaveAmountScale` é o peso de **uma** wave, por cima da curva. Existe para
-				wave roteirizada: a 3 do tutorial cai junto com o primeiro clima da vida
-				do jogador, e a conta da curva mais o debuff do clima fazia dela a mais
-				dura das cinco.
+				`WaveAmountScale` is the weight of **one** wave, on top of the curve. It
+				exists for scripted waves: the tutorial's wave 3 coincides with the
+				player's first weather ever, and the curve plus the weather debuff made it
+				the hardest of the five.
 			]]
 			local scale = preset.WaveAmountScale and preset.WaveAmountScale[waveNumber]
 			local amount = amountAt(entity, position, preset, scale)

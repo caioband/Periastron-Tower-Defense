@@ -1,22 +1,23 @@
 --[[
-	A vida base de cada inimigo. O que chega no mob e a vida daqui multiplicada
-	pela dificuldade e pela wave: `HealthMultiplier * HealthGrowth^(wave-1)`, ver
+	Each enemy's base health. What reaches the enemy is this health multiplied by
+	difficulty and wave: `HealthMultiplier * HealthGrowth^(wave-1)`; see
 	`MobService:SpawnWave`.
 
-	Estes numeros sao os da planilha do Dificil (`Config.Wave`): a coluna de vida
-	total por wave dela foi calculada com eles, entao mexer aqui desloca a curva
-	inteira. A variedade de vida entre os tipos e de proposito — o Squire e fragil
-	e rapido, o Guard e gordo e lento — e a mistura de tipos por wave e o que faz a
-	curva subir, nao o tamanho de um inimigo so.
+	These numbers match the Hard spreadsheet (`Config.Wave`): its total health per
+	wave column was computed with them, so changing them shifts the whole curve.
+	The health spread between types is on purpose (the Squire is fragile and fast,
+	the Guard is fat and slow), and the mix of types per wave is what makes the
+	curve rise, not the size of a single enemy.
+
+	See docs/game/enemies.md.
 ]]
 
 local Mob = {}
 
 --[[
-	Velocidade de referencia, em studs por segundo. A velocidade que o mob recebe e
-	`BaseSpeed * SpeedMultiplier do inimigo * SpeedMultiplier do preset *
-	SpeedGrowth^(wave-1)`, com teto no `SpeedGrowthCap` — ver `MobService:SpawnWave`
-	e `Config.Difficulty`.
+	Reference speed, in studs per second. An enemy's speed is `BaseSpeed * enemy
+	SpeedMultiplier * preset SpeedMultiplier * SpeedGrowth^(wave-1)`, capped at
+	`SpeedGrowthCap`; see `MobService:SpawnWave` and `Config.Difficulty`.
 ]]
 Mob.BaseSpeed = 4
 
@@ -72,23 +73,23 @@ Mob.Entities = {
 		SpeedMultiplier = 1 / 2,
 		Gimmicks = {
 			--[[
-				O golpe de assinatura do Redcliff Champion: na metade da vida ele para,
-				bate, e uma unidade aleatoria fica atordoada.
+				The Redcliff Champion's signature move: at half health it stops, strikes,
+				and a random unit is stunned.
 
-				O escopo existe porque o chefe do elenco Astral tem o dele (o
-				`HealthThresholdRush`, logo abaixo), e os dois disparavam no mesmo 50%:
-				o Sentinel tocava `Attack` e `Rush` juntos e ficava parado 1,3s
-				justamente quando o arranque comecava. **Um chefe, um golpe.**
+				The scope exists because the Astral boss has its own
+				(`HealthThresholdRush`, below), and both fired at the same 50%: the
+				Sentinel played `Attack` and `Rush` together and stood still for 1.3 s
+				right as the dash started. **One boss, one move.**
 
-				`ExceptModelSet`, e nao uma lista de quem tem: este e o golpe **padrao** do
-				chefe, e o Easy e o unico elenco que trocou por um proprio. Escrito pelo
-				lado positivo, cada pasta nova deixava o chefe dela mudo ate alguem
-				lembrar de somar o nome -- aconteceu tres vezes antes de a chave virar.
+				`ExceptModelSet`, not a list of who has it: this is the boss's **default**
+				move, and Easy is the only set that swapped it for its own. Written the
+				positive way, each new folder left its boss mute until someone added the
+				name, which happened three times before the key changed.
 
-				Os chefes que o herdam hoje (Sky Knight, Korblox Death Raider, Overseer
-				King) nao tem animacao `Attack`, entao neles a pausa de 1,3s sai sem gesto.
-				Cada um sai desta heranca no dia em que ganhar o golpe proprio, que e o
-				caminho que o Astral Sentinel ja fez.
+				Bosses that inherit it today (Sky Knight, Korblox Death Raider, Overseer
+				King) have no `Attack` animation, so the 1.3 s pause plays without a
+				gesture. Each leaves the inheritance when it gets its own move, the path
+				the Astral Sentinel already took.
 			]]
 			{
 				Type = "HealthThresholdStunRandomUnit",
@@ -100,19 +101,17 @@ Mob.Entities = {
 			},
 
 			--[[
-				O arranque do Astral Sentinel: na metade da vida ele toca o `Rush` e
-				dispara.
+				The Astral Sentinel's dash: at half health it plays `Rush` and takes off.
 
-				`MarkerTime` e onde cai o marcador `Action` dentro da animacao —
-				0,5667s dos 3,25s de `rbxassetid://98921075157550`, medido do asset
-				publicado. Quem conta o tempo e o servidor, e nao o marcador de
-				verdade no cliente: o buff e de partida, entao ele tem de sair igual
-				para todo mundo na sala e nao pode depender de um cliente avisar que a
-				animacao chegou la. O cliente toca a mesma animacao no mesmo instante,
-				entao o arranque cai no quadro certo na tela.
+				`MarkerTime` is where the `Action` marker falls in the animation: 0.5667 s
+				of the 3.25 s of `rbxassetid://98921075157550`, measured from the
+				published asset. The server keeps time, not the real marker on the client:
+				the buff is match state, so it must happen the same for everyone and cannot
+				depend on a client reporting that the animation got there. The client plays
+				the same animation at the same instant, so the dash lands on the right frame.
 
-				**Se o `Rush` for reexportado, este numero tem de ser remedido** — e o
-				unico lugar onde o codigo sabe de cor uma coisa que mora no asset.
+				**If `Rush` is re-exported, this number must be measured again**: it is the
+				only place the code knows by heart something that lives in the asset.
 			]]
 			{
 				Type = "HealthThresholdRush",
@@ -121,7 +120,7 @@ Mob.Entities = {
 				Animation = "Rush",
 				MarkerTime = 0.5667,
 
-				-- `RushScale = 1 + Amount`, entao 1 e velocidade dobrada.
+				-- `RushScale = 1 + Amount`, so 1 is double speed.
 				Amount = 1,
 
 				Duration = 3,
@@ -132,51 +131,49 @@ Mob.Entities = {
 }
 
 --[[
-	Qual boneco cada inimigo veste, por dificuldade.
+	Which model each enemy wears, per difficulty.
 
-	Os modelos vivem em `Assets.Entities.Difficulties.<conjunto>`, e cada conjunto e
-	um **reskin por slot**: a lista de entidades acima continua sendo a verdade —
-	mesma vida, mesma velocidade, mesmos gimmicks — e o conjunto so diz que modelo
-	desenhar no lugar de cada uma. Trocar de dificuldade nao muda a partida, muda o
-	elenco.
+	Models live in `Assets.Entities.Difficulties.<set>`, and each set is a **reskin
+	per slot**: the entity list above is still the truth (same health, speed, and
+	gimmicks), and the set only says which model to draw in each one's place.
+	Changing difficulty does not change the match, it changes the cast.
 
-	As chaves sao nomes de entidade e os valores sao nomes de modelo. O que nao
-	estiver na tabela usa o proprio nome da entidade, que e o caso da maioria do
-	`Hard`.
+	Keys are entity names and values are model names. Anything not in the table uses
+	the entity's own name, which is the case for most of `Hard`.
 
-	`Hard` e o fallback: dificuldade sem `ModelSet` (ou com um que nao exista na
-	pasta) cai nele, e por isso ele e o unico conjunto que **precisa** ter os nove.
+	`Hard` is the fallback: a difficulty without `ModelSet` (or with one not in the
+	folder) falls into it, so it is the only set that **must** have all nine.
 ]]
 Mob.DefaultModelSet = "Hard"
 
 Mob.ModelSets = {
-	-- Identidade, menos o alado: a entidade se chama `WingedSquire` desde a
-	-- planilha e o modelo se chama `WingedRedcliff`. Enquanto os dois nomes
-	-- existirem, e esta linha que os liga -- sem ela o `FindFirstChild` falha e o
-	-- inimigo nasce vestido de outro.
+	-- Identity, except the winged one: the entity has been `WingedSquire` since the
+	-- spreadsheet and the model is `WingedRedcliff`. While both names exist, this
+	-- line links them; without it `FindFirstChild` fails and the enemy spawns
+	-- wearing another model.
 	Hard = {
 		WingedSquire = "WingedRedcliff",
 	},
 
 	--[[
-		O elenco Astral, oito modelos para nove slots.
+		The Astral cast, eight models for nine slots.
 
-		A ordem sai da regua que o `Weakest`/`Strongest` desenha no Workspace: os
-		modelos estao enfileirados do mais fraco ao mais forte, e a fila casa degrau
-		por degrau com o `SPAWN_ORDER` do `Config.Wave`.
+		The order follows the ruler `Weakest`/`Strongest` draws in the Workspace:
+		models are lined up from weakest to strongest, and the line matches
+		`Config.Wave`'s `SPAWN_ORDER` step by step.
 
-		Sobra um slot, e quem repete e o `AstralAdventurer`, no Enforcer. A conta e de
-		leitura de tela: o Enforcer e o Champion aparecem juntos na ultima wave, entao
-		dar o modelo do chefe ao Enforcer tiraria do chefe o unico momento em que ele
-		tem que ser inconfundivel. Repetir o degrau de baixo custa dois elites
-		parecidos; repetir o de cima custaria o chefe.
+		One slot is left over, and `AstralAdventurer` repeats, on the Enforcer. The
+		reasoning is about reading the screen: the Enforcer and the Champion appear
+		together in the last wave, so giving the boss's model to the Enforcer would
+		take away the boss's one moment to be unmistakable. Repeating the lower step
+		costs two similar elites; repeating the top would cost the boss.
 	]]
 	--[[
-		O elenco Sky, oito modelos para nove slots.
+		The Sky cast, eight models for nine slots.
 
-		Mesma regua e mesma conta do Easy: quem repete e o degrau de baixo (o
-		`SkyGuardian`, no Enforcer), para o chefe continuar sendo o unico com a cara
-		dele na wave em que os dois aparecem juntos.
+		Same ruler and reasoning as Easy: the lower step repeats (`SkyGuardian`, on
+		the Enforcer), so the boss stays the only one with its look in the wave where
+		both appear.
 	]]
 	Medium = {
 		Traveler = "SkyBirdWarrior",
@@ -191,7 +188,7 @@ Mob.ModelSets = {
 	},
 
 	--[[
-		O elenco Korblox, nove modelos para nove slots -- nenhum repete.
+		The Korblox cast, nine models for nine slots; none repeats.
 	]]
 	Impossible = {
 		Traveler = "KorbloxMage",
@@ -206,11 +203,10 @@ Mob.ModelSets = {
 	},
 
 	--[[
-		O elenco Overseer, nove modelos para nove slots -- nenhum repete.
+		The Overseer cast, nine models for nine slots; none repeats.
 
-		Mesma regua do Easy: os modelos estao enfileirados entre o `Weakest` e o
-		`Strongest` do Workspace, e a fila casa degrau por degrau com o `SPAWN_ORDER`
-		do `Config.Wave`.
+		Same ruler as Easy: models are lined up between the Workspace's `Weakest` and
+		`Strongest`, and the line matches `Config.Wave`'s `SPAWN_ORDER` step by step.
 	]]
 	Nightmare = {
 		Traveler = "OverseerMinion",
@@ -238,38 +234,37 @@ Mob.ModelSets = {
 }
 
 --[=[
-	Os gimmicks de `entityName` que valem no conjunto `setName`.
+	The gimmicks of `entityName` that apply in set `setName`.
 
-	Gimmick sem `ModelSet` vale em todo lugar; com `ModelSet`, ele so sai no conjunto
-	que o nomeia. E o que deixa **cada inimigo de cada elenco ter o seu golpe**: o
-	Astral Sentinel arranca, o Redcliff Champion atordoa uma torre, e nenhum dos dois
-	faz o do outro.
+	A gimmick without `ModelSet` applies everywhere; with `ModelSet`, it only fires
+	in the set that names it. That is what lets **each enemy of each cast have its
+	own move**: the Astral Sentinel dashes, the Redcliff Champion stuns a tower, and
+	neither does the other's.
 
-	Sao duas chaves, e a escolha entre elas importa:
+	There are two keys, and choosing between them matters:
 
-	  - `ModelSet` -- **so** nos conjuntos nomeados. Para o golpe que e daquele elenco.
-	  - `ExceptModelSet` -- em todos **menos** nos nomeados. Para o golpe que e o
-	    padrao da entidade e que algum elenco substituiu pelo seu.
+	  - `ModelSet` -- **only** in the named sets. For a move that belongs to that cast.
+	  - `ExceptModelSet` -- in every set **except** the named ones. For the entity's
+	    default move that some cast replaced with its own.
 
-	As duas aceitam um nome ou uma lista.
+	Both accept a name or a list.
 
-	A segunda existe porque a primeira tem uma armadilha silenciosa: o filtro e por
-	**conjunto de modelos**, e nao por dificuldade, entao uma dificuldade que ganha
-	pasta propria sai do fallback `Hard` e perde na hora tudo o que estava escopado
-	la. Isso aconteceu tres vezes seguidas -- Nightmare, Medium e Impossible --, e o
-	sintoma e mudo: nenhum erro, o golpe so para de sair.
+	The second exists because the first has a silent trap: the filter is by **model
+	set**, not difficulty, so a difficulty that gets its own folder leaves the `Hard`
+	fallback and at once loses everything scoped there. It happened three times in a
+	row (Nightmare, Medium, and Impossible), and the symptom is silent: no error, the
+	move just stops.
 
-	Escrito pelo lado negativo, o padrao passa a ser **herdar**: elenco novo ja nasce
-	com o golpe da entidade, e so deixa de te-lo quando alguem disser que ele tem o
-	seu. E a diferenca entre esquecer e ganhar de graca.
+	Written the negative way, the default becomes **inheriting**: a new cast is born
+	with the entity's move and only loses it when someone says it has its own.
 
-	Para um inimigo **trocar** de golpe entre os elencos, e preciso escopar os dois
-	lados: um gimmick `Easy` novo convive com um gimmick sem `ModelSet` em vez de
-	substitui-lo. E o que os dois do chefe fazem aqui embaixo.
+	For an enemy to **swap** moves between casts, both sides must be scoped: a new
+	`Easy` gimmick coexists with an unscoped one instead of replacing it. That is what
+	the boss's two moves do below.
 
-	Isto **afrouxa** a regra de que trocar de dificuldade so troca o elenco, e por
-	isso a excecao e declarada numa chave visivel em vez de sair de um `if` em
-	algum handler. Quem le a entidade ve quais gimmicks nao valem em todo lugar.
+	This **loosens** the rule that changing difficulty only changes the cast, so the
+	exception is declared in a visible key instead of an `if` in some handler.
+	Whoever reads the entity sees which gimmicks do not apply everywhere.
 ]=]
 function Mob.GetGimmicks(setName : string?, entityName : string)
 	local entity = Mob.Entities[entityName]
@@ -278,7 +273,7 @@ function Mob.GetGimmicks(setName : string?, entityName : string)
 	local set = setName or Mob.DefaultModelSet
 	local allowed = {}
 
-	--- Se `scope` (nome, lista ou nil) nomeia o conjunto desta partida.
+	--- Whether `scope` (a name, a list, or nil) names this match's set.
 	local function names(scope) : boolean
 		if scope == nil then return false end
 		if type(scope) == "table" then return table.find(scope, set) ~= nil end
@@ -298,11 +293,11 @@ function Mob.GetGimmicks(setName : string?, entityName : string)
 end
 
 --[=[
-	O modelo que `entityName` veste no conjunto `setName`.
+	The model `entityName` wears in set `setName`.
 
-	Conjunto desconhecido cai no padrao, e entidade sem entrada no conjunto usa o
-	proprio nome. Nunca devolve nil: quem chama esta escolhendo um filho de uma
-	pasta, e um nome errado la vira um aviso, nao um erro.
+	An unknown set falls back to the default, and an entity without an entry uses
+	its own name. Never returns nil: the caller is picking a child of a folder, and a
+	wrong name there becomes a warning, not an error.
 ]=]
 function Mob.GetModelName(setName : string?, entityName : string) : string
 	local set = Mob.ModelSets[setName or ""] or Mob.ModelSets[Mob.DefaultModelSet]

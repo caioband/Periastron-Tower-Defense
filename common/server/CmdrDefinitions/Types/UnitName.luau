@@ -1,21 +1,21 @@
 --[[
 	cmdr type "unitName".
 
-	Registrado no servidor por `Registry:RegisterTypesIn`, que replica este modulo
-	para `ReplicatedStorage.CmdrClient.Types` — e o que faz o autocomplete existir no
-	console do cliente.
+	Registered on the server by `Registry:RegisterTypesIn`, which replicates this
+	module to `ReplicatedStorage.CmdrClient.Types`: that is what makes autocomplete
+	exist in the client console.
 
-	A lista sai do `SharedConfig.UnitStats`, que e o catalogo de unidades do jogo.
-	Nao e a lista das unidades *posicionadas*: essa e estado de servidor, e recusar
-	aqui um nome que existe seria pior do que deixar o comando responder que nao ha
-	nenhuma daquele tipo no mapa.
+	The list comes from `SharedConfig.UnitStats`, the game's unit catalog. It is not
+	the list of *placed* units: that is server state, and rejecting an existing name
+	here would be worse than letting the command answer that there are none of that
+	type on the map.
 
-	Mora no `common/` porque as duas places usam: a Game pelo `strike` (unidade no
-	mapa) e as duas pelo `units` (o inventario do perfil, que o Lobby e quem monta
-	em deck). O `UnitStats` que ele le e compartilhado, entao nada aqui depende de
-	service de um lado so.
+	It lives in `common/` because both places use it: Game through `strike` (a unit
+	on the map) and both through `units` (the profile inventory, which the Lobby
+	builds decks from). The `UnitStats` it reads is shared, so nothing here depends
+	on a one-sided service.
 
-	> Unidade com espaco no nome precisa de aspas na linha de comando:
+	> A unit with a space in its name needs quotes on the command line:
 	> `units add me "Subspace Tripminer" 3`.
 ]]
 

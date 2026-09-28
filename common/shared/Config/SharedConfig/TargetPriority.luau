@@ -1,21 +1,22 @@
 --[[
-	Prioridade de alvo de uma unidade — o que o botao `Priority` do card gira.
+	A unit's target priority: what the card's `Priority` button cycles.
 
-	Fica em Config, e nao em Util, porque os dois lados precisam da mesma lista e
-	dos mesmos nomes: o cliente manda para o servidor o modo que quer, o servidor
-	confere se existe. A conta de escolher alvo (`IsBetter`) tambem sai daqui pelo
-	mesmo motivo — o servidor decide quem leva o dano e o cliente so gira a
-	unidade para o alvo; se as duas contas discordassem, a torre bateria num mob
-	olhando para outro.
+	It lives in Config, not Util, because both sides need the same list and names:
+	the client sends the mode it wants and the server checks that it exists. The
+	targeting math (`IsBetter`) lives here for the same reason: the server decides
+	who takes damage and the client only turns the unit toward the target; if the
+	two disagreed, the tower would hit one enemy while facing another.
+
+	See docs/game/upgrade-card.md.
 ]]
 local TargetPriority = {}
 
 TargetPriority.Default = "Closest"
 
--- A ordem do ciclo do botao: um clique anda uma casa e volta ao inicio no fim.
+-- The button's cycle order: a click moves one step and wraps at the end.
 TargetPriority.Order = { "Closest", "Farthest", "Weakest", "Strongest" }
 
--- O que sai escrito no botao. Curto porque o label e TextScaled num botao baixo.
+-- Text on the button. Short, because the label is TextScaled on a low button.
 TargetPriority.Labels = {
 	Closest = "CLOSEST",
 	Farthest = "FARTHEST",
@@ -28,9 +29,8 @@ function TargetPriority.Exists(mode : string?) : boolean
 end
 
 --[=[
-	O modo, ja peneirado: qualquer coisa que nao seja um dos quatro vira o padrao.
-	Serve tanto para o que chega do cliente quanto para unidade antiga que ainda
-	nao tem prioridade nenhuma guardada.
+	The mode, sanitized: anything other than the four becomes the default. Used
+	for what arrives from the client and for old units with no stored priority.
 ]=]
 function TargetPriority.Get(mode : string?) : string
 	if TargetPriority.Exists(mode) then
@@ -52,10 +52,10 @@ function TargetPriority.Label(mode : string?) : string
 end
 
 --[=[
-	Se o modo precisa saber o avanco do mob pelo caminho.
+	Whether the mode needs the enemy's progress along the path.
 
-	So o `Farthest`. Serve para quem monta os candidatos nao pagar a varredura de
-	nodes nos outros tres modos, que so olham distancia e vida.
+	Only `Farthest`. Lets whoever builds the candidates skip the node scan in the
+	other three modes, which only look at distance and health.
 ]=]
 function TargetPriority.UsesPathProgress(mode : string?) : boolean
 	return TargetPriority.Get(mode) == "Farthest"
@@ -64,12 +64,12 @@ end
 export type Candidate = { distance : number, health : number, progress : number? }
 
 --[=[
-	Se `candidate` toma o lugar de `best`. Os dois ja passaram pelo teste de
-	alcance — aqui so se compara quem interessa mais.
+	Whether `candidate` replaces `best`. Both already passed the range check; this
+	only compares which matters more.
 
-	Distancia desempata todo modo: com dois mobs de vida igual no `Weakest`, a
-	unidade fica com o que esta mais perto em vez de trocar de alvo a cada
-	varredura conforme a ordem da tabela muda.
+	Distance breaks ties in every mode: with two enemies of equal health on
+	`Weakest`, the unit keeps the closer one instead of switching targets on every
+	scan as table order changes.
 ]=]
 function TargetPriority.IsBetter(mode : string?, candidate : Candidate, best : Candidate?) : boolean
 	if not best then
@@ -80,15 +80,12 @@ function TargetPriority.IsBetter(mode : string?, candidate : Candidate, best : C
 
 	if resolved == "Farthest" then
 		--[[
-			"Mais longe" e do comeco do caminho, nao da torre: quem ja andou mais
-			leva o tiro primeiro, porque e ele que esta prestes a chegar na base.
-			Antes valia a distancia ate a propria unidade, e o alvo escolhido era o
-			mob na beirada do alcance -- muitas vezes um que tinha acabado de nascer,
-			enquanto o que estava quase saindo do outro lado passava batido.
+			"Farthest" is from the start of the path, not the tower: whoever has
+			walked the most is shot first, because it is about to reach the base.
 
-			O avanco vem do node mais perto do mob (`PathUtil.GetNodeProgress`), e nao
-			existe quando o caminho ainda nao chegou inteiro no cliente. Sem ele, a
-			regra antiga vale: dos dois lados, o mais distante da torre.
+			Progress comes from the enemy's nearest node (`PathUtil.GetNodeProgress`)
+			and does not exist until the whole path has reached the client. Without
+			it, both sides fall back to the enemy farthest from the tower.
 		]]
 		if candidate.progress and best.progress then
 			if candidate.progress ~= best.progress then

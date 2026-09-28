@@ -1,14 +1,18 @@
+local Log = require(script.Parent.Log)
+
+local log = Log.new("PathUtil")
+
 local PathUtil = {}
 
 local DEFAULT_CORNER_RADIUS = 1.75
 local DEFAULT_SAMPLES_PER_CORNER = 10
 
--- Teto de seguranca para o produto das bifurcacoes: com 5 forks de 2 lados ja
--- sao 32 rotas, e cada uma custa uma suavizacao inteira.
+-- Safety cap on the product of forks: 5 two-way forks are already 32 routes, and
+-- each one costs a full smoothing pass.
 local MAX_ROUTES = 32
 
--- Contagens que o servidor publica na pasta de nodes para o cliente saber
--- quando a replicacao terminou. Ver `PublishNodeCounts` / `WaitForNodes`.
+-- Counts the server publishes on the nodes folder so the client knows when
+-- replication finished. See `PublishNodeCounts` / `WaitForNodes`.
 local NODE_COUNT_ATTRIBUTE = "NodeCount"
 local POINT_COUNT_ATTRIBUTE = "PointCount"
 local DEFAULT_WAIT_TIMEOUT = 10
@@ -25,13 +29,13 @@ function PathUtil.GetSortedNodes(nodesFolder)
 end
 
 --[[
-	Um filho de Nodes e uma de duas coisas:
+	A child of Nodes is one of two things:
 
-	  Part            um ponto do caminho
-	  Folder / Model  um trecho inteiro, com os proprios pontos numerados dentro
+	  Part            a point on the path
+	  Folder / Model  a whole segment, with its own numbered points inside
 
-	Dois filhos com o MESMO nome sao alternativas do mesmo passo — e assim que o
-	mapa declara uma bifurcacao.
+	Two children with the SAME name are alternatives for the same step: that is how
+	a map declares a fork.
 ]]
 local function expandStep(instance) : { Vector3 }
 	if instance:IsA("BasePart") then
@@ -49,17 +53,17 @@ local function expandStep(instance) : { Vector3 }
 end
 
 --[[
-	Duas alternativas do mesmo passo tem o mesmo nome, entao a ordem em que
-	`GetChildren` as devolve e o unico criterio que sobra — e essa ordem nao e
-	garantida entre servidor e cliente.
+	Two alternatives for the same step share a name, so the order `GetChildren`
+	returns them in is the only remaining criterion, and it is not guaranteed to
+	match between server and client.
 
-	Isso importa porque o indice da rota atravessa a rede: o servidor sorteia um
-	numero no spawn e o cliente monta as rotas por conta propria e indexa por ele.
-	Com os indices trocados o mob apareceria andando por um lado da bifurcacao
-	enquanto o servidor o simula pelo outro.
+	That matters because the route index crosses the network: the server draws a
+	number at spawn and the client builds the routes itself and indexes by it. With
+	swapped indices the enemy would appear walking one side of the fork while the
+	server simulates the other.
 
-	Comparar as proprias posicoes resolve: os dois lados leem as mesmas Parts
-	replicadas, entao chegam sempre a mesma ordem.
+	Comparing positions solves it: both sides read the same replicated Parts, so
+	they always reach the same order.
 ]]
 local function comparePositions(a : Vector3, b : Vector3) : boolean
 	if a.X ~= b.X then return a.X < b.X end
@@ -77,8 +81,8 @@ local function compareAlternatives(a : { Vector3 }, b : { Vector3 }) : boolean
 end
 
 --[=[
-	Quantos pontos a pasta de nodes descreve, contando os que estao dentro dos
-	trechos de bifurcacao.
+	How many points the nodes folder describes, including those inside fork
+	segments.
 ]=]
 function PathUtil.CountPoints(nodesFolder) : number
 	local count = 0
@@ -97,8 +101,8 @@ function PathUtil.CountPoints(nodesFolder) : number
 end
 
 --[=[
-	Publica o tamanho da pasta de nodes para o cliente conferir. Chamado pelo
-	servidor depois de clonar os nodes do mapa.
+	Publishes the nodes folder's size for the client to check. Called by the server
+	after cloning the map's nodes.
 ]=]
 function PathUtil.PublishNodeCounts(nodesFolder)
 	nodesFolder:SetAttribute(NODE_COUNT_ATTRIBUTE, #nodesFolder:GetChildren())
@@ -106,18 +110,17 @@ function PathUtil.PublishNodeCounts(nodesFolder)
 end
 
 --[=[
-	Espera a pasta de nodes chegar inteira no cliente.
+	Waits for the whole nodes folder to reach the client.
 
-	Esperar por um node especifico nao basta: um passo com bifurcacao tem dois
-	filhos de mesmo nome, e cada um e um Folder com os proprios pontos dentro.
-	Montar as rotas cedo demais daria uma bifurcacao com um lado so, ou um trecho
-	truncado — e como o resultado fica em cache, o erro duraria o round inteiro.
+	Waiting for one specific node is not enough: a forked step has two children with
+	the same name, each a Folder with its own points. Building routes too early
+	would give a one-sided fork or a truncated segment, and since the result is
+	cached, the mistake would last the whole round.
 
-	Conferir contagem em vez de escutar um sinal deixa a espera imune a ordem em
-	que a replicacao entrega as coisas: enquanto faltar peca, o loop continua.
+	Checking counts instead of listening to a signal makes the wait immune to the
+	order replication delivers things in: while a piece is missing, the loop goes on.
 
-	Devolve `false` se estourar o tempo, para quem chamou nao cachear um caminho
-	incompleto.
+	Returns `false` on timeout, so the caller does not cache an incomplete path.
 ]=]
 function PathUtil.WaitForNodes(nodesFolder, timeout : number?) : boolean
 	local deadline = os.clock() + (timeout or DEFAULT_WAIT_TIMEOUT)
@@ -136,20 +139,19 @@ function PathUtil.WaitForNodes(nodesFolder, timeout : number?) : boolean
 		task.wait()
 	until os.clock() >= deadline
 
-	warn("[PathUtil]: os nodes do mapa nao chegaram completos a tempo.")
+	log:StudioWarn("the map nodes did not finish replicating in time.")
 	return false
 end
 
 --[=[
-	Todas as rotas que a pasta de nodes descreve, uma por combinacao de
-	bifurcacoes.
+	Every route the nodes folder describes, one per combination of forks.
 
-	Cada rota devolvida tem o mesmo formato de um mapa sem bifurcacao nenhuma —
-	uma polilinha simples — entao todo o resto do jogo continua tratando "um
-	caminho" como sempre tratou. A escolha de qual rota seguir vira um indice.
+	Each returned route has the same shape as a map with no forks (a plain
+	polyline), so the rest of the game keeps treating "a path" as it always did.
+	Choosing a route becomes an index.
 
 		{
-			positions = { Vector3, ... },   -- os nodes crus, para as curvas
+			positions = { Vector3, ... },   -- the raw nodes, for the curves
 			smooth    = { points, length, cumulative },
 		}
 ]=]
@@ -175,15 +177,15 @@ function PathUtil.BuildRoutes(nodesFolder, cornerRadius, samplesPerCorner)
 	end
 
 	if total > MAX_ROUTES then
-		warn(string.format(
-			"[PathUtil]: %d rotas possiveis, acima do teto de %d. Usando so a primeira alternativa de cada passo.",
+		log:StudioWarn(string.format(
+			"%d possible routes, above the cap of %d. Using only the first alternative at each fork.",
 			total, MAX_ROUTES))
 		total = 1
 	end
 
-	-- Cada alternativa e expandida uma vez so e reaproveitada entre as rotas. A
-	-- ordenacao e o que faz o indice da rota significar a mesma coisa nos dois
-	-- lados da rede.
+	-- Each alternative is expanded once and reused across routes. The sort is what
+	-- makes a route index mean the same thing on both sides of the network.
+	--
 	local expanded = {}
 	for _, key in stepOrder do
 		expanded[key] = {}
@@ -198,7 +200,7 @@ function PathUtil.BuildRoutes(nodesFolder, cornerRadius, samplesPerCorner)
 		local positions = {}
 		local remaining = routeIndex - 1
 
-		-- Decomposicao em base mista: cada passo consome um "digito" do indice.
+		-- Mixed-radix decomposition: each step consumes one "digit" of the index.
 		for _, key in stepOrder do
 			local alternatives = expanded[key]
 			local count = total > 1 and #alternatives or 1
@@ -280,21 +282,21 @@ function PathUtil.BuildSmoothPathFromPositions(positions, cornerRadius, samplesP
 end
 
 --[=[
-	Os nodes do caminho achatados numa lista so, cada um com a distancia
-	percorrida do primeiro node ate ele.
+	The path's nodes flattened into one list, each with the distance walked from the
+	first node to it.
 
-	E o que a prioridade `Farthest` usa para medir o avanco de um mob: o node mais
-	perto dele diz o quanto do caminho ele ja andou, independente de onde a torre
-	esta. Sai das rotas ja montadas, entao os subnodes (as pastas de trecho) e as
-	bifurcacoes ja vieram expandidos na ordem certa pelo `BuildRoutes`.
+	This is what the `Farthest` priority uses to measure an enemy's progress: its
+	nearest node says how much of the path it has walked, wherever the tower is. It
+	comes from the routes already built, so segments and forks are already expanded
+	in order by `BuildRoutes`.
 
-	As rotas de um mapa com bifurcacao compartilham o comeco, e o mesmo node
-	aparece em varias delas. Ele entra na lista uma vez so, com a menor distancia
-	entre as rotas em que aparece -- assim dois mobs em ramos diferentes continuam
-	comparaveis, e o resultado nao depende da ordem em que as rotas foram geradas.
+	Routes on a forked map share their start, and the same node appears in several
+	of them. It enters the list once, with the smallest distance among its routes,
+	so two enemies on different branches stay comparable and the result does not
+	depend on route order.
 
-	Distancia pelo caminho, e nao em linha reta ate o primeiro node: num mapa que
-	volta perto do spawn a linha reta diria que o mob recuou.
+	Distance along the path, not a straight line to the first node: on a map that
+	loops back near the spawn, a straight line would say the enemy went backward.
 ]=]
 function PathUtil.BuildNodeDistances(routes)
 	local nodes = {}
@@ -328,15 +330,15 @@ function PathUtil.BuildNodeDistances(routes)
 end
 
 --[=[
-	O quanto do caminho ja foi andado por quem esta em `position`: a distancia do
-	primeiro node ate o node mais perto dela. `nil` se a lista estiver vazia.
+	How much of the path has been walked by whoever is at `position`: the distance
+	from the first node to the node nearest to it. `nil` if the list is empty.
 ]=]
 function PathUtil.GetNodeProgress(nodes, position : Vector3) : number?
 	local best = nil
 	local bestDistance = math.huge
 
 	for _, node in nodes do
-		-- Comparacao ao quadrado: e so para achar o menor, e a raiz nao muda a ordem.
+		-- Squared comparison: it only finds the smallest, and the root does not change order.
 		local offset = node.position - position
 		local squared = offset:Dot(offset)
 

@@ -13,11 +13,13 @@ local SharedConfig = require(Configs.SharedConfig)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local Signal = require(Packages.Signal)
 
 local PortalConfig = SharedConfig.PortalConfig
 
 local Framework = Me.new()
+local log = Log.new("PortalController")
 
 --[[ CONSTANTS ]]
 local MAP_FOLDER_NAME = "Map"
@@ -25,14 +27,16 @@ local EXIT_UI_NAME = "ExitGroupPortal"
 local EXIT_BUTTON_NAME = "Exit"
 
 --[[
-	Nome do pedido ao InterfaceController: entrou num grupo, a contagem começou, e a
-	tela fica só com o botão de sair até ela zerar.
+	The name of the InterfaceController request: the player joined a group, the countdown
+	started, and the screen keeps only the leave button until it reaches zero.
 
-	O pedido é solto quando o jogador sai do grupo, e não quando a contagem zera. Aos
-	zero segundos quem assume é a cutscene, que esconde tudo (e a interface da Roblox
-	junto); deixar este pedido de pé por baixo dela é o que impede a lobby inteira de
-	reaparecer entre o fim da cena e o teleporte. Falhando o teleporte, o portal
-	devolve o grupo e é essa devolução que traz a interface de volta.
+	The request is released when the player leaves the group, not when the countdown hits
+	zero. At zero the cutscene takes over, hiding everything (Roblox's interface too);
+	keeping this request up underneath it is what stops the whole Lobby from reappearing
+	between the end of the scene and the teleport. If the teleport fails, the portal
+	returns the group, and that return brings the interface back.
+
+	See docs/common/interface-visibility.md.
 ]]
 local HIDE_REASON = "PortalCountdown"
 
@@ -199,8 +203,8 @@ function PortalController:_flash()
 	screenGui.ResetOnSpawn = false
 	screenGui.DisplayOrder = 1000
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	-- A cutscene esconde as GUIs enquanto roda, e o flash nasce dentro dela: sem esta
-	-- marca ele nasceria desligado, e o teleporte aconteceria a olho nu.
+	-- The cutscene hides the GUIs while it runs, and the flash is born inside it: without this
+	-- mark it would be born disabled, and the teleport would happen in plain sight.
 	screenGui:SetAttribute("IgnoreInterfaceHide", true)
 
 	local frame = Instance.new("Frame")
@@ -245,15 +249,15 @@ function PortalController:_clearFlash()
 end
 
 --[=[
-	Liga e desliga o botão de sair do grupo.
+	Turns the leave-group button on and off.
 
-	Passa pelo `SetEnabled` do InterfaceController, e não por `Enabled` na mão, porque
-	este botão é justamente a GUI que muda **junto** com um pedido: ele acende no mesmo
-	instante em que a contagem esconde a lobby. Escrevendo direto, o pedido lê o
-	`Enabled` antigo (o aviso dele só chega no fim do frame) e desliga o botão de volta
-	no mesmo frame — que era o botão sumindo ao entrar no portal.
+	It goes through InterfaceController's `SetEnabled`, not `Enabled` by hand, because this
+	button is exactly the GUI that changes **together** with a request: it lights up at the
+	same instant the countdown hides the Lobby. Writing directly, the request would read the
+	old `Enabled` (its notification only arrives at the end of the frame) and turn the
+	button back off in the same frame: the button would vanish on entering the portal.
 
-	Com a chamada abaixo a ordem entre isto e o `Hide`/`Show` deixa de importar.
+	With the call below, the order between this and `Hide`/`Show` no longer matters.
 ]=]
 function PortalController:_setExitVisible(visible : boolean)
 	local screenGui = self.ExitUI
@@ -275,7 +279,7 @@ function PortalController:_bindExitUI(screenGui : ScreenGui)
 
 	local button = screenGui:WaitForChild(EXIT_BUTTON_NAME, 10)
 	if not button or not button:IsA("GuiButton") then
-		warn(`[PortalController]: Could not find {EXIT_UI_NAME}.{EXIT_BUTTON_NAME}.`)
+		log:StudioWarn(`could not find {EXIT_UI_NAME}.{EXIT_BUTTON_NAME}.`)
 		return
 	end
 
@@ -322,10 +326,10 @@ function PortalController:_onGroupChanged(portalId : number, mapName : string)
 	self:_setExitVisible(self.GroupPortalId ~= 0)
 
 	--[[
-		A contagem regressiva é uma decisão já tomada: o jogador escolheu o mapa e está
-		a caminho. A loja, o deck e o resto da lobby não têm mais o que oferecer, e
-		abrir qualquer um deles agora só serviria para ele perder o único botão que
-		ainda importa — o de sair do grupo, que é o que o `Except` deixa de pé.
+		The countdown is a decision already made: the player chose the map and is on the
+		way. The shop, the deck, and the rest of the Lobby have nothing left to offer, and
+		opening any of them now would only make the player lose the one button that still
+		matters: the leave-group one, which is what `Except` keeps up.
 	]]
 	local InterfaceController = self.Controllers.InterfaceController
 
@@ -340,9 +344,9 @@ function PortalController:_onGroupChanged(portalId : number, mapName : string)
 	if self.GroupPortalId ~= 0 then
 		self:_closePanel()
 	else
-		-- Saiu do grupo ainda aqui: ou desistiu, ou o teleporte não foi e o portal
-		-- devolveu todo mundo. Nos dois casos a tela branca não pode ficar, e a câmera
-		-- que a cena deixou parada volta pro jogador.
+		-- Left the group while still here: either they gave up, or the teleport did not go and
+		-- the portal returned everyone. Either way the white screen must not stay, and the camera
+		-- the scene left parked goes back to the player.
 		self:_clearFlash()
 		self.Controllers.CutsceneController:releaseCamera()
 	end
@@ -366,13 +370,13 @@ end
 function PortalController:PlayPortalCutscene(model : Model)
 	local reference = model:FindFirstChild(PortalConfig.CUTSCENE_REFERENCE_NAME)
 	if not reference or not reference:IsA("BasePart") then
-		warn(`[PortalController]: Portal has no {PortalConfig.CUTSCENE_REFERENCE_NAME} part.`)
+		log:StudioWarn(`portal has no {PortalConfig.CUTSCENE_REFERENCE_NAME} part.`)
 		return
 	end
 
 	local scene = self.Scene
 	if not scene then
-		warn(`[PortalController]: No cutscene named {PortalConfig.CUTSCENE_NAME} in Assets.Cutscenes.`)
+		log:StudioWarn(`no cutscene named {PortalConfig.CUTSCENE_NAME} in Assets.Cutscenes.`)
 		return
 	end
 
@@ -395,7 +399,7 @@ function PortalController:PlayPortalCutscene(model : Model)
 
 	local previousPivot = CutsceneController:placeScene(scene, origin)
 	if not previousPivot then
-		warn(`[PortalController]: Cutscene {PortalConfig.CUTSCENE_NAME} has no scene reference part.`)
+		log:StudioWarn(`cutscene {PortalConfig.CUTSCENE_NAME} has no scene reference part.`)
 		scene.Parent = previousParent
 		return
 	end
@@ -414,8 +418,8 @@ function PortalController:PlayPortalCutscene(model : Model)
 		self:_flash()
 	end
 
-	-- O branco entra alguns frames antes do fim, pra cobrir a cena enquanto ela ainda
-	-- está rodando em vez de piscar depois dela.
+	-- The white comes in a few frames before the end, to cover the scene while it is still
+	-- running instead of flashing after it.
 	local connection = CutsceneController.Signals.FrameReached:Connect(function(frame : number, lastFrame : number)
 		if frame >= lastFrame - PortalConfig.FLASH_LEAD_FRAMES then
 			flash()
@@ -426,11 +430,11 @@ function PortalController:PlayPortalCutscene(model : Model)
 		connection:Disconnect()
 	end)
 
-	-- A câmera fica onde a cena terminou; quem devolve é a falha do teleporte.
+	-- The camera stays where the scene ended; the teleport failure gives it back.
 	local duration = CutsceneController:playCutscene(scene, origin, true)
 
-	-- Rede de segurança: cena que não tocou (ou que não chegou a disparar o frame)
-	-- não pode deixar o jogador olhando pro portal até o teleporte.
+	-- Safety net: a scene that did not play (or never reached the frame) must not
+	-- leave the player staring at the portal until the teleport.
 	task.delay(duration or 0, flash)
 
 	task.delay((duration or 0) + SCENE_LINGER, function()

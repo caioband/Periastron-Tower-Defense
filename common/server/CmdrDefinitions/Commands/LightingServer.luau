@@ -31,8 +31,8 @@ end
 return function(_context, preset : string, duration : number?)
 	local LightingService = Framework:Get("LightingService", false, true)
 
-	-- Antes de ler `.Root`: e o `GetCurrent` que garante que o service ja montou a
-	-- pasta de presets.
+	-- Before reading `.Root`: `GetCurrent` is what guarantees the service already
+	-- built the presets folder.
 	local previous = LightingService:GetCurrent()
 
 	if not LightingService:GetPreset(preset) then
@@ -44,8 +44,8 @@ return function(_context, preset : string, duration : number?)
 		return string.format("There is no preset named '%s'. Available: %s.", preset, available)
 	end
 
-	-- Reaplicar o preset atual e um pedido legitimo aqui: e como se testa uma pasta
-	-- que acabou de ser mexida no Studio.
+	-- Reapplying the current preset is a legitimate request here: it is how you test
+	-- a folder that was just edited in Studio.
 	local force = previous == preset
 
 	if not LightingService:Apply(preset, duration, force) then

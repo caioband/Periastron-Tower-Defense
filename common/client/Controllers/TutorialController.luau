@@ -17,20 +17,21 @@ local Framework = Me.new()
 local Config = SharedConfig.TutorialConfig
 
 --[[
-	A oferta de tutorial na tela.
+	The tutorial offer on screen.
 
-	O servidor manda `TutorialPrompt` para quem tem `Tutorial = false` no perfil
-	(ver `TutorialService`); daqui sai a fala, pela caixa de sempre:
+	The server sends `TutorialPrompt` to players with `Tutorial = false` in their
+	profile (see `TutorialService`); the dialog comes from here, through the usual
+	box:
 
-		Hello, {nome em gradiente laranja}, welcome to Periastron Tower Defense
+		Hello, {name in an orange gradient}, welcome to Periastron Tower Defense
 		Would you like to play a Tutorial?
 
-	A segunda frase termina e só então os dois botões aparecem — a escolha depois da
-	pergunta, não durante. Enquanto eles estão no ar, clicar no vazio não fecha a
-	caixa: a resposta é do botão.
+	The second sentence finishes and only then do the two buttons appear: the choice
+	comes after the question, not during it. While they are up, clicking empty space
+	does not close the box: the answer belongs to the buttons.
 
-	**O que acontece depois é de quem quiser.** O controller responde ao servidor
-	(`TutorialAnswered`) e chama quem se inscreveu:
+	**What happens next is up to subscribers.** The controller answers the server
+	(`TutorialAnswered`) and calls whoever subscribed:
 
 		local Tutorial = Framework:Get("TutorialController")
 
@@ -40,15 +41,18 @@ local Config = SharedConfig.TutorialConfig
 			end
 		end)
 
-	Os passos do tutorial ainda não existem; quando existirem, eles se penduram
-	nesse gancho (no cliente) ou no `TutorialService:Start` (no servidor), e esta
-	fala não muda de linha.
+	The tutorial itself runs from the server (`TutorialService:Start` and the
+	tutorial match); client-side reactions hang off this hook, and this dialog does
+	not change.
 
-	**A resposta não mexe no perfil**, nem aceitando nem recusando. Quem escreve
-	`Tutorial = true` é o fim do tutorial, que está por fazer.
+	**The controller does not write the profile.** The server does: declining writes
+	`Tutorial = true` right away, and accepting sets it when the tutorial match is
+	won.
 
-	Fica em `common/` porque o controller é o mesmo nas duas places — quem decide
-	que a oferta só faz sentido no lobby é o servidor.
+	It lives in `common/` because the controller is the same in both places: the
+	server decides the offer only makes sense in the Lobby.
+
+	See docs/common/tutorial.md.
 ]]
 
 local TutorialController = {
@@ -60,17 +64,18 @@ local TutorialController = {
 
 TutorialController.Listeners = {}
 
--- Uma oferta por vez: o `task.delay` da entrada só vale se ninguém tiver
--- respondido (ou pedido outra) enquanto ele esperava.
+-- One offer at a time: the entrance's `task.delay` only applies if nobody has
+-- answered (or asked for another) while it waited.
 TutorialController.Session = 0
 
 --[[ INTERNAL ]]
 
 --[=[
-	As frases com o nome do jogador dentro.
+	The sentences with the player's name inside.
 
-	O nome passa pelo `:Escape()` porque é texto que o jogador escolheu: um colchete
-	no nome não pode virar marcação, e um `<` não pode comer o resto da saudação.
+	The name goes through `:Escape()` because it is text the player chose: a bracket
+	in the name must not become markup, and a `<` must not eat the rest of the
+	greeting.
 ]=]
 function TutorialController:lines() : { string }
 	local name = self.Controllers.RichTextController:Escape(Player.DisplayName)
@@ -84,10 +89,10 @@ function TutorialController:lines() : { string }
 end
 
 --[=[
-	A resposta: avisa o servidor, chama quem se inscreveu e fecha a caixa.
+	The answer: tells the server, calls subscribers, and closes the box.
 
-	Fecha **depois** de avisar, e não antes, para quem se inscreveu poder abrir
-	outra fala em cima sem ela ser apagada pelo fechamento desta.
+	It closes **after** telling, not before, so a subscriber can open another dialog
+	on top without it being erased by this one closing.
 ]=]
 function TutorialController:answer(accepted : boolean)
 	self.Session += 1
@@ -104,10 +109,10 @@ end
 --[[ API ]]
 
 --[=[
-	Põe a oferta na tela agora. O servidor chama isto pelo `TutorialPrompt`, e o
-	`tutorial` do Cmdr entra pelo mesmo caminho.
+	Puts the offer on screen now. The server calls this through `TutorialPrompt`, and
+	Cmdr's `tutorial` goes through the same path.
 
-	Devolve `false` quando a caixa de fala não existe nesta place.
+	Returns `false` when the dialog box does not exist in this place.
 ]=]
 function TutorialController:Prompt() : boolean
 	local dialog = self.Controllers.DialogController
@@ -142,11 +147,10 @@ function TutorialController:Prompt() : boolean
 end
 
 --[=[
-	Chama de volta com a resposta do jogador (`true` aceitou, `false` recusou).
-	Devolve a função que desinscreve.
+	Calls back with the player's answer (`true` accepted, `false` declined). Returns
+	the unsubscribe function.
 
-	É o gancho para o tutorial de verdade, para uma câmera, para um som — o que
-	quer que venha depois da pergunta.
+	It is the hook for a camera, a sound, whatever comes after the question.
 ]=]
 function TutorialController:OnAnswer(callback : (accepted : boolean) -> ()) : () -> ()
 	table.insert(self.Listeners, callback)
@@ -159,14 +163,14 @@ function TutorialController:OnAnswer(callback : (accepted : boolean) -> ()) : ()
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function TutorialController:construct()
 	Framework:Listen("TutorialPrompt", function()
 		local session = self.Session
 
-		-- O jogador acabou de cair no lobby: tem UI carregando, abertura e câmera
-		-- acontecendo. Falar por cima disso é o mesmo que não falar.
+		-- The player just landed in the Lobby: UI is loading, the intro and camera are
+		-- running. Talking over that is the same as not talking.
 		task.delay(Config.PromptDelay, function()
 			if self.Session ~= session then return end
 

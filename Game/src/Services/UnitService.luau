@@ -25,38 +25,35 @@ local GameClock = require(Shared:WaitForChild("Util"):WaitForChild("GameClock"))
 
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 local Signal = require(Packages.Signal)
 
 local Framework = Me.new()
+local log = Log.new("UnitService")
 
 local TARGET_SCANS_PER_FRAME = 8
 
--- Um efeito de dinheiro por unidade a cada tanto. Ver `playAuraVFX`.
+-- One money effect per unit every so often. See `playAuraVFX`.
 local AURA_VFX_COOLDOWN = 0.35
 
 local MAX_PLACE_DISTANCE = 2048
 
 --[[
-	A largura, em studs, do risco que um projetil `Piercing` deixa, quando a
-	unidade nao diz outra em `Projectile.PierceWidth`.
+	The width, in studs, of the streak a `Piercing` projectile leaves, when the unit does
+	not give another in `Projectile.PierceWidth`.
 
-	Nao e a espessura da flecha: e a folga que decide quem estava "no caminho". Dois
-	studs pegam o mob que a linha corta de raspao -- eles tem cerca de dois de
-	largura -- sem transformar a flecha num cone que limpa a fileira do lado.
+	It is not the arrow's thickness: it is the slack that decides who was "in the way".
+	Two studs catch an enemy the line grazes (they are about two wide) without turning the
+	arrow into a cone that clears the next lane over.
 ]]
 local PIERCE_WIDTH = 2
 
--- O total de dano por unidade so alimenta um label do card de upgrade, entao vai
--- em lote algumas vezes por segundo em vez de um evento por golpe.
+-- Per-unit total damage only feeds an upgrade card label, so it goes
+-- in batches a few times per second instead of one event per hit.
 local DAMAGE_FLUSH_INTERVAL = 0.25
 
--- Log de posicionamento: so no Studio, para nao poluir o console de producao.
-local IS_STUDIO = RunService:IsStudio()
-
-local function placementPrint(...)
-	if not IS_STUDIO then return end
-	print("[UnitService/Place]", ...)
-end
+-- Placement decisions, Studio only.
+local placeLog = Log.new("UnitService/Place")
 
 local function formatVector(v : Vector3?)
 	if not v then return "nil" end
@@ -64,14 +61,13 @@ local function formatVector(v : Vector3?)
 end
 
 --[[
-	O multiplicador de quem nao esta sob carta nenhuma.
+	The multiplier for units under no card at all.
 
-	Uma tabela so, compartilhada por todas as unidades enquanto a lista de
-	modificadores estiver vazia -- que e o comeco de toda partida. Sem ela cada
-	unidade ganharia uma tabela de "tudo 1" por quadro, e a partida sem carta
-	nenhuma pagaria por um sistema que ela nao esta usando.
+	A single table, shared by every unit while the modifier list is empty, which is the
+	start of every match. Without it each unit would get an "all 1" table per frame, and a
+	match with no cards would pay for a system it is not using.
 
-	Ela nunca e escrita: quem tem modificador ganha uma tabela propria em
+	It is never written: units with modifiers get their own table in
 	`refreshCardModifiers`.
 ]]
 local NO_CARD_MULTIPLIERS = {
@@ -81,7 +77,7 @@ local NO_CARD_MULTIPLIERS = {
 	Income = 1,
 	HitIncome = 1,
 
-	-- `Cleave` nao e numero: e a tabela de numeros do corte, ou nada. Ver
+	-- `Cleave` is not a number: it is the cleave's table of numbers, or nothing. See
 	-- `CardModifier.FlagValue`.
 	Cleave = nil,
 }
@@ -98,10 +94,9 @@ local UnitService = {
 
 	Signals = {
 		--[[
-			(player, unitName) -- uma unidade entrou no mapa. Quem escuta e o
-			`ContractTrackerService`, para o "win with only Fire units": ele guarda as
-			classes de tudo que o jogador colocou na partida, inclusive o que foi vendido
-			depois.
+			(player, unitName): a unit entered the map. `ContractTrackerService` listens,
+			for "win with only Fire units": it keeps the classes of everything the player
+			placed in the match, including what was sold later.
 		]]
 		UnitPlaced = Signal.new(),
 	},
@@ -115,21 +110,19 @@ local UnitService = {
 	DamageDirty = {},
 	LastDamageFlush = 0,
 
-	-- As farms com aura que estao no mapa. Refeita todo quadro no `stepCombat`.
+	-- The aura farms on the map. Rebuilt every frame in `stepCombat`.
 	AuraSources = {},
 
 	--[[
-		O campo como o `CardModifier` o enxerga: a lista de unidades (para as
-		condicoes de vizinhanca e para o Abrakadabra) e a fracao de vida da base
-		(para o No Pain, No Gain).
+		The field as `CardModifier` sees it: the unit list (for neighborhood conditions and
+		Abrakadabra) and the base health fraction (for No Pain, No Gain).
 
-		Reaproveitada em vez de refeita: ela e remontada todo quadro, e a lista de
-		dentro e limpa com `table.clear` para o array nao ser realocado sessenta
-		vezes por segundo.
+		Reused instead of rebuilt: it is refilled every frame, and the inner list is cleared
+		with `table.clear` so the array is not reallocated sixty times a second.
 	]]
 	CardWorld = { Units = {}, BaseHealthRatio = 1 },
 
-	-- Os modificadores valendo neste quadro, lidos do `CardModifierService`.
+	-- The modifiers in effect this frame, read from `CardModifierService`.
 	CardModifiers = {},
 }
 
@@ -165,16 +158,18 @@ function UnitService:incrementCardCount(player, unitName)
 end
 
 --[=[
-	As cartas que o jogador leva para a partida saem do **deck** que ele montou no
-	lobby (`EquippedUnits`), e nao do inventario inteiro: so entra unidade que esta
-	num slot, e a quantidade de cada uma e o `Amount` daquele slot.
+	The cards a player takes into the match come from the **deck** they built in the Lobby
+	(`EquippedUnits`), not the whole inventory: only units in a slot come in, and each
+	one's count is that slot's `Amount`.
 
-	Quem nunca montou deck recebe um automatico (`DeckConfig.resolve`), montado a
-	partir do que ele tem — sem isso ele entraria na partida sem carta nenhuma, e o
-	`getCardCount` recusaria toda colocacao.
+	A player who never built a deck gets an automatic one (`DeckConfig.resolve`), built
+	from what they own; without that they would enter the match with no cards, and
+	`getCardCount` would refuse every placement.
 
-	O cliente monta a hotbar a partir do mesmo perfil e das mesmas funcoes, entao os
-	dois chegam ao mesmo deck sem precisar de evento novo.
+	The client builds the hotbar from the same profile and the same functions, so both
+	arrive at the same deck without needing a new event.
+
+	See docs/game/units.md.
 ]=]
 function UnitService:initPlayerCards(player)
 	self.Services.DataService:Get(player, function(profileData)
@@ -183,10 +178,10 @@ function UnitService:initPlayerCards(player)
 		local cards = {}
 		local cardMax = {}
 
-		-- O tutorial dá o deck dele: duas Archer e uma Slasher, uma carta por
-		-- `PlacementPoint` do mapa. O perfil não é tocado — quem entrou com um deck
-		-- montado o encontra intacto ao voltar ao lobby, e quem entrou sem nenhum
-		-- (o caso de quem o tutorial existe para atender) tem o que colocar.
+		-- The tutorial gives its own deck: one Slingshot and two Archers, one card per
+		-- `PlacementPoint` on the map. The profile is not touched: a player who came in with a
+		-- built deck finds it intact back in the Lobby, and one who came in without any
+		-- (the case the tutorial exists for) has something to place.
 		local tutorial = self.Services.TutorialMatchService
 		local tutorialDeck = tutorial and tutorial:GetDeck()
 
@@ -198,9 +193,9 @@ function UnitService:initPlayerCards(player)
 		self.SessionCards[player.UserId] = cards
 		self.SessionCardMax[player.UserId] = cardMax
 
-		-- A hotbar do tutorial não vem do perfil, então ela precisa ser dita. Vai
-		-- **antes** das contagens: a lista é quem cria as cartas na tela, e um
-		-- contador de carta que ainda não existe não tem onde ser escrito.
+		-- The tutorial hotbar does not come from the profile, so it must be sent. It goes
+		-- **before** the counts: the list is what creates the cards on screen, and a
+		-- counter for a card that does not exist yet has nowhere to be written.
 		if tutorialDeck and tutorial then
 			Framework:Fire("TutorialDeck", player, tutorial:GetDeckOrder())
 		end
@@ -212,11 +207,11 @@ function UnitService:initPlayerCards(player)
 end
 
 --[=[
-	Devolve o service ao estado de antes da partida: derruba tudo que foi colocado
-	no mapa e recarrega as cartas de cada jogador a partir do perfil.
+	Returns the service to its pre-match state: takes down everything placed on the map
+	and reloads each player's cards from the profile.
 
-	Cada unidade sai por `RemoveUnit`, o mesmo evento da venda — entao os clientes
-	limpam modelo, linha pontilhada, minas e selecao pelo caminho que ja existe.
+	Each unit leaves through `RemoveUnit`, the same event as selling, so clients clean up
+	model, dotted line, mines, and selection through the path that already exists.
 ]=]
 function UnitService:ResetRound()
 	for _, entry in ipairs(self.PlacedUnits) do
@@ -229,7 +224,7 @@ function UnitService:ResetRound()
 	table.clear(self.UnitsById)
 	table.clear(self.DamageDirty)
 
-	-- O mapa pode ter mudado entre rounds.
+	-- The map may have changed between rounds.
 	self.GridParts = nil
 
 	for _, player in ipairs(Players:GetPlayers()) do
@@ -238,15 +233,15 @@ function UnitService:ResetRound()
 end
 
 --[=[
-	Parts do caminho do mapa em jogo.
+	The path parts of the map in play.
 
-	No servidor `GetTagged("Grid")` devolve tambem as parts dos mapas guardados em
-	`ServerStorage.Maps` — sao 585 hoje, de seis mapas, contra a centena do mapa
-	carregado. Elas nunca poderiam ser atingidas por um `GetPartsInPart` (nao estao
-	no Workspace), entao o resultado da validacao nao muda; o que muda e nao montar
-	uma lista de 585 entradas a cada tentativa de colocar uma unidade.
+	On the server `GetTagged("Grid")` also returns the parts of the maps stored in
+	`ServerStorage.Maps`: hundreds of them, against the hundred or so of the loaded map.
+	They could never be hit by a `GetPartsInPart` (they are not in the Workspace), so the
+	validation result does not change; what changes is not building a list of hundreds of
+	entries on every placement attempt.
 
-	O cache cai no ResetRound, junto com a possibilidade de o mapa ter mudado.
+	The cache drops on ResetRound, along with the possibility of the map having changed.
 ]=]
 function UnitService:getGridParts()
 	if self.GridParts then
@@ -262,7 +257,7 @@ function UnitService:getGridParts()
 		end
 	end
 
-	-- Sem o mapa no Workspace a lista pode estar incompleta; nao guarda.
+	-- Without the map in the Workspace the list may be incomplete; do not store it.
 	if mapRoot then
 		self.GridParts = parts
 	end
@@ -271,35 +266,34 @@ function UnitService:getGridParts()
 end
 
 --[=[
-	Esta unidade cabe neste CFrame?
+	Does this unit fit at this CFrame?
 
-	Sao as tres recusas do posicionamento, na ordem em que elas ficam caras: em cima
-	do caminho, perto demais de outra unidade, em cima de um jogador.
+	These are placement's three refusals, in the order they get expensive: on the path,
+	too close to another unit, on top of a player.
 
-	Existe como funcao propria porque agora ha **dois** caminhos que colocam uma
-	unidade num lugar: o `PlaceUnit` de sempre e o Zippers, que a arrasta de um lugar
-	para outro. Duas copias da mesma conferencia acabariam divergindo, e a divergencia
-	que aparece e a pior possivel -- uma carta que poe a torre em cima do caminho.
+	It exists as its own function because there are **two** paths that put a unit
+	somewhere: the usual `PlaceUnit` and Zippers, which drags it from one place to
+	another. Two copies of the same check would end up diverging, and the divergence that
+	shows is the worst possible: a card that puts the tower on the path.
 
-	`ignoreEntry` e a propria unidade, quando ela esta se mudando: sem isso o Zippers
-	sempre recusaria, porque a torre estaria perto demais dela mesma.
+	`ignoreEntry` is the unit itself, when it is moving: without it Zippers would always
+	refuse, because the tower would be too close to itself.
 
-	`label` so entra no log de posicionamento, que so existe no Studio.
+	`label` only goes into the placement log, which only exists in Studio.
 ]=]
 function UnitService:isSpotFree(cf : CFrame, unitName : string, label : string?, ignoreEntry : any?) : boolean
 	local position = cf.Position
 	local unitSizeX = self.UnitSizes[unitName] or 2
 
 	--[[
-		A caixa de teste tem que ser a mesma que o cliente usa para pintar o
-		fantasma de verde: a bounding box real do modelo, girada pelo CFrame que
-		ele mandou. Uma caixa maior (ex.: um cubo de 6 studs de altura) desce
-		abaixo do chao e encosta nos trilhos finos do caminho, recusando
-		posicionamentos que o cliente ja tinha aprovado.
+		The test box must be the same the client uses to paint the ghost green: the model's
+		real bounding box, rotated by the CFrame it sent. A larger box (e.g. a 6-stud-tall
+		cube) goes below the ground and touches the path's thin rails, refusing placements
+		the client already approved.
 
-		O `PathProbe` estica essa caixa para baixo: so o volume da unidade nao
-		basta, porque qualquer coisa que a levante acima do trilho tira o caminho
-		de dentro da caixa. Ver `PlacementUtil.PathClearance`.
+		`PathProbe` stretches that box downward: the unit's volume alone is not enough,
+		because anything lifting it above the rail takes the path out of the box. See
+		`PlacementUtil.PathClearance`.
 	]]
 	local checkSize = self.UnitBounds[unitName] or Vector3.new(unitSizeX, 2, unitSizeX)
 	local probeCF, probeSize = PlacementUtil.PathProbe(cf, checkSize)
@@ -318,9 +312,9 @@ function UnitService:isSpotFree(cf : CFrame, unitName : string, label : string?,
 	local gridParts = workspace:GetPartsInPart(gridProbe, overlapParams)
 	gridProbe:Destroy()
 	if #gridParts > 0 then
-		placementPrint(label, unitName, "recusado: em cima do caminho", formatVector(position),
-			"caixa de teste", formatVector(probeSize),
-			string.format("%d part(s) de Grid, primeira: %s em %s", #gridParts, gridParts[1]:GetFullName(), formatVector(gridParts[1].Position)))
+		placeLog:Debug(label, unitName, "refused: on the path", formatVector(position),
+			"probe box", formatVector(probeSize),
+			string.format("%d Grid part(s), first: %s at %s", #gridParts, gridParts[1]:GetFullName(), formatVector(gridParts[1].Position)))
 		return false
 	end
 
@@ -333,23 +327,23 @@ function UnitService:isSpotFree(cf : CFrame, unitName : string, label : string?,
 		local posB = Vector3.new(entry.cf.Position.X, 0, entry.cf.Position.Z)
 		local dist = (posA - posB).Magnitude
 		if dist < minDist then
-			placementPrint(label, unitName, "recusado: perto demais de outra unidade",
-				formatVector(position), string.format("%s a %.2f studs (minimo %.2f)", entry.unitName, dist, minDist))
+			placeLog:Debug(label, unitName, "refused: too close to another unit",
+				formatVector(position), string.format("%s at %.2f studs (minimum %.2f)", entry.unitName, dist, minDist))
 			return false
 		end
 	end
 
 	--[[
-		Ninguem nasce dentro de um jogador.
+		Nobody is born inside a player.
 
-		E aqui que a regra vale de verdade: o cliente pinta o fantasma de vermelho
-		para o jogador enxergar, mas quem aceita ou recusa e o servidor -- um cliente
-		adulterado manda o CFrame que quiser.
+		This is where the rule really counts: the client paints the ghost red so the player
+		can see it, but the server accepts or refuses: a tampered client sends whatever
+		CFrame it wants.
 	]]
 	local blockingCharacter = PlacementUtil.FindBlockingCharacter(cf, checkSize)
 	if blockingCharacter then
-		placementPrint(label, unitName, "recusado: em cima de um personagem",
-			formatVector(position), "personagem", blockingCharacter:GetFullName())
+		placeLog:Debug(label, unitName, "refused: on top of a character",
+			formatVector(position), "character", blockingCharacter:GetFullName())
 		return false
 	end
 
@@ -357,32 +351,31 @@ function UnitService:isSpotFree(cf : CFrame, unitName : string, label : string?,
 end
 
 --[=[
-	Muda uma unidade ja colocada de lugar. E o Zippers, e e a unica carta que mexe
-	no tabuleiro em vez de nos numeros.
+	Moves an already placed unit. It is Zippers, the only card that changes the board
+	instead of the numbers.
 
-	O destino passa pelas **mesmas** conferencias do `PlaceUnit`: fora do caminho,
-	longe das outras torres, sem ninguem em cima. Um destino recusado devolve `nil` e
-	um motivo, e quem chamou nao gasta a carta -- errar o lugar nao pode custar a
-	compra.
+	The destination goes through the **same** checks as `PlaceUnit`: off the path, away
+	from other towers, nobody on top. A refused destination returns `nil` and a reason,
+	and the caller does not spend the card: getting the spot wrong must not cost the
+	purchase.
 
-	`rotation` e o giro em radianos no eixo Y, opcional; sem ele a torre fica com o
-	que ja tinha. Ele entra na conferencia junto com o ponto, e nao depois: a caixa
-	que o `isSpotFree` testa e a do modelo **girado**, que e a mesma que o fantasma
-	do cliente pintou de verde.
+	`rotation` is the Y-axis rotation in radians, optional; without it the tower keeps
+	what it had. It enters the check along with the point, not after: the box
+	`isSpotFree` tests is the **rotated** model's, which is the same the client's ghost
+	painted green.
 
-	Na tela a unidade e tirada e reposta (`RemoveUnit` + `ReplicateUnit`) em vez de
-	deslizar ate o destino. O `unitId` continua o mesmo, entao o card, a prioridade e
-	o placar de dano dela sobrevivem a viagem; o que se perde e so a animacao de
-	mudanca, e o caminho de reposicionamento e o mesmo que ja replica toda unidade
-	desde sempre.
+	On screen the unit is removed and re-added (`RemoveUnit` + `ReplicateUnit`) instead of
+	sliding to the destination. The `unitId` stays the same, so its card, priority, and
+	damage scoreboard survive the trip; the only loss is a move animation, and the
+	repositioning path is the same one that already replicates every unit.
 
-	O alvo do momento e derrubado junto: mirar do lugar velho depois de ter mudado
-	de lugar faria a torre atirar em quem ela ja nao alcanca.
+	The current target is dropped too: aiming from the old spot after moving would make
+	the tower shoot at enemies it no longer reaches.
 ]=]
 function UnitService:MoveUnit(unitId : any, position : any, rotation : number?)
 	local entry = self.UnitsById[unitId]
 	if not entry then
-		return nil, "unidade nao existe"
+		return nil, "unit does not exist"
 	end
 
 	if typeof(position) ~= "Vector3" then
@@ -398,16 +391,16 @@ function UnitService:MoveUnit(unitId : any, position : any, rotation : number?)
 	end
 
 	--[[
-		O giro vem do fantasma, como num posicionamento novo: quem move uma torre
-		escolhe um lugar **e** uma direcao, e o R do teclado gira o fantasma do
-		Zippers pelo mesmo caminho que gira o de uma torre que acabou de ser comprada.
+		The rotation comes from the ghost, as in a new placement: someone moving a tower
+		chooses a spot **and** a direction, and the keyboard's R rotates the Zippers ghost
+		the same way it rotates a just-bought tower's.
 
-		Sem giro no pedido a torre fica com o que ja tinha. Isso nao e so
-		retrocompatibilidade: e o que mantem honesto o caso em que o cliente nao teve
-		fantasma nenhum para girar.
+		With no rotation in the request the tower keeps what it had. That is not just
+		backward compatibility: it keeps honest the case where the client had no ghost to
+		rotate.
 
-		A altura ja veio no `position`, medida no cliente pelo mesmo CFrame que o
-		`PlaceUnit` valida.
+		The height already came in `position`, measured on the client by the same CFrame
+		`PlaceUnit` validates.
 	]]
 	local spin = if rotation then CFrame.Angles(0, rotation, 0) else (entry.cf - entry.cf.Position)
 	local cf = CFrame.new(position) * spin
@@ -420,14 +413,14 @@ function UnitService:MoveUnit(unitId : any, position : any, rotation : number?)
 	entry.targetMobId = nil
 
 	--[[
-		O cliente derruba o placar de dano da unidade junto com o modelo dela (ver o
-		`RemoveUnit` no `UnitPlacementController`), e o lote so manda quem esta sujo:
-		sem isto o card mostraria zero ate a torre bater de novo.
+		The client drops the unit's damage scoreboard along with its model (see
+		`RemoveUnit` in `UnitPlacementController`), and the batch only sends dirty entries:
+		without this the card would show zero until the tower hit again.
 	]]
 	self.DamageDirty[entry.unitId] = true
 
-	-- A mina ja armada continua onde caiu: ela e do mapa a partir do arremesso, e
-	-- nao da torre. So os arremessos seguintes saem do lugar novo.
+	-- An already armed mine stays where it landed: it belongs to the map from the throw on,
+	-- not the tower. Only later throws come from the new spot.
 	for _, plr in ipairs(Players:GetPlayers()) do
 		Framework:Fire("RemoveUnit", plr, entry.unitId)
 		Framework:Fire("ReplicateUnit", plr, entry.unitName, cf, entry.ownerUserId, entry.unitId, entry.upgrades or 0, entry.priority)
@@ -437,9 +430,9 @@ function UnitService:MoveUnit(unitId : any, position : any, rotation : number?)
 end
 
 --[=[
-	Credita dano a uma unidade. O valor e o que de fato entrou no mob (`DamageMob`
-	devolve isso), nao o dano cheio do golpe — assim o `DmgDone` do card fecha com
-	a vida que os mobs perderam.
+	Credits damage to a unit. The value is what actually hit the enemy (`DamageMob`
+	returns it), not the hit's full damage, so the card's `DmgDone` adds up to the health
+	enemies lost.
 ]=]
 function UnitService:addDamageDone(entry, amount)
 	if not entry or not amount or amount <= 0 then return end
@@ -449,9 +442,9 @@ function UnitService:addDamageDone(entry, amount)
 end
 
 --[=[
-	Mapa unitId -> dano total, de todas as unidades no mapa. Vai junto do
-	`ClientReady`, para quem entra no meio da partida ver o total de quem ja parou
-	de atirar (o flush em lote so manda quem mudou desde o ultimo envio).
+	A unitId -> total damage map, for every unit on the map. It goes with `ClientReady`,
+	so a player joining mid-match sees the total of units that already stopped shooting
+	(the batch flush only sends what changed since the last send).
 ]=]
 function UnitService:getDamageSnapshot()
 	local snapshot = {}
@@ -484,27 +477,25 @@ function UnitService:flushDamageDone()
 	end
 end
 
---[[ CLIMA ]]
+--[[ WEATHER ]]
 
---[[ CARTAS DE ROUND ]]
+--[[ ROUND CARDS ]]
 
 --[=[
-	Refaz, uma vez por quadro, o que as cartas de round estao fazendo com cada
-	unidade.
+	Redoes, once per frame, what round cards are doing to each unit.
 
-	**Uma vez por quadro, e nao por pergunta.** O combate pergunta dano, cadencia e
-	alcance de cada unidade a cada quadro, e duas das condicoes do `CardModifier`
-	(o Iceolated e o Ice to Meet You) varrem a vizinhanca inteira para responder --
-	perguntar por unidade e por estatistica multiplicaria essa varredura por cinco.
-	Aqui a conta e feita uma vez e guardada em `entry.CardMult`, e o resto do quadro
-	so le a tabela.
+	**Once per frame, not per question.** Combat asks every unit's damage, attack speed,
+	and range every frame, and two of `CardModifier`'s conditions (Iceolated and Ice to
+	Meet You) sweep the whole neighborhood to answer: asking per unit and per stat would
+	multiply that sweep by five. Here the math is done once and stored in
+	`entry.CardMult`, and the rest of the frame only reads the table.
 
-	O descritor de cada unidade tambem e reaproveitado (`entry.CardDescriptor`): a
-	posicao e reescrita, e nao a tabela refeita. Sem isso seriam algumas dezenas de
-	tabelas por quadro so para dizer ao `CardModifier` coisas que ele ja podia ler.
+	Each unit's descriptor is also reused (`entry.CardDescriptor`): the position is
+	rewritten, not the table rebuilt. Without that there would be a few dozen tables per
+	frame just to tell `CardModifier` things it could already read.
 
-	Sem carta nenhuma no campo, todo mundo aponta para o `NO_CARD_MULTIPLIERS` e a
-	funcao sai pelo caminho curto -- que e a partida inteira ate a primeira loja.
+	With no card on the field, everyone points at `NO_CARD_MULTIPLIERS` and the function
+	takes the short path, which is the whole match until the first shop.
 ]=]
 function UnitService:refreshCardModifiers()
 	local service = self.Services.CardModifierService
@@ -535,8 +526,8 @@ function UnitService:refreshCardModifiers()
 			entry.CardDescriptor = descriptor
 		end
 
-		-- A posicao muda quando o Zippers move a torre; o resto do descritor e fixo
-		-- pela vida da unidade.
+		-- The position changes when Zippers moves the tower; the rest of the descriptor is
+		-- fixed for the unit's life.
 		descriptor.Position = entry.cf.Position
 
 		table.insert(world.Units, descriptor)
@@ -546,8 +537,8 @@ function UnitService:refreshCardModifiers()
 		local descriptor = entry.CardDescriptor
 		local values = entry.CardMult
 
-		-- A tabela compartilhada nao pode ser escrita: quem sai do caminho curto
-		-- ganha a sua.
+		-- The shared table must not be written: whoever leaves the short path
+		-- gets their own.
 		if not values or values == NO_CARD_MULTIPLIERS then
 			values = {}
 			entry.CardMult = values
@@ -563,12 +554,12 @@ function UnitService:refreshCardModifiers()
 end
 
 --[=[
-	O multiplicador de carta de uma unidade, do quadro corrente.
+	A unit's card multiplier, for the current frame.
 
-	Unidade que ainda nao passou por um `refreshCardModifiers` -- uma colocada neste
-	mesmo quadro, antes de o combate rodar -- vale 1 em tudo. E o valor certo para a
-	fresta: ela entra no proximo quadro, e um multiplicador vazio nunca inventa um
-	bonus que o jogador nao comprou.
+	A unit that has not gone through `refreshCardModifiers` yet (one placed this same
+	frame, before combat ran) is 1 across the board. That is the right value for the gap:
+	it comes in on the next frame, and an empty multiplier never invents a bonus the
+	player did not buy.
 ]=]
 function UnitService:cardMultiplier(entry, stat : string) : number
 	local values = entry and entry.CardMult
@@ -577,11 +568,11 @@ function UnitService:cardMultiplier(entry, stat : string) : number
 end
 
 --[=[
-	O mesmo, para o que nao e numero: hoje so o corte do Cleave It To Me.
+	The same, for what is not a number: today only Cleave It To Me's cleave.
 
-	Devolve a tabela de numeros daquele comportamento (quantos corpos, quanto o de
-	tras perde, a largura do risco) ou `nil` quando ele nao esta ligado -- e por isso
-	quem chama pode testar o retorno como um sim-ou-nao.
+	It returns that behavior's number table (how many bodies, how much the one behind
+	loses, the streak width) or `nil` when it is off, which is why callers can test the
+	return as a yes-or-no.
 ]=]
 function UnitService:cardFlag(entry, flag : string)
 	local values = entry and entry.CardMult
@@ -590,12 +581,11 @@ function UnitService:cardFlag(entry, flag : string)
 end
 
 --[=[
-	O alcance de uma unidade: o da tabela, com o clima, vezes o que as cartas
-	fizeram com ele.
+	A unit's range: the table's, with weather, times what cards did to it.
 
-	Existe para que nao haja duas contas de alcance no arquivo. O combate mira por
-	ele, a mina cai por ele, a aura da farm cobre por ele -- e o cliente desenha o
-	circulo pela mesma multiplicacao, do outro lado (`CardModifierController`).
+	It exists so there are not two range computations in the file. Combat aims by it, the
+	mine lands by it, the farm aura covers by it, and the client draws the circle by the
+	same multiplication, on the other side (`CardModifierController`).
 ]=]
 function UnitService:getRange(entry, weather : string?) : number
 	local base = SharedConfig.UnitUpgradeConfig:GetRange(entry.unitName, entry.upgrades or 0, weather)
@@ -604,12 +594,11 @@ function UnitService:getRange(entry, weather : string?) : number
 end
 
 --[=[
-	O clima no ar, lido do `WeatherService` a cada quadro de combate.
+	The active weather, read from `WeatherService` every combat frame.
 
-	Vem de la e nao do `WeatherRoundService` de proposito: o que interessa ao
-	combate e o que esta no ceu, tenha entrado pelo round ou pelo comando `weather`
-	— testar um clima na mao tem que produzir exatamente a partida que o round
-	produziria.
+	It comes from there and not from `WeatherRoundService` on purpose: what matters to
+	combat is what is in the sky, whether it came from the round or the `weather`
+	command: testing a weather by hand must produce exactly the match the round would.
 ]=]
 function UnitService:GetWeather() : string?
 	local weatherService = self.Services.WeatherService
@@ -617,11 +606,10 @@ function UnitService:GetWeather() : string?
 end
 
 --[=[
-	Multiplicador temporario de uma unidade (`Damage` ou `AttackSpeed`).
+	A unit's temporary multiplier (`Damage` or `AttackSpeed`).
 
-	Hoje so o raio do trovao carrega uma unidade `Electric`, mas o campo e generico:
-	qualquer coisa que precise de um buff com prazo escreve `entry.Charge` e o
-	combate ja o respeita.
+	Today only the thunder bolt charges an `Electric` unit, but the field is generic:
+	anything needing a timed buff writes `entry.Charge` and combat already respects it.
 ]=]
 function UnitService:chargeMultiplier(entry, stat : string, now : number) : number
 	local charge = entry.Charge
@@ -636,9 +624,9 @@ function UnitService:chargeMultiplier(entry, stat : string, now : number) : numb
 end
 
 --[=[
-	Da a uma unidade um buff com prazo. Recarregar antes de acabar renova o prazo
-	em vez de empilhar: dois raios seguidos na mesma unidade dao o prazo inteiro de
-	buff a partir do segundo, nao 50% em cima de 50%.
+	Gives a unit a timed buff. Recharging before it ends refreshes the deadline instead of
+	stacking: two bolts in a row on the same unit give the full buff duration from the
+	second, not 50% on top of 50%.
 ]=]
 function UnitService:ChargeUnit(entry, damage : number?, attackSpeed : number?, duration : number)
 	if not entry then return end
@@ -655,23 +643,22 @@ function UnitService:ChargeUnit(entry, damage : number?, attackSpeed : number?, 
 end
 
 --[=[
-	Atordoa uma unidade. O prazo maior manda — um chain de 5s nao pode encurtar um
-	atordoamento de 20s que ja estava correndo.
+	Stuns a unit. The longer deadline rules: a 5s chain must not shorten a 20s stun that
+	was already running.
 
-	`source` e o clima que causou o atordoamento, e viaja junto para o cliente:
-	parar de atacar e sempre o mesmo realce amarelo, mas o congelamento da neve tem
-	VFX proprio (`Effects.Snow.Freeze.Asset`, o `IcedVFX`) e o raio nao. Sem `source` — o gimmick
-	de mob — o cliente so desenha o realce.
+	`source` is the weather that caused the stun, and it travels to the client: stopping
+	attacks is always the same yellow highlight, but the snow freeze has its own VFX
+	(`Effects.Snow.Freeze.Asset`, `IcedVFX`) and lightning does not. Without `source` (the
+	enemy gimmick) the client only draws the highlight.
 ]=]
 function UnitService:StunUnit(entry, duration : number, source : string?)
 	if not entry then return end
 
 	--[[
-		O Staff of Healing deixa a unidade imune por alguns segundos. A recusa e aqui,
-		e nao em cada coisa que atordoa: o raio, o congelamento da neve e o gimmick de
-		mob passam todos por esta funcao, e um teste por chamador acabaria com um
-		deles esquecido -- que e justamente o que o jogador leria como "a carta nao
-		funcionou".
+		The Staff of Healing makes the unit immune for a few seconds. The refusal is here,
+		not in each thing that stuns: lightning, the snow freeze, and the enemy gimmick all
+		go through this function, and a check per caller would end with one of them
+		forgotten, which is exactly what the player would read as "the card did not work".
 	]]
 	if GameClock.Now() < (entry.StunImmuneUntil or 0) then return end
 
@@ -686,14 +673,14 @@ function UnitService:StunUnit(entry, duration : number, source : string?)
 end
 
 --[=[
-	As unidades que o clima pode atordoar.
+	The units weather can stun.
 
-	Quem e imune ao clima (Magic, nos climas de hoje) fica de fora — nao adianta
-	sortear entre elas e depois desistir, porque isso desperdicaria o sorteio e
-	faria o congelamento da neve falhar em silencio num mapa cheio de Magic.
+	Units immune to the weather (Magic, in today's weathers) are left out: there is no
+	point drawing among them and then giving up, because that would waste the draw and
+	make the snow freeze fail silently on a map full of Magic.
 
-	Sem `weatherName` devolve todas: e o caso do gimmick de mob, que atordoa sem ter
-	nada a ver com clima.
+	Without `weatherName` it returns all: the enemy gimmick's case, which stuns with
+	nothing to do with weather.
 ]=]
 function UnitService:GetStunnableUnits(weatherName : string?)
 	if not weatherName then
@@ -711,8 +698,8 @@ function UnitService:GetStunnableUnits(weatherName : string?)
 end
 
 --[=[
-	Atordoa uma unidade sorteada. `weatherName` restringe o sorteio a quem nao e
-	imune aquele clima.
+	Stuns a random unit. `weatherName` restricts the draw to units not immune to that
+	weather.
 ]=]
 function UnitService:StunRandomUnit(duration, weatherName : string?)
 	local candidates = self:GetStunnableUnits(weatherName)
@@ -725,16 +712,16 @@ function UnitService:StunRandomUnit(duration, weatherName : string?)
 end
 
 --[=[
-	Tira o atordoamento de quem esta no circulo e deixa essas unidades imunes por
-	`immunity` segundos. E o Staff of Healing.
+	Removes the stun from units in the circle and makes them immune for `immunity`
+	seconds. It is the Staff of Healing.
 
-	Devolve quantas unidades o circulo pegou -- inclusive as que nao estavam
-	atordoadas, porque a imunidade vale para elas do mesmo jeito: a carta e tanto o
-	remedio quanto o guarda-chuva, e quem a joga em cima de um canto do mapa antes
-	do raio cair fez a jogada certa.
+	Returns how many units the circle caught, including those that were not stunned,
+	because the immunity applies to them just the same: the card is both remedy and
+	umbrella, and throwing it on a corner of the map before the bolt falls is the right
+	play.
 
-	A distancia e medida no plano, como o resto do que e circulo neste jogo: o anel
-	que o jogador viu na tela e um desenho no chao.
+	Distance is measured on the plane, like everything else that is a circle in this game:
+	the ring the player saw on screen is a drawing on the ground.
 ]=]
 function UnitService:CleanseUnits(position : Vector3, radius : number, immunity : number) : number
 	if typeof(position) ~= "Vector3" then return 0 end
@@ -749,17 +736,17 @@ function UnitService:CleanseUnits(position : Vector3, radius : number, immunity 
 
 		touched += 1
 
-		-- O prazo maior manda: um segundo cajado em cima do primeiro estende a
-		-- imunidade, e nunca a encurta.
+		-- The longer deadline rules: a second staff on top of the first extends the
+		-- immunity, and never shortens it.
 		entry.StunImmuneUntil = math.max(entry.StunImmuneUntil or 0, until_)
 
 		local wasStunned = (entry.StunnedUntil or 0) > GameClock.Now()
 		entry.StunnedUntil = 0
 
 		--[[
-			O cliente precisa saber, e nao so por causa do realce amarelo: o
-			congelamento da neve tem uma aura de particulas que fica no ar pelo prazo
-			inteiro dele, e ela nao tem como adivinhar que o prazo acabou mais cedo.
+			The client needs to know, and not only because of the yellow highlight: the snow
+			freeze has a particle aura that stays up for its whole deadline, and it has no way
+			to guess the deadline ended early.
 		]]
 		if wasStunned then
 			for _, plr in ipairs(Players:GetPlayers()) do
@@ -780,11 +767,11 @@ function UnitService:construct()
 	Framework:Listen("UpdateCardCounts", function() end)
 	Framework:Listen("RequestCardCounts", function(player)
 		--[[
-			A hotbar do tutorial vai junto das contagens, e pelo mesmo motivo que elas
-			são pedidas: o cliente pergunta quando **ele** está pronto. A primeira
-			remessa sai na abertura do perfil, que costuma acontecer antes de o
-			controller do outro lado ter registrado o `Listen` — e um evento do Warp
-			que chega antes do ouvinte não fica esperando, ele se perde.
+			The tutorial hotbar goes with the counts, and for the same reason they are
+			requested: the client asks when **it** is ready. The first batch goes out when the
+			profile opens, which usually happens before the controller on the other side
+			registered its `Listen`, and a Warp event that arrives before the listener does not
+			wait; it is lost.
 		]]
 		local tutorial = self.Services.TutorialMatchService
 		local order = tutorial and tutorial:GetDeckOrder()
@@ -812,10 +799,10 @@ function UnitService:construct()
 	Framework:Listen("ArchmageLightning", function() end)
 
 	Framework:Listen("SellUnit", function(player, unitId)
-		-- A partida de tutorial nao vende torre (`CanSell`): a Slingshot da wave 1 e a
-		-- torre com que o roteiro ensina clima, loja e velocidade, e devolve-la para a
-		-- mao desfaz um passo ja cumprido. O cliente ja tranca o botao; isto aqui e o
-		-- que vale.
+		-- The tutorial match does not sell towers (`CanSell`): wave 1's Slingshot is the
+		-- tower the script teaches weather, the shop, and speed with, and returning it to the
+		-- hand undoes a step already completed. The client already locks the button; this is
+		-- what counts.
 		local tutorial = self.Services.TutorialMatchService
 		if tutorial and not tutorial:CanSell() then return end
 
@@ -847,9 +834,9 @@ function UnitService:construct()
 		local entry = self.UnitsById[unitId]
 		if not entry or entry.ownerUserId ~= player.UserId then return end
 
-		-- A partida de tutorial nao vende upgrade (`CanUpgrade`): o dinheiro dela esta
-		-- contado para o deck, e a licao de melhorar torre e a da primeira partida de
-		-- verdade. O cliente ja tranca o botao; isto aqui e o que vale.
+		-- The tutorial match does not sell upgrades (`CanUpgrade`): its money is counted
+		-- for the deck, and upgrading towers is the lesson of the first real
+		-- match. The client already locks the button; this is what counts.
 		local tutorial = self.Services.TutorialMatchService
 		if tutorial and not tutorial:CanUpgrade() then return end
 
@@ -870,9 +857,9 @@ function UnitService:construct()
 	end)
 
 	--[=[
-		Troca a prioridade de alvo de uma unidade. O cliente manda o modo que quer
-		(e nao "gira um") para o pedido nao depender de quem esta em dia com quem:
-		dois cliques rapidos chegam como dois modos, e o segundo manda.
+		Changes a unit's target priority. The client sends the mode it wants (not "cycle
+		one") so the request does not depend on who is up to date with whom: two quick
+		clicks arrive as two modes, and the second wins.
 	]=]
 	Framework:Listen("SetUnitPriority", function(player, unitId, priority)
 		local entry = self.UnitsById[unitId]
@@ -882,8 +869,8 @@ function UnitService:construct()
 
 		entry.priority = priority
 
-		-- O alvo atual cai junto: sem isso a unidade so obedeceria a prioridade
-		-- nova depois de o mob de agora sair do alcance.
+		-- The current target drops too: without that the unit would only obey the new
+		-- priority after the current enemy left its range.
 		entry.targetMobId = nil
 
 		for _, plr in ipairs(Players:GetPlayers()) do
@@ -912,52 +899,52 @@ function UnitService:construct()
 
 	Framework:Listen("PlaceUnit", function(player, unitName, cf)
 		if typeof(unitName) ~= "string" or typeof(cf) ~= "CFrame" then
-			placementPrint(player.Name, "recusado: argumentos invalidos", typeof(unitName), typeof(cf))
+			placeLog:Debug(player.Name, "refused: invalid arguments", typeof(unitName), typeof(cf))
 			return
 		end
 
 		local position = cf.Position
 		if position.X ~= position.X or position.Y ~= position.Y or position.Z ~= position.Z then
-			placementPrint(player.Name, unitName, "recusado: posicao NaN")
+			placeLog:Debug(player.Name, unitName, "refused: NaN position")
 			return
 		end
 		if position.Magnitude > MAX_PLACE_DISTANCE then
-			placementPrint(player.Name, unitName, "recusado: longe demais", formatVector(position),
+			placeLog:Debug(player.Name, unitName, "refused: too far away", formatVector(position),
 				string.format("magnitude %.2f > %d", position.Magnitude, MAX_PLACE_DISTANCE))
 			return
 		end
 
 		local stats = SharedConfig.UnitStats[unitName]
 		if not stats then
-			placementPrint(player.Name, unitName, "recusado: unidade sem stats no SharedConfig")
+			placeLog:Debug(player.Name, unitName, "refused: unit has no stats in SharedConfig")
 			return
 		end
 
-		-- O tutorial manda enquanto um passo de colocação está aberto: carta errada ou
-		-- longe do ponto não entra. O cliente já apaga as outras cartas; isto aqui é o
-		-- que vale, porque cliente não se fiscaliza.
+		-- The tutorial rules while a placement step is open: a wrong card or one far
+		-- from the point does not get in. The client already dims the other cards; this is
+		-- what counts, because the client does not police itself.
 		local tutorial = self.Services.TutorialMatchService
 		if tutorial and not tutorial:CanPlace(unitName, cf) then
-			placementPrint(player.Name, unitName, "recusado: fora do passo do tutorial")
+			placeLog:Debug(player.Name, unitName, "refused: outside the tutorial step")
 			return
 		end
 
 		--[[
-			O preco com o clima do momento: a chuva desconta 25% do Ice. Sai do
-			`GetPlaceCost` porque o card da hotbar mostra pela mesma funcao -- sem isso
-			o jogador veria um preco e pagaria outro.
+			The price with the current weather: rain takes 25% off Ice. It comes from
+			`GetPlaceCost` because the hotbar card shows it through the same function; without
+			that the player would see one price and pay another.
 		]]
 		local placeCost = SharedConfig.UnitUpgradeConfig:GetPlaceCost(unitName, self:GetWeather())
 		local cash = self.Services.MobService:getCash(player)
 		if cash < placeCost then
-			placementPrint(player.Name, unitName, "recusado: sem dinheiro",
-				string.format("tem %d, custa %d", cash, placeCost))
+			placeLog:Debug(player.Name, unitName, "refused: not enough cash",
+				string.format("has %d, costs %d", cash, placeCost))
 			return
 		end
 
 		local cardCount = self:getCardCount(player, unitName)
 		if cardCount <= 0 then
-			placementPrint(player.Name, unitName, "recusado: sem unidades no card", "count", cardCount)
+			placeLog:Debug(player.Name, unitName, "refused: no units left on the card", "count", cardCount)
 			return
 		end
 
@@ -966,13 +953,13 @@ function UnitService:construct()
 		if isValid then
 			local unitId = HttpService:GenerateGUID(false)
 			--[[
-				`invested` e o preco de **tabela**, e nao o que foi cobrado.
+				`invested` is the **table** price, not what was charged.
 
-				E dele que sai o valor de venda, e o cliente calcula o mesmo numero pelo
-				`GetInvested` sem saber quanto esta unidade custou de fato -- o
-				`invested` nao e replicado. Guardar o preco com desconto faria o card
-				prometer uma devolucao e a venda dar outra. O desconto continua sendo so
-				vantagem: comprar por 75 e vender por 50 nunca e lucro.
+				The sell value comes from it, and the client computes the same number through
+				`GetInvested` without knowing how much this unit actually cost: `invested` is not
+				replicated. Storing the discounted price would make the card promise one refund
+				and the sale give another. The discount is still only an advantage: buying for
+				75 and selling for 50 is never profit.
 			]]
 			local sticker = SharedConfig.UnitUpgradeConfig:GetPlaceCost(unitName)
 
@@ -983,7 +970,7 @@ function UnitService:construct()
 			self.Services.MobService:spendCash(player, placeCost)
 			self:decrementCardCount(player, unitName)
 
-			placementPrint(player.Name, unitName, "aceito", "CFrame recebido do cliente:", formatVector(position),
+			placeLog:Debug(player.Name, unitName, "accepted", "CFrame from the client:", formatVector(position),
 				"unitId", unitId)
 
 			for _, plr in ipairs(Players:GetPlayers()) do
@@ -1005,15 +992,15 @@ function UnitService:construct()
 	end)
 end
 
---[[ AURA DO ENTREPRENEUR ]]
+--[[ ENTREPRENEUR AURA ]]
 
 --[=[
-	As farms com aura que estao no mapa agora, remontadas uma vez por quadro.
+	The aura farms on the map now, rebuilt once per frame.
 
-	Refeita em vez de mantida na colocacao e na venda porque o `stepCombat` ja varre
-	a lista inteira todo quadro: um segundo laco pelo mesmo array nao se mede, e em
-	troca nao existe estado para invalidar quando uma unidade entra, sai, e vendida
-	ou o round recomeca.
+	Rebuilt instead of maintained on placement and sale because `stepCombat` already
+	sweeps the whole list every frame: a second loop over the same array is not
+	measurable, and in exchange there is no state to invalidate when a unit enters, leaves,
+	is sold, or the round restarts.
 ]=]
 function UnitService:collectAuraSources()
 	table.clear(self.AuraSources)
@@ -1029,16 +1016,16 @@ function UnitService:collectAuraSources()
 end
 
 --[=[
-	Quanto a mais em caixa uma unidade leva por estar na aura de uma farm.
+	How much extra cash a unit gets for being in a farm's aura.
 
-	Devolve uma fracao somavel -- 0.15 e "+15%" -- e auras que se sobrepoem somam:
-	duas farms cobrindo a mesma torre valem as duas. Zero quer dizer "fora de todas".
+	Returns an additive fraction (0.15 is "+15%") and overlapping auras add up: two farms
+	covering the same tower count both. Zero means "outside all of them".
 
-	O dono nao entra na conta: a aura vale para qualquer unidade aliada, e quem
-	recebe o dinheiro continua sendo o dono da unidade que bateu.
+	The owner does not enter the math: the aura applies to any allied unit, and the money
+	still goes to the owner of the unit that hit.
 
-	O raio de cada farm e o alcance dela pelo `GetRange`, ou seja, o mesmo circulo
-	que o jogador ve quando a seleciona -- inclusive o que o clima faz com ele.
+	Each farm's radius is its range through `GetRange`, that is, the same circle the player
+	sees when selecting it, including what weather does to it.
 ]=]
 function UnitService:getAuraBonus(entry, weather : string?) : number
 	local sources = self.AuraSources
@@ -1048,8 +1035,8 @@ function UnitService:getAuraBonus(entry, weather : string?) : number
 	local bonus = 0
 
 	for _, source in ipairs(sources) do
-		-- Uma farm nao se banha na propria aura; ela nem causa dano, mas deixar a
-		-- regra escrita evita surpresa se um dia uma farm atacar.
+		-- A farm does not bathe in its own aura; it deals no damage anyway, but keeping the
+		-- rule written avoids surprises if a farm ever attacks.
 		if source == entry then continue end
 
 		local level = source.upgrades or 0
@@ -1064,12 +1051,12 @@ function UnitService:getAuraBonus(entry, weather : string?) : number
 end
 
 --[=[
-	O dinheirinho saindo da unidade que acabou de render a mais.
+	The little money burst out of the unit that just earned extra.
 
-	Estrangulado por unidade: um MultiShot sao quatro golpes e um AOE e uma chamada
-	de dano por inimigo atingido, entao sem isto um Rocket dentro da aura mandaria
-	dez efeitos no mesmo quadro para a mesma torre. Um a cada `AURA_VFX_COOLDOWN` e
-	o bastante para o jogador entender que aquela torre esta rendendo.
+	Throttled per unit: a MultiShot is four hits and an AOE is one damage call per enemy
+	hit, so without this a Rocket inside the aura would send ten effects on the same frame
+	for the same tower. One every `AURA_VFX_COOLDOWN` is enough for the player to
+	understand that tower is earning.
 ]=]
 function UnitService:playAuraVFX(entry)
 	local now = os.clock()
@@ -1083,22 +1070,22 @@ function UnitService:playAuraVFX(entry)
 end
 
 --[=[
-	Aplica dano e credita quem bateu: o placar de dano da unidade, o caixa do dono
-	(com o bonus da aura) e o efeito de dinheiro quando o bonus valeu.
+	Applies damage and credits the hitter: the unit's damage scoreboard, the owner's cash
+	(with the aura bonus), and the money effect when the bonus applied.
 
-	Passa por aqui todo dano que sai de uma unidade -- ataque normal, area e mina.
+	All damage from a unit goes through here: normal attacks, area, and mines.
 ]=]
 function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : number) : number
 	--[[
-		O `HitIncome` do anel do Robux Royalty entra como **escala** do premio, e nao
-		somado ao bonus da aura: a aura e uma fracao que se acumula entre farms
-		(15% + 15% = 30%), e a carta e um multiplicador em cima do que sobrou. Somar
-		os dois faria "1.1x" virar "+10 pontos percentuais", que e outro numero.
+		The Robux Royalty ring's `HitIncome` enters as a **scale** on the reward, not added
+		to the aura bonus: the aura is a fraction that stacks between farms (15% + 15% =
+		30%), and the card is a multiplier on what is left. Adding the two would turn "1.1x"
+		into "+10 percentage points", which is another number.
 	]]
 
-	-- Onde o alvo estava **antes** do dano, para quem espalha gelo em volta dele (o
-	-- `Frost.Radius`): um alvo que morre com o tiro ja nao tem posicao para dar
-	-- depois, e a area tem que sair mesmo assim.
+	-- Where the target was **before** the damage, for units that spread frost around it
+	-- (`Frost.Radius`): a target that dies from the shot has no position to give
+	-- afterward, and the area must go out anyway.
 	local unitStats = SharedConfig.UnitStats[entry.unitName]
 	local frostCenter = unitStats and unitStats.Frost and unitStats.Frost.Radius
 		and self.Services.MobService:getMobPosition(mobId)
@@ -1108,26 +1095,24 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 	)
 	self:addDamageDone(entry, dealt)
 
-	-- Golpe que nao encostou em ninguem (o mob ja estava morto) nao rende nem
-	-- efeito: o `DamageMob` devolve 0 e nao pagou nada.
+	-- A hit that touched nobody (the enemy was already dead) does not even yield an
+	-- effect: `DamageMob` returns 0 and paid nothing.
 	if dealt > 0 and auraBonus > 0 then
 		self:playAuraVFX(entry)
 	end
 
 	--[[
-		O que o golpe **deixa** no inimigo, alem do dano: a lentidao do gelo e a
-		queimadura do fogo. Os dois sao declarados na propria unidade
-		(`UnitStats[nome].Slow` / `.Burn`) e executados pelo `MobService`, que e quem
-		e dono do estado do inimigo.
+		What the hit **leaves** on the enemy besides damage: ice slow, fire burn, and bleed.
+		They are declared on the unit itself (`UnitStats[name].Slow` / `.Burn` / `.Bleed`)
+		and run by `MobService`, which owns enemy state.
 
-		So depois de o dano ter entrado: um golpe que nao encostou em ninguem nao
-		congela nem queima ninguem.
+		Only after the damage landed: a hit that touched nobody freezes and burns nobody.
 
-		> Hoje deixam alguma coisa o Electro -- o tranco logo abaixo, que entra em
-		> **cada elo** da corrente, porque este caminho e o mesmo para qualquer alvo que
-		> tenha levado dano -- e o Frostione, com os acumulos de gelo, que usam a
-		> lentidao por dentro. A queimadura e do Pyre, e a carta Fire Hazard multiplica
-		> os tiques dela.
+		> Today the Electro leaves something (the jolt just below, which applies to **each
+		> link** of the chain, because this path is the same for any target that took
+		> damage), as does the Frostione, with frost stacks that use the slow internally.
+		> The burn is the Pyre's, and the Fire Hazard card multiplies its ticks. The bleed
+		> is the Slasher's and the Berserker's.
 	]]
 	if dealt > 0 then
 		local stats = SharedConfig.UnitStats[entry.unitName]
@@ -1148,38 +1133,38 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 		end
 
 		--[[
-			O tranco: o inimigo para de vez por um instante, e so depois volta a andar
-			(lento, se o golpe tambem deixou `Slow` -- nenhum deixa hoje). E o mesmo
-			`StunnedUntil` do Time Stop, aplicado a um mob so.
+			The jolt: the enemy stops completely for an instant, and only then walks again
+			(slowed, if the hit also left `Slow`; none does today). It is the same
+			`StunnedUntil` as Time Stop, applied to a single enemy.
 
-			Vem **depois** da lentidao de proposito, e a ordem importa: o `ApplySlow` nao
-			avisa a tela enquanto o mob esta parado, entao lentidao primeiro e tranco
-			depois deixa as duas pontas contando a mesma historia. Ao contrario, o aviso
-			de velocidade nova sairia por cima do "parou".
+			It comes **after** the slow on purpose, and the order matters: `ApplySlow` does
+			not notify the screen while the enemy is stopped, so slow first and jolt after
+			keeps both ends telling the same story. The other way around, the new speed
+			notification would go out over the "stopped".
 		]]
-		-- O tempo e o do nivel da unidade (o tranco cresce com o upgrade), e o dono vai
-		-- junto: o atordoamento conta para os contratos dele.
+		-- The time is the unit level's (the jolt grows with upgrades), and the owner goes
+		-- along: the stun counts for their contracts.
 		local stunDuration = SharedConfig.UnitUpgradeConfig:GetStunDuration(entry.unitName, entry.upgrades or 0)
 		if stunDuration > 0 then
 			self.Services.MobService:StunMob(mobId, stunDuration, entry.ownerUserId)
 		end
 
-		-- Os acumulos de gelo do Frostione: lentidao enquanto durarem, congelamento no
-		-- ultimo. O `unitId` vai junto porque a conta e de cada unidade, e nao do
-		-- inimigo. Ver o `MobService:ApplyFrost`.
+		-- The Frostione's frost stacks: slow while they last, freeze on the
+		-- last one. The `unitId` goes along because the count belongs to each unit, not the
+		-- enemy. See `MobService:ApplyFrost`.
 		local frost = stats and stats.Frost
 		if frost then
 			local mobService = self.Services.MobService
 			mobService:ApplyFrost(mobId, frost, entry.ownerUserId, entry.unitId)
 
 			--[[
-				A area de gelo em volta do alvo: quem estiver nela ganha um acumulo da
-				mesma unidade, como se tivesse levado o tiro, mas sem dano -- o dano e so
-				do alvo. O raio cresce com o nivel (`GetFrostRadius`).
+				The frost area around the target: anyone in it gets a stack from the same unit,
+				as if they had been shot, but without damage; the damage is only the target's.
+				The radius grows with level (`GetFrostRadius`).
 
-				O centro e a posicao do alvo **antes** do dano (`frostCenter`, la em
-				cima): o alvo pode ter morrido com este tiro, e a area sai do mesmo jeito.
-				Ele fica de fora da lista porque ja levou o acumulo dele logo acima.
+				The center is the target's position **before** the damage (`frostCenter`,
+				above): the target may have died from this shot, and the area goes out anyway.
+				It is left out of the list because it already got its stack just above.
 			]]
 			local radius = SharedConfig.UnitUpgradeConfig:GetFrostRadius(entry.unitName, entry.upgrades or 0)
 			if frostCenter and radius > 0 then
@@ -1196,22 +1181,22 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 end
 
 --[=[
-	Cobra o dano e ja anota o acerto na lista que vai no `AttackVisual`.
+	Charges the damage and records the hit in the list that goes in `AttackVisual`.
 
-	O numero que atravessa e o que o `DamageMob` **devolveu**, e nao o que pedimos a
-	ele. Os dois multiplicadores que moram dentro dele -- o "quebradico" do Staff of
-	Azure Ever Ice e a ferida aberta do sangramento (`BleedVulnerability`) -- nao
-	aparecem aqui, e o golpe fatal ainda e cortado na vida que sobrou.
+	The number that crosses is what `DamageMob` **returned**, not what we asked of it. The
+	two multipliers living inside it (the Staff of Azure Ever Ice's "brittle" and the
+	bleed's open wound, `BleedVulnerability`) do not appear here, and the killing blow is
+	still cut at the remaining health.
 
-	Isso importa porque o cliente **nao** recebe a vida do mob a cada golpe: ele
-	guarda uma copia e desconta dela exatamente este numero (ver o `MobHealth` do
-	`MobController`). Mandar o valor pedido fazia a copia descer menos que a do
-	servidor, e a diferenca nunca era corrigida -- a barra ficava parada num resto
-	enquanto o servidor ja tinha matado. Num boss, que leva golpes demais para a
-	diferenca passar batida, isso virava uma barra inteira de sobra.
+	That matters because the client does **not** receive the enemy's health on every hit:
+	it keeps a copy and subtracts exactly this number from it (see `MobController`'s
+	`MobHealth`). Sending the requested value would make the copy drop less than the
+	server's, and the difference would never be corrected: the bar would stop at a
+	remainder while the server had already killed. On a boss, which takes too many hits
+	for the difference to go unnoticed, that would be a whole extra bar.
 
-	Golpe que nao encostou em ninguem (o alvo morreu durante o windup) fica de fora
-	da lista: o `DamageMob` devolve 0, e um "0" flutuando so sujaria a tela.
+	A hit that touched nobody (the target died during the windup) is left out of the
+	list: `DamageMob` returns 0, and a floating "0" would only clutter the screen.
 ]=]
 function UnitService:creditHit(entry, hits, mobId, damage : number, auraBonus : number) : number
 	local dealt = self:creditDamage(entry, mobId, damage, auraBonus)
@@ -1231,19 +1216,19 @@ function UnitService:stepCombat()
 	local mobService = self.Services.MobService
 	if not mobService then return end
 
-	-- Tempo de partida, e nao `os.clock()`: e o mesmo "agora" que gravou
-	-- `lastAttack`, `StunnedUntil` e o prazo da carga, entao acelerar o relogio
-	-- encurta os tres juntos sem tocar em nenhum numero do `UnitUpgradeConfig`.
+	-- Match time, not `os.clock()`: it is the same "now" that recorded
+	-- `lastAttack`, `StunnedUntil`, and the charge deadline, so speeding up the clock
+	-- shortens all three together without touching any `UnitUpgradeConfig` number.
 	local now = GameClock.Now()
 	local scansLeft = TARGET_SCANS_PER_FRAME
 
-	-- Uma leitura por quadro, repassada para baixo: o clima nao muda no meio de um
-	-- laco, e consultar por unidade so gastaria.
+	-- One read per frame, passed down: weather does not change mid
+	-- loop, and querying per unit would only waste.
 	local weather = self:GetWeather()
 
 	--[[
-		As cartas antes de tudo: o dano, a cadencia e o alcance lidos daqui para baixo
-		saem ja com o que elas fizeram. Uma leitura por quadro, como o clima -- ver
+		Cards before everything: damage, attack speed, and range read from here down
+		already include what they did. One read per frame, like weather; see
 		`refreshCardModifiers`.
 	]]
 	self:refreshCardModifiers()
@@ -1252,17 +1237,17 @@ function UnitService:stepCombat()
 	self:stepTripmines(now, weather)
 
 	--[[
-		A volta pela lista comeca em quem ficou sem busca no quadro anterior, e nao
-		sempre na primeira unidade.
+		The loop through the list starts with whoever was left without a scan the previous
+		frame, not always at the first unit.
 
-		Unidade pronta sem ninguem no alcance busca em todo quadro, e oito delas no
-		comeco da lista gastavam o orcamento inteiro sozinhas: quem vinha depois nunca
-		mais achava alvo novo e ficava parada com um inimigo na frente. Comecando pelo
-		primeiro que ficou de fora, toda unidade busca em no maximo
-		`ceil(unidades / TARGET_SCANS_PER_FRAME)` quadros.
+		A ready unit with nobody in range scans every frame, and eight of them at the start
+		of the list would spend the whole budget alone: the ones after would never find a
+		new target and would stand still with an enemy in front. Starting from the first one
+		left out, every unit scans at most every `ceil(units / TARGET_SCANS_PER_FRAME)`
+		frames.
 
-		O cursor e um indice e nao a unidade: vender ou colocar uma torre no meio so
-		desloca a fila por um quadro, e o modulo abaixo o mantem dentro da lista.
+		The cursor is an index, not the unit: selling or placing a tower midway only shifts
+		the queue for one frame, and the modulo below keeps it within the list.
 	]]
 	local start = ((self.ScanCursor or 1) - 1) % count + 1
 	local starved = nil
@@ -1273,13 +1258,13 @@ function UnitService:stepCombat()
 		local stats = SharedConfig.UnitStats[entry.unitName]
 
 		--[[
-			Unidade desligada pelo clima nao faz nada neste laco -- a chuva apaga o
-			`Fire` inteiro. Nao e atordoamento: nao tem prazo, nao acende realce
-			amarelo e nao pode ser encurtado; ela volta quando o clima sair.
+			A unit turned off by weather does nothing in this loop: rain turns off all of
+			`Fire`. It is not a stun: it has no deadline, lights no yellow highlight, and
+			cannot be shortened; it comes back when the weather leaves.
 
-			A renda da farm fica de fora porque quem paga e o `payFarmUnits`, e nao
-			este laco. Nenhuma farm de hoje e de uma classe que algum clima desligue;
-			no dia em que for, e la que a regra tem que ser repetida.
+			Farm income is left out because `payFarmUnits` pays it, not this loop. No farm
+			today belongs to a class any weather turns off; the day one does, the rule must
+			be repeated there.
 		]]
 		if SharedConfig.WeatherConfig.IsDisabled(weather, entry.unitName) then continue end
 
@@ -1308,14 +1293,14 @@ function UnitService:stepCombat()
 			end
 
 			--[[
-				A busca acontece a cada golpe, e nao so quando o alvo sai do alcance:
-				prioridade e sobre quem esta em alcance AGORA. O mob mais fraco muda
-				a cada batida, e o "mais forte" que acabou de entrar no alcance tem
-				que roubar o alvo do que ja estava la.
+				The scan happens on every attack, not only when the target leaves range:
+				priority is about who is in range NOW. The weakest enemy changes with each
+				hit, and the "strongest" that just entered range must steal the target from
+				the one already there.
 
-				O orcamento de buscas por quadro continua mandando — estourou, a
-				unidade fica com o alvo anterior se ele ainda serve e e a primeira a
-				buscar no proximo quadro (ver `ScanCursor` la em cima).
+				The per-frame scan budget still rules: once exhausted, the unit keeps its
+				previous target if it still works and is the first to scan next frame (see
+				`ScanCursor` above).
 			]]
 			if scansLeft > 0 then
 				scansLeft -= 1
@@ -1342,24 +1327,24 @@ function UnitService:stepCombat()
 		end
 	end
 
-	-- Ninguem ficou sem busca: a ordem de hoje serve, e o cursor fica onde esta.
+	-- Nobody was left without a scan: today's order works, and the cursor stays put.
 	if starved then
 		self.ScanCursor = starved
 	end
 end
 
 --[=[
-	Quanto a unidade espera, desde o ultimo golpe, para dar o proximo.
+	How long the unit waits, since its last attack, to make the next one.
 
-	Quase sempre e o cooldown. A excecao e a sequencia encadeada (`ChainSequence` no
-	`UnitAttackConfig`, o Archmage): no meio dela a espera e o `ChainDelay` contado
-	do comeco do passo que acabou de sair -- ou a `Duration` da animacao dele, se for
-	maior, para nenhum passo cortar o anterior --, e depois do ultimo passo e a
-	animacao dele **mais** o cooldown: o cooldown conta do fim da sequencia, e nao do
-	comeco do ultimo passo.
+	Almost always the cooldown. The exception is the chained sequence (`ChainSequence` in
+	`UnitAttackConfig`, the Archmage): mid-sequence the wait is `ChainDelay` counted from
+	the start of the step that just went out (or its animation's `Duration`, if longer,
+	so no step cuts the previous one), and after the last step it is its animation
+	**plus** the cooldown: the cooldown counts from the end of the sequence, not the start
+	of the last step.
 
-	A sequencia sem inimigo no alcance nao anda: o `stepCombat` so ataca com alvo, e
-	o `attackStep` fica onde parou ate aparecer um.
+	A sequence with no enemy in range does not advance: `stepCombat` only attacks with a
+	target, and `attackStep` stays where it stopped until one appears.
 ]=]
 function UnitService:getAttackDelay(entry, now : number, weather : string?) : number
 	local attackConfig = SharedConfig.UnitAttackConfig and SharedConfig.UnitAttackConfig[entry.unitName]
@@ -1381,21 +1366,21 @@ function UnitService:getAttackDelay(entry, now : number, weather : string?) : nu
 end
 
 --[=[
-	Cooldown efetivo de uma unidade: o da tabela com o clima, dividido pela carga
-	temporaria que ela esteja carregando.
+	A unit's effective cooldown: the table's with weather, divided by any temporary
+	charge it carries.
 
-	A carga entra por fora do `UnitUpgradeConfig` porque ela e estado de partida —
-	uma unidade especifica que levou um raio ha 4 segundos — e o config so conhece
-	numeros que valem para todo mundo.
+	The charge comes in outside `UnitUpgradeConfig` because it is match state (a specific
+	unit that took a bolt 4 seconds ago) and the config only knows numbers that apply to
+	everyone.
 ]=]
 function UnitService:getCooldown(entry, now : number, weather : string?) : number
 	local cooldown = SharedConfig.UnitUpgradeConfig:GetCooldown(entry.unitName, entry.upgrades or 0, weather)
 
 	--[[
-		A carta entra como divisao, igual ao clima: 1.15 e "bate 15% mais rapido", ou
-		seja, o mesmo ciclo em 1/1.15 do tempo. E aqui, e nao no `UnitUpgradeConfig`,
-		pelo mesmo motivo da carga do raio -- o config so conhece numeros que valem
-		para todo mundo, e uma carta vale para quem ela escolheu.
+		The card goes in as a division, like weather: 1.15 is "hits 15% faster", that is,
+		the same cycle in 1/1.15 of the time. It is here, and not in `UnitUpgradeConfig`,
+		for the same reason as the lightning charge: the config only knows numbers that
+		apply to everyone, and a card applies to whoever it chose.
 	]]
 	local cards = self:cardMultiplier(entry, "AttackSpeed")
 	if cards > 0 then
@@ -1408,7 +1393,7 @@ function UnitService:getCooldown(entry, now : number, weather : string?) : numbe
 	return cooldown / charge
 end
 
--- Dano por golpe, com o mesmo arredondamento do config.
+-- Damage per hit, with the same rounding as the config.
 function UnitService:getDamage(entry, stats, weather : string?) : number
 	local base = stats.Damage or 0
 	local multiplier = SharedConfig.UnitUpgradeConfig:GetDamageMultiplier(entry.unitName, entry.upgrades or 0, weather)
@@ -1421,7 +1406,7 @@ end
 function UnitService:getMineLimit(entry, tripmineConfig)
 	local limit = (tripmineConfig.BaseLimit or 3) + (entry.upgrades or 0) * (tripmineConfig.LimitPerUpgrade or 1)
 
-	-- `MaxLimit` e o teto: os upgrades seguintes continuam valendo pelo dano.
+	-- `MaxLimit` is the cap: later upgrades still count for damage.
 	return math.min(limit, tripmineConfig.MaxLimit or math.huge)
 end
 
@@ -1442,8 +1427,8 @@ function UnitService:getRandomPathPointInRange(entry, weather : string?)
 	local step = 1
 	local candidates = {}
 
-	-- Varre todas as rotas: uma mina pode cair em qualquer lado da bifurcacao que
-	-- estiver no alcance, e o gatilho ja testa todos os mobs independente da rota.
+	-- Sweeps every route: a mine can land on either side of the fork that is
+	-- in range, and the trigger already tests every enemy regardless of route.
 	for _, route in self.Services.MobService:getRoutes() do
 		local routeSmooth = route.smooth
 		if routeSmooth and routeSmooth.points and #routeSmooth.points >= 2 and routeSmooth.length > 0 then
@@ -1512,19 +1497,19 @@ function UnitService:stepTripminer(entry, stats, now, weather : string?)
 	end
 
 	--[[
-		A mina sai da mao no fim do windup e **so arma quando pousa**.
+		The mine leaves the hand at the end of the windup and **only arms when it lands**.
 
-		Sao dois instantes, e nao um: antes, a mina entrava em `entry.mines` no mesmo
-		quadro em que o cliente comecava a desenhar o arco, entao ela passava o voo
-		inteiro armada e invisivel no destino -- um mob que cruzasse o ponto nessa
-		janela via a explosao sair de um lugar onde ainda nao havia mina nenhuma.
+		They are two instants, not one: if the mine entered `entry.mines` on the same frame
+		the client started drawing the arc, it would spend the whole flight armed and
+		invisible at the destination, and an enemy crossing the spot in that window would see
+		the explosion come from a place with no mine yet.
 
-		O `ThrowTime` vai junto no evento em vez de o cliente ler do config: assim os
-		dois lados gastam o mesmo numero por construcao, e o arco termina exatamente
-		no quadro em que o gatilho liga.
+		`ThrowTime` goes in the event instead of the client reading it from config: that way
+		both sides spend the same number by construction, and the arc ends exactly on the
+		frame the trigger arms.
 
-		As duas esperas sao de partida (`GameClock`), como o cooldown e o windup: no
-		3x a mina e arremessada e pousa tres vezes mais rapido, junto com o resto.
+		Both waits are match time (`GameClock`), like the cooldown and windup: at 3x the mine
+		is thrown and lands three times faster, along with everything else.
 	]]
 	local throwTime = config.ThrowTime or 0
 
@@ -1539,21 +1524,21 @@ function UnitService:stepTripminer(entry, stats, now, weather : string?)
 		end
 
 		GameClock.Delay(throwTime, function()
-			-- A vaga so e liberada aqui: a mina no ar ja conta para o limite, senao o
-			-- cooldown de 3s contra windup mais voo deixaria plantar acima dele.
+			-- The slot is only freed here: a mine in the air already counts toward the limit, or
+			-- the 3s cooldown against windup plus flight would allow planting above it.
 			entry.pendingMines = math.max(0, (entry.pendingMines or 1) - 1)
 
 			if not self.UnitsById[entry.unitId] then return end
 
-			-- `armedAt` comeca o carregamento: ver `Tripmine.Charge` e `mineChargeFactor`.
+			-- `armedAt` starts the charge: see `Tripmine.Charge` and `mineChargeFactor`.
 			entry.mines[mineId] = { position = position, cf = mineCF, armedAt = GameClock.Now() }
 		end)
 	end)
 end
 
 --[=[
-	Quanto do dano uma mina entrega agora: `StartDamage` no pouso, subindo em linha
-	reta ate 1 em `Charge.Time` segundos. Sem `Charge` no config a mina sai cheia.
+	How much of its damage a mine delivers now: `StartDamage` on landing, rising linearly
+	to 1 over `Charge.Time` seconds. With no `Charge` in the config the mine goes out full.
 ]=]
 local function mineChargeFactor(mine, config, now : number) : number
 	local charge = config.Charge
@@ -1575,14 +1560,13 @@ function UnitService:stepTripmines(now, weather : string?)
 		if config and entry.mines then
 			for mineId, mine in entry.mines do
 				--[[
-					O trecho que o mob andou neste quadro, e nao onde ele esta parado.
+					The stretch the enemy walked this frame, not where it stands.
 
-					Um mob anda `CurrentSpeed * dt` por quadro, e acelerado esse passo
-					passa do diametro do gatilho: no 3x com o servidor a 30Hz, o inimigo
-					mais rapido do Nightmare da quase 6 studs de uma vez e atravessaria os
-					5 studs de gatilho da mina sem nunca ser visto parado dentro dela. Com
-					o segmento, a mina explode pela distancia -- e nao pela sorte de o
-					quadro cair em cima dela.
+					An enemy walks `CurrentSpeed * dt` per frame, and sped up that step exceeds
+					the trigger's diameter: at 3x with the server at 30Hz, Nightmare's fastest
+					enemy covers almost 6 studs at once and would cross the mine's 5-stud trigger
+					without ever being seen inside it. With the segment, the mine explodes by
+					distance, not by the luck of the frame landing on it.
 				]]
 				local triggeredBy = mobService:GetMobCrossing(mine.position, config.TriggerRadius or 2.5)
 				if triggeredBy then
@@ -1592,22 +1576,22 @@ function UnitService:stepTripmines(now, weather : string?)
 					local radius = config.AOE and config.AOE.Radius or 6
 					local mobsHit = mobService:GetMobsInRadius(mine.position, radius)
 
-					-- A aura mede a distancia ate a UNIDADE, e nao ate a mina: quem
-					-- precisa estar perto da farm e a torre, nao o lugar onde ela
-					-- jogou o explosivo.
+					-- The aura measures distance to the UNIT, not the mine: what needs to be near
+					-- the farm is the tower, not the spot where it threw
+					-- the explosive.
 					local auraBonus = self:getAuraBonus(entry, weather)
 
 					--[[
-						A explosao nao tem `AttackVisual`: ela nao e um golpe de uma unidade, e
-						o VFX dela ja sai no `TripmineTriggered` logo abaixo. Mas o numero e a
-						barra de vida tem que sair, e por isso cada acerto vai como um
-						`MobDamageTick` -- o mesmo caminho dos tiques de queimadura, que e o que
-						o cliente tem para dano sem unidade.
+						The explosion has no `AttackVisual`: it is not a unit's hit, and its VFX
+						already goes out in `TripmineTriggered` just below. But the number and the
+						health bar must go out, which is why each hit goes as a `MobDamageTick`:
+						the same path as burn ticks, which is what the client has for damage with
+						no unit.
 
-						Sem isto a mina era o unico dano do jogo invisivel para a barra: o
-						cliente desconta de uma copia da vida (ver o `creditHit`), e o que nao
-						chega ali nunca mais e corrigido -- um boss que pisasse numa mina ficava
-						com aquele pedaco de barra sobrando ate morrer.
+						Without this the mine would be the only damage in the game invisible to the
+						bar: the client subtracts from a copy of the health (see `creditHit`), and
+						what does not arrive there is never corrected: a boss stepping on a mine
+						would keep that piece of bar until it died.
 					]]
 					local players = Players:GetPlayers()
 
@@ -1632,9 +1616,9 @@ end
 
 function UnitService:payFarmUnits()
 	--[[
-		A renda e paga no fim da wave, fora do laco de combate: sem esta leitura ela
-		sairia com o que as cartas estavam fazendo no ultimo quadro em que alguem
-		atacou -- que pode ter sido antes de o anel do cajado ser desenhado.
+		Income is paid at the end of the wave, outside the combat loop: without this read
+		it would go out with what cards were doing on the last frame someone attacked,
+		which may have been before the staff's ring was drawn.
 	]]
 	self:refreshCardModifiers()
 
@@ -1645,12 +1629,12 @@ function UnitService:payFarmUnits()
 			local player = Players:GetPlayerByUserId(entry.ownerUserId)
 			if player then
 				--[[
-					Sem clima de proposito: a renda da fazenda nao e dano, e o corte de
-					30% da tempestade de areia mexeria na economia da partida em vez de
-					no combate — que e o que os climas foram feitos para fazer.
+					No weather on purpose: farm income is not damage, and the sandstorm's 30% cut
+					would change the match economy instead of combat, which is what weathers
+					were made for.
 
-					A **carta**, essa sim, entra: o anel do Robux Royalty e uma carta de
-					economia, e recusa-la aqui seria recusar a coisa que ela faz.
+					The **card**, however, does apply: the Robux Royalty ring is an economy card,
+					and refusing it here would be refusing what it does.
 				]]
 				local income = SharedConfig.UnitUpgradeConfig:GetIncome(entry.unitName, entry.upgrades or 0)
 					* self:cardMultiplier(entry, "Income")
@@ -1666,15 +1650,15 @@ function UnitService:payFarmUnits()
 end
 
 --[=[
-	Um passo de sequencia com `Combo` (o Archmage): o ataque daquele passo, com os
-	numeros de `UnitStats[nome].Combo[step.Combo]`.
+	A sequence step with `Combo` (the Archmage): that step's attack, with the numbers from
+	`UnitStats[name].Combo[step.Combo]`.
 
-	Os tempos sao os do passo (`HitTime`, `HitEnd`), no relogio da partida. A janela
-	desses passos e a `Duration` da animacao (`getAttackDelay`), maior ou igual a
-	ela, entao nenhum e espremido: os marcadores valem como estao.
+	The timings are the step's (`HitTime`, `HitEnd`), on the match clock. These steps'
+	window is the animation's `Duration` (`getAttackDelay`), greater than or equal to it,
+	so none is squeezed: the markers hold as they are.
 
-	O alvo e quem a unidade mirava quando o passo comecou -- e dele que sai a posicao
-	do meteoro, a direcao do raio e quem e teleportado.
+	The target is whoever the unit was aiming at when the step started: the meteor's
+	position, the bolt's direction, and who gets teleported come from it.
 ]=]
 function UnitService:executeCombo(entry, unitStats, step, targetId, weather : string?)
 	local combo = unitStats.Combo and unitStats.Combo[step.Combo]
@@ -1685,13 +1669,13 @@ function UnitService:executeCombo(entry, unitStats, step, targetId, weather : st
 	local unitName = entry.unitName
 	local unitPosition = entry.cf.Position
 
-	-- Congelados no comeco do passo, pelo mesmo motivo do golpe comum: um clima ou
-	-- uma carta que entre no meio nao muda o passo que ja comecou.
+	-- Frozen at the start of the step, for the same reason as a regular hit: a weather or
+	-- a card that comes in midway does not change a step already started.
 	local auraBonus = self:getAuraBonus(entry, weather)
 	local damage = combo.Damage and self:getDamage(entry, combo, weather) or 0
 	local range = self:getRange(entry, weather)
 
-	-- Onde o alvo estava quando o passo comecou: e para la que o meteoro cai.
+	-- Where the target was when the step started: that is where the meteor falls.
 	local aimPos = targetId and mobService:getMobPosition(targetId)
 
 	local function showHits(hits)
@@ -1712,7 +1696,7 @@ function UnitService:executeCombo(entry, unitStats, step, targetId, weather : st
 				Framework:Fire("ArchmageMeteor", plr, unitId, aimPos, fallTime, combo.Height or 15)
 			end
 
-			-- O dano entra no impacto, junto com a explosao que o cliente toca.
+			-- Damage lands on impact, along with the explosion the client plays.
 			GameClock.Wait(fallTime)
 
 			local radius = SharedConfig.UnitUpgradeConfig:GetMeteorRadius(unitName, entry.upgrades or 0)
@@ -1722,8 +1706,8 @@ function UnitService:executeCombo(entry, unitStats, step, targetId, weather : st
 			end
 			showHits(hits)
 		elseif step.Combo == "Lightning" then
-			-- A linha trava aqui, no inicio do dano: onde o alvo esta agora, ou onde ele
-			-- estava no comeco do passo se ja morreu.
+			-- The line locks here, at the start of the damage: where the target is now, or where
+			-- it was at the start of the step if it already died.
 			local through = (targetId and mobService:getMobPosition(targetId)) or aimPos
 			if not through then return end
 
@@ -1736,8 +1720,8 @@ function UnitService:executeCombo(entry, unitStats, step, targetId, weather : st
 			end
 
 			for tick = 1, ticks do
-				-- Quem estiver na linha **neste** tique: inimigo que entra na reta no
-				-- meio do raio tambem leva.
+				-- Whoever is on the line **on this** tick: an enemy entering the line in the
+				-- middle of the bolt takes damage too.
 				local hits = {}
 				for _, mobId in mobService:GetMobsAlongLine(unitPosition, through, range, combo.Width or PIERCE_WIDTH) do
 					self:creditHit(entry, hits, mobId, damage, auraBonus)
@@ -1763,43 +1747,43 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 	local upgradeLevel = entry.upgrades or 0
 
 	--[[
-		O dano e o alcance sao congelados aqui, no comeco do golpe, e nao relidos a
-		cada acerto. Um MultiShot leva quase um segundo do primeiro ao ultimo hit, e
-		um clima que entrasse no meio faria os quatro golpes do mesmo ciclo saírem
-		com numeros diferentes.
+		Damage and range are frozen here, at the start of the attack, not reread on each hit.
+		A MultiShot takes almost a second from the first to the last hit, and a weather
+		coming in midway would make the four hits of the same cycle come out with different
+		numbers.
 	]]
 	local damage = self:getDamage(entry, unitStats, weather)
 
-	-- Congelado pelo mesmo motivo: a farm pode ser vendida entre o primeiro e o
-	-- ultimo golpe de um MultiShot, e os quatro hits do mesmo ciclo tem que render
-	-- igual.
+	-- Frozen for the same reason: the farm may be sold between the first and the
+	-- last hit of a MultiShot, and the four hits of the same cycle must earn the
+	-- same.
 	local auraBonus = self:getAuraBonus(entry, weather)
 
 	local aoe = unitStats.AOE
 
 	--[[
-		O projetil que atravessa: o golpe deixa de ser "o alvo" e passa a ser a linha
-		ate ele. Quem estiver nela leva o mesmo dano, inclusive quem vem atras do
-		alvo -- a flecha nao para no primeiro.
+		The piercing projectile: the attack stops being "the target" and becomes the line to
+		it. Everyone on it takes the same damage, including those behind the target: the
+		arrow does not stop at the first.
 	]]
 	local projectile = unitStats.Projectile
 	local pierce = projectile and projectile.Subtype == "Piercing" and projectile or nil
 
 	--[[
-		O raio que salta: o golpe deixa de ser "o alvo" e passa a ser a corrente que
-		sai dele. Quem monta a corrente e o `MobService`, que e o dono da posicao de
-		todo mundo -- aqui so se cobra o dano de cada elo e se manda o desenho.
+		The jumping bolt: the attack stops being "the target" and becomes the chain leaving
+		from it. `MobService` builds the chain, since it owns everyone's position; here only
+		each link's damage is charged and the drawing is sent.
 	]]
 	local chain = unitStats.Chain
 
 	--[[
-		O corte que a carta Cleave It To Me liga no corpo a corpo, com os numeros dela
-		dentro. Congelado aqui junto com o dano, e nao relido a cada acerto, pelo mesmo
-		motivo: um MultiShot leva quase um segundo, e a carta pode vencer no meio dele.
+		The cleave the Cleave It To Me card turns on for melee, with its numbers inside.
+		Frozen here with the damage, not reread on each hit, for the same reason: a MultiShot
+		takes almost a second, and the card may expire midway.
 
-		So vale para quem nao tem area, projetil nem corrente -- os tres ja acertam mais
-		de um alvo por conta propria, e somar o corte por cima seria a mesma unidade
-		cobrando duas vezes pela mesma ideia.
+		It only applies to units with no area, projectile, or chain: all three already hit
+		more than one target on their own, and adding the cleave on top would be the same
+		unit charging twice for the same idea.
 	]]
 	local cleave = (not aoe and not projectile and not chain) and self:cardFlag(entry, "Cleave") or nil
 
@@ -1819,25 +1803,23 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 	end
 
 	--[[
-		A janela do golpe vai junto com o pedido: quanto tempo de partida a unidade
-		tem antes de poder atacar de novo.
+		The attack window goes along with the request: how much match time the unit has
+		before it can attack again.
 
-		So o servidor sabe esse numero -- o da tabela ja passado pelo clima, pelo
-		upgrade, pela carta e pela carga --, e o cliente precisa dele para caber a
-		animacao dentro do golpe (ver o `Unit:playAttackVisual`). Mandar o
-		`stats.Cooldown` cru nao serviria: uma carta de `AttackSpeed` encurta o
-		ciclo e a animacao tem que encurtar junto.
+		Only the server knows that number (the table's, already through weather, upgrade,
+		card, and charge), and the client needs it to fit the animation inside the attack
+		(see `Unit:playAttackVisual`). Sending the raw `stats.Cooldown` would not work: an
+		`AttackSpeed` card shortens the cycle and the animation must shorten with it.
 	]]
 	local swingWindow = self:getCooldown(entry, GameClock.Now(), weather)
 
 	--[[
-		O passo com `Combo` (o Archmage) tem caminho proprio, e sai daqui antes de
-		tudo o que e do golpe comum -- area, projetil, corrente, combo de acertos.
+		A step with `Combo` (the Archmage) has its own path, and leaves here before
+		everything that belongs to a regular attack: area, projectile, chain, hit combos.
 
-		A janela dele e a `Duration` da animacao, e nao o cooldown: numa sequencia
-		encadeada o cooldown so vale depois do ultimo passo (`getAttackDelay`), e a
-		animacao tem que tocar inteira, sem espremer, para os marcadores continuarem
-		batendo com os tempos do servidor.
+		Its window is the animation's `Duration`, not the cooldown: in a chained sequence the
+		cooldown only applies after the last step (`getAttackDelay`), and the animation must
+		play whole, unsqueezed, so the markers keep matching the server's timings.
 	]]
 	if step and step.Combo then
 		swingWindow = step.Duration or swingWindow
@@ -1851,23 +1833,21 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 	end
 
 	--[=[
-		O golpe que acerta varias vezes dentro da mesma animacao, cada acerto no seu
-		instante (`HitTimes`, no `UnitAttackConfig`) em vez de espacado por
-		`HitInterval`. Quem tem isso hoje e o Berserker, e o combo dele nao cabe no
-		intervalo regular: 0,83s do primeiro acerto para o segundo e 1,30s do segundo
-		para o terceiro.
+		An attack that hits several times within the same animation, each hit at its own
+		instant (`HitTimes`, in `UnitAttackConfig`) instead of spaced by `HitInterval`. The
+		Berserker has this today, and its combo does not fit a regular interval: 0.83s from
+		the first hit to the second and 1.12s from the second to the third.
 
-		Com a lista no passo, e ela quem manda no numero de acertos -- o `Hits` do
-		`UnitStats` continua existindo para o DPS do card, e os dois tem que
-		continuar iguais (ver o comentario de la).
+		With the list on the step, it rules the hit count: `UnitStats`' `Hits` still exists
+		for the card's DPS, and the two must stay equal (see the comment there).
 
-		O `squeeze` e o mesmo encolhimento que o cliente faz na animacao quando ela
-		nao cabe na janela do golpe (`Unit:playAttackVisual`): as duas pontas dividem
-		pelo mesmo fator, entao o acerto continua caindo no frame do marcador mesmo
-		com uma carta de `AttackSpeed` apertando o ciclo. Sem ele, o ultimo acerto do
-		Berserker (2,5667s) sairia depois de o golpe seguinte ja ter comecado assim
-		que a janela descesse dos 2,9s da animacao. No caso normal -- janela maior que
-		a animacao -- o fator e 1 e os instantes sao os da tabela.
+		`squeeze` is the same shrink the client applies to the animation when it does not
+		fit the attack window (`Unit:playAttackVisual`): both ends divide by the same factor,
+		so the hit still lands on the marker's frame even with an `AttackSpeed` card
+		tightening the cycle. Without it, the Berserker's last hit (2.5667s) would go out
+		after the next attack had already started as soon as the window dropped below the
+		animation's 2.9s. In the normal case (window larger than the animation) the factor
+		is 1 and the instants are the table's.
 	]=]
 	local schedule = nil
 	if step and step.HitTimes and #step.HitTimes > 0 then
@@ -1884,23 +1864,23 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 	end
 
 	--[=[
-		Quanto cada golpe do MESMO ataque vale, em fracao do dano cheio.
+		How much each hit of the SAME attack is worth, as a fraction of full damage.
 
-		A queda e por **golpe**, e nao por alvo: a do `PierceFalloff` desconta a cada
-		corpo que a flecha fura dentro de um tiro so, esta desconta a cada batida do
-		combo, e quem esta na area do golpe 2 leva o mesmo que quem esta na area do
-		golpe 1. As duas se compoem sem conflito -- a queda do combo entra como base
-		da queda da linha --, so que nenhuma unidade de hoje declara as duas.
+		The falloff is per **hit**, not per target: `PierceFalloff` discounts each body the
+		arrow pierces within a single shot, this one discounts each beat of the combo, and
+		whoever is in hit 2's area takes the same as whoever is in hit 1's. The two compose
+		without conflict (the combo's falloff becomes the line falloff's base), though no
+		current unit declares both.
 
-		O `HitFalloff` do `UnitStats` e a perda de um golpe para o **seguinte**, e nao
-		a perda contra o dano cheio: com 0.1, o combo vale 100%, 90%, 81%, 72,9%...
-		Composta pelo mesmo motivo da flecha -- assim ela nunca chega a zero, enquanto
-		descontar 10 pontos percentuais de cada vez faria o 11o golpe nao machucar e o
-		12o curar o inimigo.
+		`UnitStats`' `HitFalloff` is the loss from one hit to the **next**, not the loss
+		against full damage: with 0.1, the combo is worth 100%, 90%, 81%, 72.9%...
+		Compounded for the same reason as the arrow: that way it never reaches zero, while
+		subtracting 10 percentage points each time would make the 11th hit do nothing and
+		the 12th heal the enemy.
 
-		O dano so e arredondado la embaixo, na hora de cobrar, e nao a cada degrau da
-		queda: arredondar em cada um acumularia o erro do arredondamento ao longo do
-		combo. O piso de 1 e o mesmo do resto do arquivo -- acertou, tirou vida.
+		Damage is only rounded below, when charging, not at each falloff step: rounding at
+		each would accumulate rounding error along the combo. The floor of 1 is the same as
+		the rest of the file: it hit, it took health.
 	]=]
 	local hitFalloff = math.clamp(unitStats.HitFalloff or 0, 0, 1)
 
@@ -1914,17 +1894,17 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 		end
 
 		for i = 1, totalHits do
-			-- O dano deste golpe: o congelado la em cima, menos o que os golpes
-			-- anteriores do mesmo ataque ja tiraram (ver o `hitFalloff`).
+			-- This hit's damage: the one frozen above, minus what the previous hits
+			-- of the same attack already took off (see `hitFalloff`).
 			local hitDamage = damage
 			if hitFalloff > 0 and i > 1 then
 				hitDamage = math.max(1, math.floor(damage * (1 - hitFalloff) ^ (i - 1) + 0.5))
 			end
 
 			local resolvedMobId = initialMobId
-			-- O alvo morreu entre dois golpes do mesmo ataque: o substituto sai pela
-			-- mesma prioridade, senao o golpe 2 iria para o mais perto enquanto o
-			-- golpe 1 foi para o mais forte.
+			-- The target died between two hits of the same attack: the replacement comes from
+			-- the same priority, or hit 2 would go to the nearest while
+			-- hit 1 went to the strongest.
 			if resolvedMobId and not self.Services.MobService.ActiveMobs[resolvedMobId] then
 				resolvedMobId = self.Services.MobService:GetBestMobInRange(unitPosition, range, entry.priority)
 			end
@@ -1934,24 +1914,24 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 			local hits = {}
 			if chain and resolvedMobId then
 				--[=[
-					A corrente: o alvo mirado e os saltos a partir dele.
+					The chain: the aimed target and the jumps from it.
 
-					Todos levam o **mesmo** dano -- esta e a unica forma de acertar varios
-					alvos do arquivo que nao tem queda nenhuma (a flecha tem o
-					`PierceFalloff`, o corte tem o `Falloff`, o combo tem o `HitFalloff`).
-					Ver o `Chain` no `UnitStats`: o preco disso esta no `Targets` e no
-					cooldown longo, e e la que se mexe.
+					All take the **same** damage: this is the only way of hitting several
+					targets in the file with no falloff at all (the arrow has `PierceFalloff`,
+					the cleave has `Falloff`, the combo has `HitFalloff`). See `Chain` in
+					`UnitStats`: the price is in `Targets` and the long cooldown, and that is
+					where to adjust.
 
-					O tranco nao aparece aqui: ele e o `Stun` da unidade, aplicado pelo
-					`creditDamage` a cada elo -- o mesmo caminho de qualquer coisa que um
-					golpe deixe no inimigo. O que este bloco manda para o cliente e so o
-					desenho, e o `stun` vai junto porque o realce amarelo do inimigo dura
-					exatamente o tempo em que ele esta parado.
+					The jolt does not appear here: it is the unit's `Stun`, applied by
+					`creditDamage` on each link, the same path as anything a hit leaves on the
+					enemy. What this block sends to the client is only the drawing, and `stun`
+					goes along because the enemy's yellow highlight lasts exactly as long as it
+					is stopped.
 				]=]
 				local mobService = self.Services.MobService
 				local targets = mobService:GetChainTargets(resolvedMobId, chain.Targets, chain.Radius)
 
-				-- O mesmo tempo que o `creditDamage` aplica, no nivel desta unidade.
+				-- The same time `creditDamage` applies, at this unit's level.
 				local arc = {
 					unitId = unitId,
 					origin = unitPosition,
@@ -1961,9 +1941,9 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 
 				for _, targetId in targets do
 					--[[
-						A posicao **antes** do dano: o golpe pode derrubar o inimigo, e o mob
-						removido ja nao tem posicao para dar. Sem isto o raio ficaria sem a
-						ponta justamente naquele que ele matou.
+						The position **before** the damage: the hit may take the enemy down, and a
+						removed enemy has no position to give. Without this the bolt would lack its
+						tip exactly on the one it killed.
 					]]
 					table.insert(arc.targets, {
 						mobId = targetId,
@@ -1974,11 +1954,11 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 				end
 
 				--[[
-					O raio sai daqui, e nao do cliente: esta linha roda no instante do
-					marcador `Hit` (o `HitTime` do `UnitAttackConfig` e o windup deste
-					`task.spawn`), e a corrente que ele desenha e a mesma que acabou de
-					cobrar dano. Deixar o cliente escolher os alvos poria o desenho em
-					inimigos que nao levaram nada.
+					The bolt goes out from here, not the client: this line runs at the instant of
+					the `Hit` marker (`UnitAttackConfig`'s `HitTime` is this `task.spawn`'s
+					windup), and the chain it draws is the same one that just dealt damage.
+					Letting the client choose the targets would put the drawing on enemies that
+					took nothing.
 				]]
 				for _, plr in ipairs(Players:GetPlayers()) do
 					Framework:Fire("ChainLightning", plr, arc)
@@ -1994,32 +1974,31 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 				end
 			elseif pierce and resolvedMobId then
 				--[[
-					A linha sai da unidade, passa por onde o alvo vai estar e segue ate
-					o **alcance** dela -- e nao ate o alvo. Parar no alvo faria a flecha
-					atravessar e nao machucar ninguem do outro lado, que e justamente o
-					que a unidade vende.
+					The line leaves the unit, passes where the target will be, and continues to
+					its **range**, not to the target. Stopping at the target would make the arrow
+					pierce and hurt nobody on the other side, which is exactly what the unit
+					sells.
 
-					A mira e a posicao prevista, a mesma que o cliente usou para desenhar
-					o tiro: mirar em onde o mob esta agora poria a linha atras dele. Sem
-					previsao (o mob nasceu neste quadro e ainda nao tem caminho andado),
-					nao ha linha para tracar e o golpe cai no alvo unico, la embaixo.
+					The aim is the predicted position, the same the client used to draw the
+					shot: aiming where the enemy is now would put the line behind it. With no
+					prediction (the enemy spawned this frame and has no path walked yet), there
+					is no line to trace and the attack falls to the single target, below.
 				]]
 				local along = predictedPos and self.Services.MobService:GetMobsAlongLine(
 					unitPosition, predictedPos, range, pierce.PierceWidth or PIERCE_WIDTH
 				) or {}
 
 				--[[
-					A flecha vai perdendo forca a cada corpo que fura.
+					The arrow loses strength with each body it pierces.
 
-					A queda e **composta**, e nao subtraida do dano cheio: com 10%, o
-					segundo inimigo leva 90% do primeiro, o terceiro 90% do segundo, e
-					assim por diante. Composta ela nunca chega a zero -- uma flecha que
-					atravessou dez inimigos ainda machuca um pouco --, enquanto descontar
-					10 pontos percentuais de cada vez faria o 11o levar nada e o 12o
-					levar dano negativo.
+					The falloff **compounds**, not subtracted from full damage: with 10%, the
+					second enemy takes 90% of the first, the third 90% of the second, and so on.
+					Compounded it never reaches zero (an arrow that pierced ten enemies still
+					hurts a little), while subtracting 10 percentage points each time would make
+					the 11th take nothing and the 12th take negative damage.
 
-					O arredondamento e o mesmo do `getDamage`, e o piso de 1 existe para
-					o fim da fila nao virar um "0" flutuando na tela: acertou, tirou vida.
+					Rounding is the same as `getDamage`, and the floor of 1 exists so the end of
+					the queue does not become a floating "0" on screen: it hit, it took health.
 				]]
 				local falloff = math.clamp(pierce.PierceFalloff or 0, 0, 1)
 
@@ -2032,22 +2011,22 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 					self:creditHit(entry, hits, targetId, scaled, auraBonus)
 				end
 
-				-- O alvo saiu da linha entre a mira e o disparo (ele virou uma esquina
-				-- durante o windup): ele levou o tiro do mesmo jeito, senao o golpe
-				-- inteiro se perderia por causa de uma curva.
+				-- The target left the line between aim and shot (it turned a corner
+				-- during the windup): it takes the shot anyway, or the whole attack
+				-- would be lost because of a turn.
 				if #hits == 0 then
 					self:creditHit(entry, hits, resolvedMobId, hitDamage, auraBonus)
 				end
 			elseif cleave and resolvedMobId and predictedPos then
 				--[[
-					O corte do Cleave It To Me: o golpe deixa de valer por alvo e passa a
-					valer pela **fila**, como a flecha do Archer -- mas curto. A linha sai da
-					unidade, passa por onde o alvo vai estar e para no alcance dela, e so os
-					`Targets` primeiros da fila levam.
+					Cleave It To Me's cleave: the attack stops being worth per target and becomes
+					worth per **queue**, like the Archer's arrow, but short. The line leaves the
+					unit, passes where the target will be, and stops at its range, and only the
+					first `Targets` in the queue take damage.
 
-					O teto existe porque corpo a corpo nao e projetil: "quem esta atras do
-					alvo" sao um ou dois inimigos colados, e nao a coluna inteira. Sem ele um
-					Sword bem posto num mapa que enfileira limparia a wave sozinho.
+					The cap exists because melee is not a projectile: "those behind the target"
+					are one or two enemies right behind, not the whole column. Without it, a
+					well-placed Sword on a map that lines enemies up would clear the wave alone.
 				]]
 				local line = self.Services.MobService:GetMobsAlongLine(
 					unitPosition, predictedPos, range, cleave.Width or PIERCE_WIDTH
@@ -2061,16 +2040,16 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 
 					local scaled = hitDamage
 					if falloff > 0 and index > 1 then
-						-- O mesmo arredondamento e o mesmo piso de 1 da flecha: acertou,
-						-- tirou vida, e o fim da fila nao vira um "0" flutuando na tela.
+						-- The same rounding and floor of 1 as the arrow: it hit,
+						-- it took health, and the end of the queue does not become a floating "0" on screen.
 						scaled = math.max(1, math.floor(hitDamage * (1 - falloff) ^ (index - 1) + 0.5))
 					end
 
 					self:creditHit(entry, hits, targetId, scaled, auraBonus)
 				end
 
-				-- O alvo saiu da linha entre a mira e o golpe: ele leva assim mesmo, senao
-				-- uma curva no caminho anularia o ataque inteiro.
+				-- The target left the line between aim and hit: it takes it anyway, or
+				-- a turn in the path would cancel the whole attack.
 				if #hits == 0 then
 					self:creditHit(entry, hits, resolvedMobId, hitDamage, auraBonus)
 				end
@@ -2086,8 +2065,8 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 			end
 
 			if i < totalHits then
-				-- Com `HitTimes`, o intervalo e a distancia entre dois instantes da
-				-- lista; sem ela, o `HitInterval` regular do `UnitStats`.
+				-- With `HitTimes`, the interval is the distance between two instants in the
+				-- list; without it, `UnitStats`' regular `HitInterval`.
 				GameClock.Wait(schedule and (schedule[i + 1] - schedule[i]) or unitStats.HitInterval)
 			end
 		end

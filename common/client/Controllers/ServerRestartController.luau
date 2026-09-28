@@ -17,20 +17,23 @@ local Config = WarningConfig.Restart
 --[[
 	"WARNING! SERVER RESTART FOR GAME UPDATE IN 2 MINUTES".
 
-	O servidor manda `ServerRestartScheduled` com o nome do `Enum.CloseReason` e
-	quantos segundos faltam; daqui sai a frase, e quem a anima no
-	`Interface.WeatherWarning` é o `WarningController`.
+	The server sends `ServerRestartScheduled` with the `Enum.CloseReason` name and
+	how many seconds are left; the sentence is built here, and `WarningController`
+	animates it in `Interface.WeatherWarning`.
 
-	**O prazo é ancorado no relógio local.** O que chega é "faltam N segundos", não
-	um horário: a partir daí o controller conta com `os.clock()`, que é monótono e
-	não depende de a máquina do jogador estar com a hora certa.
+	**The deadline is anchored to the local clock.** What arrives is "N seconds
+	left", not a time of day: from then on the controller counts with `os.clock()`,
+	which is monotonic and does not depend on the player's machine having the right
+	time.
 
-	**O aviso volta.** Um restart costuma ser marcado com minutos de antecedência, e
-	uma frase de oito segundos no meio de uma wave se perde. As marcas de
-	`Config.Reminders` (5min, 2min, 1min, 30s, 10s) trazem o aviso de volta com o
-	número novo, e é a última delas que o jogador realmente lê.
+	**The warning comes back.** A restart is usually scheduled minutes ahead, and an
+	eight-second sentence in the middle of a wave gets lost. The `Config.Reminders`
+	marks (5min, 2min, 1min, 30s, 10s) bring the warning back with the new number,
+	and the last one is the one the player actually reads.
 
-	Fica em `common/` porque o restart derruba as duas places.
+	It lives in `common/` because the restart takes down both places.
+
+	See docs/common/screen-warnings.md.
 ]]
 
 local ServerRestartController = {
@@ -39,20 +42,20 @@ local ServerRestartController = {
 	}
 }
 
--- Instante do restart no relógio local (`os.clock`), ou nil se o servidor não
--- soube dizer quando.
+-- The restart instant on the local clock (`os.clock`), or nil if the server could
+-- not say when.
 ServerRestartController.Deadline = nil :: number?
 ServerRestartController.Source = nil :: string?
 
--- Um agendamento por sessão: os `task.delay` das marcas só valem enquanto ninguém
--- tiver reagendado por cima.
+-- One schedule per session: the marks' `task.delay` calls only apply while nobody
+-- has rescheduled on top.
 ServerRestartController.Session = 0
 
 --[[ INTERNAL ]]
 
 --[=[
-	A frase, com o tempo que falta agora — e não o que faltava quando o aviso foi
-	agendado.
+	The sentence, with the time left now, not what was left when the warning was
+	scheduled.
 ]=]
 function ServerRestartController:_text() : string
 	local source = WarningConfig.GetRestartSource(self.Source)
@@ -71,7 +74,7 @@ function ServerRestartController:_text() : string
 end
 
 --[=[
-	Põe o aviso na tela, se a sessão ainda for a atual.
+	Puts the warning on screen, if the session is still the current one.
 ]=]
 function ServerRestartController:_announce(session : number)
 	if self.Session ~= session then return end
@@ -88,12 +91,12 @@ end
 --[[ API ]]
 
 --[=[
-	Registra o restart e avisa o jogador — agora e a cada marca de `Reminders` que
-	ainda couber.
+	Registers the restart and warns the player: now, and at every `Reminders` mark
+	that still fits.
 
-	`remaining` é em segundos, contados a partir de agora. Marca que cairia em cima
-	do aviso anterior é descartada: dois avisos seguidos com o mesmo número na tela
-	só cortariam a animação um do outro.
+	`remaining` is in seconds, counted from now. A mark that would land on top of the
+	previous warning is dropped: two warnings in a row with the same number on screen
+	would only cut each other's animation.
 ]=]
 function ServerRestartController:Schedule(source : string?, remaining : number?)
 	self.Session += 1
@@ -116,7 +119,7 @@ function ServerRestartController:Schedule(source : string?, remaining : number?)
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function ServerRestartController:construct()
 	Framework:Listen("ServerRestartScheduled", function(source : string?, remaining : number?)
@@ -126,7 +129,7 @@ function ServerRestartController:construct()
 		)
 	end)
 
-	-- Quem entra depois de o restart ja estar marcado precisa saber.
+	-- A player who joins after the restart is already scheduled needs to know.
 	Framework:Fire("RequestServerRestart")
 end
 

@@ -33,12 +33,11 @@ function UIUtil.formatCommas(num: number): string
 end
 
 --[=[
-	Espera um descendente pelo nome, em qualquer profundidade. O `WaitForChild` só
-	olha filhos diretos, e a GUI muda de forma com o tempo — um botão do HUD pode
-	estar solto no frame hoje e dentro de um wrapper amanhã.
+	Waits for a descendant by name, at any depth. `WaitForChild` only looks at
+	direct children, and GUIs change shape over time: a HUD button may be loose in
+	the frame today and inside a wrapper tomorrow.
 
-	Devolve nil se estourar o tempo (10s por padrão), do mesmo jeito que o
-	`WaitForChild` com timeout.
+	Returns nil on timeout (10 s by default), like `WaitForChild` with a timeout.
 ]=]
 function UIUtil.waitForDescendant(root: Instance, name: string, timeout: number?): Instance?
 	local deadline = os.clock() + (timeout or 10)
@@ -55,19 +54,18 @@ function UIUtil.waitForDescendant(root: Instance, name: string, timeout: number?
 	return root:FindFirstChild(name, true)
 end
 
---[[ TRANSPARÊNCIA ]]
+--[[ TRANSPARENCY ]]
 
 --[=[
-	Que propriedades de transparência cada peça tem.
+	Which transparency properties each piece has.
 
-	`GuiObject.Transparency` fica de fora de propósito: é apelido de
-	`BackgroundTransparency`, e os dois tweens brigariam pela mesma propriedade.
+	`GuiObject.Transparency` is left out on purpose: it aliases
+	`BackgroundTransparency`, and two tweens would fight over the same property.
 
-	Mora aqui, e não no controller da loja de round, porque as **duas** places
-	desenham a mesma carta: a loja de round revela a carta no meio da partida
-	(`Game`) e a loja de cartas do lobby revela a mesma arte no balcão (`Lobby`).
-	Uma segunda cópia da lista de propriedades só daria duas listas para atualizar
-	no dia em que uma peça nova de UI ganhasse um `Transparency` próprio.
+	It lives here, not in the round shop controller, because **both** places draw
+	the same card: the round shop reveals it mid-match (Game) and the Lobby card
+	shop reveals the same art at the counter (Lobby). A second copy of the property
+	list would be two lists to update.
 ]=]
 function UIUtil.fadeProperties(object: Instance): { string }?
 	if object:IsA("UIStroke") then
@@ -81,13 +79,13 @@ function UIUtil.fadeProperties(object: Instance): { string }?
 	end
 
 	--[[
-		O `UIShadow` não aparece na lista de classes acima porque não é `GuiObject`
-		nem `UIStroke`; ele entra por aqui, e junto com ele qualquer componente de UI
-		novo que tenha um `Transparency` próprio.
+		`UIShadow` is not in the class list above because it is neither a
+		`GuiObject` nor a `UIStroke`; it comes in here, along with any new UI
+		component with its own `Transparency`.
 
-		Só vale se o `Transparency` for **número**: o do `UIGradient` é uma
-		`NumberSequence`, e tweenar aquilo como se fosse um número derrubaria o
-		gradiente inteiro da carta.
+		Only when `Transparency` is a **number**: a `UIGradient`'s is a
+		`NumberSequence`, and tweening it as a number would break the card's whole
+		gradient.
 	]]
 	local ok, value = pcall(function()
 		return (object :: any).Transparency
@@ -97,13 +95,13 @@ function UIUtil.fadeProperties(object: Instance): { string }?
 end
 
 --[=[
-	Todo par (peça, propriedade) com o valor que o designer deixou, varrendo os
-	**descendentes** de `root` — o próprio `root` fica de fora porque quem cuida
-	dele é quem chamou (na carta, a queda com a imagem aparecendo).
+	Every (piece, property) pair with the value the designer left, scanning the
+	**descendants** of `root` (the caller handles `root` itself; on the card, the
+	drop with the image fading in).
 
-	Tem de ser lido do clone intocado, **antes** de qualquer escrita de
-	transparência: é para estes valores que o `applyFades(fades, 1)` leva tudo de
-	volta, e capturar depois gravaria o estado escondido como se fosse o autorado.
+	It must read the untouched clone, **before** any transparency write: these
+	are the values `applyFades(fades, 1)` restores, and capturing later would
+	record the hidden state as the authored one.
 ]=]
 function UIUtil.captureFades(root: Instance)
 	local fades = {}
@@ -126,12 +124,11 @@ function UIUtil.captureFades(root: Instance)
 end
 
 --[=[
-	Escreve a transparência de todos os descendentes de uma vez.
+	Writes the transparency of every descendant at once.
 
-	`progress` é 0 (tudo transparente) a 1 (tudo no valor autorado). Sem `info` o
-	valor salta; com `info` cada peça tweena até lá — e é quem chama que decide a
-	curva, porque a entrada de uma carta chega desacelerando e a saída dela sai
-	acelerando.
+	`progress` goes from 0 (fully transparent) to 1 (the authored values). Without
+	`info` the value jumps; with `info` each piece tweens there, and the caller
+	picks the curve (a card's entrance decelerates and its exit accelerates).
 ]=]
 function UIUtil.applyFades(fades, progress: number, info: TweenInfo?)
 	for _, fade in fades do
@@ -150,8 +147,8 @@ function UIUtil.applyFades(fades, progress: number, info: TweenInfo?)
 			continue
 		end
 
-		-- Propriedade que o TweenService recusa salta direto, em vez de derrubar a
-		-- animação das outras peças junto.
+		-- A property TweenService refuses jumps straight there instead of taking down the
+		-- animation of the other pieces.
 		local ok = pcall(function()
 			TweenService:Create(object, info, goal):Play()
 		end)

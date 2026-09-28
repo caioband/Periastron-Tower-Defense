@@ -7,12 +7,13 @@ local Me = require(Vendor:WaitForChild("Me"))
 local Framework = Me.new()
 
 --[[
-	A segunda parte do tutorial sem a primeira.
+	The second part of the tutorial without the first.
 
-	Ela normalmente chega pelo bilhete `TutorialDone` que o servidor da partida
-	embarca no teleporte de volta — ou seja, só depois de vencer as cinco waves.
-	Este comando entra pelo mesmo `PromptShop` e não escreve nada no perfil: serve
-	para conferir a fala, o destaque no botão da loja e o fecho na compra da caixa.
+	It normally arrives through the `TutorialDone` ticket the match server attaches
+	to the teleport back, that is, only after winning the five waves. This command
+	goes through the same `PromptShop` and writes nothing to the profile: it is for
+	checking the dialog, the shop button highlight, and the wrap-up on buying the
+	crate.
 ]]
 return function(context, players : { Player }?)
 	local TutorialService = Framework:Get("TutorialService", false, true)

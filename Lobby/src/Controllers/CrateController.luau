@@ -14,11 +14,13 @@ local UIUtil = require(Utils.UIUtil)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local Signal = require(Packages.Signal)
 
 local CrateConfig = SharedConfig.CrateConfig
 
 local Framework = Me.new()
+local log = Log.new("CrateController")
 
 --[[ CONSTANTS ]]
 local CRATE_UI_NAME = "crateui"
@@ -191,7 +193,7 @@ function CrateController:_bindUI(screenGui : ScreenGui)
 	local template = wrapper and wrapper:WaitForChild(TEMPLATE_NAME, 10)
 
 	if not template then
-		warn(`[CrateController]: Could not find {CRATE_UI_NAME}.Rectangle.scrollcrates.CrateWrapper.{TEMPLATE_NAME}`)
+		log:StudioWarn(`could not find {CRATE_UI_NAME}.Rectangle.scrollcrates.CrateWrapper.{TEMPLATE_NAME}`)
 		return
 	end
 

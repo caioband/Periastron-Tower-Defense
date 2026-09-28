@@ -1,24 +1,23 @@
 --[[
-	O deck do jogador: como as cartas equipadas são guardadas e o que conta como
-	uma lista válida.
+	The player's deck: how equipped cards are stored and what counts as a valid list.
 
-	`EquippedUnits` é um array de **slots**, um por `CardWrapper` do
-	`EquippedCards`, e cada posição é `{ Unit = nome, Amount = quantidade }` ou
-	`false` quando o slot está vazio. O array é sempre denso (`MAX_SLOTS`
-	posições), então ele sobrevive à ida e volta do DataStore sem virar dicionário.
+	`EquippedUnits` is an array of **slots**, one per `CardWrapper` in
+	`EquippedCards`; each entry is `{ Unit = name, Amount = count }` or `false`
+	when the slot is empty. The array is always dense (`MAX_SLOTS` entries), so it
+	survives the DataStore round trip without becoming a dictionary.
 
-	O slot é **fixo**: tirar a última carta de uma unidade esvazia o slot dela e
-	não mexe em mais nada — quem está no slot 4 continua no slot 4. Era por isso que
-	o formato antigo não servia: ele era um array de nomes com repetição, e o slot
-	saía da ordem de primeira aparição, então uma unidade que acabava puxava todas as
-	seguintes uma casa para trás.
+	A slot is **fixed**: removing a unit's last card empties its slot and moves
+	nothing else; whoever is in slot 4 stays in slot 4. The old format (an array of
+	names with repeats) derived slots from first appearance, so a unit running out
+	pulled every later one back a slot.
 
-	O formato antigo continua sendo lido (`sanitize` converte, agrupando na ordem em
-	que os nomes aparecem), então perfil velho não precisa de migração.
+	The old format is still read (`sanitize` converts it, grouping in order of
+	appearance), so old profiles need no migration.
 
-	Os três números da tela saem daqui sem nenhum outro campo: o total de cartas é
-	`total`, a quantidade de um slot é o `Amount` dele, e o `CardLimit` limita o
-	total.
+	The screen's three numbers come from here with no other field: the card total
+	is `total`, a slot's count is its `Amount`, and `CardLimit` caps the total.
+
+	See docs/lobby/deck.md.
 ]]
 
 local UnitStats = require(script.Parent.UnitStats)
@@ -31,44 +30,42 @@ local DeckConfig = {}
 export type Slot = { Unit : string, Amount : number }
 export type Deck = { Slot | false }
 
--- Quantos `CardWrapper` o `StarterGui.HUD.CardUI.EquippedCards` tem. É o teto de
--- unidades **diferentes** no deck, não de cartas.
+-- How many `CardWrapper`s `StarterGui.HUD.CardUI.EquippedCards` has. It caps
+-- **different** units in the deck, not cards.
 DeckConfig.MAX_SLOTS = 6
 
 --[=[
-	O nível que cada slot pede, do primeiro ao sexto.
+	The level each slot requires, from the first to the sixth.
 
-	O jogador começa com três e ganha os outros ao subir de nível: o quarto no 5, o
-	quinto no 15 e o sexto no 25. Um slot travado não guarda carta e nem aparece como
-	livre — quem desenha é o `LockedFrame` de cada `CardWrapper`.
+	The player starts with three and earns the others by leveling up: the fourth at
+	5, the fifth at 15, and the sixth at 25. A locked slot holds no card and does not
+	show as free; each `CardWrapper`'s `LockedFrame` draws it.
 
-	**A lista tem que ser crescente.** Os slots destravam em ordem, e o
-	`unlockedSlots` conta o prefixo destravado em vez de varrer a lista inteira: é o
-	que deixa o resto do arquivo trabalhar com "quantos slots este jogador tem" em
-	vez de perguntar slot por slot.
+	**The list must be ascending.** Slots unlock in order, and `unlockedSlots` counts
+	the unlocked prefix instead of scanning the whole list, which lets the rest of the
+	file work with "how many slots this player has".
 
-	Nada aqui é sigiloso — o servidor decide o mesmo com o mesmo config (ver o
-	`DeckService`), então o cliente calcular junto é só o desenho chegar antes da
-	resposta.
+	Nothing here is secret: the server decides the same with the same config (see
+	`DeckService`), so the client computing it only makes the drawing arrive first.
 ]=]
 DeckConfig.SLOT_UNLOCK_LEVELS = { 1, 1, 1, 5, 15, 25 }
 
--- Quantas cartas no total o jogador começa podendo equipar. Fica no perfil
--- (`CardLimit`), então subir o teto de um jogador é escrever nele -- este número
--- só vale para quem nunca teve a chave.
+-- How many cards in total a player can equip at first. It lives in the profile
+-- (`CardLimit`), so raising a player's cap means writing there; this number only
+-- applies to players who never had the key.
 DeckConfig.DEFAULT_CARD_LIMIT = 15
 
 --[=[
-	Um deck vazio: `MAX_SLOTS` posições, todas livres.
+	An empty deck: `MAX_SLOTS` entries, all free.
 ]=]
 function DeckConfig.empty() : Deck
 	return table.create(DeckConfig.MAX_SLOTS, false)
 end
 
 --[=[
-	O nível que o slot pede. Slot fora da lista vale como sempre destravado: o
-	`MAX_SLOTS` e a `SLOT_UNLOCK_LEVELS` podem sair de sincronia numa edição, e um
-	slot a mais destravado é melhor do que um slot a mais que ninguém alcança.
+	The level the slot requires. A slot outside the list counts as always unlocked:
+	`MAX_SLOTS` and `SLOT_UNLOCK_LEVELS` can drift apart in an edit, and an extra
+	unlocked slot is better than one nobody can reach.
 ]=]
 function DeckConfig.slotUnlockLevel(index : number?) : number
 	local level = typeof(index) == "number" and DeckConfig.SLOT_UNLOCK_LEVELS[index]
@@ -77,7 +74,7 @@ function DeckConfig.slotUnlockLevel(index : number?) : number
 end
 
 --[=[
-	Se este slot está liberado para um jogador neste nível.
+	Whether this slot is open for a player at this level.
 ]=]
 function DeckConfig.isSlotUnlocked(index : number?, level : number?) : boolean
 	local resolved = typeof(level) == "number" and level or 1
@@ -86,8 +83,8 @@ function DeckConfig.isSlotUnlocked(index : number?, level : number?) : boolean
 end
 
 --[=[
-	Quantos slots o jogador tem neste nível: sempre os três primeiros, e os outros
-	conforme ele sobe.
+	How many slots the player has at this level: always the first three, and the
+	others as they level up.
 ]=]
 function DeckConfig.unlockedSlots(level : number?) : number
 	local count = 0
@@ -104,9 +101,8 @@ function DeckConfig.unlockedSlots(level : number?) : number
 end
 
 --[=[
-	O nível de um perfil, derivado do `Stats.XP` como em todo lugar -- o nível não é
-	guardado (ver `LevelConfig`), então não existe perfil com nível e XP fora de
-	sincronia.
+	A profile's level, derived from `Stats.XP` as everywhere: the level is not stored
+	(see `LevelConfig`), so level and XP are never out of sync.
 ]=]
 function DeckConfig.levelOf(profile : any) : number
 	local stats = typeof(profile) == "table" and profile.Stats
@@ -116,23 +112,23 @@ function DeckConfig.levelOf(profile : any) : number
 end
 
 --[=[
-	Quantos slots este perfil tem. É o atalho que servidor e cliente usam: os dois
-	saem do mesmo `Stats.XP` e chegam ao mesmo número, sem combinar nada.
+	How many slots this profile has. The shortcut server and client both use: they
+	start from the same `Stats.XP` and reach the same number without coordinating.
 ]=]
 function DeckConfig.unlockedFor(profile : any) : number
 	return DeckConfig.unlockedSlots(DeckConfig.levelOf(profile))
 end
 
 --[=[
-	Se o nome é de uma unidade que existe hoje no `UnitStats`.
+	Whether the name is a unit that exists in `UnitStats` today.
 ]=]
 function DeckConfig.exists(unitName : string?) : boolean
 	return typeof(unitName) == "string" and UnitStats[unitName] ~= nil
 end
 
 --[=[
-	O limite de cartas guardado num perfil, com o padrão para quem não tem a chave
-	ainda. É o número **do perfil**, sem gamepass — ver `limitFor`.
+	The card limit stored in a profile, with the default for players without the key
+	yet. It is the **profile's** number, without game passes; see `limitFor`.
 ]=]
 function DeckConfig.resolveLimit(limit : number?) : number
 	if typeof(limit) ~= "number" or limit < 0 then
@@ -143,18 +139,16 @@ function DeckConfig.resolveLimit(limit : number?) : number
 end
 
 --[=[
-	Quantas cartas este perfil pode equipar de verdade: o `CardLimit` dele mais o que
-	as gamepasses dão.
+	How many cards this profile can actually equip: its `CardLimit` plus what game
+	passes give.
 
-	É o atalho que servidor e cliente usam, do mesmo jeito que o `unlockedFor` é para
-	os slots: os dois saem do mesmo perfil e chegam ao mesmo número, sem combinar
-	nada.
+	The shortcut server and client both use, like `unlockedFor` for slots.
 
-	**A pass soma aqui e não no `CardLimit`.** Escrever os +5 no perfil seria crédito,
-	e crédito não volta: quem pedisse reembolso da pass ficaria com o teto alto para
-	sempre, e um segundo login somaria outros cinco. Somando na leitura, o teto cai
-	junto com a pass — e o `SetLimit`, que é o teto que o jogo dá, continua sendo a
-	única coisa gravada.
+	**The pass adds here, not to `CardLimit`.** Writing +5 to the profile would be a
+	credit, and credits do not go back: a refunded player would keep the higher cap
+	forever, and a second login would add five more. Added on read, the cap drops
+	with the pass, and `SetLimit` (the cap the game grants) remains the only thing
+	saved.
 ]=]
 function DeckConfig.limitFor(profile : any) : number
 	local stored = typeof(profile) == "table" and profile.CardLimit or nil
@@ -163,7 +157,7 @@ function DeckConfig.limitFor(profile : any) : number
 end
 
 --[=[
-	Em que slot a unidade está, ou `nil` se ela não estiver no deck.
+	Which slot the unit is in, or `nil` if it is not in the deck.
 ]=]
 function DeckConfig.slotIndexOf(deck : Deck?, unitName : string?) : number?
 	if typeof(deck) ~= "table" or unitName == nil then
@@ -182,10 +176,10 @@ function DeckConfig.slotIndexOf(deck : Deck?, unitName : string?) : number?
 end
 
 --[=[
-	O primeiro slot livre **entre os destravados**, ou `nil` se não houver.
+	The first free slot **among the unlocked ones**, or `nil` if there is none.
 
-	`unlocked` é quantos slots o jogador tem (ver `unlockedFor`); sem ele, todos --
-	é o que mantém honesto quem só quer perguntar do deck e não do dono dele.
+	`unlocked` is how many slots the player has (see `unlockedFor`); without it, all
+	of them, which keeps callers honest when they only ask about the deck.
 ]=]
 function DeckConfig.firstFreeSlot(deck : Deck?, unlocked : number?) : number?
 	if typeof(deck) ~= "table" then
@@ -204,7 +198,7 @@ function DeckConfig.firstFreeSlot(deck : Deck?, unlocked : number?) : number?
 end
 
 --[=[
-	Quantas cartas desta unidade estão equipadas.
+	How many cards of this unit are equipped.
 ]=]
 function DeckConfig.countOf(deck : Deck?, unitName : string?) : number
 	local index = DeckConfig.slotIndexOf(deck, unitName)
@@ -213,7 +207,7 @@ function DeckConfig.countOf(deck : Deck?, unitName : string?) : number
 end
 
 --[=[
-	Quantas cartas o deck tem no total. É o número que o `CardLimit` limita.
+	How many cards the deck holds in total. The number `CardLimit` caps.
 ]=]
 function DeckConfig.total(deck : Deck?) : number
 	if typeof(deck) ~= "table" then
@@ -233,7 +227,7 @@ function DeckConfig.total(deck : Deck?) : number
 end
 
 --[=[
-	Quantas cartas de cada unidade o deck tem: `{[nome] = quantidade}`.
+	How many cards of each unit the deck holds: `{[name] = count}`.
 ]=]
 function DeckConfig.tally(deck : Deck?) : { [string]: number }
 	local counts = {}
@@ -254,8 +248,8 @@ function DeckConfig.tally(deck : Deck?) : { [string]: number }
 end
 
 --[=[
-	Uma cópia que pode ser mexida sem tocar no original — os slots também são
-	copiados, senão `addCard` mudaria o `Amount` dos dois.
+	A copy that can be changed without touching the original; slots are copied too,
+	or `addCard` would change both `Amount`s.
 ]=]
 function DeckConfig.copy(deck : Deck?) : Deck
 	local copy = DeckConfig.empty()
@@ -276,12 +270,12 @@ function DeckConfig.copy(deck : Deck?) : Deck
 end
 
 --[=[
-	Põe **uma** carta da unidade no deck: no slot dela se ela já tiver um, senão no
-	primeiro livre. Devolve `false` quando não há slot livre.
+	Adds **one** card of the unit: to its slot if it already has one, otherwise to
+	the first free one. Returns `false` when there is no free slot.
 
-	Não checa posse nem `CardLimit` — quem chama é que sabe desses dois. `unlocked`
-	é passado adiante para o `firstFreeSlot`: uma unidade nova não entra num slot que
-	o jogador ainda não tem.
+	It checks neither ownership nor `CardLimit`; the caller knows those. `unlocked`
+	is passed on to `firstFreeSlot`, so a new unit never enters a slot the player
+	does not have yet.
 ]=]
 function DeckConfig.addCard(deck : Deck, unitName : string, unlocked : number?) : boolean
 	local index = DeckConfig.slotIndexOf(deck, unitName)
@@ -304,8 +298,8 @@ function DeckConfig.addCard(deck : Deck, unitName : string, unlocked : number?) 
 end
 
 --[=[
-	Tira **uma** carta da unidade. O slot só é liberado quando a última sai, e os
-	outros nunca se mexem. Devolve `false` se a unidade não estava no deck.
+	Removes **one** card of the unit. The slot is only freed when the last one
+	leaves, and the others never move. Returns `false` if the unit was not in the deck.
 ]=]
 function DeckConfig.removeCard(deck : Deck, unitName : string) : boolean
 	local index = DeckConfig.slotIndexOf(deck, unitName)
@@ -324,9 +318,8 @@ function DeckConfig.removeCard(deck : Deck, unitName : string) : boolean
 end
 
 --[=[
-	Converte o formato antigo — array de nomes com repetição — em slots, agrupando
-	na ordem em que os nomes aparecem. É a única coisa que aquele formato dizia
-	sobre slots.
+	Converts the old format (an array of names with repeats) into slots, grouping in
+	order of appearance, the only thing that format said about slots.
 ]=]
 local function fromLegacy(equipped : { string }) : { Slot }
 	local order, counts = {}, {}
@@ -353,21 +346,21 @@ local function fromLegacy(equipped : { string }) : { Slot }
 end
 
 --[=[
-	O deck limpo: só unidade que existe, no máximo o que o jogador tem de cada uma,
-	uma unidade por slot e no máximo `limit` cartas no total.
+	The cleaned deck: only units that exist, at most what the player owns of each,
+	one unit per slot, and at most `limit` cards in total.
 
-	`owned` é o `Units` do perfil (`{[nome] = quantidade}`); `nil` não filtra por
-	posse. `limit` cai no padrão quando não vem.
+	`owned` is the profile's `Units` (`{[name] = count}`); `nil` does not filter by
+	ownership. `limit` falls back to the default.
 
-	`unlocked` é quantos slots o jogador tem hoje (ver `unlockedFor`): o que estiver
-	num slot travado **sai do deck**, e não muda de slot. Isso vale sobretudo para o
-	perfil que já existia quando os slots ainda eram seis livres — as cartas voltam
-	para o inventário (o `Units` não é tocado aqui) e o jogador as reequipa quando o
-	slot abrir. Mudar de slot seria pior: o slot é fixo, e reempacotar o deck moveria
-	cartas que o jogador pôs onde quis.
+	`unlocked` is how many slots the player has today (see `unlockedFor`): anything in
+	a locked slot **leaves the deck** instead of moving. This matters mostly for
+	profiles from when all six slots were free: the cards return to the inventory
+	(`Units` is untouched here) and the player re-equips them when the slot opens.
+	Moving them would be worse: slots are fixed, and repacking would move cards the
+	player placed on purpose.
 
-	**Cada slot é limpo no lugar**: um slot que perde tudo vira `false` e os outros
-	ficam onde estão.
+	**Each slot is cleaned in place**: a slot that loses everything becomes `false`
+	and the others stay put.
 ]=]
 function DeckConfig.sanitize(equipped : any, owned : { [string]: number }?, limit : number?, unlocked : number?) : Deck
 	local deck = DeckConfig.empty()
@@ -376,7 +369,7 @@ function DeckConfig.sanitize(equipped : any, owned : { [string]: number }?, limi
 		return deck
 	end
 
-	-- Perfil no formato antigo: um nome por carta, sem slot nenhum.
+	-- A profile in the old format: one name per card, no slots.
 	if typeof(equipped[1]) == "string" then
 		equipped = fromLegacy(equipped)
 	end
@@ -403,8 +396,8 @@ function DeckConfig.sanitize(equipped : any, owned : { [string]: number }?, limi
 			amount = math.min(amount, owned[unitName] or 0)
 		end
 
-		-- O que estourar o limite é cortado, mas o slot não some por isso: só some
-		-- quando não sobra carta nenhuma nele.
+		-- Anything over the limit is cut, but the slot only disappears when no card is
+		-- left in it.
 		amount = math.min(amount, maxCards - total)
 
 		if amount <= 0 then
@@ -420,20 +413,17 @@ function DeckConfig.sanitize(equipped : any, owned : { [string]: number }?, limi
 end
 
 --[=[
-	Um deck montado na hora a partir do inventário, para quem nunca montou o seu.
+	A deck built on the spot from the inventory, for players who never built one.
 
-	Sem isto, um jogador que nunca abriu o painel do deck entraria na partida sem
-	carta nenhuma — e ficaria travado, porque o deck é o que decide o que ele pode
-	colocar no mapa.
+	Without it, a player who never opened the deck panel would enter a match with no
+	cards and be stuck, since the deck decides what they can place.
 
-	Pega as unidades mais raras primeiro (até encher os slots **destravados**) e
-	distribui as cartas
-	em rodízio entre elas, respeitando o que ele tem de cada uma e o `limit`. O
-	rodízio é para o deck automático não ser três cópias de uma só quando o jogador
-	tem variedade.
+	It takes the rarest units first (up to the **unlocked** slots) and deals cards
+	in turns among them, respecting what they own and `limit`, so the automatic deck
+	is not three copies of one unit when the player has variety.
 
-	É **determinístico**: cliente e servidor chegam ao mesmo deck a partir do mesmo
-	perfil, sem precisar combinar nada.
+	It is **deterministic**: client and server reach the same deck from the same
+	profile without coordinating.
 ]=]
 function DeckConfig.autoDeck(owned : { [string]: number }?, limit : number?, unlocked : number?) : Deck
 	local deck = DeckConfig.empty()
@@ -449,8 +439,8 @@ function DeckConfig.autoDeck(owned : { [string]: number }?, limit : number?, unl
 		end
 	end
 
-	-- Da raridade mais alta para a mais baixa, alfabética dentro da faixa: a mesma
-	-- ordem da lista do inventário.
+	-- From the highest rarity to the lowest, alphabetical within a rarity: the same
+	-- order as the inventory list.
 	table.sort(names, function(a : string, b : string)
 		local orderA = RarityConfig.getOrder(UnitStats[a].Rarity) or 0
 		local orderB = RarityConfig.getOrder(UnitStats[b].Rarity) or 0
@@ -501,10 +491,9 @@ function DeckConfig.autoDeck(owned : { [string]: number }?, limit : number?, unl
 end
 
 --[=[
-	O deck que vale para uma partida: o que o jogador montou, ou um automático
-	quando ele nunca montou nenhum. É o que o Game usa para saber o que ele pode
-	colocar no mapa, e é chamado dos dois lados — servidor e cliente — para os dois
-	chegarem à mesma hotbar.
+	The deck that applies to a match: the one the player built, or an automatic one
+	when they never built any. The Game uses it to know what they can place, and it
+	is called on both sides so both reach the same hotbar.
 ]=]
 function DeckConfig.resolve(profile : { EquippedUnits : any, Units : any, CardLimit : number?, Stats : any, Gamepasses : any }?) : Deck
 	if typeof(profile) ~= "table" then
@@ -513,9 +502,9 @@ function DeckConfig.resolve(profile : { EquippedUnits : any, Units : any, CardLi
 
 	local owned = profile.Units
 
-	-- Quantos slots este perfil tem sai do proprio perfil, e nao de quem chamou: e o
-	-- que faz a hotbar da partida, o deck do lobby e a checagem do servidor
-	-- concordarem sem ninguem passar o nivel adiante.
+	-- The profile's slot count comes from the profile itself, not the caller: that is
+	-- what makes the match hotbar, the Lobby deck, and the server check agree without
+	-- anyone passing the level around.
 	local unlocked = DeckConfig.unlockedFor(profile)
 	local limit = DeckConfig.limitFor(profile)
 	local deck = DeckConfig.sanitize(profile.EquippedUnits, owned, limit, unlocked)
@@ -528,8 +517,8 @@ function DeckConfig.resolve(profile : { EquippedUnits : any, Units : any, CardLi
 end
 
 --[=[
-	Os nomes das unidades do deck, na ordem dos slots e sem os buracos. É a hotbar
-	da partida: slot vazio não vira carta em branco no meio da mão.
+	The deck's unit names, in slot order and without gaps. It is the match hotbar:
+	an empty slot does not become a blank card in the middle of the hand.
 ]=]
 function DeckConfig.unitList(deck : Deck?) : { string }
 	local names = {}

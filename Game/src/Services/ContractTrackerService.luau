@@ -8,42 +8,45 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("ContractTrackerService")
 
 local Events = SharedConfig.ContractConfig.Events
 local WeatherConfig = SharedConfig.WeatherConfig
 
 --[[
-	A partida contada para os contratos: o que acontece no round vira `Record` no
-	`ContractService`, com o contexto que os filtros olham (mapa, dificuldade...).
+	The match counted for contracts: what happens in the round becomes a `Record` in
+	`ContractService`, with the context the filters look at (map, difficulty...).
 
-	Este service nao sabe quais contratos o jogador tem. Ele conta **tudo** que um
-	contrato poderia pedir, e quem casa evento com contrato e o `ContractService`.
-	Contrato novo que so combine eventos que ja existem nao precisa de linha nenhuma
-	aqui.
+	This service does not know which contracts the player has. It counts **everything**
+	a contract could ask for, and `ContractService` matches events to contracts. A new
+	contract that only combines existing events needs no line here.
 
-	  | Evento | De onde vem |
+	  | Event | Comes from |
 	  | --- | --- |
-	  | `Kill`, `BossKill`, `Stun`, `Damage` | o placar da partida do `MobService`, lido em lote |
-	  | `MatchCashSpent`, `MatchCashEarned` | idem -- o total da partida, para o `Max` |
+	  | `Kill`, `BossKill`, `Stun`, `Damage` | `MobService`'s match scoreboard, read in batches |
+	  | `MatchCashSpent`, `MatchCashEarned` | same: the match total, for `Max` |
 	  | `WaveReached` | `WaveService.Signals.WaveStarted` |
 	  | `Weather` | `WeatherRoundService.Signals.WeatherStarted` |
 	  | `Win` | `WaveService.Signals.MatchFinished` |
 	  | `MatchTime` | `MatchStatsService.Signals.Closed` |
 
-	**Tudo e do proprio jogador.** Kill, dano e atordoamento sao de quem era a
-	unidade; o caixa e o dele. So o clima e a wave sao da sala -- todo mundo que esta
-	na partida viveu os dois.
+	**Everything is the player's own.** Kills, damage, and stuns belong to whoever
+	owned the unit; the cash is theirs. Only weather and wave belong to the room:
+	everyone in the match lived through both.
 
-	**O placar e lido, e nao ouvido.** O `MobService` so soma (ver `SessionStats`), e
-	este service manda a diferenca desde a ultima leitura a cada `SYNC_INTERVAL`, no
-	fim da partida e na saida. Um sinal por golpe seria um evento por dano.
+	**The scoreboard is read, not listened to.** `MobService` only sums (see
+	`SessionStats`), and this service sends the difference since the last read every
+	`SYNC_INTERVAL`, at match end, and on leave. A signal per hit would be one event
+	per damage.
 
-	**A vitoria leva o contexto inteiro:** mapa, dificuldade, se a base terminou
-	cheia, se havia amigo na sala e as classes que **todas** as unidades colocadas
-	tinham em comum (o "only Fire units"). Unidade vendida no meio conta: ela foi
-	usada.
+	**A win carries the whole context:** map, difficulty, whether the base ended full,
+	whether a friend was in the room, and the classes **every** placed unit had in
+	common (the "only Fire units"). A unit sold midway counts: it was used.
+
+	See docs/common/contracts.md.
 ]]
 
 local SYNC_INTERVAL = 3
@@ -60,13 +63,13 @@ local ContractTrackerService = {
 		WeatherRoundService = {},
 	},
 
-	-- [Player] = { Kills, BossKills, Stuns, Damage } -- o que ja foi mandado nesta partida.
+	-- [Player] = { Kills, BossKills, Stuns, Damage }: what was already sent this match.
 	Reported = {},
 
-	-- [Player] = { { classes } } -- as classes de cada unidade colocada nesta partida.
+	-- [Player] = { { classes } }: the classes of each unit placed this match.
 	Placed = {},
 
-	-- ["menor:maior"] = boolean -- amizade entre dois UserIds, perguntada uma vez.
+	-- ["lower:higher"] = boolean: friendship between two UserIds, asked once.
 	Friends = {},
 }
 
@@ -79,7 +82,7 @@ function ContractTrackerService:_record(player : Player, event : string, value :
 	end
 end
 
---- Mapa e dificuldade da partida de agora. A dificuldade e nil antes da votacao.
+--- The current match's map and difficulty. Difficulty is nil before the vote.
 function ContractTrackerService:_context()
 	local mapService = self.Services.MapService
 	local waveService = self.Services.WaveService
@@ -92,8 +95,8 @@ function ContractTrackerService:_context()
 end
 
 --[=[
-	Manda a diferenca do placar desde a ultima leitura. Os `Max` vao com o total da
-	partida: o `ContractService` so guarda se for maior que o melhor ate aqui.
+	Sends the scoreboard difference since the last read. `Max` entries go with the
+	match total: `ContractService` only keeps it if it beats the best so far.
 ]=]
 function ContractTrackerService:_sync(player : Player)
 	local mobService = self.Services.MobService
@@ -111,7 +114,7 @@ function ContractTrackerService:_sync(player : Player)
 	local context = self:_context()
 
 	local function send(event : string, field : string, current : number)
-		-- Placar menor que o mandado quer dizer que ele zerou por baixo (partida nova).
+		-- A scoreboard lower than what was sent means it reset underneath (a new match).
 		local last = reported[field]
 		if current < last then
 			last = 0
@@ -136,13 +139,13 @@ function ContractTrackerService:_syncAll()
 	end
 end
 
---- Zera o que e da partida: o placar ja mandado e as unidades colocadas.
+--- Resets what belongs to the match: the scoreboard already sent and the placed units.
 function ContractTrackerService:_resetMatch()
 	table.clear(self.Reported)
 	table.clear(self.Placed)
 end
 
---- As classes que todas as unidades colocadas pelo jogador tem em comum.
+--- The classes all units placed by the player have in common.
 function ContractTrackerService:_commonClasses(player : Player) : { [string] : boolean }
 	local placed = self.Placed[player]
 	if not placed or #placed == 0 then
@@ -172,8 +175,8 @@ function ContractTrackerService:_commonClasses(player : Player) : { [string] : b
 end
 
 --[=[
-	Se os dois sao amigos na Roblox. Pergunta uma vez por par e guarda; a pergunta
-	cede, entao quem chama esta numa thread propria.
+	Whether the two are friends on Roblox. Asks once per pair and caches; the query
+	yields, so the caller is on its own thread.
 ]=]
 function ContractTrackerService:_areFriends(a : Player, b : Player) : boolean
 	local low, high = math.min(a.UserId, b.UserId), math.max(a.UserId, b.UserId)
@@ -204,10 +207,10 @@ function ContractTrackerService:_hasFriendHere(player : Player) : boolean
 end
 
 --[=[
-	O fim da partida: o placar vai inteiro e, na vitoria, a vitoria com o contexto.
+	The match end: the whole scoreboard goes and, on a win, the win with its context.
 
-	A vida da base e lida aqui, e nao dentro da thread: a pergunta de amizade cede,
-	e no meio dela o round pode ter sido reiniciado com a base cheia de novo.
+	Base health is read here, not inside the thread: the friendship query yields, and
+	during it the round may have restarted with the base full again.
 ]=]
 function ContractTrackerService:_onMatchFinished(won : boolean, preset)
 	self:_syncAll()
@@ -251,7 +254,7 @@ function ContractTrackerService:_onMatchFinished(won : boolean, preset)
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function ContractTrackerService:construct()
 	local waveService = self.Services.WaveService
@@ -261,7 +264,7 @@ function ContractTrackerService:construct()
 	local dataService = self.Services.DataService
 
 	if not waveService or not self.Services.ContractService then
-		warn("[ContractTrackerService]: sem WaveService ou ContractService; a partida nao conta para os contratos.")
+		log:Warn("no WaveService or ContractService; the match does not count toward contracts.")
 		return
 	end
 
@@ -269,8 +272,8 @@ function ContractTrackerService:construct()
 		self:_resetMatch()
 	end)
 
-	-- Reset no meio ou fim de round: o que a partida fez ate aqui vai antes de o
-	-- placar do `MobService` zerar.
+	-- Reset mid-round or at round end: what the match did so far goes before
+	-- `MobService`'s scoreboard resets.
 	waveService.Signals.RoundClosed:Connect(function()
 		self:_syncAll()
 		self:_resetMatch()
@@ -317,8 +320,8 @@ function ContractTrackerService:construct()
 		end)
 	end
 
-	-- A ultima leitura de quem sai, com o perfil aberto e antes de o `ContractService`
-	-- escrever a fila (ele registra depois, com ordem maior).
+	-- The last read for a player leaving, with the profile open and before
+	-- `ContractService` writes its queue (it registers later, with a higher order).
 	if dataService and dataService.OnBeforeRelease then
 		dataService:OnBeforeRelease(function(player : Player)
 			self:_sync(player)
@@ -327,8 +330,8 @@ function ContractTrackerService:construct()
 		end)
 	end
 
-	-- A amizade e perguntada na entrada, e nao no fim da partida: a pergunta cede, e
-	-- na hora da vitoria a resposta ja esta guardada.
+	-- Friendship is asked on join, not at match end: the query yields, and at win
+	-- time the answer is already cached.
 	Players.PlayerAdded:Connect(function(player : Player)
 		for _, other in Players:GetPlayers() do
 			if other ~= player then

@@ -7,11 +7,11 @@ local Me = require(Vendor:WaitForChild("Me"))
 local Framework = Me.new()
 
 --[[
-	Escrever marcação, apertar DISPLAY, ver.
+	Write markup, press DISPLAY, look.
 
-	Sem alvo, a bancada abre para quem rodou o comando — ela é ferramenta de quem
-	está mexendo no texto, não anúncio. Passar jogadores serve para mostrar o
-	resultado a outra pessoa na mesma sessão.
+	Without a target, the workbench opens for whoever ran the command: it is a tool
+	for whoever is working on the text, not an announcement. Passing players shows
+	the result to someone else in the same session.
 ]]
 return function(context, players : { Player }?)
 	local RichTextLabService = Framework:Get("RichTextLabService", false, true)

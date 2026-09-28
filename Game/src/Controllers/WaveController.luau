@@ -20,8 +20,8 @@ local ARROW_STAGGER = ArrowConfig.Stagger
 local ARROW_Y_OFFSET = ArrowConfig.YOffset
 local ARROW_FLIP = false
 
--- Faixa em SharedSounds.Musics que entra por cima da musica do mapa enquanto a
--- wave tiver boss.
+-- Track in SharedSounds.Musics that plays over the map music while the wave has
+-- a boss.
 local BOSS_MUSIC = "Boss"
 local BOSS_MUSIC_FADE = 2
 
@@ -85,9 +85,9 @@ function WaveController:playArrows()
 	if not nodesFolder then return end
 
 	task.spawn(function()
-		-- Uma leva de setas por rota: num mapa com bifurcacao os dois lados sao
-		-- sinalizados, senao o jogador so ve um deles. A espera vem antes do
-		-- build para nenhum lado ficar de fora por replicacao pela metade.
+		-- One batch of arrows per route: on a map with a fork both sides are signaled,
+		-- or the player only sees one of them. The wait comes before the build so no
+		-- side is left out by half-finished replication.
 		PathUtil.WaitForNodes(nodesFolder)
 		local routes = PathUtil.BuildRoutes(nodesFolder)
 
@@ -109,9 +109,8 @@ function WaveController:playWaveSound()
 end
 
 --[[
-	Musica de boss. O Push guarda o que estava tocando e o Pop devolve, entao a
-	volta acerta a musica do mapa qualquer que ela seja — e waves de boss
-	seguidas nao empilham.
+	Boss music. Push saves what was playing and Pop restores it, so the return gets
+	the map music right whatever it is, and back-to-back boss waves do not stack.
 ]]
 function WaveController:setWaveMusic(hasBoss : boolean?)
 	local music = self.Controllers.MusicController
@@ -129,12 +128,12 @@ function WaveController:OnWave(num, hasBoss)
 	self:playWaveSound()
 
 	--[[
-		As setas so correm na wave 1.
+		The arrows only run on wave 1.
 
-		Elas ensinam o caminho, e o caminho nao muda de uma wave para a outra:
-		repetidas a cada wave viravam so o `getArrowLeadTime` de espera parada antes
-		de cada spawn. O servidor corta essa espera pela mesma condicao (ver
-		`WaveService`), entao os dois lados tem que concordar em qual wave e esta.
+		They teach the path, and the path does not change from one wave to the next:
+		repeated every wave they would just be `getArrowLeadTime` of idle waiting
+		before each spawn. The server cuts that wait under the same condition (see
+		`WaveService`), so both sides must agree on which wave it is.
 	]]
 	if num == 1 then
 		self:playArrows()
@@ -144,9 +143,9 @@ end
 function WaveController:construct()
 	Framework:Listen("SetWave", function(...) self:OnWave(...) end)
 
-	-- Zera o contador sem som nem setas: nao e o comeco de uma wave, e a limpeza
-	-- do round anterior. A musica de boss sai junto — se o round acabou numa wave
-	-- de boss, o proximo comeca com a do mapa.
+	-- Resets the counter with no sound or arrows: this is not the start of a wave, it
+	-- is the previous round's cleanup. The boss music goes too: if the round ended on a
+	-- boss wave, the next one starts with the map's.
 	Framework:Listen("RoundRestarted", function()
 		self.Controllers.UILibraryController:doComponent("Wave", "set", 0)
 		self.Controllers.MusicController:PopTrack(BOSS_MUSIC_FADE)

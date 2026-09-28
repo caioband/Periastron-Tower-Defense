@@ -1,49 +1,49 @@
 --[[
-	Sons de passo, por superfície.
+	Footstep sounds, per surface.
 
-	O jogo é stud: o Material das parts não diz nada sobre o chão, então a
-	superfície vem de um atributo posto na própria Part (ou em qualquer pai dela).
-	O FootstepController lê esse atributo no que o raio embaixo do pé acertar.
+	The game is built from studs, so a part's Material says nothing about the
+	floor; the surface comes from an attribute on the Part (or any ancestor).
+	FootstepController reads it on whatever the ray under the foot hits.
 
 		Part.Surface = "Grass"
 
-	Cada superfície tem uma lista de Ids — as variações. O controller sorteia uma
-	a cada passo e evita repetir a anterior, então bastam três ou quatro pra não
-	soar mecânico. Superfície sem Id configurado não toca nada (e avisa uma vez
-	no Studio).
+	Each surface has a list of ids, its variations. The controller draws one per
+	step and avoids repeating the previous one, so three or four are enough not to
+	sound mechanical. A surface without ids plays nothing (and warns once in
+	Studio). See docs/common/footsteps.md.
 ]]
 
 local FootstepConfig = {}
 
--- Nome do atributo lido na Part pisada.
+-- Name of the attribute read on the part stepped on.
 FootstepConfig.Attribute = "Surface"
 
 --[[
-	Superfície usada quando a Part pisada não tem o atributo em lugar nenhum da
-	hierarquia. `nil` = silêncio, de propósito: assim uma part sem atributo fica
-	obviamente muda em vez de fingir ser grama.
+	Surface used when the part has the attribute nowhere in its hierarchy. `nil`
+	means silence, on purpose: an untagged part is obviously mute instead of
+	pretending to be grass.
 ]]
 FootstepConfig.Default = nil :: string?
 
--- Quanto o raio desce a partir do pé procurando o chão.
+-- How far the ray goes down from the foot looking for the floor.
 FootstepConfig.RayLength = 5
 
--- Piso geral, multiplicado pelo Volume da superfície.
+-- Overall volume, multiplied by the surface's Volume.
 FootstepConfig.Volume = 0.5
 
--- Cada passo sorteia um PlaybackSpeed nessa faixa.
+-- Each step draws a PlaybackSpeed in this range.
 FootstepConfig.PitchRange = { 0.94, 1.06 }
 
--- Trava de segurança contra marcador duplicado ou animação acelerada demais.
+-- Safety limit against a duplicated marker or an animation sped up too much.
 FootstepConfig.MinInterval = 0.1
 
--- Rolloff do som 3D no pé.
+-- Rolloff of the 3D sound at the foot.
 FootstepConfig.RollOffMin = 4
 FootstepConfig.RollOffMax = 45
 
 --[[
-	Uma entrada por superfície. Além de `Ids`, aceita `Volume` e `PitchRange`
-	próprios, que substituem os gerais acima.
+	One entry per surface. Besides `Ids`, it accepts its own `Volume` and
+	`PitchRange`, which replace the general ones above.
 
 		Stone = {
 			Ids = { "rbxassetid://111", "rbxassetid://222" },
@@ -62,9 +62,9 @@ FootstepConfig.Surfaces = {
 }
 
 --[[
-	Pulo. Mesma forma das superfícies (aceita `Volume` e `PitchRange` próprios) e
-	entra no mesmo pré-carregamento, mas não depende do chão: toca no salto,
-	qualquer que seja a superfície. Mais de um id vira variação, igual aos passos.
+	Jump. Same shape as the surfaces (accepts its own `Volume` and `PitchRange`)
+	and preloaded with them, but it does not depend on the floor: it plays on the
+	jump, whatever the surface. More than one id becomes variations, as for steps.
 ]]
 FootstepConfig.Jump = {
 	Ids = {

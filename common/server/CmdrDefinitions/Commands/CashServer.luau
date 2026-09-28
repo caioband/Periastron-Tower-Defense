@@ -6,8 +6,8 @@ local Me = require(Vendor:WaitForChild("Me"))
 
 local Framework = Me.new()
 
--- Online neste servidor, em outro ou offline: quem decide o caminho é o
--- `ProfileEditService`.
+-- Online on this server, on another one, or offline: `ProfileEditService`
+-- picks the path.
 return function(_context, action : string, userIds : { number }, amount : number)
 	local ProfileEditService = Framework:Get("ProfileEditService", false, true)
 

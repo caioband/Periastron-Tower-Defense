@@ -1,6 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextService = game:GetService("TextService")
-local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -10,37 +9,28 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("RichTextController")
 
 local Config = SharedConfig.RichTextConfig
 
 --[[
-	O tamanho em que a largura de uma frase é medida (ver `measureWidth`).
+	The size a sentence's width is measured at (see `measureWidth`).
 
-	A largura de um texto é linear no tamanho da letra, então medir uma vez num tamanho
-	grande e escalar dá a largura em qualquer tamanho — com a vantagem de o erro de
-	arredondamento de um tamanho pequeno não entrar na conta. Ele não aparece na tela.
+	A text's width is linear in font size, so measuring once at a large size and
+	scaling gives the width at any size, with the bonus that a small size's rounding
+	error does not enter the math. It never shows on screen.
 ]]
 local PROBE_SIZE = 100
 
---[[
-	A conta da letra, no output do Studio (ver `FitOptions.Debug`).
-
-	Só no Studio, porque é informação de quem está desenhando a tela e não do jogador.
-]]
-local IS_STUDIO = RunService:IsStudio()
-
-local function fitPrint(...)
-	if not IS_STUDIO then return end
-	print("[RichTextController]", ...)
-end
 
 --[[
-	Texto rico: letra por letra, com cor, tremor, imagem no meio da frase.
+	Rich text: letter by letter, with color, shake, and images mid-sentence.
 
-	Quem renderiza hoje é o HyperText (`Shared.Vendor.HyperText`, MIT, de @lopjoss),
-	mas o jogo não sabe disso. O jogo fala com este controller:
+	HyperText (`Shared.Vendor.HyperText`, MIT, by @lopjoss) renders it today, but the
+	game does not know that. The game talks to this controller:
 
 		local RichText = Framework:Get("RichTextController")
 
@@ -48,8 +38,8 @@ end
 			Preset = "Warning",
 		})
 
-	Ou, quando o mesmo container vai receber várias frases (uma fala de NPC, um
-	tutorial), guarda o handle e reusa:
+	Or, when the same container will receive several sentences (an NPC line, a
+	tutorial), keep the handle and reuse it:
 
 		local handle = RichText:Bind(dialogueFrame, { Preset = "Dialogue" })
 
@@ -57,30 +47,29 @@ end
 			prompt.Visible = true
 		end)
 
-		handle:Write("Bem-vindo, [color=yellow]comandante[/color].[pause=1] Sente-se.")
+		handle:Write("Welcome, [color=yellow]commander[/color].[pause=1] Have a seat.")
 
-	**Por que não requerer o HyperText direto.** Porque ele é a escolha de hoje. O
-	que o jogo escreve — a marcação dentro do texto, o nome dos presets, os métodos
-	do handle — está descrito em `SharedConfig.RichTextConfig` e aqui, em termos que
-	não são de biblioteca nenhuma. Trocar de tecnologia é escrever um backend novo
-	ao lado dos dois que existem e mudar uma coluna na tabela de aliases; nenhuma
-	tela do jogo muda de linha.
+	**Why not require HyperText directly.** Because it is today's choice. What the
+	game writes (the markup inside the text, the preset names, the handle's methods)
+	is described in `SharedConfig.RichTextConfig` and here, in terms that belong to no
+	library. Switching technology means writing a new backend next to the two that
+	exist and changing one column in the alias table; no game screen changes a line.
 
-	**O backend.** `Backends/` tem um módulo por tecnologia. Cada um carrega a lib
-	dele tarde, dentro de um pcall, e diz se conseguiu — é o que permite ao
-	`Backends` do config listar uma ordem de preferência e este controller ficar no
-	primeiro que responder. Hoje: `HyperTextBackend` e, de reserva, `PlainBackend`,
-	que arranca a marcação e escreve texto puro num TextLabel. A reserva não é
-	enfeite: vendor fora do sync, erro de require, mudança de engine — em qualquer
-	um desses o aviso continua aparecendo, feio, mas aparecendo.
+	**The backend.** `Backends/` has one module per technology. Each loads its library
+	late, inside a pcall, and says whether it succeeded: that lets the config's
+	`Backends` list an order of preference and this controller settle on the first
+	that answers. Today: `HyperTextBackend` and, as a fallback, `PlainBackend`, which
+	strips the markup and writes plain text into a TextLabel. The fallback is not
+	decoration: vendor out of sync, a require error, an engine change; in any of these
+	the warning still appears, ugly, but it appears.
 
-	Um backend implementa:
+	A backend implements:
 
 		Backend.Name                            string
-		Backend.Load() -> boolean               tenta carregar a lib
-		Backend.Tag(name, value, closing)       alias -> dialeto (nil = não é alias)
+		Backend.Load() -> boolean               tries to load the library
+		Backend.Tag(name, value, closing)       alias -> dialect (nil = not an alias)
 		Backend.Create(container) -> object
-		Backend.Apply(object, options)          opções neutras -> ajustes da lib
+		Backend.Apply(object, options)          neutral options -> library settings
 		Backend.Render(object, text, options)
 		Backend.Skip / Pause / Resume (object)
 		Backend.Clear(object, instant)
@@ -90,55 +79,57 @@ end
 		Backend.OnFinished(object, fn) -> () -> ()
 		Backend.OnEvent(object, fn) -> () -> ()
 
-	**O tamanho da letra.** `Size` é em pixels, e pixel não se traduz entre telas.
-	Quem quiser a letra saindo da caixa em vez de um número pede `Fit`:
+	**Font size.** `Size` is in pixels, and pixels do not translate between screens.
+	To have the font size come from the box instead of a number, ask for `Fit`:
 
 		RichText:Write(label, "WAVE 12 INCOMING", { Fit = true })
 
-	A caixa é medida no instante da escrita, e o tamanho sai dela — ver
-	`RichTextConfig.Fit` para as paredes da conta e `:FitSize()` para a caixa que
-	precisa de um tamanho só para várias peças irmãs.
+	The box is measured at the moment of writing, and the size comes from it; see
+	`RichTextConfig.Fit` for the math's walls and `:FitSize()` for a box that needs a
+	single size for several sibling pieces.
 
-	**A marcação.** `[nome]texto[/nome]`, `[nome=valor]`, `[br]`. Só é tag o que
-	estiver em `RichTextConfig.Aliases`; qualquer outro colchete é texto comum, que
-	é o que faz `[1]` no meio de uma frase continuar sendo `[1]`. `[[` escreve um
-	colchete literal — é assim que `:Escape()` neutraliza texto de jogador.
+	**The markup.** `[name]text[/name]`, `[name=value]`, `[br]`. Only what is in
+	`RichTextConfig.Aliases` is a tag; any other bracket is plain text, which is what
+	keeps a `[1]` in the middle of a sentence a `[1]`. `[[` writes a literal bracket:
+	that is how `:Escape()` neutralizes player text.
 
-	Fica em `common/` porque as duas places escrevem na tela.
+	It lives in `common/` because both places write on screen.
+
+	See docs/common/rich-text.md.
 ]]
 
 local RichTextController = {
 	Controllers = {}
 }
 
--- O backend em uso. Resolvido na primeira vez que alguém escreve, não no `init`:
--- controller que renderiza no próprio `init` não pode depender da ordem em que o
--- `Me:Load()` varreu a pasta.
+-- The backend in use. Resolved the first time someone writes, not in `init`: a
+-- controller that renders in its own `init` must not depend on the order in which
+-- `Me:Load()` swept the folder.
 RichTextController.Backend = nil :: any
 
 RichTextController.Resolved = false
 
--- [GuiObject] = Handle. Um container tem um handle só — dois renderizadores no
--- mesmo frame escreveriam por cima um do outro.
+-- [GuiObject] = Handle. A container has a single handle: two renderers on the
+-- same frame would write over each other.
 RichTextController.Handles = {}
 
 --[[
-	`[fonte][frase] = largura em PROBE_SIZE`, das que já foram medidas.
+	`[font][sentence] = width at PROBE_SIZE`, for those already measured.
 
-	Vale para a sessão inteira: a mesma frase não muda de largura entre duas escritas,
-	e a chamada que a mede é assíncrona — sem o cache, toda relançada da mesma tela
-	pagaria a viagem de novo.
+	It holds for the whole session: the same sentence does not change width between
+	two writes, and the call that measures it is asynchronous. Without the cache,
+	every relaunch of the same screen would pay the trip again.
 ]]
 RichTextController.Widths = {}
 
 --[[ HANDLE ]]
 
 --[=[
-	O objeto que o jogo segura: um container mais o render que está nele.
+	The object the game holds: a container plus the render in it.
 
-	Todo método devolve `self` quando não tem nada melhor a devolver, então dá para
-	encadear. Nenhum deles estoura se o backend tiver morrido no meio do caminho —
-	handle de container destruído vira inerte em vez de erro.
+	Every method returns `self` when it has nothing better to return, so calls can be
+	chained. None of them blows up if the backend died midway: a handle for a
+	destroyed container becomes inert instead of an error.
 ]=]
 local Handle = {}
 Handle.__index = Handle
@@ -157,16 +148,16 @@ export type Handle = typeof(setmetatable(
 ))
 
 --[=[
-	Escreve.
+	Writes.
 
-	Opções passadas aqui entram por cima das que o handle já tinha e **ficam** —
-	é um `:SetOptions()` antes do texto, não um ajuste de uma frase só. Voltar
-	atrás é passar o valor antigo de novo. É assim porque as opções viram
-	configuração do renderizador lá dentro: desfazê-las depois de cada frase
-	custaria uma remontagem por frase para um caso que o jogo não tem.
+	Options passed here go on top of the ones the handle already had and **stay**:
+	it is a `:SetOptions()` before the text, not a one-sentence adjustment. Going back
+	means passing the old value again. It works this way because options become the
+	renderer's internal configuration: undoing them after each sentence would cost a
+	rebuild per sentence for a case the game does not have.
 
-	Com `Fit` ligado a chamada **dorme** antes de escrever: a letra sai da caixa, e
-	a caixa só mede depois da passada de layout. Ver `:Fit()`.
+	With `Fit` on, the call **yields** before writing: the font size comes from the
+	box, and the box only measures after the layout pass. See `:Fit()`.
 ]=]
 function Handle:Write(text : string, options : Options?) : Handle
 	if not self.Alive then return self end
@@ -178,7 +169,7 @@ function Handle:Write(text : string, options : Options?) : Handle
 	if self.Options.Fit then
 		self:Fit(text)
 
-		-- O `:Fit()` dorme, e o container pode ter sido destruído no meio.
+		-- `:Fit()` yields, and the container may have been destroyed in the meantime.
 		if not self.Alive then return self end
 	end
 
@@ -188,25 +179,26 @@ function Handle:Write(text : string, options : Options?) : Handle
 end
 
 --[=[
-	Mede a caixa e tira dela o tamanho da letra, daqui para frente.
+	Measures the box and takes the font size from it, from now on.
 
-	É o que `Fit` faz sozinho a cada `:Write()`. Chamar à mão serve para o depois: a
-	tela mudou de tamanho e o que está escrito precisa da medida nova.
+	It is what `Fit` does on its own on every `:Write()`. Calling it by hand is for
+	afterward: the screen changed size and what is written needs the new measurement.
 
 		container:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 			handle:Fit()
 		end)
 
-	Sem `text`, a conta usa a última frase escrita — que é o que a tela redimensionada
-	quer. Com `text`, usa o que vai ser escrito, que é o que o `:Write()` quer: a frase
-	que ainda não está lá é a que tem de caber.
+	Without `text`, the math uses the last sentence written, which is what a resized
+	screen wants. With `text`, it uses what is about to be written, which is what
+	`:Write()` wants: the sentence not there yet is the one that has to fit.
 
-	Uma lista de frases mede pela **mais comprida** e devolve um tamanho só. Ver
+	A list of sentences measures by the **longest** and returns a single size. See
 	`RichTextController:FitSize`.
 
-	**Dorme**: espera a caixa ter tamanho estável e mede a largura da frase por uma
-	chamada assíncrona. Não reescreve o que já está na tela — o renderizador reescala o
-	que está desenhado junto com a caixa; o tamanho novo vale para a escrita seguinte.
+	**Yields**: waits for the box to have a stable size and measures the sentence's
+	width with an asynchronous call. It does not rewrite what is already on screen: the
+	renderer rescales what is drawn along with the box; the new size applies to the
+	next write.
 ]=]
 function Handle:Fit(text : (string | { string })?) : Handle
 	if not self.Alive then return self end
@@ -230,8 +222,8 @@ function Handle:Fit(text : (string | { string })?) : Handle
 end
 
 --[=[
-	Mostra tudo agora, sem esperar o resto da digitação. É o que o clique do
-	jogador no meio de uma fala deve fazer.
+	Shows everything now, without waiting for the rest of the typing. It is what the
+	player's click mid-dialog should do.
 ]=]
 function Handle:Skip() : Handle
 	if self.Alive then
@@ -258,7 +250,7 @@ function Handle:Resume() : Handle
 end
 
 --[=[
-	Apaga o que está escrito. `instant` pula a animação de saída.
+	Clears what is written. `instant` skips the exit animation.
 ]=]
 function Handle:Clear(instant : boolean?) : Handle
 	if self.Alive then
@@ -269,8 +261,8 @@ function Handle:Clear(instant : boolean?) : Handle
 end
 
 --[=[
-	Troca as opções do handle daqui para frente. Não reescreve o que já está na
-	tela — quem quiser isso chama `:Write()` de novo.
+	Replaces the handle's options from now on. It does not rewrite what is already on
+	screen: call `:Write()` again for that.
 ]=]
 function Handle:SetOptions(options : Options) : Handle
 	if not self.Alive then return self end
@@ -282,8 +274,8 @@ function Handle:SetOptions(options : Options) : Handle
 end
 
 --[=[
-	O texto da última frase, sem marcação nenhuma. Serve para medir, comparar ou
-	mandar para o log.
+	The last sentence's text, with no markup at all. It is for measuring, comparing, or
+	sending to the log.
 ]=]
 function Handle:GetText() : string?
 	if not self.Alive then return nil end
@@ -292,7 +284,7 @@ function Handle:GetText() : string?
 end
 
 --[=[
-	`true` enquanto ainda tem letra por aparecer, mesmo pausado.
+	`true` while there are still letters to appear, even when paused.
 ]=]
 function Handle:IsWriting() : boolean
 	if not self.Alive then return false end
@@ -301,11 +293,10 @@ function Handle:IsWriting() : boolean
 end
 
 --[=[
-	Chama de volta quando a frase termina de aparecer. Devolve a função que
-	desconecta.
+	Calls back when the sentence finishes appearing. Returns the disconnect function.
 
-	O argumento é `true` quando o fim veio de um `:Skip()` — uma fala que pulou não
-	merece a mesma pausa dramática de uma que foi até o fim.
+	The argument is `true` when the end came from a `:Skip()`: a skipped line does not
+	deserve the same dramatic pause as one that ran to the end.
 ]=]
 function Handle:OnFinished(callback : (skipped : boolean) -> ()) : () -> ()
 	if not self.Alive then return function() end end
@@ -314,11 +305,10 @@ function Handle:OnFinished(callback : (skipped : boolean) -> ()) : () -> ()
 end
 
 --[=[
-	Chama de volta quando a digitação passa por um `[event=nome]`. Devolve a função
-	que desconecta.
+	Calls back when typing passes an `[event=name]`. Returns the disconnect function.
 
-	É o gancho para sincronizar som, câmera ou VFX com um ponto da frase em vez de
-	com um `task.wait` chutado.
+	It is the hook for syncing sound, camera, or VFX with a point in the sentence
+	instead of a guessed `task.wait`.
 ]=]
 function Handle:OnEvent(callback : (name : string) -> ()) : () -> ()
 	if not self.Alive then return function() end end
@@ -338,11 +328,11 @@ end
 --[[ INTERNAL ]]
 
 --[=[
-	O backend em uso, carregando o primeiro da fila que responder.
+	The backend in use, loading the first in line that answers.
 
-	O `warn` do fim é para o caso impossível de nem o `PlainBackend` carregar — que
-	só acontece com a pasta `Backends` fora do sync. Devolvendo `nil`, todo `Write`
-	vira no-op silencioso em vez de erro em cascata.
+	The warning at the end is for the impossible case of not even `PlainBackend`
+	loading, which only happens with the `Backends` folder out of sync. Returning
+	`nil`, every `Write` becomes a silent no-op instead of a cascade of errors.
 ]=]
 function RichTextController:getBackend() : any
 	if self.Resolved then
@@ -354,7 +344,7 @@ function RichTextController:getBackend() : any
 	for _, name in Config.Backends do
 		local module = script.Backends:FindFirstChild(`{name}Backend`)
 		if not module or not module:IsA("ModuleScript") then
-			warn(`[RichTextController]: backend "{name}" nao existe em Backends/.`)
+			log:StudioWarn(`backend "{name}" does not exist in Backends/.`)
 			continue
 		end
 
@@ -363,27 +353,27 @@ function RichTextController:getBackend() : any
 			self.Backend = backend
 
 			if name ~= Config.Backends[1] then
-				warn(`[RichTextController]: usando o backend "{name}" — "{Config.Backends[1]}" nao carregou.`)
+				log:StudioWarn(`using backend "{name}": "{Config.Backends[1]}" did not load.`)
 			end
 
 			return backend
 		end
 	end
 
-	warn("[RichTextController]: nenhum backend carregou; o texto rico esta desligado.")
+	log:StudioWarn("no backend loaded; rich text is off.")
 
 	return nil
 end
 
 --[=[
-	Junta `Defaults`, o preset e o que veio na chamada, nessa ordem.
+	Merges `Defaults`, the preset, and what came in the call, in that order.
 
-	`base` é o que o handle já tinha — é o que faz um `:SetOptions()` com uma opção
-	só não jogar fora o resto da configuração do handle.
+	`base` is what the handle already had: it keeps a `:SetOptions()` with a single
+	option from throwing away the rest of the handle's configuration.
 
-	O preset só entra quando vem **nesta** chamada. O preset de `base` já está
-	dentro de `base`, misturado com os ajustes que quem chamou fez por cima dele;
-	reaplicá-lo aqui desfaria justamente esses ajustes.
+	The preset only applies when it comes in **this** call. `base`'s preset is already
+	inside `base`, mixed with the adjustments the caller made on top of it; reapplying
+	it here would undo exactly those adjustments.
 ]=]
 function RichTextController:resolveOptions(options : Options?, base : Options?) : Options
 	local resolved = {}
@@ -407,7 +397,7 @@ function RichTextController:resolveOptions(options : Options?, base : Options?) 
 		if preset then
 			merge(preset)
 		else
-			warn(`[RichTextController]: preset "{presetName}" nao existe em RichTextConfig.Presets.`)
+			log:StudioWarn(`preset "{presetName}" does not exist in RichTextConfig.Presets.`)
 		end
 	end
 
@@ -418,11 +408,11 @@ function RichTextController:resolveOptions(options : Options?, base : Options?) 
 end
 
 --[=[
-	Os ajustes do `Fit` resolvidos contra `RichTextConfig.Fit`.
+	`Fit`'s settings resolved against `RichTextConfig.Fit`.
 
-	`true` (ou qualquer coisa que não seja tabela) é "os padrões"; tabela entra por
-	cima deles campo a campo, para quem quer mexer só no `MaxRows` não ter de repetir
-	os outros cinco.
+	`true` (or anything that is not a table) means "the defaults"; a table goes on top
+	of them field by field, so someone changing only `MaxRows` does not have to repeat
+	the other five.
 ]=]
 function RichTextController:fitSettings(fit : any) : any
 	local resolved = {}
@@ -443,19 +433,19 @@ function RichTextController:fitSettings(fit : any) : any
 end
 
 --[=[
-	A largura de uma frase em `PROBE_SIZE`, ou `nil` quando não deu para medir.
+	A sentence's width at `PROBE_SIZE`, or `nil` when it could not be measured.
 
-	Medida de verdade, e não estimada por número de caracteres: a estimativa (ver
-	`FitOptions.WidthPerChar`) erra para cada lado — conservadora demais ela encolhe a
-	letra sem motivo, e otimista demais deixa a frase estourar a caixa. Como a largura é
-	linear no tamanho da letra, uma medida serve para todos os tamanhos.
+	Actually measured, not estimated by character count: the estimate (see
+	`FitOptions.WidthPerChar`) errs both ways: too conservative, it shrinks the text
+	for no reason; too optimistic, it lets the sentence overflow the box. Since width
+	is linear in font size, one measurement serves every size.
 
-	Dorme, porque a chamada é assíncrona; quem a usa já está numa thread própria. O
-	resultado fica em cache por frase **e por fonte** — a mesma frase em duas fontes são
-	duas larguras.
+	Yields, because the call is asynchronous; callers are already on their own thread.
+	The result is cached per sentence **and per font**: the same sentence in two fonts
+	is two widths.
 
-	Falhando (a fonte não existe, a chamada foi recusada), devolve `nil` e quem chamou
-	cai na estimativa. É medida melhor, não medida obrigatória.
+	On failure (the font does not exist, the call was refused), returns `nil` and the
+	caller falls back to the estimate. It is a better measurement, not a required one.
 ]=]
 function RichTextController:measureWidth(text : string, font : string) : number?
 	local byFont = self.Widths[font]
@@ -475,8 +465,8 @@ function RichTextController:measureWidth(text : string, font : string) : number?
 		params.Size = PROBE_SIZE
 		params.Font = Font.new(font)
 
-		-- 0 é "sem limite": a largura que queremos é a da frase em uma fileira, e é daí
-		-- que sai a conta de quantas fileiras ela precisa.
+		-- 0 means "no limit": the width we want is the sentence's on a single row, and
+		-- that is where the count of rows it needs comes from.
 		params.Width = 0
 
 		return TextService:GetTextBoundsAsync(params)
@@ -492,14 +482,15 @@ function RichTextController:measureWidth(text : string, font : string) : number?
 end
 
 --[=[
-	A nossa marcação virando o dialeto do backend.
+	Our markup becoming the backend's dialect.
 
-	Varredura à mão em vez de `gsub` por causa do `[[`: um escape precisa ser visto
-	antes de o `[` seguinte ser considerado abertura de tag.
+	A manual scan instead of `gsub` because of `[[`: an escape must be seen before the
+	next `[` is considered a tag opening.
 
-	Colchete que não abre um alias conhecido volta para o texto como estava. É o que
-	permite escrever "[1]" ou "[SPOILER]" numa frase sem escapar nada — e o que faz
-	um alias escrito errado aparecer na tela em vez de sumir calado.
+	A bracket that does not open a known alias goes back into the text as it was. That
+	is what allows writing "[1]" or "[SPOILER]" in a sentence without escaping
+	anything, and what makes a misspelled alias show on screen instead of vanishing
+	silently.
 ]=]
 function RichTextController:translate(text : string, backend : any) : string
 	local out = {}
@@ -551,10 +542,10 @@ end
 --[[ API ]]
 
 --[=[
-	O handle do container, criando um se ainda não houver.
+	The container's handle, creating one if there is none yet.
 
-	Chamar duas vezes com o mesmo container devolve o mesmo handle — `options` do
-	segundo em diante vale como `:SetOptions()`.
+	Calling twice with the same container returns the same handle; `options` from the
+	second call on act as `:SetOptions()`.
 ]=]
 function RichTextController:Bind(container : GuiObject, options : Options?) : Handle?
 	local existing = self.Handles[container]
@@ -589,8 +580,8 @@ function RichTextController:Bind(container : GuiObject, options : Options?) : Ha
 
 	self.Handles[container] = handle
 
-	-- O container é do designer, não nosso: ele some quando a tela some, e o handle
-	-- some junto em vez de virar entrada morta no cache.
+	-- The container is the designer's, not ours: it goes away when the screen does, and
+	-- the handle goes with it instead of becoming a dead cache entry.
 	container.Destroying:Once(function()
 		handle:Destroy()
 	end)
@@ -599,8 +590,8 @@ function RichTextController:Bind(container : GuiObject, options : Options?) : Ha
 end
 
 --[=[
-	Escreve num container, cuidando do handle por quem chama. É a chamada de uma
-	linha, para a tela que escreve uma frase e esquece.
+	Writes into a container, managing the handle for the caller. It is the one-line
+	call, for a screen that writes a sentence and forgets it.
 ]=]
 function RichTextController:Write(container : GuiObject, text : string, options : Options?) : Handle?
 	local handle = self:Bind(container, options)
@@ -608,16 +599,16 @@ function RichTextController:Write(container : GuiObject, text : string, options 
 		return nil
 	end
 
-	-- `Bind` já aplicou as opções ao criar ou ao reencontrar o handle; passar de
-	-- novo faria o backend remontar a mesma configuração à toa.
+	-- `Bind` already applied the options when creating or finding the handle; passing
+	-- them again would make the backend rebuild the same configuration for nothing.
 	handle:Write(text)
 
 	return handle
 end
 
 --[=[
-	Apaga o que estiver escrito no container. Container sem handle é silêncio, não
-	erro — limpar o que nunca foi escrito é uma não-operação legítima.
+	Clears whatever is written in the container. A container without a handle is
+	silence, not an error: clearing what was never written is a legitimate no-op.
 ]=]
 function RichTextController:Clear(container : GuiObject, instant : boolean?)
 	local handle = self.Handles[container]
@@ -627,7 +618,7 @@ function RichTextController:Clear(container : GuiObject, instant : boolean?)
 end
 
 --[=[
-	Solta o container: para o render, apaga e esquece o handle.
+	Releases the container: stops the render, clears it, and forgets the handle.
 ]=]
 function RichTextController:Release(container : GuiObject)
 	local handle = self.Handles[container]
@@ -637,18 +628,19 @@ function RichTextController:Release(container : GuiObject)
 end
 
 --[=[
-	Espera a peça ter tamanho **estável** na tela, e diz se conseguiu.
+	Waits for the piece to have a **stable** on-screen size, and says whether it did.
 
-	Não basta ser diferente de zero. O tamanho medido é o que decide a letra (ver
-	`:FitSize()`) e o que o renderizador guarda como referência de escala do que
-	desenhou, e um `UIListLayout` que ainda está distribuindo as peças dá um valor
-	intermediário — que viraria uma letra de tamanho errado congelada na tela.
+	Nonzero is not enough. The measured size is what decides the font size (see
+	`:FitSize()`) and what the renderer keeps as the scale reference for what it drew,
+	and a `UIListLayout` still distributing its pieces gives an intermediate value that
+	would become a wrong font size frozen on screen.
 
-	O prazo existe para a caixa que nunca vai ganhar tamanho (tela desligada por outro
-	controller, pai apagado, tamanho zero autorado): isso vira uma escrita sem efeito,
-	e não uma espera infinita. Escrever no prazo esgotado é de propósito — o backend
-	reclama no output dizendo que a caixa mede zero, e é essa a pista do defeito.
-	Silêncio aqui viraria uma tela que não aparece e não explica.
+	The timeout exists for a box that will never get a size (screen disabled by another
+	controller, hidden parent, authored zero size): that becomes a write with no
+	effect, not an infinite wait. Writing when the timeout runs out is deliberate: the
+	backend complains in the output that the box measures zero, and that is the clue
+	to the bug. Silence here would become a screen that does not appear and does not
+	explain.
 ]=]
 function RichTextController:AwaitLayout(container : GuiObject, timeout : number?) : boolean
 	local deadline = os.clock() + (timeout or Config.Fit.LayoutTimeout or 1)
@@ -672,13 +664,13 @@ function RichTextController:AwaitLayout(container : GuiObject, timeout : number?
 end
 
 --[=[
-	O tamanho da letra que cabe na caixa, em pixels.
+	The font size that fits the box, in pixels.
 
-	É a conta que o `Fit` faz sozinho (ver `RichTextConfig.Fit` para o porquê de cada
-	parede). Chamar direto serve para o caso que o `Fit` não resolve: **várias peças
-	irmãs com um tamanho só**. Uma lista de linhas se mede uma vez, na primeira peça, e
-	o resultado vale para todas — tipografia por linha pareceria defeito, não
-	responsividade:
+	It is the math `Fit` does on its own (see `RichTextConfig.Fit` for the why of each
+	wall). Calling it directly is for the case `Fit` does not solve: **several sibling
+	pieces with a single size**. A list of lines is measured once, on the first piece,
+	and the result applies to all of them: a different font size per line would look
+	like a bug, not responsiveness:
 
 		local size = RichText:FitSize(firstLine, texts, Config.Text, Config.Fit)
 
@@ -686,16 +678,16 @@ end
 			handle:Write(markup(...), { Size = size })
 		end
 
-	`text` é uma frase ou uma lista delas; numa lista, manda a **mais comprida**. A
-	marcação é arrancada antes de medir — cor e tremor não ocupam largura.
+	`text` is a sentence or a list of them; in a list, the **longest** rules. Markup is
+	stripped before measuring: color and shake take no width.
 
-	`options` é de onde sai a fonte em que a largura é medida (e aceita um `Preset`,
-	como qualquer chamada). `fit` são os ajustes, e quando não vem usa os de
-	`options.Fit`, e depois os padrões do config.
+	`options` is where the font the width is measured in comes from (and it accepts a
+	`Preset`, like any call). `fit` is the settings; when absent it uses
+	`options.Fit`, and then the config defaults.
 
-	**Dorme** na primeira vez que vê uma frase (ver `measureWidth`). Não espera o
-	layout: a caixa tem de estar medida quando isto é chamado, e quem chama de fora do
-	`Fit` pede isso com `:AwaitLayout()` antes.
+	**Yields** the first time it sees a sentence (see `measureWidth`). It does not wait
+	for layout: the box must already be measured when this is called, and callers
+	outside `Fit` ensure that with `:AwaitLayout()` first.
 ]=]
 function RichTextController:FitSize(
 	container : GuiObject,
@@ -724,7 +716,7 @@ function RichTextController:FitSize(
 
 	local box = container.AbsoluteSize
 
-	local best, bestRows, bestWall = settings.MinTextSize, 1, "o PISO (MinTextSize)"
+	local best, bestRows, bestWall = settings.MinTextSize, 1, "the FLOOR (MinTextSize)"
 
 	for rows = 1, math.max(1, settings.MaxRows) do
 		local fromHeight = (box.Y * settings.TextRatio) / rows
@@ -741,27 +733,28 @@ function RichTextController:FitSize(
 		if size > best then
 			best = size
 			bestRows = rows
-			bestWall = if fromWidth < fromHeight then "a LARGURA da caixa" else "a ALTURA da caixa"
+			bestWall = if fromWidth < fromHeight then "the box WIDTH" else "the box HEIGHT"
 		end
 	end
 
-	-- O teto entra depois da escolha, e não dentro do laço: ele é um limite de
-	-- legibilidade, não uma parede que deva mudar quantas fileiras ganham.
+	-- The ceiling goes in after the choice, not inside the loop: it is a legibility
+	-- limit, not a wall that should change how many rows win.
 	best = math.min(best, settings.MaxTextSize)
 
 	if settings.Debug then
 		local camera = workspace.CurrentCamera
 		local viewport = camera and camera.ViewportSize or Vector2.zero
 
-		fitPrint(string.format(
-			-- Tudo em %.0f, e nao %d: `ViewportSize` e `AbsoluteSize` sao floats, e `%d`
-			-- com float sem representacao inteira e erro, nao arredondamento.
-			"%s | tela %.0fx%.0f | caixa %.0fx%.0f | %.0f chars, largura %s | letra %.1f em %d fileira(s), manda %s",
+		-- The size math goes to the Studio Output (see `FitOptions.Debug`).
+		log:Debug(string.format(
+			-- Everything is %.0f, not %d: `ViewportSize` and `AbsoluteSize` are floats, and
+			-- `%d` with a float that has no integer representation is an error, not rounding.
+			"%s | screen %.0fx%.0f | box %.0fx%.0f | %.0f chars, width %s | text %.1f in %d row(s), limited by %s",
 			container:GetFullName(),
 			viewport.X, viewport.Y,
 			box.X, box.Y,
 			#longest,
-			if measured then string.format("medida (%.0f em %d)", measured, PROBE_SIZE) else "estimada",
+			if measured then string.format("measured (%.0f at %d)", measured, PROBE_SIZE) else "estimated",
 			best, bestRows, bestWall
 		))
 	end
@@ -770,12 +763,12 @@ function RichTextController:FitSize(
 end
 
 --[=[
-	Texto que não é nosso — nome de jogador, mensagem de chat, nome de mapa vindo
-	do servidor — passa por aqui antes de entrar numa frase.
+	Text that is not ours (a player name, a chat message, a map name from the server)
+	goes through here before entering a sentence.
 
-	Dobra o colchete (o escape que o `:translate()` entende) e troca `<` por `‹`, o
-	sinal parecido de largura simples: o HyperText trata `<` como começo de tag e
-	engoliria o resto da frase atrás de um `>` que nunca vem.
+	It doubles the bracket (the escape `:translate()` understands) and swaps `<` for
+	`‹`, the similar single-width sign: HyperText treats `<` as a tag start and would
+	swallow the rest of the sentence waiting for a `>` that never comes.
 ]=]
 function RichTextController:Escape(text : string) : string
 	local escaped = string.gsub(text, "%[", "[[")
@@ -785,10 +778,10 @@ function RichTextController:Escape(text : string) : string
 end
 
 --[=[
-	A frase sem efeito nenhum: sem a nossa marcação e sem tag crua de biblioteca.
+	The sentence with no effects: without our markup and without raw library tags.
 
-	Serve para o que não renderiza texto rico — um tooltip, um `print`, o nome que
-	vai para um BillboardGui simples.
+	It is for things that do not render rich text: a tooltip, a log line, the name
+	that goes into a plain BillboardGui.
 ]=]
 function RichTextController:Plain(text : string) : string
 	local plain = self:translate(text, require(script.Backends.PlainBackend))
@@ -797,7 +790,7 @@ function RichTextController:Plain(text : string) : string
 end
 
 --[=[
-	Qual tecnologia está desenhando. Só para debug e para o Cmdr.
+	Which technology is drawing. Only for debugging and for Cmdr.
 ]=]
 function RichTextController:GetBackend() : string?
 	local backend = self:getBackend()
@@ -805,11 +798,11 @@ function RichTextController:GetBackend() : string?
 	return backend and backend.Name
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function RichTextController:start()
-	-- Resolve o backend fora do caminho do primeiro texto: carregar o vendor custa
-	-- alguns milissegundos, e eles não precisam cair em cima do primeiro aviso.
+	-- Resolves the backend off the first text's path: loading the vendor costs a few
+	-- milliseconds, and they do not need to land on top of the first warning.
 	self:getBackend()
 end
 

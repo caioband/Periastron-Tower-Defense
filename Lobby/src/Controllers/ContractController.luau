@@ -10,6 +10,7 @@ local Util = Shared:WaitForChild("Util")
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local SharedConfig = require(Configs.SharedConfig)
 local ButtonUtil = require(Util.ButtonUtil)
@@ -20,16 +21,17 @@ local ContractConfig = SharedConfig.ContractConfig
 local CrateConfig = SharedConfig.CrateConfig
 
 local Framework = Me.new()
+local log = Log.new("ContractController")
 
 local BOARD = ContractConfig.Board
 
 --[[ CONSTANTS ]]
 
 --[=[
-	O caminho da UI: `Contracts.Frame.MainBoard.ScrollingFrame`, com um par
-	cabecalho + frame por periodo. O cabecalho traz o `Timer`; o frame traz o
-	`TaskFrame` autorado, que e o **molde** das linhas daquela secao -- cada secao
-	tem a arte dela, entao o molde e por secao, e nao um so.
+	The UI path: `Contracts.Frame.MainBoard.ScrollingFrame`, with a header + frame pair per
+	period. The header carries the `Timer`; the frame carries the authored `TaskFrame`,
+	which is the **template** for that section's rows: each section has its own art, so
+	the template is per section, not a single one.
 ]=]
 local GUI = {
 	ScreenGui = "Contracts",
@@ -50,7 +52,7 @@ local GUI = {
 	Paper = "TaskPaper",
 	Rewards = "RewardsContainer",
 
-	-- O carimbo do `TaskPaper`, escondido ate o slot ser resgatado.
+	-- The `TaskPaper` stamp, hidden until the slot is claimed.
 	Claimed = "Claimed",
 
 	Coin = "CoinAmount",
@@ -58,18 +60,18 @@ local GUI = {
 	Shard = "ShardAmount",
 	ShardText = "ShardAmountText",
 
-	-- O texto generico das recompensas que nao sao coin nem shard (as caixas). Um
-	-- por caixa: o autorado leva a primeira, e clones dele levam as outras.
+	-- The generic text for rewards that are not coins or shards (the crates). One
+	-- per crate: the authored one takes the first, and clones of it take the others.
 	Other = "OtherReward",
 }
 
 --[=[
-	O botao da HUD que leva o jogador ate o quadro: `HUD.HUDLeft.Wrapper.Contracts`,
-	a coluna da esquerda. O nome e procurado em profundidade dentro da coluna, como
-	nas lojas, entao mexer nos wrappers no Studio nao quebra o bind.
+	The HUD button that takes the player to the board: `HUD.HUDLeft.Wrapper.Contracts`, in
+	the left column. The name is looked up by depth inside the column, as in the shops, so
+	changing the wrappers in Studio does not break the bind.
 
-	Aqui mora so o clique. O crescer e o afundar do botao sao do `HUDButtonController`,
-	que anima todo `GuiButton` das duas colunas.
+	Only the click lives here. The button's grow and sink belong to
+	`HUDButtonController`, which animates every `GuiButton` in both columns.
 ]=]
 local HUD_UI_NAME = "HUD"
 local HUD_FRAME_NAME = "HUDLeft"
@@ -87,34 +89,36 @@ local HIDE_REASON = "Contracts"
 local CLAIM_TEXT = "CLAIM"
 local CLAIMED_TEXT = "CLAIMED"
 
--- O botao de quem ainda nao pode resgatar (incompleto ou ja resgatado) fica meio
--- apagado, e nao escondido: a arte da linha foi desenhada com ele no lugar.
+-- The button for a slot that cannot be claimed yet (incomplete or already claimed) is
+-- dimmed, not hidden: the row's art was drawn with it in place.
 local DISABLED_TRANSPARENCY = 0.55
 
--- A arte do botao pronto para resgatar. Fora disso ele volta para a imagem autorada
--- no `ClaimButton` do molde.
+-- The art for a button ready to claim. Otherwise it returns to the authored image
+-- on the template's `ClaimButton`.
 local CLAIM_READY_IMAGE = "rbxassetid://87113976488534"
 
--- O som do resgate: o `Coins` da compra da loja, em `SoundService.BuySFX`.
+-- The claim sound: the shop purchase's `Coins`, in `SoundService.BuySFX`.
 local CLAIM_SOUND = "Coins"
 local CLAIM_SOUND_KEY = "ContractClaim"
 
 local TIMER_INTERVAL = 1
 
 --[=[
-	O quadro de contratos do lobby: `StarterGui.Contracts`.
+	The Lobby contract board: `StarterGui.Contracts`.
 
-	Abre quando o jogador chega na `Workspace.ContractsBoard.TargetPart` e fecha
-	quando ele sai -- o mesmo painel das lojas, pelo `ProximityPanel`.
+	It opens when the player reaches `Workspace.ContractsBoard.TargetPart` and closes when
+	they leave: the same panel as the shops, through `ProximityPanel`.
 
-	**Este controller nao decide nada.** Os contratos, o progresso e o "ja resgatado"
-	chegam pela replica do perfil (`Data.Contracts`), e o CLAIM manda so "o slot N do
-	periodo X". Quem sorteia, conta e paga e o `ContractService`; o botao acender aqui
-	e so a leitura do mesmo perfil, e o servidor confere de novo.
+	**This controller decides nothing.** Contracts, progress, and "already claimed" arrive
+	through the profile replica (`Data.Contracts`), and CLAIM only sends "slot N of period
+	X". `ContractService` draws, counts, and pays; the button lighting up here is only a
+	reading of the same profile, and the server checks again.
 
-	A contagem de cada secao sai da hora do servidor (`GetServerTimeNow`) e do
-	`ContractConfig`, e nao de um numero que o servidor mande: a virada e em hora
-	fixa, e as duas pontas chegam no mesmo instante sem combinar nada.
+	Each section's countdown comes from the server time (`GetServerTimeNow`) and
+	`ContractConfig`, not from a number the server sends: rollover is at a fixed hour, and
+	both ends reach the same instant without coordinating.
+
+	See docs/common/contracts.md.
 ]=]
 local ContractController = {
 	Controllers = {
@@ -122,8 +126,8 @@ local ContractController = {
 		InterfaceController = {},
 		MusicController = {},
 
-		-- O selo `New` do botao da HUD: quem o apaga e o quadro abrir. Ver o
-		-- `BeforeOpen` no `construct`.
+		-- The HUD button's `New` badge: the board opening clears it. See
+		-- `BeforeOpen` in `construct`.
 		HUDBadgeController = {},
 	},
 }
@@ -134,7 +138,7 @@ local function formatAmount(value : number) : string
 	return UIUtil.formatCommas(math.floor(value))
 end
 
---- O `Contracts` da replica, ou nil enquanto ela nao chegou.
+--- The replica's `Contracts`, or nil until it arrives.
 function ContractController:_contracts()
 	local replica = self.Replica
 	local data = replica and replica.Data
@@ -152,16 +156,16 @@ function ContractController:_board() : BasePart?
 
 	if not self.WarnedBoard then
 		self.WarnedBoard = true
-		warn(`[ContractController]: no {BOARD.Model}.{BOARD.Target} in Workspace -- the board never opens.`)
+		log:StudioWarn(`no {BOARD.Model}.{BOARD.Target} in Workspace -- the board never opens.`)
 	end
 
 	return nil
 end
 
 --[=[
-	Escreve as recompensas no `RewardsContainer` da linha. Coin e shard sao os dois
-	autorados, e somem quando o contrato nao paga aquela moeda; cada caixa e uma
-	linha de texto (`8x Fragmented Crate`), na ordem do `CrateConfig`.
+	Writes the rewards into the row's `RewardsContainer`. Coins and shards are the two
+	authored ones, and hide when the contract does not pay that currency; each crate is a
+	line of text (`8x Fragmented Crate`), in `CrateConfig` order.
 ]=]
 local function writeRewards(row : Instance, rewards)
 	local container = row:FindFirstChild(GUI.Rewards, true)
@@ -191,7 +195,7 @@ local function writeRewards(row : Instance, rewards)
 		end
 	end
 
-	-- Os clones de uma escrita anterior saem antes: a linha e reaproveitada.
+	-- The clones from a previous write leave first: the row is reused.
 	for _, child in container:GetChildren() do
 		if string.sub(child.Name, 1, #OTHER_CLONE_PREFIX) == OTHER_CLONE_PREFIX then
 			child:Destroy()
@@ -226,9 +230,9 @@ local function writeRewards(row : Instance, rewards)
 end
 
 --[=[
-	O botao conforme o slot: aceso, e com a arte de pronto (`CLAIM_READY_IMAGE`), so
-	quando da para resgatar. A imagem e a transparencia autoradas ficam guardadas na
-	primeira vez, para o botao voltar a elas.
+	The button according to the slot: lit, and with the ready art (`CLAIM_READY_IMAGE`),
+	only when it can be claimed. The authored image and transparency are stored the first
+	time, so the button can return to them.
 ]=]
 local function writeClaim(entry, complete : boolean, claimed : boolean)
 	local button = entry.Claim
@@ -255,9 +259,8 @@ local function writeClaim(entry, complete : boolean, claimed : boolean)
 end
 
 --[=[
-	Uma linha por slot. As linhas sao clones do molde da secao e sao reaproveitadas
-	entre escritas; as que sobram (um periodo com menos slots, que nao acontece hoje)
-	ficam escondidas.
+	One row per slot. Rows are clones of the section's template and are reused between
+	writes; leftovers (a period with fewer slots, which does not happen today) stay hidden.
 ]=]
 function ContractController:_renderSection(kind : string)
 	local section = self.Sections[kind]
@@ -280,8 +283,8 @@ function ContractController:_renderSection(kind : string)
 			local claim = row:FindFirstChild(GUI.Claim, true)
 			local claimLabel = claim and claim:FindFirstChildWhichIsA("TextLabel")
 
-			-- O carimbo mora no `TaskPaper`, mas a busca e pela linha inteira: cada
-			-- secao aninha o papel do jeito dela.
+			-- The stamp lives in `TaskPaper`, but the lookup covers the whole row: each
+			-- section nests the paper its own way.
 			local claimedFrame = row:FindFirstChild(GUI.Claimed, true)
 
 			entry = {
@@ -313,7 +316,7 @@ function ContractController:_renderSection(kind : string)
 				entry.Task.Text = ContractConfig.describe(definition, slot)
 			end
 
-			-- O slot traz a recompensa quando ela acompanha a dificuldade sorteada.
+			-- The slot carries the reward when it follows the drawn difficulty.
 			writeRewards(entry.Row, slot.Rewards or definition.Rewards or {})
 			writeClaim(entry, ContractConfig.isComplete(definition, slot), slot.Claimed == true)
 		end
@@ -343,8 +346,8 @@ function ContractController:_updateTimers()
 end
 
 --[=[
-	O pedido de resgate. So sai com o botao aceso, mas o servidor confere tudo de
-	novo -- o que chega aqui e um clique, e nao uma decisao.
+	The claim request. It only goes out with the button lit, but the server checks
+	everything again: what arrives here is a click, not a decision.
 ]=]
 function ContractController:_requestClaim(kind : string, index : number)
 	local contracts = self:_contracts()
@@ -359,13 +362,13 @@ function ContractController:_requestClaim(kind : string, index : number)
 end
 
 --[=[
-	Abre o prompt do reroll da aba, no produto que a contagem do perfil manda
+	Opens the tab's reroll prompt, on the product the profile's count calls for
 	(`ContractConfig.rerollProduct`).
 
-	O cliente **abre** a compra e nao credita nada: quem rerola e o recibo, no
-	`ContractService`, e a aba nova chega pela replica. Cancelar o prompt nao faz nada.
-	Sem debounce, como o reroll da loja de cartas: `PromptProductPurchase` nao empilha
-	janelas.
+	The client **opens** the purchase and credits nothing: the receipt rerolls, in
+	`ContractService`, and the new tab arrives through the replica. Canceling the prompt
+	does nothing. No debounce, like the card shop reroll: `PromptProductPurchase` does not
+	stack windows.
 ]=]
 function ContractController:_promptReroll(kind : string)
 	local contracts = self:_contracts()
@@ -379,15 +382,15 @@ function ContractController:_promptReroll(kind : string)
 end
 
 --[=[
-	O conteudo numa copia nova da `Contracts`: acha as tres secoes e tira o molde de
-	cada uma da tela. O painel em si (moldura, animacao, borrao, proximidade) e do
-	`ProximityPanel`.
+	The content on a new copy of `Contracts`: finds the three sections and takes each one's
+	template off the screen. The panel itself (frame, animation, blur, proximity) belongs
+	to `ProximityPanel`.
 ]=]
 function ContractController:_onBind(panel : GuiObject)
 	local list = panel:WaitForChild(GUI.List, 10)
 
 	if not list then
-		warn(`[ContractController]: could not find {GUI.ScreenGui}.{GUI.Wrapper}.{GUI.Panel}.{GUI.List}.`)
+		log:StudioWarn(`could not find {GUI.ScreenGui}.{GUI.Wrapper}.{GUI.Panel}.{GUI.List}.`)
 		return
 	end
 
@@ -400,16 +403,16 @@ function ContractController:_onBind(panel : GuiObject)
 		local template = frame and frame:FindFirstChild(GUI.Template)
 
 		if not template then
-			warn(`[ContractController]: no {names.Frame}.{GUI.Template} in {GUI.List} -- the {kind} section stays empty.`)
+			log:StudioWarn(`no {names.Frame}.{GUI.Template} in {GUI.List} -- the {kind} section stays empty.`)
 		else
-			-- O molde sai da tela e fica so como fonte das linhas.
+			-- The template leaves the screen and stays only as the source for rows.
 			template.Parent = nil
 		end
 
 		local timer = header and header:FindFirstChild(GUI.Timer)
 
-		-- O dado de reroll do cabecalho. O clique vive no `RowMaid`, como os das
-		-- linhas: uma copia nova da `Contracts` liga os botoes dela.
+		-- The header's reroll die. The click lives in `RowMaid`, like the rows':
+		-- a new copy of `Contracts` hooks up its own buttons.
 		local reroll = header and header:FindFirstChild(ContractConfig.Reroll.Button)
 		if reroll and reroll:IsA("GuiButton") then
 			self.RowMaid:GiveTask(reroll.Activated:Connect(function()
@@ -418,7 +421,7 @@ function ContractController:_onBind(panel : GuiObject)
 
 			ButtonUtil.bindFeedback(reroll, self.RowMaid)
 		elseif header then
-			warn(`[ContractController]: no {ContractConfig.Reroll.Button} in {names.Header} -- the {kind} reroll does nothing.`)
+			log:StudioWarn(`no {ContractConfig.Reroll.Button} in {names.Header} -- the {kind} reroll does nothing.`)
 		end
 
 		self.Sections[kind] = {
@@ -434,11 +437,11 @@ function ContractController:_onBind(panel : GuiObject)
 end
 
 --[=[
-	Liga o botao da HUD, que leva o jogador ate o quadro.
+	Hooks up the HUD button that takes the player to the board.
 
-	Maid proprio: a `HUD` e a `Contracts` sao `ScreenGui` diferentes e a engine as
-	refaz em momentos diferentes (a HUD a cada respawn), entao o bind de uma nao pode
-	desconectar o da outra -- a `Contracts` e seguida pelo `ProximityPanel`.
+	Its own maid: `HUD` and `Contracts` are different `ScreenGui`s and the engine rebuilds
+	them at different times (the HUD on every respawn), so one's bind must not disconnect
+	the other's; `ProximityPanel` follows `Contracts`.
 ]=]
 function ContractController:_bindHud(screenGui : ScreenGui)
 	local hudFrame = screenGui:WaitForChild(HUD_FRAME_NAME, WAIT_TIMEOUT)
@@ -447,7 +450,7 @@ function ContractController:_bindHud(screenGui : ScreenGui)
 	if not button or not button:IsA("GuiButton") then
 		if not self.WarnedButton then
 			self.WarnedButton = true
-			warn(`[ContractController]: nao achei {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
+			log:StudioWarn(`could not find {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
 		end
 
 		return
@@ -459,7 +462,7 @@ function ContractController:_bindHud(screenGui : ScreenGui)
 	end))
 end
 
---- A HUD, pelo botao que leva ate o quadro.
+--- The HUD, through the button that goes to the board.
 function ContractController:_observeUI()
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
@@ -535,15 +538,15 @@ function ContractController:Toggle()
 end
 
 --[=[
-	Larga o jogador em cima da `TargetPart` do quadro.
+	Drops the player on the board's `TargetPart`.
 
-	O cliente e dono do proprio personagem, entao mover aqui basta: o servidor ve a
-	posicao nova pela replicacao de sempre.
+	The client owns its own character, so moving it here is enough: the server sees the
+	new position through the usual replication.
 
-	O pouso e **dentro** do raio, porque a peca do pouso e a propria referencia. Ainda
-	assim a abertura e na mao, pelo `EnterRange`: a medida so roda a cada
-	`ProximityInterval`, e assim o quadro abre junto com o teleporte -- com a entrada
-	marcada, para andar embora fechar do mesmo jeito.
+	The landing is **inside** the radius, because the landing part is the reference itself.
+	Even so the opening is done by hand, through `EnterRange`: the measurement only runs
+	every `ProximityInterval`, and this way the board opens with the teleport, with the
+	entry marked, so walking away closes it the same way.
 ]=]
 function ContractController:TeleportToBoard() : boolean
 	local character = Players.LocalPlayer.Character
@@ -560,7 +563,7 @@ function ContractController:TeleportToBoard() : boolean
 
 	character:PivotTo(target.CFrame * CFrame.new(0, target.Size.Y / 2 + BOARD.TeleportHeightOffset, 0))
 
-	-- Sem isto o jogador mantem a velocidade que tinha e escorrega para fora do quadro.
+	-- Without this the player keeps the velocity they had and slides off the board.
 	root.AssemblyLinearVelocity = Vector3.zero
 
 	if self.Proximity then
@@ -578,7 +581,7 @@ function ContractController:construct()
 				music:PlaySFX(CLAIM_SOUND, { Key = CLAIM_SOUND_KEY })
 			end
 		elseif reason then
-			warn(`[ContractController]: claim refused ({reason}).`)
+			log:Debug(`claim refused ({reason}).`)
 		end
 	end)
 
@@ -611,9 +614,9 @@ function ContractController:construct()
 			self:_updateTimers()
 
 			--[[
-				O quadro foi lido: o selo de "os contratos resetaram" se encerra aqui. O de
-				claim pendente **nao** -- aquele sai quando o contrato for claimado, e quem o
-				apaga e o proprio perfil.
+				The board was read: the "contracts reset" badge ends here. The pending-claim one
+				does **not**: that one goes away when the contract is claimed, and the profile
+				itself clears it.
 			]]
 			local badges = self.Controllers.HUDBadgeController
 			if badges then
@@ -644,14 +647,14 @@ end
 function ContractController:init()
 	self.Maid = Maid.new()
 
-	-- As linhas desenhadas e os cliques delas, por copia da `Contracts`.
+	-- The drawn rows and their clicks, per copy of `Contracts`.
 	self.RowMaid = Maid.new()
 	self.Maid:GiveTask(self.RowMaid)
 
 	-- [kind] = { Frame, Template, Timer, Rows = { { Row, Task, Claim, ... } } }
 	self.Sections = {}
 
-	-- O clique do botao da HUD, que a engine refaz a cada respawn.
+	-- The HUD button's click, which the engine rebuilds on every respawn.
 	self.HudMaid = Maid.new()
 	self.Maid:GiveTask(self.HudMaid)
 

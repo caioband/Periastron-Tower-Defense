@@ -11,13 +11,15 @@ local SharedConfig = require(Configs.SharedConfig)
 local GameClock = require(Shared:WaitForChild("Util"):WaitForChild("GameClock"))
 
 --[[
-	Modulo de VFX de terceiros (ReplicatedStorage.vfx). Ele mesmo se recusa a rodar
-	fora do cliente, e e quem sabe montar o raio a partir dos atributos do asset.
+	Third-party VFX module (ReplicatedStorage.vfx). It refuses to run outside the client
+	on its own, and it knows how to build the bolt from the asset's attributes.
 ]]
 local VFX = require(ReplicatedStorage:WaitForChild("vfx"))
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local Framework = Me.new()
+local log = Log.new("VFXController")
 
 local WeatherConfig = SharedConfig.WeatherConfig
 local ThunderConfig = WeatherConfig.Thunder
@@ -26,20 +28,20 @@ local RoundCardConfig = SharedConfig.RoundCardConfig
 local DEFAULT_LIFETIME = 2
 local DEFAULT_EMIT_COUNT = 25
 
--- O dinheirinho da aura do Entrepreneur: o asset em `Assets.VFX` e a Part da
--- unidade onde ele e pendurado.
+-- The Entrepreneur aura's little money burst: the asset in `Assets.VFX` and the
+-- unit Part it hangs on.
 local MONEY_VFX_NAME = "MoneyEntrepreneur"
 local UNIT_ROOT_NAME = "HumanoidRootPart"
 
--- Prazo de faxina de quando o proprio modulo nao souber dizer quanto o efeito
--- dura (asset sem particula, ou com `EmitDuration` infinito).
+-- Cleanup deadline for when the module itself cannot say how long the effect lasts
+-- (an asset with no particles, or with an infinite `EmitDuration`).
 local MONEY_VFX_FALLBACK = 3
 
--- Os estados desenhados num modelo inteiro (`playModelStatus`): o congelamento --
--- do Frostione nos inimigos e do clima nas unidades --, a queimadura do Pyre e o
--- sangramento do Slasher e do Berserker. O asset em `Assets.VFX`, o nome do Highlight dele depois
--- de mudar para o modelo, e a faxina de quando o modulo `vfx` nao souber dizer
--- quanto as particulas duram.
+-- States drawn over a whole model (`playModelStatus`): the freeze (the
+-- Frostione's on enemies and weather's on units), the Pyre's burn, and the
+-- Slasher's and Berserker's bleed. The asset in `Assets.VFX`, its Highlight's name after
+-- moving to the model, and the cleanup for when the `vfx` module cannot say
+-- how long the particles last.
 local ICED_VFX_NAME = "IcedVFX"
 local ICED_HIGHLIGHT_NAME = "IcedHighlight"
 local BURNING_VFX_NAME = "BurningVFX"
@@ -49,29 +51,28 @@ local BLEED_HIGHLIGHT_NAME = "BleedHighlight"
 local STATUS_VFX_FALLBACK = 2
 
 --[=[
-	O impacto da ponta do raio do Electro, bem mais baixo que o do raio do clima.
+	The impact at the tip of the Electro's bolt, much smaller than the weather bolt's.
 
-	O asset e o mesmo (`LightningBeam`), e e no Attachment da **ponta** dele que o
-	addon guarda o que acontece onde o raio bate: a tag `CraterVFX` com `Count = 40`
-	de detritos, mais os atributos `CameraShake` e `ImpactFrames`. Autorado assim, ele
-	e um raio caindo do ceu -- e e isso que o clima quer.
+	The asset is the same (`LightningBeam`), and the addon keeps what happens where the
+	bolt lands in the **tip** Attachment: the `CraterVFX` tag with `Count = 40` of
+	debris, plus the `CameraShake` and `ImpactFrames` attributes. Authored that way, it
+	is a bolt falling from the sky, which is what the weather wants.
 
-	O `Size` daqui e pouco mais da metade do autorado (1,8 contra 3 de comprimento), e
-	nao um terco como na primeira versao: com detrito miudo demais a marca no chao
-	sumia no meio da wave e o raio parecia nao ter encostado em nada.
+	The `Size` here is a bit more than half the authored one (1.8 against 3 in length),
+	not a third: with debris too small, the mark on the ground vanished mid-wave and the
+	bolt looked like it touched nothing.
 
-	Numa corrente aquilo sai **por elo**: quatro pontas no mesmo quadro sao quatro
-	tremores de camera, quatro impact frames e 160 detritos a cada golpe. O golpe de
-	uma torre nao pode sequestrar a tela do jogador desse jeito, ainda mais um que se
-	repete a partida inteira. A cratera fica, pequena: ela e o que marca no chao onde
-	o raio encostou.
+	In a chain that happens **per link**: four tips on the same frame are four camera
+	shakes, four impact frames, and 160 pieces of debris per hit. A tower's hit must not
+	hijack the player's screen like that, least of all one that repeats the whole match.
+	The crater stays, small: it marks where the bolt touched the ground.
 
-	O raio do trovao continua com tudo, e nao passa por aqui -- ele cai uma vez a cada
-	cinco segundos e e um acontecimento da wave, nao um ataque.
+	The thunder bolt keeps everything and does not go through here: it falls once every
+	five seconds and is a wave event, not an attack.
 
-	`Clear` **apaga** o atributo em vez de zera-lo porque e assim que o addon desliga:
-	ele le `attrs.X` e sai fora quando nao acha nada (`if not attr then return end`).
-	Um zero ali continuaria ligando o efeito, so que com numero zerado.
+	`Clear` **removes** the attribute instead of zeroing it because that is how the addon
+	turns off: it reads `attrs.X` and bails out when it finds nothing (`if not attr then
+	return end`). A zero there would still turn the effect on, just with a zeroed number.
 ]=]
 local CHAIN_IMPACT = {
 	Attributes = {
@@ -89,8 +90,8 @@ local VFXController = {
 		UnitPlacementController = {},
 		WeatherController = {},
 
-		-- De onde saem os modelos dos inimigos, para o raio do Electro terminar em
-		-- cada um deles. Ver `mobPoint`.
+		-- Where the enemy models come from, so the Electro's bolt ends on each one of
+		-- them. See `mobPoint`.
 		MobController = {}
 	}
 }
@@ -192,7 +193,7 @@ function VFXController:Trigger(unitName, eventName, context)
 	for _, entry in config do
 		if entry.Event ~= eventName then continue end
 
-		-- O asset vai para dentro do inimigo, soldado nele, e estoura uma vez so. Ver
+		-- The asset goes inside the enemy, welded to it, and bursts once. See
 		-- `attachToMob`.
 		if entry.Target == "MobRoot" then
 			local mob = context.mobModel
@@ -223,23 +224,23 @@ function VFXController:Trigger(unitName, eventName, context)
 end
 
 --[=[
-	O dinheiro saindo da unidade que acabou de render a mais dentro da aura de um
-	Entrepreneur. Quem manda e o `UnitService`, no servidor -- a caixa e dele, e
-	assim todo mundo ve o efeito na mesma unidade.
+	Money coming out of the unit that just earned extra inside an Entrepreneur's aura.
+	`UnitService` sends it, on the server: the cash is its business, and this way
+	everyone sees the effect on the same unit.
 
-	O asset e um Attachment, entao ele mora dentro de uma BasePart: a
-	`HumanoidRootPart` da unidade. E isso que faz o efeito acompanhar o modelo sem
-	weld nenhum, ao contrario do `Play`, que solta o clone no Workspace.
+	The asset is an Attachment, so it lives inside a BasePart: the unit's
+	`HumanoidRootPart`. That is what makes the effect follow the model with no weld,
+	unlike `Play`, which drops the clone in the Workspace.
 
-	O emit e do modulo `vfx`: os `EmitCount`/`EmitDelay` vem autorados no
-	ParticleEmitter do asset e e ele quem sabe le-los. A faxina tambem -- sem prazo
-	explicito, o modulo tira do maior tempo de vida das particulas do proprio
-	asset, entao mexer no emitter no Studio nao deixa lixo para tras.
+	The emit belongs to the `vfx` module: `EmitCount`/`EmitDelay` come authored on the
+	asset's ParticleEmitter and it knows how to read them. The cleanup too: with no
+	explicit deadline, the module takes it from the asset's longest particle lifetime, so
+	tweaking the emitter in Studio leaves no garbage behind.
 ]=]
 function VFXController:PlayAuraBonus(unitId : string)
 	local template = self.Library[MONEY_VFX_NAME]
 	if not template then
-		warn(`[VFXController]: nao achei o VFX "{MONEY_VFX_NAME}" em Assets.VFX.`)
+		log:StudioWarn(`could not find VFX "{MONEY_VFX_NAME}" in Assets.VFX.`)
 		return
 	end
 
@@ -257,11 +258,11 @@ function VFXController:PlayAuraBonus(unitId : string)
 end
 
 --[=[
-	Baixa o impacto da ponta de um raio: cratera menor, sem impact frame e sem tremor
-	de camera. Ver o `CHAIN_IMPACT`.
+	Tones down a bolt tip's impact: smaller crater, no impact frame, and no camera shake.
+	See `CHAIN_IMPACT`.
 
-	Mexe no **clone**, e nunca no asset -- o raio do clima sai do mesmo template e tem
-	de continuar chegando inteiro.
+	It changes the **clone**, never the asset: the weather bolt comes from the same
+	template and must keep arriving whole.
 ]=]
 local function tuneBeamImpact(tip : Instance, impact)
 	for name, value in impact.Attributes do
@@ -280,20 +281,20 @@ local function disarmPart(part : BasePart)
 end
 
 --[=[
-	Pendura um asset de VFX dentro da `HumanoidRootPart` da unidade, pronto para
-	tocar. Devolve o clone.
+	Hangs a VFX asset inside the unit's `HumanoidRootPart`, ready to play. Returns the
+	clone.
 
-	Duas coisas que parentear sozinho nao resolve:
+	Two things parenting alone does not solve:
 
-	**Posicionar.** Part filha de Part nao herda posicao — a do asset e a de quando
-	ele foi autorado, do outro lado do mapa. O `PlayAuraBonus` nao precisa disto
-	porque o asset dele e um Attachment, que herda.
+	**Positioning.** A Part child of a Part does not inherit position: the asset's is
+	the one from when it was authored, across the map. `PlayAuraBonus` does not need this
+	because its asset is an Attachment, which inherits.
 
-	**Desarmar.** Os assets vem do plugin com `CanCollide`, `CanQuery` e `CanTouch`
-	ligados (o `FrozenVFX` vem assim). Dentro de uma unidade isso vira uma caixa
-	invisivel que empurra quem passa e, pior, aparece nos `GetPartsInPart` do
-	posicionamento — recusando um lugar vazio para todo mundo que tentar construir
-	do lado. Nao da para depender de o asset vir certo do Studio.
+	**Disarming.** Assets come from the plugin with `CanCollide`, `CanQuery`, and
+	`CanTouch` on (`FrozenVFX` comes like that). Inside a unit that becomes an invisible
+	box pushing whoever passes and, worse, showing up in placement's `GetPartsInPart`,
+	refusing an empty spot for anyone trying to build next to it. We cannot rely on the
+	asset coming right from Studio.
 ]=]
 local function attachVFX(template : Instance, root : BasePart) : Instance
 	local clone = template:Clone()
@@ -304,15 +305,15 @@ local function attachVFX(template : Instance, root : BasePart) : Instance
 		disarmPart(clone)
 	elseif clone:IsA("Attachment") then
 		--[[
-			**Zerar o deslocamento.** Attachment herda a posicao do pai, mas nao zera a
-			propria: a que vem autorada e onde o asset estava no mapa quando o plugin o
-			salvou. O `PlayerStopTime` veio com Y = 22,25 -- a altura do lugar onde ele
-			foi montado --, e pendurado no jogador isso punha as particulas 22 studs
-			acima da cabeca dele: o efeito tocava, so que fora da tela.
+			**Zeroing the offset.** An Attachment inherits its parent's position, but does
+			not zero its own: the authored one is where the asset was on the map when the
+			plugin saved it. `PlayerStopTime` came with Y = 22.25 (the height where it was
+			built), and hung on the player that put the particles 22 studs above their head:
+			the effect played, just off screen.
 
-			A rotacao fica, que essa o autor escolhe de verdade (e dela sai a direcao
-			das particulas); o deslocamento some, que e resto de montagem. O
-			`MoneyEntrepreneur` nunca precisou disto so porque veio salvo em 0, 0, 0.
+			Rotation stays, since the author really chooses it (the particle direction
+			comes from it); the offset goes, since it is assembly leftover.
+			`MoneyEntrepreneur` never needed this only because it was saved at 0, 0, 0.
 		]]
 		clone.CFrame = clone.CFrame.Rotation
 	end
@@ -327,20 +328,19 @@ local function attachVFX(template : Instance, root : BasePart) : Instance
 end
 
 --[=[
-	Pendura um asset de `Assets.VFX` numa Part e devolve o clone, **sem estourar**.
+	Hangs an `Assets.VFX` asset on a Part and returns the clone, **without bursting**.
 
-	E a metade da frente do `EmitAttached`, separada porque nem todo efeito nasce
-	e estoura no mesmo instante: o da carta de round e pendurado no jogador na hora
-	em que ela e usada e so estoura quando a animacao chega no marcador. Quem separa
-	os dois fica devendo o `EmitAttached` -- ou a destruicao do clone, se o estouro
-	nunca vier.
+	It is the front half of `EmitAttached`, split because not every effect is born and
+	bursts at the same instant: a round card's is hung on the player when the card is
+	used and only bursts when the animation reaches the marker. Callers that split the
+	two owe the `EmitAttached`, or destroying the clone if the burst never comes.
 ]=]
 function VFXController:AttachAsset(assetName : string?, root : BasePart) : Instance?
 	if not assetName then return nil end
 
 	local template = self.Library[assetName]
 	if not template then
-		warn(`[VFXController]: nao achei o VFX "{assetName}" em Assets.VFX.`)
+		log:StudioWarn(`could not find VFX "{assetName}" in Assets.VFX.`)
 		return nil
 	end
 
@@ -348,12 +348,12 @@ function VFXController:AttachAsset(assetName : string?, root : BasePart) : Insta
 end
 
 --[=[
-	O estouro de um asset ja pendurado.
+	The burst of an asset already hung.
 
-	Um `emit` so, que e o que emissor de rajada pede. A faxina sai do maior tempo de
-	vida das particulas do proprio asset -- `fallback` so entra quando o modulo nao
-	sabe dizer (asset sem particula, ou com `EmitDuration` infinito) --, entao mexer
-	no emitter no Studio nao deixa lixo para tras.
+	A single `emit`, which is what a burst emitter asks for. Cleanup comes from the
+	asset's longest particle lifetime (`fallback` only applies when the module cannot say:
+	an asset with no particles, or with an infinite `EmitDuration`), so tweaking the
+	emitter in Studio leaves no garbage behind.
 ]=]
 function VFXController:EmitAttached(clone : Instance?, fallback : number?)
 	if not clone or not clone.Parent then return end
@@ -363,17 +363,17 @@ function VFXController:EmitAttached(clone : Instance?, fallback : number?)
 end
 
 --[=[
-	O congelamento de clima na unidade que acabou de travar: o mesmo `IcedVFX` do
-	congelamento do Frostione nos inimigos, pelo `playModelStatus` -- particulas
-	soldadas no `Torso` e o Highlight dele na raiz do modelo da unidade.
+	The weather freeze on the unit that just locked up: the same `IcedVFX` as the
+	Frostione's freeze on enemies, through `playModelStatus`: particles welded to the
+	`Torso` and its Highlight on the unit model's root.
 
-	Nada aqui e escrito em cima do nome "Snow": o asset sai do `Freeze` do clima que
-	o servidor mandou como causa do atordoamento. Clima sem `Freeze` (o raio) e
-	atordoamento sem clima nenhum (o gimmick de mob) caem fora sozinhos, e ficam so
-	com o realce amarelo que o `UnitPlacementController` desenha.
+	Nothing here is written against the name "Snow": the asset comes from the `Freeze`
+	of the weather the server sent as the stun's cause. A weather without `Freeze`
+	(lightning) and a stun with no weather at all (the enemy gimmick) drop out on their
+	own, keeping only the yellow highlight `UnitPlacementController` draws.
 
-	`duration` e o que o servidor de fato aplicou, e nao o `Freeze.Duration` do
-	config: o prazo maior manda em `UnitService:StunUnit`.
+	`duration` is what the server actually applied, not the config's `Freeze.Duration`:
+	the longer deadline wins in `UnitService:StunUnit`.
 ]=]
 function VFXController:PlayFreeze(unitId : string, weatherName : string?, duration : number?)
 	local effects = WeatherConfig.GetEffects(weatherName)
@@ -387,15 +387,14 @@ function VFXController:PlayFreeze(unitId : string, weatherName : string?, durati
 end
 
 --[=[
-	Apaga o congelamento de uma unidade antes da hora dele.
+	Removes a unit's freeze before its time.
 
-	E o Staff of Healing: ele tira o atordoamento no meio, e o desenho tem prazo
-	proprio -- um `GameClock.Delay` que nasceu junto com ele e nao tem como saber que
-	o congelamento acabou mais cedo. Sem isto a unidade voltaria a atacar ainda
-	coberta de gelo.
+	It is the Staff of Healing: it removes the stun midway, and the drawing has its own
+	deadline, a `GameClock.Delay` created with it that cannot know the freeze ended
+	early. Without this, the unit would start attacking again still covered in ice.
 
-	Os nomes saem do config: um clima novo com `Freeze` proprio entra nesta limpeza
-	sem passar por aqui.
+	The names come from config: a new weather with its own `Freeze` enters this cleanup
+	without going through here.
 ]=]
 function VFXController:StopFreeze(unitId : string)
 	local model = self:resolveUnitModel(unitId)
@@ -410,17 +409,17 @@ function VFXController:StopFreeze(unitId : string)
 end
 
 --[=[
-	O estouro de uma carta de round de alvo unico encostando numa torre.
+	The burst of a single-target round card touching a tower.
 
-	Quem manda e o `CardShopService`, no servidor, e ele manda para **todos**: a carta
-	e comprada por uma pessoa, mas o efeito e da sala, e o estouro tem que aparecer na
-	mesma torre para todo mundo -- como o raio e o dinheiro da aura.
+	`CardShopService` sends it, on the server, and to **everyone**: the card is bought by
+	one person, but the effect belongs to the room, and the burst must appear on the same
+	tower for everyone, like lightning and aura money.
 
-	O caminho e o mesmo do estouro do congelamento: o asset e pendurado dentro da
-	`HumanoidRootPart` da torre (e por isso ele acompanha o modelo sem weld nenhum) e
-	estourado de uma vez. Os `EmitCount` de cada emissor vem autorados no asset, e a
-	faxina sai do maior tempo de vida das particulas dele -- mexer no emitter no
-	Studio nao deixa lixo para tras.
+	The path is the same as the freeze burst: the asset is hung inside the tower's
+	`HumanoidRootPart` (which is why it follows the model with no weld) and burst at
+	once. Each emitter's `EmitCount` comes authored in the asset, and cleanup comes from
+	its longest particle lifetime: tweaking the emitter in Studio leaves no garbage
+	behind.
 ]=]
 function VFXController:PlayUnitApplied(unitId : string)
 	local model = self:resolveUnitModel(unitId)
@@ -444,9 +443,9 @@ function VFXController:resolveUnitModel(unitId)
 end
 
 --[=[
-	Pe da unidade: o centro da base da caixa dela.
+	The unit's feet: the center of the bottom of its box.
 
-	`GetPivot` devolveria o meio do corpo, e o raio tem que bater no chao.
+	`GetPivot` would return the middle of the body, and the bolt must hit the ground.
 ]=]
 local function footOf(model : Model) : Vector3
 	local cf, size = model:GetBoundingBox()
@@ -454,11 +453,11 @@ local function footOf(model : Model) : Vector3
 end
 
 --[=[
-	De onde o raio desce.
+	Where the bolt comes down from.
 
-	O certo e sair da propria nuvem, entao a altura vem da Part do clima que o
-	`WeatherService` deixou em `workspace.Weather`. Sem clima ligado (o raio pode
-	ser disparado por outra coisa um dia), cai para uma altura fixa acima do pe.
+	It should come from the cloud itself, so the height comes from the weather Part
+	`WeatherService` left in `workspace.Weather`. With no weather on (the bolt may be
+	fired by something else someday), it falls back to a fixed height above the feet.
 ]=]
 local function strikeOrigin(foot : Vector3) : Vector3
 	local container = Workspace:FindFirstChild("Weather")
@@ -469,60 +468,60 @@ local function strikeOrigin(foot : Vector3) : Vector3
 end
 
 --[=[
-	Um arco entre dois pontos do mundo. Devolve o Attachment da ponta, para quem
-	chamou poder pendurar som nele.
+	An arc between two world points. Returns the tip Attachment, so the caller can hang
+	a sound on it.
 
-	O asset e um Attachment (o comeco do raio) com um Attachment filho de letra
-	unica (o fim). Posicionar os dois pelo `WorldPosition` e o suficiente: a posicao
-	relativa do filho se recalcula sozinha, e como nenhum dos dois tem BasePart de
-	ancestral, o mundo e o proprio referencial.
+	The asset is an Attachment (the bolt's start) with a single-letter child Attachment
+	(the end). Positioning both by `WorldPosition` is enough: the child's relative
+	position recomputes on its own, and since neither has a BasePart ancestor, the world
+	is the reference frame.
 
-	Vale tanto para o raio que desce da nuvem quanto para o salto de uma unidade
-	para outra — a unica diferenca entre os dois e onde ficam as pontas.
+	It works both for the bolt coming down from the cloud and for the jump from one unit
+	to another; the only difference between the two is where the ends are.
 
-	`impact` e opcional e so o raio do Electro manda um (`CHAIN_IMPACT`): sem ele, a
-	ponta chega com o que veio autorado no asset, que e o raio cheio do clima.
+	`impact` is optional and only the Electro's bolt sends one (`CHAIN_IMPACT`): without
+	it, the tip arrives with what was authored on the asset, the weather's full bolt.
 ]=]
 function VFXController:spawnBeam(from : Vector3, to : Vector3, impact : { [string] : any }?) : Attachment?
 	local asset = self.Library[ThunderConfig.Asset]
 	if not asset then
-		warn(`[VFXController]: nao achei o VFX "{ThunderConfig.Asset}" em Assets.VFX.`)
+		log:StudioWarn(`could not find VFX "{ThunderConfig.Asset}" in Assets.VFX.`)
 		return nil
 	end
 
 	local beam = asset:Clone()
 	local tip = beam:FindFirstChildWhichIsA("Attachment")
 	if not tip then
-		warn(`[VFXController]: "{ThunderConfig.Asset}" nao tem o Attachment filho que marca o fim do raio.`)
+		log:StudioWarn(`"{ThunderConfig.Asset}" has no child Attachment marking the end of the bolt.`)
 		beam:Destroy()
 		return nil
 	end
 
-	-- Antes do emit, e no clone: o addon le os atributos da ponta na hora em que ela
-	-- e emitida, entao mudar depois nao mudaria nada.
+	-- Before the emit, and on the clone: the addon reads the tip's attributes when it
+	-- is emitted, so changing them afterward would change nothing.
 	if impact then
 		tuneBeamImpact(tip, impact)
 	end
 
-	-- Precisa estar no DataModel antes do emit: o modulo ignora o que esta solto.
+	-- It must be in the DataModel before the emit: the module ignores what is loose.
 	beam.Parent = VFX.temp
 
 	beam.WorldPosition = from
 	tip.WorldPosition = to
 
 	--[[
-		O asset vem com `EmitRepeat = -1`, que e como o plugin marca a previa em
-		loop. Na pratica o `emit` trata -1 como "nao repete", mas depender disso e
-		fragil — aqui o tiro unico e dito na mao, e o resto dos atributos autorados
-		segue valendo.
+		The asset comes with `EmitRepeat = -1`, which is how the plugin marks the looping
+		preview. In practice `emit` treats -1 as "do not repeat", but relying on that is
+		fragile: here the single shot is stated by hand, and the rest of the authored
+		attributes still apply.
 	]]
 	local attrs = beam:GetAttributes()
 	attrs.EmitRepeat = 0
 
 	VFX.emit(beam, attrs)
 
-	-- O asset nao tem ParticleEmitter proprio (o addon cria os dele em runtime),
-	-- entao o `maxLifetime` do modulo daria zero: a vida sai do `Duration` dele.
+	-- The asset has no ParticleEmitter of its own (the addon creates its own at runtime),
+	-- so the module's `maxLifetime` would give zero: the lifetime comes from its `Duration`.
 	local duration = VFX.num(beam:GetAttribute("Duration"), 5)
 	VFX.destroyAfter(beam, duration + ThunderConfig.Cleanup)
 
@@ -530,12 +529,12 @@ function VFXController:spawnBeam(from : Vector3, to : Vector3, impact : { [strin
 end
 
 --[=[
-	Raio caindo num ponto do mapa.
+	A bolt falling on a point on the map.
 
-	`unitId` e opcional: vindo, o pe do modelo manda, porque o servidor so conhece o
-	CFrame de posicionamento e o cliente mede a caixa real da unidade. A `position`
-	e o alvo quando o raio cai no chao, e o fallback de quando a unidade ainda nao
-	replicou.
+	`unitId` is optional: when present, the model's feet rule, because the server only
+	knows the placement CFrame and the client measures the unit's real box. `position`
+	is the target when the bolt hits the ground, and the fallback for when the unit has
+	not replicated yet.
 ]=]
 function VFXController:PlayLightningStrike(position : Vector3, unitId : string?)
 	if typeof(position) ~= "Vector3" then return end
@@ -552,9 +551,9 @@ function VFXController:PlayLightningStrike(position : Vector3, unitId : string?)
 	if not tip then return end
 
 	--[[
-		Depois de posicionar, nunca antes: o Sound vira filho do Attachment da ponta,
-		entao ele sai de onde o raio bateu. O clone do som morre junto com o beam, e o
-		beam so e destruido bem depois de o estouro acabar.
+		After positioning, never before: the Sound becomes a child of the tip Attachment,
+		so it comes from where the bolt hit. The sound clone dies with the beam, and the
+		beam is only destroyed well after the crack ends.
 	]]
 	local weather = self.Controllers.WeatherController
 	if weather then
@@ -563,8 +562,8 @@ function VFXController:PlayLightningStrike(position : Vector3, unitId : string?)
 end
 
 --[=[
-	Meio do corpo da unidade, ou a posicao que o servidor mandou quando o modelo
-	ainda nao chegou.
+	The middle of the unit's body, or the position the server sent when the model has
+	not arrived yet.
 ]=]
 function VFXController:chainPoint(unitId : string?, fallback : Vector3?) : Vector3?
 	if unitId then
@@ -578,15 +577,15 @@ function VFXController:chainPoint(unitId : string?, fallback : Vector3?) : Vecto
 end
 
 --[=[
-	O salto do raio de uma unidade para outra.
+	The bolt's jump from one unit to another.
 
-	Cada link vem do `ThunderService` com o par de unidades e o par de posicoes. O
-	modelo manda quando ele ja replicou — a posicao do servidor e o CFrame de
-	posicionamento, que fica no pe da unidade, e um arco horizontal saindo do chao
-	parece um risco no piso. Sem modelo, a posicao serve de reserva.
+	Each link comes from `ThunderService` with the pair of units and the pair of
+	positions. The model rules when it has already replicated: the server's position is
+	the placement CFrame, at the unit's feet, and a horizontal arc coming off the ground
+	looks like a scratch on the floor. Without a model, the position is the backup.
 
-	Sem estouro proprio de proposito: o do raio principal ja esta tocando, e um
-	clone por arco encheria de trovao sobreposto uma coisa que dura meio segundo.
+	No crack of its own on purpose: the main bolt's is already playing, and a clone per
+	arc would fill something that lasts half a second with overlapping thunder.
 ]=]
 function VFXController:PlayLightningChain(links)
 	if typeof(links) ~= "table" then return end
@@ -602,17 +601,16 @@ function VFXController:PlayLightningChain(links)
 end
 
 --[=[
-	Meio do corpo de um inimigo, ou a posicao que o servidor mandou quando o modelo
-	nao esta mais la.
+	The middle of an enemy's body, or the position the server sent when the model is no
+	longer there.
 
-	O par do `chainPoint`, que faz o mesmo com unidades -- e separado dele porque as
-	duas coisas vivem em controllers diferentes: unidade e do
-	`UnitPlacementController`, inimigo e do `MobController`.
+	The pair of `chainPoint`, which does the same with units; separate from it because
+	the two live in different controllers: units belong to `UnitPlacementController`,
+	enemies to `MobController`.
 
-	O modelo manda quando existe. O cliente simula o andar dos inimigos por conta
-	propria, entao a posicao que veio no evento ja e de alguns quadros atras na hora
-	em que o raio e desenhado -- em cima de um inimigo rapido isso e um arco terminando
-	visivelmente atras dele.
+	The model rules when it exists. The client simulates enemy walking on its own, so the
+	position in the event is already a few frames old when the bolt is drawn: on a fast
+	enemy that is an arc visibly ending behind it.
 ]=]
 function VFXController:mobPoint(mobId : string?, fallback : Vector3?) : Vector3?
 	local mobs = self.Controllers.MobController
@@ -626,20 +624,19 @@ function VFXController:mobPoint(mobId : string?, fallback : Vector3?) : Vector3?
 end
 
 --[=[
-	O raio do Electro: um arco da unidade ate o primeiro inimigo, e dai de um para o
-	seguinte na ordem em que a corrente saltou.
+	The Electro's bolt: an arc from the unit to the first enemy, and from there one to
+	the next in the order the chain jumped.
 
-	O asset e o mesmo do raio do clima (`ThunderConfig.Asset`, pelo `spawnBeam`) --
-	e o mesmo addon desenhando a mesma coisa, e por isso o raio do trovao e o da
-	unidade se parecem de proposito.
+	The asset is the same as the weather bolt's (`ThunderConfig.Asset`, through
+	`spawnBeam`): it is the same addon drawing the same thing, which is why the thunder
+	bolt and the unit's look alike on purpose.
 
-	Quem escolheu os alvos foi o servidor, no instante do marcador `Hit`
-	(`UnitService:executeAttack`): daqui nao sai nenhuma decisao, so o desenho da
-	corrente que ja cobrou dano.
+	The server chose the targets, at the instant of the `Hit` marker
+	(`UnitService:executeAttack`): no decision comes from here, only the drawing of the
+	chain that already dealt damage.
 
-	Inimigo que ja saiu da tela e nao mandou posicao nenhuma nao interrompe a
-	corrente: o arco seguinte sai do ultimo ponto que deu para desenhar, em vez de o
-	raio morrer no meio.
+	An enemy already off screen that sent no position does not break the chain: the next
+	arc starts from the last point that could be drawn, instead of the bolt dying midway.
 ]=]
 function VFXController:PlayChainLightning(arc)
 	if typeof(arc) ~= "table" or typeof(arc.targets) ~= "table" then return end
@@ -656,25 +653,25 @@ function VFXController:PlayChainLightning(arc)
 	end
 end
 
--- As tags com que o modulo `vfx` liga e desliga um asset sozinho. Ver `attachToMob`.
+-- The tags the `vfx` module uses to turn an asset on and off by itself. See `attachToMob`.
 local AUTO_VFX_TAGS = { "EnabledVFX", "SequencedVFX" }
 
 --[=[
-	Pendura um asset de `Assets.VFX` no `HumanoidRootPart` de um inimigo, soldado,
-	e devolve o clone.
+	Hangs an `Assets.VFX` asset on an enemy's `HumanoidRootPart`, welded, and returns
+	the clone.
 
-	O par do `attachVFX`, que faz o mesmo em unidades -- e separado dele por duas
-	diferencas:
+	The pair of `attachVFX`, which does the same on units; separate from it because of
+	two differences:
 
-	**Seguir quem anda.** Unidade fica parada, inimigo nao. A Part do asset sai da
-	ancora e e soldada em `weldTo` (o proprio root quando nao vier nome), e o
-	`PivotTo` com que o `MobController` move o inimigo leva ela junto.
+	**Following something that walks.** Units stand still, enemies do not. The asset's
+	Part leaves the anchor and is welded to `weldTo` (the root itself when no name comes),
+	and the `PivotTo` `MobController` moves the enemy with carries it along.
 
-	**Tirar as tags do modulo `vfx`.** O `IcedVFX` vem com `EnabledVFX`, e o
-	Highlight dele com `SequencedVFX`: o modulo liga e desliga quem tem essas tags
-	por conta propria, um quadro depois de entrar no Workspace, e passaria por cima
-	de quem acendeu os emissores na mao. Elas saem **antes** de parentear -- tirar
-	depois ainda dispararia o liga-desliga atrasado.
+	**Removing the `vfx` module's tags.** `IcedVFX` comes with `EnabledVFX`, and its
+	Highlight with `SequencedVFX`: the module turns things with these tags on and off on
+	its own, a frame after entering the Workspace, and would override whoever lit the
+	emitters by hand. They are removed **before** parenting: removing them afterward
+	would still fire the delayed on/off.
 ]=]
 function VFXController:attachToMob(assetName : string?, mob : Model, weldTo : string?) : Instance?
 	if not assetName then return nil end
@@ -684,7 +681,7 @@ function VFXController:attachToMob(assetName : string?, mob : Model, weldTo : st
 
 	local template = self.Library[assetName]
 	if not template then
-		warn(`[VFXController]: nao achei o VFX "{assetName}" em Assets.VFX.`)
+		log:StudioWarn(`could not find VFX "{assetName}" in Assets.VFX.`)
 		return nil
 	end
 
@@ -715,7 +712,7 @@ function VFXController:attachToMob(assetName : string?, mob : Model, weldTo : st
 		weld.Part1 = anchor
 		weld.Parent = clone
 	elseif clone:IsA("Attachment") then
-		-- Attachment herda a posicao do pai; so o deslocamento de montagem sai.
+		-- An Attachment inherits its parent's position; only the assembly offset goes.
 		clone.CFrame = clone.CFrame.Rotation
 	end
 
@@ -725,18 +722,17 @@ function VFXController:attachToMob(assetName : string?, mob : Model, weldTo : st
 end
 
 --[=[
-	Um estado que o servidor pos num modelo -- inimigo ou unidade: congelado,
-	queimando --, desenhado pelos `duration` segundos que ele aplicou.
+	A state the server put on a model (enemy or unit: frozen, burning), drawn for the
+	`duration` seconds it applied.
 
-	O asset vai para o `HumanoidRootPart` soldado no `Torso`, com os emissores
-	ligados, e o Highlight dele muda para a raiz do modelo, que e o que ele precisa
-	para pintar o corpo inteiro. No fim os emissores desligam, o Highlight sai na
-	hora e a Part so e destruida depois do rabo das ultimas particulas.
+	The asset goes on the `HumanoidRootPart` welded to the `Torso`, with the emitters on,
+	and its Highlight moves to the model's root, which is what it needs to paint the whole
+	body. At the end the emitters turn off, the Highlight leaves immediately, and the
+	Part is only destroyed after the last particles' tail.
 
-	O mesmo estado em cima de outro troca o anterior em vez de empilhar dois. O
-	modelo sair no meio (inimigo morto, unidade vendida) limpa tudo sozinho: os dois
-	vivem dentro dele. Estados diferentes convivem -- cada um tem o nome do asset e
-	do Highlight dele.
+	The same state on top of another replaces the previous one instead of stacking two.
+	The model leaving midway (enemy dead, unit sold) cleans everything on its own: both
+	live inside it. Different states coexist: each has its own asset and Highlight name.
 ]=]
 function VFXController:playModelStatus(mob : Model, assetName : string, highlightName : string, duration : number?)
 	duration = tonumber(duration) or 0
@@ -769,8 +765,8 @@ function VFXController:playModelStatus(mob : Model, assetName : string, highligh
 		end
 	end
 
-	-- Tempo de partida, como o `StunMob` do outro lado: no 3x o estado acaba antes
-	-- em segundos reais, e o desenho tem que sair junto.
+	-- Match time, like `StunMob` on the other side: at 3x the state ends sooner in
+	-- real seconds, and the drawing must leave with it.
 	GameClock.Delay(duration, function()
 		if highlight and highlight.Parent then
 			highlight:Destroy()
@@ -789,9 +785,9 @@ function VFXController:playModelStatus(mob : Model, assetName : string, highligh
 end
 
 --[=[
-	Apaga um estado do `playModelStatus` antes da hora: o Highlight sai na hora, e a
-	Part so depois do rabo das ultimas particulas, como no fim normal. O `Delay` que
-	nasceu com o estado ainda dispara depois, e nao acha mais nada para mexer.
+	Removes a `playModelStatus` state early: the Highlight leaves immediately, and the Part
+	only after the last particles' tail, as in the normal end. The `Delay` created with the
+	state still fires later, and finds nothing left to touch.
 ]=]
 function VFXController:stopModelStatus(mob : Model, assetName : string, highlightName : string)
 	local highlight = mob:FindFirstChild(highlightName)
@@ -803,8 +799,8 @@ function VFXController:stopModelStatus(mob : Model, assetName : string, highligh
 	local clone = root and root:FindFirstChild(assetName)
 	if not clone then return end
 
-	-- Sai do nome para um estado novo logo em seguida nao destruir este no meio do
-	-- rabo das particulas.
+	-- Gives up the name so a new state right after does not destroy this one in the
+	-- middle of the particle tail.
 	clone.Name = assetName .. "Ending"
 
 	for _, descendant in clone:GetDescendants() do
@@ -816,7 +812,7 @@ function VFXController:stopModelStatus(mob : Model, assetName : string, highligh
 	VFX.destroyAfter(clone, VFX.maxLifetime(clone) or STATUS_VFX_FALLBACK)
 end
 
--- Um estado num inimigo, pelo id: o modelo mora no `MobController`.
+-- A state on an enemy, by id: the model lives in `MobController`.
 function VFXController:playMobStatus(mobId : string, assetName : string, highlightName : string, duration : number?)
 	local mobs = self.Controllers.MobController
 	local mob = mobs and mobs.SpawnedMobs and mobs.SpawnedMobs[mobId]
@@ -825,33 +821,33 @@ function VFXController:playMobStatus(mobId : string, assetName : string, highlig
 	self:playModelStatus(mob, assetName, highlightName, duration)
 end
 
--- O congelamento do Frostione (`IcedVFX`). Ver `playModelStatus`.
+-- The Frostione's freeze (`IcedVFX`). See `playModelStatus`.
 function VFXController:PlayIced(mobId : string, duration : number?)
 	self:playMobStatus(mobId, ICED_VFX_NAME, ICED_HIGHLIGHT_NAME, duration)
 end
 
--- A queimadura do Pyre (`BurningVFX`). Ver `playModelStatus`.
+-- The Pyre's burn (`BurningVFX`). See `playModelStatus`.
 function VFXController:PlayBurning(mobId : string, duration : number?)
 	self:playMobStatus(mobId, BURNING_VFX_NAME, BURNING_HIGHLIGHT_NAME, duration)
 end
 
--- O sangramento do Slasher (`BleedVFX`). Ver `playModelStatus`.
+-- The Slasher's and Berserker's bleed (`BleedVFX`). See `playModelStatus`.
 function VFXController:PlayBleeding(mobId : string, duration : number?)
 	self:playMobStatus(mobId, BLEED_VFX_NAME, BLEED_HIGHLIGHT_NAME, duration)
 end
 
--- Os dois ataques do Archmage que tem desenho: os assets em `Assets.VFX`, o
--- Attachment da explosao dentro do meteoro, e a faxina de reserva.
+-- The Archmage's two attacks that have visuals: the assets in `Assets.VFX`, the
+-- explosion Attachment inside the meteor, and the backup cleanup.
 local METEOR_VFX_NAME = "Meteor"
 local METEOR_EXPLOSION_NAME = "EXPLOSION"
 local ARCHMAGE_LIGHTNING_NAME = "ArchmageLightning"
 local ARCHMAGE_VFX_FALLBACK = 2
 
 --[=[
-	Um clone solto no mundo, pronto para ser movido na mao: sem as tags com que o
-	modulo `vfx` liga e desliga um asset sozinho (ver `attachToMob`), e com toda
-	Part ancorada e desarmada -- os assets vem do plugin colidindo, e um meteoro
-	solido caindo empurraria unidade e apareceria no raycast do posicionamento.
+	A clone loose in the world, ready to be moved by hand: without the tags the `vfx`
+	module uses to turn an asset on and off by itself (see `attachToMob`), and with every
+	Part anchored and disarmed: assets come from the plugin colliding, and a solid
+	falling meteor would push units and show up in the placement raycast.
 ]=]
 local function looseVFXClone(template : Instance) : Instance
 	local clone = template:Clone()
@@ -869,8 +865,8 @@ local function looseVFXClone(template : Instance) : Instance
 	return clone
 end
 
--- Liga ou desliga os efeitos continuos de um asset, pulando o que estiver dentro de
--- `skip` (a explosao do meteoro, que so estoura no fim).
+-- Turns an asset's continuous effects on or off, skipping what is inside
+-- `skip` (the meteor's explosion, which only bursts at the end).
 local function setEffectsEnabled(root : Instance, enabled : boolean, skip : Instance?)
 	for _, descendant in root:GetDescendants() do
 		if skip and descendant:IsDescendantOf(skip) then continue end
@@ -882,24 +878,24 @@ local function setEffectsEnabled(root : Instance, enabled : boolean, skip : Inst
 end
 
 --[=[
-	O meteoro do Archmage.
+	The Archmage's meteor.
 
-	Nasce `height` studs acima do `HumanoidRootPart` da unidade e cai em linha reta
-	ate `aimPos` -- onde o alvo estava quando o ataque comecou, decidido pelo
-	servidor --, em `fallTime` segundos de partida. Os emissores fora do Attachment
-	`EXPLOSION` sao o rastro e ficam ligados durante a queda; no fim eles desligam, a
-	pedra some e o `EXPLOSION` estoura uma vez.
+	It spawns `height` studs above the unit's `HumanoidRootPart` and falls in a straight
+	line to `aimPos` (where the target was when the attack started, decided by the
+	server) over `fallTime` match seconds. The emitters outside the `EXPLOSION` Attachment
+	are the trail and stay on during the fall; at the end they turn off, the rock
+	vanishes, and `EXPLOSION` bursts once.
 
-	A queda e contada no relogio da partida, e nao num Tween: o servidor cobra o dano
-	depois do mesmo `fallTime` no `GameClock`, e no 2x um Tween em tempo real
-	explodiria depois de o inimigo ja ter levado o dano.
+	The fall is counted on the match clock, not a Tween: the server deals the damage
+	after the same `fallTime` on `GameClock`, and at 2x a real-time Tween would explode
+	after the enemy had already taken the damage.
 ]=]
 function VFXController:PlayMeteor(unitId : string, aimPos : Vector3, fallTime : number?, height : number?)
 	if typeof(aimPos) ~= "Vector3" then return end
 
 	local template = self.Library[METEOR_VFX_NAME]
 	if not template then
-		warn(`[VFXController]: nao achei o VFX "{METEOR_VFX_NAME}" em Assets.VFX.`)
+		log:StudioWarn(`could not find VFX "{METEOR_VFX_NAME}" in Assets.VFX.`)
 		return
 	end
 
@@ -948,23 +944,23 @@ function VFXController:PlayMeteor(unitId : string, aimPos : Vector3, fallTime : 
 end
 
 --[=[
-	O raio em linha do Archmage, ligado pelos `duration` segundos de dano.
+	The Archmage's line bolt, on for the `duration` seconds of damage.
 
-	O asset e comprido no eixo X, com a ponta (o Attachment) no +X. Ele comeca no
-	`HumanoidRootPart` da unidade e aponta, na horizontal, para `throughPos` -- a
-	mesma mira com que o servidor traca a linha que leva dano. Fica no mundo, e nao
-	dentro do modelo, para o giro suave da unidade nao entortar o desenho para fora
-	da linha de verdade.
+	The asset is long along the X axis, with the tip (the Attachment) at +X. It starts at
+	the unit's `HumanoidRootPart` and points, horizontally, at `throughPos`: the same aim
+	the server uses to trace the damage line. It stays in the world, not inside the
+	model, so the unit's smooth turning does not bend the drawing off the real line.
 
-	A `SpotLight` vem com a tag do addon `Sequencer`, que nao roda em partida (falta
-	capability); por isso as tags saem no clone e tudo e ligado e desligado na mao.
+	The `SpotLight` comes with the `Sequencer` addon's tag, which does not run in a match
+	(missing capability); that is why the tags are removed on the clone and everything is
+	turned on and off by hand.
 ]=]
 function VFXController:PlayArchmageLightning(unitId : string, throughPos : Vector3, duration : number?)
 	if typeof(throughPos) ~= "Vector3" then return end
 
 	local template = self.Library[ARCHMAGE_LIGHTNING_NAME]
 	if not template then
-		warn(`[VFXController]: nao achei o VFX "{ARCHMAGE_LIGHTNING_NAME}" em Assets.VFX.`)
+		log:StudioWarn(`could not find VFX "{ARCHMAGE_LIGHTNING_NAME}" in Assets.VFX.`)
 		return
 	end
 
@@ -1004,8 +1000,8 @@ end
 function VFXController:construct()
 	self:buildLibrary()
 
-	-- Quem sorteia o alvo e o compasso e o ThunderService, no servidor: assim todo
-	-- mundo ve o mesmo raio na mesma unidade.
+	-- ThunderService, on the server, picks the target and keeps the beat: that way
+	-- everyone sees the same bolt on the same unit.
 	Framework:Listen("LightningStrike", function(position : Vector3, unitId : string?)
 		self:PlayLightningStrike(position, unitId)
 	end)
@@ -1015,33 +1011,33 @@ function VFXController:construct()
 	end)
 
 	--[[
-		O raio do Electro. O `MobController` escuta o mesmo evento para pintar os
-		inimigos de amarelo -- aqui e so o arco, la e so o realce, e os dois chegam
-		no mesmo quadro.
+		The Electro's bolt. `MobController` listens to the same event to paint the enemies
+		yellow: here it is only the arc, there only the highlight, and both arrive on the
+		same frame.
 	]]
 	Framework:Listen("ChainLightning", function(arc)
 		self:PlayChainLightning(arc)
 	end)
 
-	-- O congelamento do Frostione: so o servidor sabe quando os acumulos fecharam a
-	-- conta, entao o aviso vem dele (`MobService:ApplyFrost`).
+	-- The Frostione's freeze: only the server knows when the stacks completed,
+	-- so the notification comes from it (`MobService:ApplyFrost`).
 	Framework:Listen("MobFrozen", function(mobId : string, duration : number)
 		self:PlayIced(mobId, duration)
 	end)
 
-	-- A queimadura do Pyre: so o servidor sabe se o acerto acendeu fogo novo ou caiu
-	-- em quem ja queimava (`MobService:ApplyBurn`).
+	-- The Pyre's burn: only the server knows whether the hit lit a new fire or landed
+	-- on something already burning (`MobService:ApplyBurn`).
 	Framework:Listen("MobBurning", function(mobId : string, duration : number)
 		self:PlayBurning(mobId, duration)
 	end)
 
-	-- O sangramento do Slasher, pelo mesmo motivo (`MobService:ApplyBleed`).
+	-- The Slasher's and Berserker's bleed, for the same reason (`MobService:ApplyBleed`).
 	Framework:Listen("MobBleeding", function(mobId : string, duration : number)
 		self:PlayBleeding(mobId, duration)
 	end)
 
-	-- Os ataques do Archmage que tem desenho. Quem decide a mira e o tempo e o
-	-- servidor (`UnitService:executeCombo`); daqui sai so o desenho.
+	-- The Archmage's attacks that have visuals. The server decides the aim and timing
+	-- (`UnitService:executeCombo`); only the drawing comes from here.
 	Framework:Listen("ArchmageMeteor", function(unitId : string, aimPos : Vector3, fallTime : number, height : number)
 		self:PlayMeteor(unitId, aimPos, fallTime, height)
 	end)
@@ -1059,9 +1055,9 @@ function VFXController:construct()
 	end)
 
 	--[[
-		O mesmo evento que acende o realce amarelo no `UnitPlacementController`. Os
-		dois escutam de proposito: o realce vale para qualquer atordoamento, e o VFX
-		so para o clima que tiver um.
+		The same event that lights the yellow highlight in `UnitPlacementController`. Both
+		listen on purpose: the highlight applies to any stun, and the VFX only to a weather
+		that has one.
 	]]
 	Framework:Listen("UnitStunned", function(unitId : string, duration : number, source : string?)
 		self:PlayFreeze(unitId, source, duration)

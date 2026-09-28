@@ -1,56 +1,56 @@
 --[[
-	Presets de Lighting.
+	Lighting presets.
 
-	Um preset é uma Folder dentro de `ReplicatedStorage.Shared.Assets.Lighting`:
+	A preset is a Folder inside `ReplicatedStorage.Shared.Assets.Lighting`:
 
 		Assets.Lighting
 		└── Blizzard              (Folder)
-			│   atributos: Ambient, Brightness, ClockTime, FogColor, ...
+			│   attributes: Ambient, Brightness, ClockTime, FogColor, ...
 			├── Atmosphere        (Atmosphere)
 			├── Sky               (Sky)
 			└── ColorCorrection   (ColorCorrectionEffect)
 
-	Os **atributos** da Folder viram propriedades do próprio `Lighting`; os
-	**filhos** são as instâncias que vão para dentro dele. O `LightingService`
-	troca o conteúdo de uma vez e o `LightingController` transforma a troca em
-	transição, interpolando o que dá para interpolar.
+	The Folder's **attributes** become properties of `Lighting` itself; its
+	**children** are the instances that go inside it. `LightingService` swaps the
+	contents at once and `LightingController` turns the swap into a transition,
+	interpolating what can be interpolated.
 
-	Fica em `common/` porque as duas places usam.
+	It lives in `common/` because both places use it. See docs/common/lighting.md.
 ]]
 
 local LightingConfig = {}
 
--- Onde os presets moram. Caminho a partir de `ReplicatedStorage`; o service cria
--- a pasta se ela não existir.
+-- Where presets live. Path from `ReplicatedStorage`; the service creates the
+-- folder if it does not exist.
 LightingConfig.PresetsPath = { "Shared", "Assets", "Lighting" }
 
 --[[
-	Nome do preset que o service monta na entrada, a partir do Lighting que veio
-	autorado na place. Existir garante que toda transição seja preset -> preset:
-	o cliente sempre tem de onde ler os valores de origem, mesmo na primeira troca.
+	Name of the preset the service builds on start from the Lighting authored in
+	the place. It guarantees every transition is preset -> preset: the client always
+	has start values to read, even on the first change.
 ]]
 LightingConfig.BaselineName = "Default"
 
 --[[
-	Preset aplicado assim que o servidor sobe. `nil` = fica com o baseline.
+	Preset applied as soon as the server starts. `nil` keeps the baseline.
 
-	Cuidado na Game: o `MapService` aplica a pasta `Lighting` do mapa durante o
-	carregamento, e o `start` do service roda depois disso — preencher aqui
-	sobrescreveria a iluminação do mapa.
+	Careful in the Game: `MapService` applies the map's `Lighting` folder while
+	loading, and the service's `start` runs after that, so setting this would
+	overwrite the map lighting.
 ]]
 LightingConfig.DefaultPreset = nil :: string?
 
 --[[
-	Prefixo do preset que o `MapService` registra a partir da pasta `Lighting` do
-	mapa. Serve para o nome de um mapa nunca esbarrar num preset autorado à mão:
-	`Assets.Lighting.Map_Farm` é claramente do mapa, `Assets.Lighting.Farm` não.
+	Prefix of the presets `MapService` registers from each map's `Lighting` folder,
+	so a map name never collides with a hand-authored preset:
+	`Assets.Lighting.Map_Farm` is clearly the map's, `Assets.Lighting.Farm` is not.
 ]]
 LightingConfig.MapPrefix = "Map_"
 
 --[[
-	Filho do Lighting com este atributo em `true` sobrevive ao clear — para algo
-	que outro sistema pendurou lá e não faz parte de preset nenhum (um BlurEffect
-	de menu, por exemplo).
+	A Lighting child with this attribute set to `true` survives the clear: for
+	something another system hung there that belongs to no preset (a menu
+	BlurEffect, for example).
 ]]
 LightingConfig.KeepAttribute = "LightingKeep"
 
@@ -61,15 +61,15 @@ LightingConfig.Transition = {
 }
 
 --[[
-	Quais propriedades cada classe expõe à transição.
+	Which properties each class exposes to the transition.
 
-	Roblox não tem reflection em runtime — não dá para perguntar a uma instância
-	quais são as propriedades dela — então a lista é na mão. Classe que não estiver
-	aqui entra no Lighting normalmente, só não é interpolada: para uma classe nova
-	participar da transição, basta acrescentar a entrada.
+	Roblox has no runtime reflection (you cannot ask an instance for its
+	properties), so the list is written by hand. A class not listed still enters
+	Lighting normally, it just does not interpolate; to make a new class take part,
+	add its entry.
 
-	`TimeOfDay` está fora de propósito: é o mesmo valor de `ClockTime` em string, e
-	as duas juntas só brigariam por quem escreve por último.
+	`TimeOfDay` is left out on purpose: it is `ClockTime` as a string, and the two
+	together would only fight over who writes last.
 ]]
 LightingConfig.Properties = {
 	Lighting = {
@@ -150,18 +150,17 @@ LightingConfig.Properties = {
 }
 
 --[[
-	O valor de cada classe que significa "este efeito não está fazendo nada".
+	Each class's values that mean "this effect is doing nothing".
 
-	É o que permite uma instância **entrar e sair** interpolando em vez de piscar.
-	Trocar de mapa mexe muito mais em quais efeitos existem do que nos valores dos
-	que continuam existindo — sem isto, a maior parte da mudança visual é um corte
-	seco por mais que o resto esteja interpolando.
+	This is what lets an instance **enter and leave** by interpolating instead of
+	popping. Changing maps changes which effects exist far more than the values of
+	those that remain; without this, most of the visual change is a hard cut.
 
-	Só entram as propriedades que controlam intensidade. `Atmosphere.Color` não
-	precisa estar aqui, por exemplo: com `Density = 0` ela já não pinta nada.
+	Only intensity properties are listed. `Atmosphere.Color` does not need to be,
+	for example: with `Density = 0` it paints nothing.
 
-	Classe sem entrada aqui aparece e some de uma vez, e é o certo: `Sky` é textura,
-	não tem meio-caminho.
+	A class without an entry appears and disappears at once, which is right: `Sky`
+	is a texture and has no halfway.
 ]]
 LightingConfig.Neutral = {
 	Atmosphere = {
@@ -200,9 +199,9 @@ function LightingConfig:GetProperties(className: string): { string }
 end
 
 --[[
-	Cópia de `values` com as propriedades de intensidade zeradas — o ponto de
-	partida de quem entra e o ponto de chegada de quem sai. Classe sem neutro volta
-	`values` intacto, e aí não sobra nada para interpolar.
+	A copy of `values` with the intensity properties zeroed: the start for an
+	entering instance and the end for an exiting one. A class without a neutral
+	returns `values` unchanged, leaving nothing to interpolate.
 ]]
 function LightingConfig:GetNeutral(className: string, values: { [string]: any }): { [string]: any }
 	local neutral = self.Neutral[className]

@@ -12,8 +12,10 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("SkipPromptController")
 
 local SkipConfig = SharedConfig.SkipConfig
 
@@ -24,35 +26,37 @@ local TWEEN_STYLE = Enum.EasingStyle.Quad
 local TWEEN_DIRECTION = Enum.EasingDirection.Out
 
 --[=[
-	O prompt de pular a wave: `Interface.SkipPrompt`.
+	The skip-wave prompt: `Interface.SkipPrompt`.
 
-	Quem decide quando ele aparece e o `SkipService`; daqui sai so a tela. O
-	servidor manda `SkipState` a cada mudanca (votos, quantos faltam, se este
-	jogador ja votou) e o prompt entra ou sai conforme o `active`.
+	`SkipService` decides when it appears; only the screen lives here. The server
+	sends `SkipState` on every change (votes, how many are missing, whether this
+	player already voted) and the prompt comes in or leaves according to `active`.
 
-	**A animacao e a do `WeatherWarning`**: o prompt desce de `SlideOffset` acima do
-	lugar autorado enquanto a transparencia sobe de 1 ate o valor autorado. Sobe ate
-	o valor autorado, e nao ate zero, porque o prompt tem fundo transparente, sombra
-	a 20% e imagem opaca no mesmo galho — animar todo mundo para zero pintaria uma
-	caixa solida por tras da arte. Os valores sao lidos uma vez, no bind, antes de
-	qualquer animacao, entao repintar no Studio basta.
+	**The animation is `WeatherWarning`'s**: the prompt slides down from `SlideOffset`
+	above its authored spot while transparency goes from 1 to the authored value. It
+	goes to the authored value, not zero, because the prompt has a transparent
+	background, a 20% shadow, and an opaque image on the same branch: animating
+	everything to zero would paint a solid box behind the art. The values are read
+	once, at bind, before any animation, so repainting in Studio is enough.
 
-	**Cancel esconde, mas nao vota contra.** O clique tira o voto de quem tinha
-	votado e some com o prompt so para ele, ate a proxima votacao — cada abertura
-	vem com um `token` novo do servidor, e um token que este cliente ainda nao
-	dispensou volta a aparecer normalmente.
+	**Cancel hides, but does not vote against.** The click removes the vote of a
+	player who had voted and hides the prompt only for them, until the next vote:
+	each opening comes with a new `token` from the server, and a token this client has
+	not dismissed shows up again normally.
+
+	See docs/game/skip-wave.md.
 ]=]
 local SkipPromptController = {}
 
 --[[ INTERNAL ]]
 
 --[=[
-	Todo par (instancia, propriedade de transparencia) do prompt, com o valor que o
-	designer deixou. E a lista que a animacao percorre nas duas direcoes.
+	Every (instance, transparency property) pair in the prompt, with the value the
+	designer left. It is the list the animation walks in both directions.
 
-	`GuiObject.Transparency` fica de fora de proposito: e um apelido de
-	`BackgroundTransparency`, e animar os dois deixaria dois tweens brigando pela
-	mesma propriedade.
+	`GuiObject.Transparency` is left out on purpose: it is an alias of
+	`BackgroundTransparency`, and animating both would leave two tweens fighting over
+	the same property.
 ]=]
 function SkipPromptController:_collectFades(root : Instance)
 	local fades = {}
@@ -91,11 +95,11 @@ function SkipPromptController:_collectFades(root : Instance)
 end
 
 --[=[
-	A transparencia de tudo de uma vez. `progress` e 0 para escondido e 1 para o
-	prompt como o designer o pintou.
+	The transparency of everything at once. `progress` is 0 for hidden and 1 for the
+	prompt as the designer painted it.
 
-	Sem tween quando `time` e nil: e assim que o estado inicial e armado, antes da
-	animacao de entrada.
+	No tween when `time` is nil: that is how the initial state is set up, before the
+	entrance animation.
 ]=]
 function SkipPromptController:_applyFade(progress : number, time : number?)
 	local info = time and TweenInfo.new(time, TWEEN_STYLE, TWEEN_DIRECTION)
@@ -107,9 +111,9 @@ function SkipPromptController:_applyFade(progress : number, time : number?)
 		local value = 1 + (fade.Target - 1) * progress
 		local tweened = false
 
-		-- Propriedade que o TweenService recusa (uma classe nova de UI que ainda
-		-- nao anima) salta direto para o valor em vez de derrubar a animacao dos
-		-- outros. Marcado na lista para nao tentar de novo a cada quadro de tela.
+		-- A property TweenService refuses (a new UI class that does not animate yet)
+		-- jumps straight to the value instead of breaking the others' animation. It is
+		-- marked in the list so it is not retried every screen frame.
 		if info and not fade.NoTween then
 			tweened = pcall(function()
 				TweenService:Create(instance, info, { [fade.Property] = value }):Play()
@@ -142,9 +146,9 @@ function SkipPromptController:_show()
 	self.Shown = true
 	self.AnimToken += 1
 
-	-- Os filhos vem desligados do Studio (o prompt inteiro nasce escondido); a
-	-- transparencia e que faz a entrada, entao aqui eles so precisam existir na
-	-- tela.
+	-- The children come disabled from Studio (the whole prompt starts hidden); the
+	-- transparency does the entrance, so here they only need to exist on
+	-- screen.
 	for _, descendant in prompt:GetDescendants() do
 		if descendant:IsA("GuiObject") then
 			descendant.Visible = true
@@ -177,8 +181,8 @@ function SkipPromptController:_hide()
 	self:_applyFade(0, SkipConfig.FadeOut)
 
 	task.delay(SkipConfig.FadeOut, function()
-		-- Um `_show` no meio da saida manda: o prompt que esta na tela agora e o
-		-- dele, e desligar aqui apagaria uma votacao nova.
+		-- A `_show` during the exit wins: the prompt on screen now is its prompt, and
+		-- disabling here would erase a new vote.
 		if self.AnimToken ~= token then return end
 		if not prompt.Parent then return end
 
@@ -196,11 +200,11 @@ function SkipPromptController:_updateCount()
 end
 
 --[=[
-	O ultimo estado que veio do servidor, na tela.
+	The latest state from the server, on screen.
 
-	O prompt so aparece se o jogador nao tiver dispensado **esta** votacao: o
-	`token` muda a cada abertura, entao o Cancel vale para a votacao em que foi
-	clicado e nao para as proximas.
+	The prompt only appears if the player has not dismissed **this** vote: the
+	`token` changes on every opening, so Cancel applies to the vote it was clicked in
+	and not to the next ones.
 ]=]
 function SkipPromptController:_apply()
 	local state = self.State
@@ -220,7 +224,7 @@ function SkipPromptController:_bind() : boolean
 	local prompt = interface and interface:WaitForChild(SkipConfig.Name, WAIT_TIMEOUT)
 
 	if not prompt or not prompt:IsA("GuiObject") then
-		warn(`[SkipPromptController]: nao achei {INTERFACE_NAME}.{SkipConfig.Name}.`)
+		log:StudioWarn(`could not find {INTERFACE_NAME}.{SkipConfig.Name}.`)
 		return false
 	end
 
@@ -250,13 +254,13 @@ function SkipPromptController:_bind() : boolean
 	return true
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function SkipPromptController:construct()
 	--[[
-		O `Listen` entra antes do `_bind` porque o bind espera a Interface replicar:
-		um estado que chegasse durante a espera se perderia, e o prompt so voltaria
-		a aparecer na proxima mudanca de voto.
+		`Listen` goes in before `_bind` because the bind waits for the Interface to
+		replicate: a state arriving during that wait would be lost, and the prompt would
+		only reappear on the next vote change.
 	]]
 	Framework:Listen("SkipState", function(state)
 		if typeof(state) ~= "table" then return end
@@ -270,9 +274,9 @@ function SkipPromptController:construct()
 			return
 		end
 
-		-- O estado que ja estava no ar quando este cliente carregou. Quem entra no
-		-- meio de uma votacao aberta precisa ve-la; o `SkipState` so sai sozinho
-		-- quando algo muda.
+		-- The state that was already live when this client loaded. A player joining in the
+		-- middle of an open vote needs to see it; `SkipState` only goes out on its own
+		-- when something changes.
 		Framework:Fire("RequestSkipState")
 
 		self:_apply()

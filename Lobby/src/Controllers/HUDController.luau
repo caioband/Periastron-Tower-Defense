@@ -9,6 +9,7 @@ local Util = Shared:WaitForChild("Util")
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local SharedConfig = require(Configs.SharedConfig)
 local UIUtil = require(Util.UIUtil)
@@ -16,6 +17,7 @@ local UIUtil = require(Util.UIUtil)
 local LevelConfig = SharedConfig.LevelConfig
 
 local Framework = Me.new()
+local log = Log.new("HUDController")
 
 --[[ CONSTANTS ]]
 local HUD_UI_NAME = "HUD"
@@ -36,20 +38,22 @@ local WAIT_TIMEOUT = 10
 local LEVEL_FORMAT = "LEVEL %d"
 local MAX_EXP_TEXT = "MAX"
 
--- ScreenGui so para segurar as imagens da barra em memoria. Fica desligada e
--- com ResetOnSpawn falso: o HUD e recriado a cada respawn, o cache nao.
+-- A ScreenGui only to hold the bar's images in memory. It stays disabled and
+-- with ResetOnSpawn off: the HUD is recreated on every respawn, the cache is not.
 local CACHE_GUI_NAME = "HUDImageCache"
 
 --[=[
-	Escreve os dados do perfil no StarterGui.HUD.HUDMiddle: nivel, XP, coins e shards.
+	Writes the profile data into StarterGui.HUD.HUDMiddle: level, XP, coins, and shards.
 
-	Nivel e progresso saem do XP acumulado (`SharedConfig.LevelConfig`) — o perfil nao
-	guarda nivel. A barra nao e uma barra: e um ImageLabel unico que troca de arte
-	conforme a faixa de progresso, e as cinco artes sao baixadas e mantidas em cache
-	assim que o jogador entra, para a primeira troca nao aparecer em branco.
+	Level and progress come from accumulated XP (`SharedConfig.LevelConfig`): the profile
+	stores no level. The bar is not a bar: it is a single ImageLabel that swaps art by
+	progress band, and the five arts are downloaded and cached as soon as the player joins,
+	so the first swap does not show blank.
 
-	O HUD tem `ResetOnSpawn` ligado, entao o bind roda de novo para cada copia nova
-	que a engine coloca na PlayerGui.
+	The HUD has `ResetOnSpawn` on, so the bind runs again for every new copy the engine
+	puts in PlayerGui.
+
+	See docs/lobby/hud.md.
 ]=]
 local HUDController = {
 	Controllers = {
@@ -60,12 +64,12 @@ local HUDController = {
 --[[ INTERNAL ]]
 
 --[=[
-	Baixa as artes da barra e as segura em memoria. `PreloadAsync` sozinho so garante
-	o download; o que impede o descarte depois e ter um ImageLabel vivo apontando para
-	cada uma — por isso o cache e feito de instancias, e nao de uma lista de ids.
+	Downloads the bar's art and holds it in memory. `PreloadAsync` alone only guarantees
+	the download; what prevents discarding it later is having a live ImageLabel pointing at
+	each one, which is why the cache is made of instances, not a list of ids.
 
-	`emptyImage` e a barra vazia que veio autorada na GUI, que tambem volta a ser usada
-	quando o progresso zera num level up.
+	`emptyImage` is the empty bar authored in the GUI, which is also used again when
+	progress resets on a level up.
 ]=]
 function HUDController:_cacheImages(emptyImage : string?)
 	if self.CacheGui then
@@ -108,13 +112,13 @@ function HUDController:_cacheImages(emptyImage : string?)
 		end)
 
 		if not ok then
-			warn(`[HUDController]: preload da barra de XP falhou — {err}`)
+			log:StudioWarn(`XP bar preload failed: {err}`)
 		end
 	end)
 end
 
 --[=[
-	Os stats do perfil, ou nil enquanto a replica nao chegou.
+	The profile stats, or nil until the replica arrives.
 ]=]
 function HUDController:_getStats()
 	local replica = self.Replica
@@ -131,8 +135,8 @@ function HUDController:_setBarImage(image : string)
 end
 
 --[=[
-	Reescreve os quatro campos a partir da replica. Chamado no bind e a cada escrita
-	em `Stats`; sem replica ainda, mostra o estado zerado em vez do texto autorado.
+	Rewrites the four fields from the replica. Called on bind and on every write to
+	`Stats`; with no replica yet, shows the zeroed state instead of the authored text.
 ]=]
 function HUDController:_refresh()
 	if not self.Middle or not self.Middle.Parent then
@@ -166,9 +170,9 @@ function HUDController:_refresh()
 end
 
 --[=[
-	Segura a replica do jogador e reescreve o HUD a cada mudanca. Igual ao contador do
-	ShopController: o DataService escreve a chave `Stats` inteira, mas o listener e o
-	`OnChange` para que qualquer escrita mais funda (`Stats.XP`, ...) tambem conte.
+	Holds the player's replica and rewrites the HUD on every change. Same as the
+	ShopController counter: DataService writes the whole `Stats` key, but the listener is
+	`OnChange` so any deeper write (`Stats.XP`, ...) also counts.
 ]=]
 function HUDController:_watchStats()
 	task.spawn(function()
@@ -192,7 +196,7 @@ function HUDController:_watchStats()
 end
 
 --[=[
-	Liga a uma copia do HUD. Roda de novo a cada respawn (`ResetOnSpawn`).
+	Binds to a copy of the HUD. Runs again on every respawn (`ResetOnSpawn`).
 ]=]
 function HUDController:_bindUI(screenGui : ScreenGui)
 	local middle = screenGui:WaitForChild(MIDDLE_NAME, WAIT_TIMEOUT)
@@ -200,7 +204,7 @@ function HUDController:_bindUI(screenGui : ScreenGui)
 	local bar = barContainer and barContainer:WaitForChild(BAR_IMAGE_NAME, WAIT_TIMEOUT)
 
 	if not middle or not bar or not bar:IsA("ImageLabel") then
-		warn(`[HUDController]: nao achei {HUD_UI_NAME}.{MIDDLE_NAME}.{BAR_CONTAINER_NAME}.{BAR_IMAGE_NAME}.`)
+		log:StudioWarn(`could not find {HUD_UI_NAME}.{MIDDLE_NAME}.{BAR_CONTAINER_NAME}.{BAR_IMAGE_NAME}.`)
 		return
 	end
 
@@ -215,9 +219,9 @@ function HUDController:_bindUI(screenGui : ScreenGui)
 	self.CoinLabel = coin and coin:FindFirstChild(COIN_TEXT_NAME)
 	self.ShardLabel = shard and shard:FindFirstChild(SHARD_TEXT_NAME)
 
-	-- A barra vazia e a arte que veio autorada na GUI: o id dela nao mora no config,
-	-- e lido daqui. So da primeira copia, que e a unica garantidamente intocada — e
-	-- e ela tambem que dispara o cache, que vale para a sessao inteira.
+	-- The empty bar is the art authored in the GUI: its id does not live in the config,
+	-- it is read from here. Only from the first copy, the only one guaranteed untouched,
+	-- and it is also what triggers the cache, which holds for the whole session.
 	if not self.EmptyBarImage then
 		self.EmptyBarImage = bar.Image
 		self:_cacheImages(self.EmptyBarImage)
@@ -245,15 +249,15 @@ end
 --[[ EXTERNAL ]]
 
 --[=[
-	Nivel e progresso do jogador local, do jeito que o HUD esta mostrando.
+	The local player's level and progress, as the HUD is showing them.
 ]=]
 function HUDController:GetLevelState()
 	return self.State or LevelConfig:Resolve(0)
 end
 
 --[=[
-	Reescreve o HUD na mao. So e preciso para quem mexe no perfil sem passar pela
-	replica — a replica ja atualiza sozinha.
+	Rewrites the HUD by hand. Only needed for code that changes the profile without going
+	through the replica; the replica already updates on its own.
 ]=]
 function HUDController:Refresh()
 	self:_refresh()

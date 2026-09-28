@@ -15,18 +15,20 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local LightingUtil = require(Util.LightingUtil)
+local Log = require(Util:WaitForChild("Log"))
 local Me = require(Vendor.Me)
 
 local Framework = Me.new()
+local log = Log.new("DialogController")
 
 local Config = SharedConfig.DialogConfig
 
--- Quadros de paciência com o layout da caixa antes da primeira linha. Ver
+-- Frames of patience with the box's layout before the first line. See
 -- `waitForLayout`.
 local LAYOUT_FRAMES = 4
 
--- O que o `:Play()` entende e o `RichTextController` não: são da conversa, não do
--- texto, e por isso não descem para o render.
+-- What `:Play()` understands and `RichTextController` does not: they belong to the
+-- conversation, not the text, so they do not go down to the render.
 local DIALOG_ONLY_OPTIONS = {
 	Auto = true,
 	Buttons = true,
@@ -37,68 +39,71 @@ local DIALOG_ONLY_OPTIONS = {
 }
 
 --[[
-	A caixa de fala: `SharedUIs.DialogGUI.Container`.
+	The dialog box: `SharedUIs.DialogGUI.Container`.
 
-	Este controller é o **único** que encosta nela. Quem tem algo a dizer manda as
-	linhas prontas:
+	This controller is the **only** one that touches it. Anything with something to
+	say sends the finished lines:
 
 		local Dialog = Framework:Get("DialogController")
 
 		Dialog:Play({
-			"Bem-vindo ao [color=yellow]Periastron[/color].[pause=.6] Sente-se.",
-			"A wave 8 traz [shake]NEVASCA[/shake].",
+			"Welcome to [color=yellow]Periastron[/color].[pause=.6] Have a seat.",
+			"Wave 8 brings a [shake]BLIZZARD[/shake].",
 		})
 
-	O texto é escrito pelo `RichTextController`, então a marcação de sempre vale
-	aqui — inclusive `[event=nome]`, que chega em quem se inscreveu no `:OnEvent()`
-	quando a digitação passa pela marca. É o gancho para sincronizar som, câmera ou
-	VFX com um ponto da frase em vez de com um `task.wait` chutado.
+	The text is written by `RichTextController`, so the usual markup applies here,
+	including `[event=name]`, which reaches `:OnEvent()` subscribers when typing passes
+	the mark. It is the hook for syncing sound, camera, or VFX with a point in the
+	sentence instead of a guessed `task.wait`.
 
-	**Uma linha por vez, e o jogador passa.** Clique, toque, `E`, espaço, enter ou o
-	A do controle: com a linha ainda sendo escrita, o gesto mostra ela inteira; com
-	ela pronta, vai para a próxima; na última, fecha. É o contrato que todo jogo de
-	fala tem, e é o que o jogador já sabe antes de a gente explicar. Fala pedida com
-	`Auto = true` anda sozinha depois de `DialogConfig.AutoHold` segundos.
+	**One line at a time, and the player advances.** Click, tap, `E`, space, enter, or
+	the gamepad's A: with the line still being written, the gesture shows it whole;
+	with it done, it goes to the next; on the last, it closes. It is the contract every
+	dialog game has, and the player knows it before anyone explains. A line requested
+	with `Auto = true` advances on its own after `DialogConfig.AutoHold` seconds.
 
-	**Os dois botões da caixa** (`Button1` à direita, `Button2` à esquerda) recebem
-	texto, aparecem, somem e chamam o que quem pediu a fala mandar:
+	**The box's two buttons** (`Button1` on the right, `Button2` on the left) receive
+	text, appear, disappear, and call whatever the requester sends:
 
-		Dialog:Play("Aceita o contrato?", {
+		Dialog:Play("Accept the contract?", {
 			Buttons = {
-				{ Text = "ACEITAR", OnClick = function() Contracts:Accept() end },
-				{ Text = "AGORA NAO", OnClick = function() Dialog:Close() end },
+				{ Text = "ACCEPT", OnClick = function() Contracts:Accept() end },
+				{ Text = "NOT NOW", OnClick = function() Dialog:Close() end },
 			},
 		})
 
-	Fora do `:Play()` eles se mexem por `:SetButton(indice, spec)`, `:SetButtons`,
-	`:ClearButtons` e `:GetButton` — este último devolve o ImageButton para quem
-	quiser trocar imagem, animar ou pôr um ícone dentro. Botão **sem** `OnClick`
-	avança a fala, que é o gesto mais provável de quem apertou um botão numa
-	conversa. Fala que não pede botão nenhum começa sem botão: escolha de conversa
-	velha na tela da nova é defeito que só aparece na mão do jogador.
+	Outside `:Play()` they are changed through `:SetButton(index, spec)`,
+	`:SetButtons`, `:ClearButtons`, and `:GetButton`; the last returns the ImageButton
+	for anyone who wants to swap the image, animate, or put an icon inside. A button
+	**without** `OnClick` advances the dialog, which is the most likely intent of
+	someone pressing a button in a conversation. A line that asks for no buttons
+	starts without buttons: an old conversation's choice on the new one's screen is a
+	bug that only shows up in the player's hands.
 
-	**Atrás da fala**, a tela sai do caminho: o resto da UI some (pelo
-	`InterfaceController`, o mesmo "some com o resto" da cutscene e dos painéis), o
-	fundo borra (o `UIBlur` compartilhado, com tween de entrada e de saída) e a
-	música abaixa (`MusicController:Duck`, que não mexe no volume que o jogador
-	escolheu). Os três são ligados por `DialogConfig.Background` e desligáveis por
-	fala — `Dialog:Play(texto, { Blur = false })`.
+	**Behind the dialog**, the screen gets out of the way: the rest of the UI hides
+	(through `InterfaceController`, the same "hide everything else" as the cutscene
+	and the panels), the background blurs (the shared `UIBlur`, tweened in and out),
+	and the music lowers (`MusicController:Duck`, which does not touch the volume the
+	player chose). All three are turned on by `DialogConfig.Background` and can be
+	turned off per line: `Dialog:Play(text, { Blur = false })`.
 
-	**A tela mora no place, não no git** — `StarterGui` não é sincronizado pelo
-	Rojo. Por isso o caminho é por nome (`DialogConfig.Gui`) e resolvido tarde: a
-	`SharedUIs` pode não ter replicado quando o controller carrega, e um
-	`WaitForChild` no `init` seguraria o boot do cliente por causa de uma caixa que
-	talvez nem seja usada nesta sessão.
+	**The screen lives in the place, not in git**: `StarterGui` is not synced by Rojo.
+	That is why the path is by name (`DialogConfig.Gui`) and resolved late:
+	`SharedUIs` may not have replicated when the controller loads, and a
+	`WaitForChild` in `init` would hold up the client boot for a box that may not even
+	be used this session.
 
-	Fica em `common/` porque as duas places têm a `SharedUIs`.
+	It lives in `common/` because both places have `SharedUIs`.
+
+	See docs/common/dialog.md.
 ]]
 
 local DialogController = {
 	Controllers = {
 		RichTextController = {},
 
-		-- O fundo da fala: quem esconde o resto da UI e quem abaixa a musica. Os
-		-- dois ja existiam para a cutscene e para os paineis; aqui so sao pedidos.
+		-- The dialog's background: what hides the rest of the UI and what lowers the music.
+		-- Both already existed for the cutscene and the panels; here they are only requested.
 		InterfaceController = {},
 		MusicController = {},
 	}
@@ -108,86 +113,86 @@ DialogController.Container = nil :: GuiObject?
 DialogController.Screen = nil :: ScreenGui?
 
 --[[
-	A caixa já apareceu alguma vez nesta sessão?
+	Has the box appeared at least once this session?
 
-	É o que separa "esta place não tem caixa de fala" de "a caixa morreu e está
-	voltando". Sem a diferença, o `getContainer` teria de escolher entre nunca esperar
-	(e perder toda fala pedida logo depois de um respawn) e sempre esperar (e travar
-	por dez segundos cada `Play` de uma place que não tem a `SharedUIs`).
+	It is what separates "this place has no dialog box" from "the box died and is
+	coming back". Without the difference, `getContainer` would have to choose between
+	never waiting (and losing every line requested right after a respawn) and always
+	waiting (and blocking every `Play` for ten seconds in a place without `SharedUIs`).
 ]]
 DialogController.Existed = false
 DialogController.Handle = nil :: any
 
--- A conversa no ar.
+-- The conversation on screen.
 DialogController.Lines = {} :: { string }
 DialogController.Index = 0
 DialogController.Open = false
 
--- Fala que anda sozinha, sem o jogador passar.
+-- A dialog that advances on its own, without the player.
 DialogController.Auto = false
 
--- Uma sessão por `:Play()`: o `task.delay` do modo automático só vale enquanto
--- ninguém tiver começado outra conversa por cima.
+-- One session per `:Play()`: auto mode's `task.delay` only applies while nobody
+-- has started another conversation on top.
 DialogController.Session = 0
 
 DialogController.LastAdvance = 0
 DialogController.Listeners = {}
 
 --[[
-	As opções da fala no ar, guardadas para ela poder voltar igual depois de um
-	respawn (ver `Respawn` em `DialogConfig` e o `Destroying` do `:Play`).
+	The current dialog's options, saved so it can return the same after a respawn
+	(see `Respawn` in `DialogConfig` and the `Destroying` in `:Play`).
 ]]
 DialogController.Options = nil :: any
 
 --[[
-	A fala esperando a caixa nova, quando o jogador morreu no meio dela. `nil`
-	quando não há nada voltando.
+	The dialog waiting for the new box, when the player died in the middle of it.
+	`nil` when nothing is coming back.
 
-	`IsOpen()` responde `false` nesse intervalo — a caixa de fato não está na tela —,
-	então quem precisa saber que ainda vem fala pergunta por `IsResuming()`.
+	`IsOpen()` answers `false` during that gap (the box really is not on screen), so
+	code that needs to know more dialog is coming asks `IsResuming()`.
 ]]
 DialogController.Resume = nil :: any
 
--- Sobe a cada volta marcada e a cada `:Play()`. É o que faz uma fala nova cancelar
--- a volta da anterior em vez de as duas disputarem a caixa.
+-- Goes up on every scheduled return and every `:Play()`. It is what makes a new
+-- dialog cancel the previous one's return instead of the two fighting over the box.
 DialogController.ResumeToken = 0
 
--- Quem quer saber quando a caixa fechou. Ver `:OnClosed`.
+-- Who wants to know when the box closed. See `:OnClosed`.
 DialogController.ClosedListeners = {}
 DialogController.Warned = false
 
--- [índice] = { Instance, Label, OnClick }. Preenchido na primeira vez que o botão
--- é usado e esvaziado junto com o container (ver `getContainer`).
+-- [index] = { Instance, Label, OnClick }. Filled the first time the button is used
+-- and emptied along with the container (see `getContainer`).
 DialogController.ButtonSlots = {}
 
--- Os botões que esperam a última frase acabar (`ButtonsAtEnd`). Nil quando não há
--- escolha pendente.
+-- Buttons waiting for the last sentence to finish (`ButtonsAtEnd`). Nil when there
+-- is no pending choice.
 DialogController.PendingButtons = nil :: { any }?
 
--- O que a fala tomou da tela agora: o resto da UI escondido, o borrão no ar, a
--- música abafada. Guardado para o fechamento devolver exatamente o que a abertura
--- tomou — nem mais (borrão de um painel que não é nosso) nem menos.
+-- What the dialog took from the screen now: the rest of the UI hidden, the blur up,
+-- the music ducked. Saved so closing returns exactly what opening took: no more
+-- (a blur from a panel that is not ours) and no less.
 DialogController.Background = { UI = false, Blur = false, Duck = false }
 DialogController.BlurTween = nil :: Tween?
 
 --[[ INTERNAL ]]
 
 --[=[
-	A caixa, na primeira vez em que ela for precisa.
+	The box, the first time it is needed.
 
-	Guardada depois de achada, e reachada quando o `Parent` some — a `PlayerGui` é
-	remontada a cada respawn e a referência velha vira lixo.
+	Cached once found, and found again when its `Parent` goes away: `PlayerGui` is
+	rebuilt on every respawn and the old reference becomes garbage.
 
-	**Se ela já existiu e sumiu, esperamos por ela.** A `DialogGUI` tem
-	`ResetOnSpawn`: renascer destrói a tela e a nova só chega alguns quadros depois,
-	quando o clone da `StarterGui` acontece. Uma fala pedida nesse intervalo — que é
-	exatamente o caso do fluxo do tutorial recomeçando no `CharacterAdded` — não
-	achava caixa nenhuma, o `:Play()` devolvia `false` e quem esperava o `OnClosed`
-	ficava esperando para sempre: nenhuma fala na tela e o roteiro parado.
+	**If it existed and vanished, we wait for it.** `DialogGUI` has `ResetOnSpawn`:
+	respawning destroys the screen and the new one only arrives a few frames later,
+	when the `StarterGui` clone happens. A line requested in that gap (exactly the case
+	of the tutorial flow restarting on `CharacterAdded`) would find no box, `:Play()`
+	would return `false`, and whoever waited on `OnClosed` would wait forever: no
+	dialog on screen and the script stalled.
 
-	A espera é **só** para quem já viu a caixa uma vez (ver `Existed`). Place que não
-	tem a `SharedUIs` continua respondendo `nil` na hora, como sempre respondeu — lá
-	não há o que esperar.
+	The wait is **only** for sessions that have seen the box once (see `Existed`). A
+	place without `SharedUIs` still answers `nil` immediately: there is nothing to
+	wait for there.
 ]=]
 function DialogController:getContainer() : GuiObject?
 	local container = self.Container
@@ -218,7 +223,7 @@ function DialogController:getContainer() : GuiObject?
 		until found or os.clock() > deadline
 
 		if not found then
-			warn("[DialogController]: a caixa de fala nao voltou depois do respawn.")
+			log:StudioWarn("the dialog box did not come back after the respawn.")
 		end
 	end
 
@@ -234,9 +239,9 @@ function DialogController:getContainer() : GuiObject?
 	self.Container = found
 	self.Screen = if screen and screen:IsA("ScreenGui") then screen else nil
 
-	-- O handle é do container: container novo (respawn, tela recriada) pede handle
-	-- novo, senão escreveríamos num frame que não está mais na tela. Os botões são
-	-- filhos dele e morrem junto — o cache deles vai embora pelo mesmo motivo.
+	-- The handle belongs to the container: a new container (respawn, recreated screen)
+	-- needs a new handle, or we would write into a frame no longer on screen. The
+	-- buttons are its children and die with it; their cache goes away for the same reason.
 	self.Handle = nil
 	table.clear(self.ButtonSlots)
 
@@ -244,15 +249,15 @@ function DialogController:getContainer() : GuiObject?
 end
 
 --[=[
-	O botão do índice, pronto para uso: achado dentro do container, com o label de
-	texto criado e o clique já ligado.
+	The button at the index, ready to use: found inside the container, with its text
+	label created and its click already connected.
 
-	O label é criado aqui, e não autorado no Studio, porque o botão é um ImageButton
-	— ele não tem texto próprio. Nascendo daqui, botão novo que o designer coloque
-	na caixa ganha texto centrado sem ninguém precisar lembrar de nada.
+	The label is created here, not authored in Studio, because the button is an
+	ImageButton: it has no text of its own. Created here, any new button the designer
+	adds to the box gets centered text without anyone having to remember anything.
 
-	`nil` quando não existe botão nesse índice: a caixa é do place, e uma place que
-	tenha só um botão (ou nenhum) não é erro, é outra tela.
+	`nil` when there is no button at that index: the box belongs to the place, and a
+	place with a single button (or none) is not an error, it is a different screen.
 ]=]
 function DialogController:getButton(index : number) : any
 	local slot = self.ButtonSlots[index]
@@ -285,8 +290,8 @@ function DialogController:getButton(index : number) : any
 		label.TextScaled = true
 		label.TextWrapped = true
 
-		-- O clique é do botão, não do label: sem isso o label comeria o toque no
-		-- meio do botão, que é justamente onde o dedo cai.
+		-- The click belongs to the button, not the label: otherwise the label would eat
+		-- the tap in the middle of the button, which is exactly where the finger lands.
 		label.Active = false
 
 		local padding = Instance.new("UIPadding")
@@ -296,7 +301,7 @@ function DialogController:getButton(index : number) : any
 		padding.PaddingRight = UDim.new(0, labelConfig.Padding)
 		padding.Parent = label
 
-		-- `TextScaled` sozinho transformaria "OK" numa letra de cartaz.
+		-- `TextScaled` alone would turn "OK" into poster-sized text.
 		local constraint = Instance.new("UITextSizeConstraint")
 		constraint.MaxTextSize = labelConfig.MaxTextSize
 		constraint.Parent = label
@@ -312,9 +317,9 @@ function DialogController:getButton(index : number) : any
 
 	self.ButtonSlots[index] = slot
 
-	-- Uma conexão por botão, para sempre: ela chama o callback que **estiver** no
-	-- slot na hora do clique. Reconectar a cada `:SetButton()` seria a receita para
-	-- um clique disparar três vezes.
+	-- One connection per button, forever: it calls whatever callback **is** in the slot
+	-- at click time. Reconnecting on every `:SetButton()` would be a recipe for one
+	-- click firing three times.
 	instance.Activated:Connect(function()
 		local current = self.ButtonSlots[index]
 		if not current then return end
@@ -325,8 +330,8 @@ function DialogController:getButton(index : number) : any
 			return
 		end
 
-		-- Botão sem callback é um "continuar": o gesto mais provável de quem
-		-- apertou um botão numa fala é querer a próxima linha.
+		-- A button without a callback is a "continue": the most likely intent of someone
+		-- pressing a button in a dialog is wanting the next line.
 		self:Advance(true)
 	end)
 
@@ -334,27 +339,27 @@ function DialogController:getButton(index : number) : any
 end
 
 --[=[
-	Barulho quando a caixa não aparece — uma vez só, para uma fala que se repete não
-	virar spam.
+	Noise when the box does not show up, only once, so a recurring line does not
+	become spam.
 
-	Place que não tem a `SharedUIs` não é engano e não merece warn: é a tela não
-	existir ali. A `SharedUIs` existindo **sem** a `DialogGUI` é engano, e esse
-	merece.
+	A place without `SharedUIs` is not a mistake and does not deserve a warning: the
+	screen simply does not exist there. `SharedUIs` existing **without** `DialogGUI`
+	is a mistake, and that one does.
 ]=]
 function DialogController:warnMissing()
 	if self.Warned then return end
 	if not PlayerGui:FindFirstChild(Config.Gui.Folder) then return end
 
 	self.Warned = true
-	warn(`[DialogController]: nao achei {Config.Gui.Folder}.{Config.Gui.Screen}.{Config.Gui.Container} na PlayerGui.`)
+	log:StudioWarn(`could not find {Config.Gui.Folder}.{Config.Gui.Screen}.{Config.Gui.Container} in PlayerGui.`)
 end
 
 --[=[
-	O handle de texto do container, criado uma vez e reusado.
+	The container's text handle, created once and reused.
 
-	É aqui que o `[event=]` da fala vira o `:OnEvent()` de quem se inscreveu: a
-	inscrição é no handle, e o handle é um só, então ela não se multiplica a cada
-	fala.
+	This is where a line's `[event=]` becomes the subscriber's `:OnEvent()`: the
+	subscription is on the handle, and there is a single handle, so it does not
+	multiply with each line.
 ]=]
 function DialogController:getHandle(options : any) : any
 	local container = self:getContainer()
@@ -387,11 +392,11 @@ function DialogController:getHandle(options : any) : any
 end
 
 --[=[
-	Mostra ou esconde a caixa.
+	Shows or hides the box.
 
-	Mexe no `Enabled` da ScreenGui **e** no `Visible` do frame: o designer pode ter
-	deixado qualquer um dos dois ligado no Studio, e a caixa aparecendo vazia no
-	spawn é o defeito mais fácil de evitar daqui.
+	It touches the ScreenGui's `Enabled` **and** the frame's `Visible`: the designer
+	may have left either one on in Studio, and the box showing up empty on spawn is
+	the easiest bug to prevent from here.
 ]=]
 function DialogController:setVisible(visible : boolean)
 	local container = self.Container
@@ -406,15 +411,16 @@ function DialogController:setVisible(visible : boolean)
 end
 
 --[=[
-	Põe o fundo no estado pedido: o resto da UI, o borrão e a música.
+	Puts the background in the requested state: the rest of the UI, the blur, and the
+	music.
 
-	Trabalha por diferença em vez de "aplica tudo": fala nova começando por cima de
-	outra não pode devolver o borrão para zero e subi-lo de novo — seria um piscar
-	no meio de uma conversa que, para o jogador, nem parou.
+	It works by difference instead of "apply everything": a new line starting on top
+	of another must not drop the blur to zero and raise it again; that would be a
+	flicker in the middle of a conversation that, for the player, never stopped.
 
-	Cada peça é opcional porque cada uma pode não existir na place: sem
-	`InterfaceController` a fala aparece com a UI toda atrás, o que é feio, não
-	quebrado.
+	Each piece is optional because each may not exist in the place: without
+	`InterfaceController` the dialog appears with the whole UI behind it, which is ugly,
+	not broken.
 ]=]
 function DialogController:applyBackground(wanted : { UI : boolean, Blur : boolean, Duck : boolean })
 	local active = self.Background
@@ -425,10 +431,10 @@ function DialogController:applyBackground(wanted : { UI : boolean, Blur : boolea
 
 		if interface then
 			if wanted.UI then
-				-- O `Except` é por garantia: a `DialogGUI` mora dentro da pasta
-				-- `SharedUIs`, e o `InterfaceController` só acompanha filho direto da
-				-- PlayerGui — hoje ela nem entra na conta. Alguém movendo a tela para
-				-- fora da pasta amanhã não deve descobrir isso pela fala sumindo.
+				-- The `Except` is a safeguard: `DialogGUI` lives inside the `SharedUIs` folder, and
+				-- `InterfaceController` only tracks direct children of PlayerGui, so today it does
+				-- not even enter the math. Someone moving the screen out of the folder tomorrow
+				-- should not find out by the dialog vanishing.
 				interface:Hide(background.HideReason, { Except = { Config.Gui.Screen } })
 			else
 				interface:Show(background.HideReason)
@@ -439,8 +445,8 @@ function DialogController:applyBackground(wanted : { UI : boolean, Blur : boolea
 	if wanted.Blur ~= active.Blur then
 		local blur = background.Blur
 
-		-- Um tween por vez: `Cancel` não devolve a propriedade, então fechar no meio
-		-- da abertura desce a partir de onde a subida chegou.
+		-- One tween at a time: `Cancel` does not restore the property, so closing mid-open
+		-- goes down from wherever the rise got to.
 		if self.BlurTween then
 			self.BlurTween:Cancel()
 			self.BlurTween = nil
@@ -471,25 +477,24 @@ function DialogController:applyBackground(wanted : { UI : boolean, Blur : boolea
 end
 
 --[=[
-	Devolve tudo o que a fala tomou. É o que o fechamento chama, e é seguro chamar
-	duas vezes: o `applyBackground` só mexe no que está diferente.
+	Returns everything the dialog took. It is what closing calls, and it is safe to call
+	twice: `applyBackground` only touches what differs.
 ]=]
 function DialogController:releaseBackground()
 	self:applyBackground({ UI = false, Blur = false, Duck = false })
 end
 
 --[=[
-	Espera a caixa ter tamanho de verdade antes de escrever nela.
+	Waits for the box to have a real size before writing into it.
 
-	Duas razões. O renderizador **não desenha nada** num container que mede zero, e
-	uma ScreenGui recém-ligada mede zero até o próximo quadro de layout — a fala
-	simplesmente não apareceria. E o tamanho do container no instante do render é a
-	referência de escala do texto daquela fala: pegá-lo antes do layout (antes do
-	`UIAspectRatioConstraint`) fixa a escala num tamanho que nunca existiu na tela.
+	Two reasons. The renderer **draws nothing** in a container that measures zero, and
+	a freshly enabled ScreenGui measures zero until the next layout frame: the line
+	simply would not appear. And the container's size at render time is the scale
+	reference for that line's text: taking it before layout (before
+	`UIAspectRatioConstraint`) pins the scale to a size that never existed on screen.
 
-	O orçamento de quadros existe para o caso de a caixa nunca ganhar tamanho (tela
-	desligada por outro controller): isso vira uma fala sem efeito, não uma espera
-	infinita.
+	The frame budget exists for a box that never gets a size (a screen disabled by
+	another controller): that becomes a line with no effect, not an infinite wait.
 ]=]
 function DialogController:waitForLayout(container : GuiObject)
 	local previous = container.AbsoluteSize
@@ -507,7 +512,7 @@ function DialogController:waitForLayout(container : GuiObject)
 end
 
 --[=[
-	Escreve a linha em que a conversa está.
+	Writes the line the conversation is on.
 ]=]
 function DialogController:write(session : number)
 	local handle = self.Handle
@@ -520,8 +525,8 @@ function DialogController:write(session : number)
 
 	if not self.Auto and not (isLast and self.PendingButtons) then return end
 
-	-- Uma inscrição por linha, desfeita no primeiro disparo: a linha seguinte
-	-- inscreve a dela, e sem isso a terceira frase chamaria três callbacks.
+	-- One subscription per line, undone on the first firing: the next line subscribes
+	-- its own, and without this the third sentence would call three callbacks.
 	local disconnect
 	disconnect = handle:OnFinished(function()
 		if disconnect then
@@ -530,10 +535,10 @@ function DialogController:write(session : number)
 
 		if self.Session ~= session then return end
 
-		-- A escolha só aparece quando a última frase terminou de ser escrita —
-		-- botão no ar enquanto o texto ainda está chegando convida o jogador a
-		-- responder uma pergunta que ele ainda não leu. Pular a digitação também
-		-- chega aqui, que é o que faz quem tem pressa não ficar sem os botões.
+		-- The choice only appears once the last sentence finished being written: buttons
+		-- up while the text is still arriving invite the player to answer a question they
+		-- have not read yet. Skipping the typing also lands here, which keeps players in a
+		-- hurry from ending up without the buttons.
 		if isLast and self.PendingButtons then
 			self:SetButtons(self.PendingButtons)
 			self.PendingButtons = nil
@@ -551,11 +556,11 @@ function DialogController:write(session : number)
 end
 
 --[=[
-	Tem escolha no ar? É botão visível **com** callback próprio.
+	Is there a choice on screen? That is a visible button **with** its own callback.
 
-	Botão sem callback é um "continuar" e não segura nada; botão com callback é uma
-	pergunta, e enquanto ela está na tela o clique no vazio não pode fechar a caixa
-	— senão a resposta se perde no primeiro clique distraído.
+	A button without a callback is a "continue" and holds nothing; a button with a
+	callback is a question, and while it is on screen a click on empty space must not
+	close the box, or the answer is lost on the first distracted click.
 ]=]
 function DialogController:hasChoice() : boolean
 	for index in Config.Buttons.Names do
@@ -576,8 +581,8 @@ export type ButtonSpec = {
 	Visible : boolean?,
 	OnClick : ((index : number) -> ())?,
 
-	-- Caminho de família de fonte (`rbxasset://fonts/families/....json`) para este
-	-- botão. Sem isso vale o `DialogConfig.Buttons.Label.Font`.
+	-- Font family path (`rbxasset://fonts/families/....json`) for this button.
+	-- Without it, `DialogConfig.Buttons.Label.Font` applies.
 	Font : string?,
 }
 
@@ -588,39 +593,41 @@ export type PlayOptions = {
 	Font : string?,
 	Buttons : { ButtonSpec }?,
 
-	-- `true` segura os botões até a última frase terminar de ser escrita. É o que
-	-- uma pergunta quer: a escolha aparece depois de o jogador ler o que foi
-	-- perguntado.
+	-- `true` holds the buttons until the last sentence finishes being written. It is what
+	-- a question wants: the choice appears after the player reads what was
+	-- asked.
 	ButtonsAtEnd : boolean?,
 
-	-- O fundo: esconder o resto da UI, borrar a tela, abafar a música. Sem valor,
-	-- vale o `DialogConfig.Background`.
+	-- The background: hide the rest of the UI, blur the screen, duck the music. With no
+	-- value, `DialogConfig.Background` applies.
 	HideUI : boolean?,
 	Blur : boolean?,
 	Duck : boolean?,
 }
 
 --[=[
-	Mexe num dos botões da caixa. Só o que vier no `spec` muda:
+	Changes one of the box's buttons. Only what comes in `spec` changes:
 
 		Dialog:SetButton(1, {
-			Text = "ACEITAR",
+			Text = "ACCEPT",
 			OnClick = function()
 				Contracts:Accept()
 				Dialog:Close()
 			end,
 		})
 
-		Dialog:SetButton(2, { Text = "AGORA NAO", Visible = true })
+		Dialog:SetButton(2, { Text = "NOT NOW", Visible = true })
 
-	`Text` vai centrado num label dentro do botão. `Visible` liga e desliga o botão.
-	`OnClick` é o callback, e é livre: recebe o índice e não precisa devolver nada.
-	Botão **sem** callback funciona como "continuar" — o clique avança a fala.
+	`Text` goes centered in a label inside the button. `Visible` turns the button on
+	and off. `OnClick` is the callback, and it is free-form: it receives the index and
+	need not return anything. A button **without** a callback works as "continue":
+	the click advances the dialog.
 
-	Passar `Text` acende o botão sozinho, porque escrever num botão invisível é
-	sempre engano. Para escrever e deixar apagado, mande `Visible = false` junto.
+	Passing `Text` turns the button on by itself, because writing on an invisible
+	button is always a mistake. To write and keep it hidden, send `Visible = false`
+	along.
 
-	Devolve `false` se não existe botão nesse índice nesta place.
+	Returns `false` if there is no button at that index in this place.
 ]=]
 function DialogController:SetButton(index : number, spec : ButtonSpec) : boolean
 	local slot = self:getButton(index)
@@ -633,7 +640,7 @@ function DialogController:SetButton(index : number, spec : ButtonSpec) : boolean
 		if success then
 			slot.Label.FontFace = font
 		else
-			warn(`[DialogController]: fonte invalida no botao {index}: {spec.Font}`)
+			log:StudioWarn(`invalid font on button {index}: {spec.Font}`)
 		end
 	end
 
@@ -654,8 +661,8 @@ function DialogController:SetButton(index : number, spec : ButtonSpec) : boolean
 end
 
 --[=[
-	Os dois de uma vez, na ordem de `DialogConfig.Buttons.Names`. Índice sem spec
-	na lista é apagado — é o que faz `{ {...} }` deixar só o primeiro na tela.
+	Both at once, in `DialogConfig.Buttons.Names` order. An index with no spec in the
+	list is cleared: that is what makes `{ {...} }` leave only the first on screen.
 ]=]
 function DialogController:SetButtons(specs : { ButtonSpec })
 	for index in Config.Buttons.Names do
@@ -670,12 +677,12 @@ function DialogController:SetButtons(specs : { ButtonSpec })
 end
 
 --[=[
-	Apaga os dois e esquece os callbacks.
+	Clears both and forgets the callbacks.
 
-	É o que roda quando uma fala começa sem pedir botão e quando a caixa fecha: as
-	escolhas de uma conversa não podem sobreviver a ela. Callback de uma fala
-	antiga num botão da fala nova é o tipo de defeito que só aparece na mão do
-	jogador.
+	It is what runs when a line starts without asking for buttons and when the box
+	closes: a conversation's choices must not outlive it. A callback from an old line
+	on a new line's button is the kind of bug that only shows up in the player's
+	hands.
 ]=]
 function DialogController:ClearButtons()
 	for index in Config.Buttons.Names do
@@ -689,8 +696,9 @@ function DialogController:ClearButtons()
 end
 
 --[=[
-	O botão em si, para quem quiser fazer o que esta API não faz — trocar a imagem,
-	animar, pôr um ícone dentro. É a saída para "customizado de qualquer jeito".
+	The button itself, for anyone who wants to do what this API does not: swap the
+	image, animate, put an icon inside. It is the escape hatch for "customized any
+	way".
 ]=]
 function DialogController:GetButton(index : number) : GuiButton?
 	local slot = self:getButton(index)
@@ -699,18 +707,19 @@ function DialogController:GetButton(index : number) : GuiButton?
 end
 
 --[=[
-	A caixa morreu com a fala aberta: guarda o que falta dizer e larga o que está
-	fora dela.
+	The box died with the dialog open: saves what is left to say and releases what is
+	outside it.
 
-	O que sobra é de `Index` em diante, e não a fala inteira: o jogador já leu o que
-	leu, e recomeçar do zero é fazê-lo ler duas vezes a mesma coisa para ser punido
-	por ter morrido. As opções são as mesmas — o mesmo fundo, os mesmos botões, o
-	mesmo modo automático —, porque a fala é a mesma; só a caixa é outra.
+	What remains is from `Index` on, not the whole dialog: the player already read what
+	they read, and restarting from zero makes them read the same thing twice as
+	punishment for dying. The options are the same (the same background, the same
+	buttons, the same auto mode), because the dialog is the same; only the box is
+	different.
 
-	O fundo é devolvido **agora**, e não na volta: o borrão e a UI escondida são da
-	tela que acabou de morrer, e deixá-los de pé enquanto a caixa nova não chega é
-	exatamente a tela travada que este bloco existe para evitar. A volta os pede de
-	novo, porque ela passa pelo `:Play()` inteiro.
+	The background is returned **now**, not on return: the blur and the hidden UI
+	belong to the screen that just died, and leaving them up while the new box has not
+	arrived is exactly the stuck screen this block exists to prevent. The return asks
+	for them again, because it goes through the full `:Play()`.
 ]=]
 function DialogController:noteDestroyed()
 	local remaining = {}
@@ -727,8 +736,8 @@ function DialogController:noteDestroyed()
 	self:releaseBackground()
 
 	if #remaining == 0 then
-		-- Nada por dizer: a fala tinha acabado, e isto é um fechamento como outro
-		-- qualquer.
+		-- Nothing left to say: the dialog had ended, and this is a close like any
+		-- other.
 		self:fireClosed()
 
 		return
@@ -745,16 +754,16 @@ function DialogController:noteDestroyed()
 end
 
 --[=[
-	Espera a caixa nova aparecer e reescreve nela o que faltava.
+	Waits for the new box to appear and rewrites what was missing into it.
 
-	A caixa não volta no mesmo quadro em que a antiga morre: o `ResetOnSpawn` só
-	reclona a `StarterGui` quando o personagem novo entra, e entre uma coisa e outra
-	há o tempo de respawn do servidor. Por isso é espera, e não uma tentativa só.
+	The box does not return on the same frame the old one dies: `ResetOnSpawn` only
+	reclones `StarterGui` when the new character enters, and between the two there is
+	the server's respawn time. That is why it waits, rather than trying once.
 
-	Desistindo (ver `Respawn.Timeout`), quem esperava o `:OnClosed()` **é avisado**.
-	É essa linha que impede um passo de tutorial de ficar parado para sempre
-	esperando uma fala que não volta mais — melhor o passo seguir sem a instrução que
-	o jogador preso numa tela que não responde.
+	When it gives up (see `Respawn.Timeout`), whoever waited on `:OnClosed()` **is
+	notified**. That line is what keeps a tutorial step from stalling forever waiting
+	for a dialog that will not come back: better the step continues without the
+	instruction than the player stuck on a screen that does not respond.
 ]=]
 function DialogController:awaitResume(token : number)
 	local respawn = Config.Respawn or {}
@@ -782,15 +791,15 @@ function DialogController:awaitResume(token : number)
 
 	if self.ResumeToken ~= token then return end
 
-	warn("[DialogController]: a caixa de fala nao voltou depois do respawn; a fala foi perdida.")
+	log:StudioWarn("the dialog box did not come back after the respawn; the line was lost.")
 
 	self.Resume = nil
 	self:fireClosed()
 end
 
 --[=[
-	Avisa quem pediu `:OnClosed()`. Em `task.spawn` porque o callback é de fora: um
-	erro nele não pode derrubar quem está fechando a caixa.
+	Notifies `:OnClosed()` subscribers. In `task.spawn` because the callback is external:
+	an error in it must not take down the code closing the box.
 ]=]
 function DialogController:fireClosed()
 	for _, listener in self.ClosedListeners do
@@ -799,12 +808,12 @@ function DialogController:fireClosed()
 end
 
 --[=[
-	Põe uma conversa na tela. `lines` é uma frase ou a lista delas.
+	Puts a conversation on screen. `lines` is one sentence or a list of them.
 
-	Devolve `false` quando não deu — caixa que não existe nesta place, ou texto rico
-	sem backend nenhum. Conversa nova sempre derruba a que estiver no ar: fala é
-	interrupção, e enfileirar diálogo velho atrás do novo é como o jogador acaba
-	lendo o aviso da wave passada.
+	Returns `false` when it could not: a box that does not exist in this place, or rich
+	text with no backend at all. A new conversation always replaces the one on screen:
+	dialog is an interruption, and queuing old dialog behind new is how the player
+	ends up reading the previous wave's warning.
 ]=]
 function DialogController:Play(lines : string | { string }, options : PlayOptions?) : boolean
 	local list = if type(lines) == "table" then lines else { lines }
@@ -815,8 +824,8 @@ function DialogController:Play(lines : string | { string }, options : PlayOption
 	local resolved = table.clone(Config.Text)
 	if options then
 		for key, value in options do
-			-- Opção da conversa não é opção do texto: mandá-la para o
-			-- `RichTextController` só viraria opção desconhecida lá dentro.
+			-- A conversation option is not a text option: sending it to
+			-- `RichTextController` would only become an unknown option in there.
 			if DIALOG_ONLY_OPTIONS[key] then continue end
 
 			resolved[key] = value
@@ -831,12 +840,12 @@ function DialogController:Play(lines : string | { string }, options : PlayOption
 	self.Session += 1
 	local session = self.Session
 
-	-- Volta marcada de uma fala anterior não pode escrever por cima desta.
+	-- A scheduled return from a previous dialog must not write over this one.
 	self.ResumeToken += 1
 	self.Resume = nil
 
-	-- Guardadas para a fala poder voltar igual depois de um respawn (ver o
-	-- `Destroying` mais abaixo).
+	-- Saved so the dialog can return the same after a respawn (see the
+	-- `Destroying` further below).
 	self.Options = options
 
 	self.Lines = list
@@ -845,9 +854,9 @@ function DialogController:Play(lines : string | { string }, options : PlayOption
 	self.Open = true
 	self.LastAdvance = os.clock()
 
-	-- Fala que não pediu botão nenhum entra sem botão: as escolhas da conversa
-	-- anterior não podem continuar na tela por cima desta. Pedidos com
-	-- `ButtonsAtEnd` ficam guardados até a última frase acabar (ver `write`).
+	-- A line that asked for no buttons enters without buttons: the previous
+	-- conversation's choices must not stay on screen over this one. Requests with
+	-- `ButtonsAtEnd` are held until the last sentence ends (see `write`).
 	self:ClearButtons()
 	self.PendingButtons = nil
 
@@ -860,16 +869,17 @@ function DialogController:Play(lines : string | { string }, options : PlayOption
 	end
 
 	--[=[
-		A `DialogGUI` tem `ResetOnSpawn`: morrer com a fala aberta **destrói a caixa**.
+		`DialogGUI` has `ResetOnSpawn`: dying with the dialog open **destroys the box**.
 
-		Sem isto o fechamento nunca chegaria — o borrão ficaria na tela e o resto da UI,
-		escondido, até o jogador sair do servidor. E pior que o borrão: quem espera o
-		`:OnClosed()` (o passo do tutorial, o fluxo do lobby) ficaria esperando para
-		sempre por um aviso que não vem.
+		Without this the close would never come: the blur would stay on screen and the
+		rest of the UI hidden until the player left the server. Worse than the blur:
+		whoever waits on `:OnClosed()` (the tutorial step, the Lobby flow) would wait
+		forever for a notification that never comes.
 
-		Não é um `:Close()` de propósito: a caixa e os botões já não existem, e
-		limpá-los seria escrever em instância destruída. Aqui só se desfaz o que está
-		**fora** da tela que morreu, e se marca a volta da fala (ver `awaitResume`).
+		It is not a `:Close()` on purpose: the box and buttons no longer exist, and
+		clearing them would write to destroyed instances. Here only what is **outside**
+		the dead screen is undone, and the dialog's return is scheduled (see
+		`awaitResume`).
 	]=]
 	local container = self.Container
 	if container then
@@ -898,7 +908,7 @@ function DialogController:Play(lines : string | { string }, options : PlayOption
 	self:setVisible(true)
 	self:waitForLayout(self.Container :: GuiObject)
 
-	-- Outra conversa pode ter começado enquanto esperávamos o layout.
+	-- Another conversation may have started while we waited for layout.
 	if self.Session ~= session then
 		return true
 	end
@@ -909,11 +919,11 @@ function DialogController:Play(lines : string | { string }, options : PlayOption
 end
 
 --[=[
-	O gesto do jogador: mostra a linha inteira se ela ainda está sendo escrita,
-	senão vai para a próxima — e fecha, se era a última.
+	The player's gesture: shows the whole line if it is still being written,
+	otherwise goes to the next, and closes if it was the last.
 
-	`ignoreDebounce` é para quem não é dedo: o modo automático não precisa ser
-	protegido de si mesmo.
+	`ignoreDebounce` is for callers that are not a finger: auto mode does not need
+	protection from itself.
 ]=]
 function DialogController:Advance(ignoreDebounce : boolean?) : boolean
 	if not self.Open then
@@ -943,8 +953,8 @@ function DialogController:Advance(ignoreDebounce : boolean?) : boolean
 	end
 
 	if self.Index >= #self.Lines then
-		-- Última frase com escolha na tela: a caixa fica. Quem fecha é o botão, e é
-		-- por isso que a pergunta não morre num clique distraído no cenário.
+		-- Last sentence with a choice on screen: the box stays. The button closes it, and
+		-- that is why the question does not die to a distracted click on the scenery.
 		if self:hasChoice() then
 			return false
 		end
@@ -961,7 +971,7 @@ function DialogController:Advance(ignoreDebounce : boolean?) : boolean
 end
 
 --[=[
-	Fecha a caixa e esquece a conversa.
+	Closes the box and forgets the conversation.
 ]=]
 function DialogController:Close()
 	self.Session += 1
@@ -978,7 +988,7 @@ function DialogController:Close()
 	self:releaseBackground()
 	self:setVisible(false)
 
-	-- Fechamento por gesto cancela a volta de uma fala que estivesse esperando caixa.
+	-- A gesture close cancels the return of a dialog that was waiting for a box.
 	self.ResumeToken += 1
 	self.Resume = nil
 
@@ -986,12 +996,12 @@ function DialogController:Close()
 end
 
 --[=[
-	Ainda vem fala?
+	Is more dialog coming?
 
-	`true` no intervalo entre a caixa morrer com o jogador e a caixa nova chegar. É o
-	que separa "a fala acabou" de "a fala está voltando" para quem decide o que pôr na
-	tela agora — o passo do tutorial não pode acender o destaque por cima de uma
-	instrução que está a um segundo de reaparecer.
+	`true` in the gap between the box dying with the player and the new box arriving.
+	It is what separates "the dialog is over" from "the dialog is coming back" for
+	code deciding what to put on screen now: the tutorial step must not light the
+	highlight over an instruction a second away from reappearing.
 ]=]
 function DialogController:IsResuming() : boolean
 	return self.Resume ~= nil
@@ -1002,11 +1012,11 @@ function DialogController:IsOpen() : boolean
 end
 
 --[=[
-	Chama de volta quando a caixa fecha — por gesto do jogador, por botão ou pelo
-	fim de uma fala automática. Devolve a função que desinscreve.
+	Calls back when the box closes: by player gesture, by button, or at the end of an
+	auto dialog. Returns the unsubscribe function.
 
-	É o que permite encadear: quem quiser mostrar alguma coisa **depois** da fala
-	espera aqui em vez de chutar um `task.wait`.
+	It is what allows chaining: code that wants to show something **after** the dialog
+	waits here instead of guessing a `task.wait`.
 ]=]
 function DialogController:OnClosed(callback : () -> ()) : () -> ()
 	table.insert(self.ClosedListeners, callback)
@@ -1020,8 +1030,7 @@ function DialogController:OnClosed(callback : () -> ()) : () -> ()
 end
 
 --[=[
-	Chama de volta quando a digitação passa por um `[event=nome]`. Devolve a função
-	que desinscreve.
+	Calls back when typing passes an `[event=name]`. Returns the unsubscribe function.
 ]=]
 function DialogController:OnEvent(callback : (name : string) -> ()) : () -> ()
 	table.insert(self.Listeners, callback)
@@ -1034,11 +1043,11 @@ function DialogController:OnEvent(callback : (name : string) -> ()) : () -> ()
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function DialogController:construct()
-	-- O servidor manda falar. `DialogService` é quem dispara, e o Cmdr entra por
-	-- ele para testar.
+	-- The server tells it to speak. `DialogService` fires it, and Cmdr goes through it
+	-- for testing.
 	Framework:Listen("DialogPlay", function(lines : any, options : any)
 		if type(lines) ~= "table" and type(lines) ~= "string" then return end
 
@@ -1048,8 +1057,8 @@ function DialogController:construct()
 	UserInputService.InputBegan:Connect(function(input : InputObject, gameProcessed : boolean)
 		if not self.Open then return end
 
-		-- `gameProcessed` é o jogador digitando no chat ou no Cmdr: a tecla é de lá,
-		-- não da fala.
+		-- `gameProcessed` is the player typing in chat or Cmdr: the key belongs there,
+		-- not to the dialog.
 		if gameProcessed then return end
 
 		local advance = Config.Advance
@@ -1067,9 +1076,9 @@ function DialogController:construct()
 end
 
 function DialogController:start()
-	-- Caixa vazia na tela do spawn é o defeito mais barato de evitar: o designer
-	-- autora a `DialogGUI` visível para poder vê-la no Studio. Os botões entram na
-	-- mesma conta — eles nascem visíveis lá, com o texto de teste que estiver neles.
+	-- An empty box on the spawn screen is the cheapest bug to prevent: the designer
+	-- authors `DialogGUI` visible to see it in Studio. The buttons enter the same math:
+	-- they are born visible there, with whatever test text they have.
 	if self:getContainer() then
 		self:ClearButtons()
 		self:setVisible(false)

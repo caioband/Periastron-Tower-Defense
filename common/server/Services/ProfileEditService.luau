@@ -6,48 +6,52 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("ProfileEditService")
 
 --[[
-	Edição de perfil pelos comandos de admin (`cash`, `shards`, `units`), com o
-	jogador em qualquer lugar: neste servidor, em outro, ou offline.
+	Profile editing for admin commands (`cash`, `shards`, `units`), with the player
+	anywhere: on this server, on another one, or offline.
 
-	Uma edição é uma **operação**: `{ Key, Field, Action, Amount }` — mexe em
-	`Data[Key][Field]`, um número. Hoje são duas chaves: `Stats` (Cash e Shards) e
-	`Units` (quantas de cada unidade).
+	An edit is an **operation**: `{ Key, Field, Action, Amount }`, changing
+	`Data[Key][Field]`, a number. Today there are two keys: `Stats` (Cash and Shards)
+	and `Units` (how many of each unit).
 
-	**Por onde ela vai.**
-	  1. O jogador está neste servidor → `DataService:Update`, na hora, e a replica
-	     avisa o cliente como em qualquer outra escrita.
-	  2. O perfil tem sessão aberta em outro servidor → `MessageAsync`. O servidor de
-	     lá recebe em segundos (o `DataService` registra o `MessageHandler`), aplica e
-	     salva. Sessão de servidor que caiu também cai aqui: a mensagem espera o
-	     jogador entrar de novo.
-	  3. Sem sessão → a mesma mensagem, e em seguida uma sessão curta aberta **só para
-	     consumi-la**: aplica, salva e fecha.
+	**Which way it goes.**
+	  1. The player is on this server → `DataService:Update`, immediately, and the
+	     replica notifies the client as with any other write.
+	  2. The profile has a session open on another server → `MessageAsync`. That
+	     server receives it within seconds (`DataService` registers the
+	     `MessageHandler`), applies it, and saves. A session from a server that
+	     crashed also lands here: the message waits for the player to join again.
+	  3. No session → the same message, followed by a short session opened **only to
+	     consume it**: apply, save, and close.
 
-	**Por que o caso 3 também vai por mensagem.** Entre ver "sem sessão" e abrir a
-	nossa há uma fresta; se o jogador entrar nela, quem ganha o perfil é quem
-	consome a mensagem — ela é aplicada uma vez só (o ProfileStore marca como
-	processada) e nunca se perde. E, se a nossa sessão curta tomar o perfil de um
-	servidor que acabou de abrir, o `DataService` de lá expulsa o jogador (ver o
-	`OnSessionEnd` dele) em vez de deixá-lo jogando sem salvar.
+	**Why case 3 also goes by message.** Between seeing "no session" and opening
+	ours there is a gap; if the player joins in it, whoever wins the profile is the
+	one that consumes the message. It is applied exactly once (ProfileStore marks it
+	processed) and is never lost. And if our short session steals the profile from a
+	server that just opened it, that server's `DataService` kicks the player (see its
+	`OnSessionEnd`) instead of letting them play without saving.
+
+	See docs/common/admin-commands.md.
 ]]
 
 local MESSAGE_KIND = "AdminEdit"
 
--- Quanto a sessão curta do caso 3 espera o perfil antes de desistir. Desistir não
--- perde nada: a mensagem já está no perfil e será aplicada na próxima sessão.
+-- How long case 3's short session waits for the profile before giving up. Giving
+-- up loses nothing: the message is already on the profile and applies next session.
 local OFFLINE_SESSION_TIMEOUT = 15
 
--- O que cada chave aceita, e se o zero sai da tabela.
+-- What each key accepts, and whether zero leaves the table.
 local KEYS = {
-	-- Moeda zerada continua no perfil como `0`: é o formato do template.
+	-- A currency at zero stays on the profile as `0`: that is the template's format.
 	Stats = { Fields = { Cash = true, Shards = true }, DropZero = false },
 
-	-- Unidade zerada sai da tabela: é assim que o perfil de quem nunca teve a
-	-- unidade se parece, e o `DeckConfig` lê os dois casos pelo mesmo `or 0`.
+	-- A unit at zero leaves the table: that is what a profile that never had the unit
+	-- looks like, and `DeckConfig` reads both cases with the same `or 0`.
 	Units = { Fields = nil, DropZero = true },
 }
 
@@ -60,8 +64,8 @@ local ProfileEditService = {
 --[[ INTERNAL ]]
 
 --[=[
-	O valor depois da operação. Nunca negativo: `remove` grande demais é engano de
-	quem digitou, não um pedido para dever.
+	The value after the operation. Never negative: an oversized `remove` is a typo,
+	not a request to owe.
 ]=]
 local function applyAction(action : string, current : number, amount : number) : number
 	if action == "set" then
@@ -74,8 +78,8 @@ local function applyAction(action : string, current : number, amount : number) :
 end
 
 --[=[
-	Aplica a operação numa tabela `{ [Field] = número }` e devolve
-	`(tabela, anterior, novo)`. É a única conta: os três caminhos passam por aqui.
+	Applies the operation to a `{ [Field] = number }` table and returns
+	`(table, previous, new)`. It is the only math: all three paths go through here.
 ]=]
 local function editTable(tbl : { [string] : number }?, op) : ({ [string] : number }, number, number)
 	tbl = if typeof(tbl) == "table" then tbl else {}
@@ -122,12 +126,12 @@ local function displayName(userId : number) : string
 end
 
 --[=[
-	Caso 3: abre o perfil só para consumir as mensagens pendentes, e fecha.
+	Case 3: opens the profile only to consume pending messages, then closes it.
 
-	Enquanto a sessão curta está aberta, a chave fica marcada no `DataService`
-	(`OfflineSessions`): o ProfileStore recusa abrir a mesma chave duas vezes no
-	mesmo servidor, e o jogador que entrar **aqui** nesse meio-tempo espera ela
-	fechar em vez de ficar sem perfil.
+	While the short session is open, the key is marked in `DataService`
+	(`OfflineSessions`): ProfileStore refuses to open the same key twice on the same
+	server, and a player who joins **here** in the meantime waits for it to close
+	instead of ending up without a profile.
 ]=]
 function ProfileEditService:_consumeOffline(userId : number, nonce : string) : (number?, number?)
 	local dataService = self.Services.DataService
@@ -135,11 +139,12 @@ function ProfileEditService:_consumeOffline(userId : number, nonce : string) : (
 	local profileKey = "Player_" .. userId
 
 	--[[
-		O jogador pode ter entrado **aqui** enquanto a mensagem viajava. A conferência
-		e a marca vêm juntas, sem ceder a thread entre elas: quem entrar depois disto
-		espera a marca sair (`DataService:CreatePlayer`), e quem entrou antes já
-		abriu (ou está abrindo) a sessão dele, que consome a mensagem sozinha. Abrir a
-		nossa por cima faria o ProfileStore devolver `nil` para a dele.
+		The player may have joined **here** while the message was in flight. The check
+		and the mark happen together, without yielding the thread between them: a
+		player who joins after this waits for the mark to clear
+		(`DataService:CreatePlayer`), and one who joined before already opened (or is
+		opening) their session, which consumes the message on its own. Opening ours on
+		top would make ProfileStore return `nil` for theirs.
 	]]
 	if Players:GetPlayerByUserId(userId) then
 		return nil, nil
@@ -173,7 +178,7 @@ function ProfileEditService:_consumeOffline(userId : number, nonce : string) : (
 	dataService.OfflineSessions[userId] = nil
 
 	if not ok then
-		warn(`[ProfileEditService]: sessao curta de {profileKey} falhou: {err}`)
+		log:Warn(`short session for {profileKey} failed: {err}`)
 	end
 
 	return previous, updated
@@ -182,11 +187,11 @@ end
 --[[ API ]]
 
 --[=[
-	O `MessageHandler` que os `DataService` registram em toda sessão, e o da sessão
-	curta do caso 3. Aplica a mensagem de edição direto em `data` e a marca como
-	processada. Mensagem de outro tipo passa reto e fica para quem a entender.
+	The `MessageHandler` every `DataService` registers on each session, and case 3's
+	short session too. Applies the edit message directly to `data` and marks it
+	processed. A message of another type passes through for whoever understands it.
 
-	Devolve `(anterior, novo)` quando aplicou.
+	Returns `(previous, new)` when it applied.
 ]=]
 function ProfileEditService:ApplyMessage(data : any, message : any, processed : () -> ()) : (number?, number?)
 	if typeof(message) ~= "table" or message.Kind ~= MESSAGE_KIND then
@@ -195,7 +200,7 @@ function ProfileEditService:ApplyMessage(data : any, message : any, processed : 
 
 	local op = message.Op
 	if typeof(op) ~= "table" or validate(op) then
-		warn(`[ProfileEditService]: mensagem de edicao invalida descartada.`)
+		log:Warn("invalid edit message discarded.")
 		processed()
 		return nil, nil
 	end
@@ -209,8 +214,8 @@ function ProfileEditService:ApplyMessage(data : any, message : any, processed : 
 end
 
 --[=[
-	Igual ao `ApplyMessage`, mas para o perfil aberto neste servidor: passa pelo
-	`DataService:Update`, que é o que avisa a replica (e o cliente).
+	Like `ApplyMessage`, but for the profile open on this server: it goes through
+	`DataService:Update`, which is what notifies the replica (and the client).
 ]=]
 function ProfileEditService:ApplyMessageToPlayer(player : Player, message : any, processed : () -> ())
 	if typeof(message) ~= "table" or message.Kind ~= MESSAGE_KIND then
@@ -219,7 +224,7 @@ function ProfileEditService:ApplyMessageToPlayer(player : Player, message : any,
 
 	local op = message.Op
 	if typeof(op) ~= "table" or validate(op) then
-		warn(`[ProfileEditService]: mensagem de edicao invalida descartada.`)
+		log:Warn("invalid edit message discarded.")
 		processed()
 		return
 	end
@@ -232,8 +237,8 @@ function ProfileEditService:ApplyMessageToPlayer(player : Player, message : any,
 end
 
 --[=[
-	Aplica a operação no perfil de `userId`, onde quer que ele esteja, e devolve a
-	linha que o console imprime.
+	Applies the operation to `userId`'s profile, wherever it is, and returns the line
+	the console prints.
 ]=]
 function ProfileEditService:Edit(userId : number, op) : string
 	local problem = validate(op)
@@ -248,7 +253,7 @@ function ProfileEditService:Edit(userId : number, op) : string
 
 	local label = `{op.Key}.{op.Field}`
 
-	-- 1. Neste servidor.
+	-- 1. On this server.
 	local player = Players:GetPlayerByUserId(userId)
 	if player then
 		if not (dataService.Profiles and dataService.Profiles[player]) then
@@ -285,12 +290,12 @@ function ProfileEditService:Edit(userId : number, op) : string
 		return `{name}: failed to send the edit ({okSend and "store closing" or sent}).`
 	end
 
-	-- 2. Sessão aberta em outro servidor (ou de um servidor que caiu).
+	-- 2. Session open on another server (or from a server that crashed).
 	if snapshot.Session then
 		return `{name} {label}: {op.Action} {op.Amount} sent to their server (online elsewhere; applies in a few seconds, or on next join).`
 	end
 
-	-- 3. Sem sessão.
+	-- 3. No session.
 	local previous, updated = self:_consumeOffline(userId, nonce)
 	if updated then
 		return `{name} {label} {previous} -> {updated} (offline, saved)`
@@ -300,9 +305,9 @@ function ProfileEditService:Edit(userId : number, op) : string
 end
 
 --[=[
-	O que os comandos do Cmdr chamam: a operação para cada `userId`, uma linha por
-	jogador. Em série de propósito — cada um pode esperar o DataStore, e em
-	paralelo um `all` dispararia todas as leituras de uma vez.
+	What the Cmdr commands call: the operation for each `userId`, one line per
+	player. Serial on purpose: each may wait on the DataStore, and in parallel an
+	`all` would fire every read at once.
 ]=]
 function ProfileEditService:RunCommand(userIds : { number }, op) : string
 	if #userIds == 0 then
@@ -317,7 +322,7 @@ function ProfileEditService:RunCommand(userIds : { number }, op) : string
 	return table.concat(lines, "\n")
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function ProfileEditService:start()
 	for Service, _ in self.Services do

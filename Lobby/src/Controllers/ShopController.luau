@@ -9,6 +9,7 @@ local Util = Shared:WaitForChild("Util")
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local Signal = require(Packages.Signal)
 
 local SharedConfig = require(Configs.SharedConfig)
@@ -21,28 +22,28 @@ local ShopConfig = SharedConfig.ShopConfig
 local RarityConfig = SharedConfig.RarityConfig
 
 local Framework = Me.new()
+local log = Log.new("ShopController")
 
 --[[ CONSTANTS ]]
 local SHOP_UI_NAME = "ShopUI"
 
 --[=[
-	O caminho do painel: `ShopUI.Frame.ImageLabel`.
+	The panel path: `ShopUI.Frame.ImageLabel`.
 
-	O `Frame` de fora carrega o `UIAspectRatioConstraint`, e o `ImageLabel` de dentro
-	e a moldura desenhada -- e nele que a `OpenShop` escreve.
+	The outer `Frame` carries the `UIAspectRatioConstraint`, and the inner `ImageLabel` is
+	the drawn frame: it is what `OpenShop` writes to.
 
-	**A `ShopUI` carrega tres lojas.** O `Frame` e esta, a de caixas; o `RCSS` ao lado
-	dele e a de cartas (`RoundCardShopController`), e o `RobuxShop` e a de Robux
-	(`RobuxShopController`). Quem abre e fecha a moldura e o `ProximityPanel`, e o
-	`CanDisable` dele e o que impede esta loja de apagar a ScreenGui com uma vizinha
-	aberta.
+	**`ShopUI` carries three shops.** `Frame` is this one, the crate shop; `RCSS` next to it
+	is the card shop (`RoundCardShopController`), and `RobuxShop` is the Robux shop
+	(`RobuxShopController`). `ProximityPanel` opens and closes the frame, and its
+	`CanDisable` is what keeps this shop from disabling the ScreenGui with a neighbor open.
 ]=]
 local WRAPPER_NAME = "Frame"
 local PANEL_NAME = "ImageLabel"
 local LIST_NAME = "ScrollingFrame"
 
--- Dentro do container de cada caixa. `BoxArt` carrega a ilustracao e, dentro dela,
--- o nome; `Frame` carrega a lista de raridades; `Buy` e o botao com o preco.
+-- Inside each crate's container. `BoxArt` carries the illustration and, inside it,
+-- the name; `Frame` carries the rarity list; `Buy` is the button with the price.
 local BOX_ART_NAME = "BoxArt"
 local ODDS_FRAME_NAME = "Frame"
 local RARITY_TEMPLATE_NAME = "Rarity"
@@ -51,56 +52,55 @@ local BUY_BUTTON_NAME = "Buy"
 
 local RARITY_ROW_PREFIX = "Rarity_"
 
--- O contador de shards ainda nao existe no painel novo -- a loja nao depende dele
--- para funcionar. O X (`Close`, no `Frame` de fora) e ligado pelo `ProximityPanel`.
+-- The shards counter does not exist in the new panel yet; the shop does not depend
+-- on it to work. The X (`Close`, on the outer `Frame`) is hooked up by `ProximityPanel`.
 local SHARDS_LABEL_NAME = "CurrentShards"
 
 local HUD_UI_NAME = "HUD"
 local HUD_FRAME_NAME = "HUDFrame"
 local HUD_BUTTON_NAME = "Shop"
 
--- Quantas vezes as chances sao pedidas ao servidor antes de desistir, e de quanto
--- em quanto tempo. Ver o `_requestOdds`.
+-- How many times the chances are requested from the server before giving up, and how
+-- often. See `_requestOdds`.
 local ODDS_REQUEST_ATTEMPTS = 5
 local ODDS_REQUEST_INTERVAL = 2
 
 --[=[
-	O nome do pedido ao `InterfaceController`: enquanto a loja esta aberta, a tela e
-	so dela.
+	The name of the `InterfaceController` request: while the shop is open, the screen is
+	its alone.
 
-	Pedido com nome, e nao um interruptor global: a cutscene e o painel de mapas
-	pedem a mesma coisa, e uma GUI so volta quando o **ultimo** pedido sai. Quem
-	esconde nunca escreve no `Enabled` dos outros -- o controller guarda o que o dono
-	de cada GUI queria e devolve exatamente aquilo.
+	A named request, not a global switch: the cutscene and the maps panel ask for the same
+	thing, and a GUI only comes back when the **last** request leaves. Whoever hides never
+	writes to the others' `Enabled`: the controller keeps what each GUI's owner wanted and
+	restores exactly that.
 ]=]
 local HIDE_REASON = "Shop"
 
 --[=[
-	O som da compra, um por moeda. Toca no **resultado** do servidor, e nao no
-	clique: o preco e a carteira sao conferidos la, e um clique sem saldo nao comprou
-	nada.
+	The purchase sound, one per currency. It plays on the server's **result**, not on the
+	click: price and wallet are checked there, and a click without balance bought nothing.
 
-	Os dois moram em `SoundService.BuySFX`, uma pasta solta ao lado do Package
-	`SharedSounds` -- e um efeito so do Lobby, e nao vale uma mudanca de package nas
-	duas places. O `MusicController` acha som solto e som em pasta solta pelo nome;
-	ver o `_findLoose` de la.
+	Both live in `SoundService.BuySFX`, a loose folder next to the `SharedSounds` Package:
+	it is a Lobby-only effect, and not worth a package change in both places.
+	`MusicController` finds loose sounds and sounds in loose folders by name; see its
+	`_findLoose`.
 
-	A chave e a moeda do perfil (`ShopConfig.CURRENCIES`) e o valor e o nome do
-	`Sound`, que e o nome da tela: a pasta traz `Coins`, e nao `Cash`.
+	The key is the profile currency (`ShopConfig.CURRENCIES`) and the value is the
+	`Sound`'s name, which is the screen's name: the folder has `Coins`, not `Cash`.
 
-	**Toda compra toca do comeco.** As duas dividem uma `Key`, e o `PlaySFX` para e
-	destroi o que estiver tocando nela antes de soltar o clone novo -- comprar de novo
-	no meio do som corta e recomeca, em vez de somar uma segunda copia por cima da
-	primeira. Sem `Key` os clones se empilhariam, e a terceira compra seguida sairia
-	como um borrao em vez de tres confirmacoes.
+	**Every purchase plays from the start.** Both share a `Key`, and `PlaySFX` stops and
+	destroys whatever is playing on it before releasing the new clone: buying again
+	mid-sound cuts and restarts, instead of adding a second copy on top of the first.
+	Without `Key` the clones would stack, and the third purchase in a row would come out as
+	a smear instead of three confirmations.
 
-	Isso **nao e debounce**: nada e engolido, e toda resposta do servidor tem o seu
-	som. O corte e a favor do jogador -- o som que ele ouve e sempre o da compra que
-	ele acabou de fazer.
+	This **is not a debounce**: nothing is swallowed, and every server response has its
+	sound. The cut favors the player: the sound they hear is always the purchase they just
+	made.
 
-	Sem fade, o clone toca no mesmo quadro em que a resposta chega. O que ainda podia
-	atrasar era o download do audio no primeiro toque, e por isso os dois sao
-	pre-carregados no `construct`.
+	No fade, so the clone plays on the same frame the response arrives. What could still
+	delay it was downloading the audio on the first play, which is why both are preloaded
+	in `construct`.
 ]=]
 local BUY_SOUND_KEY = "ShopBuy"
 
@@ -110,38 +110,39 @@ local BUY_SOUNDS = {
 }
 
 --[[
-	O contorno de cada linha de raridade.
+	Each rarity row's outline.
 
-	A cor e a do tier no `RarityConfig` -- a mesma que pinta o carretel do unboxing e
-	o nome da carta no deck --, e o gradiente e um brilho por cima dela: o `Color` do
-	`UIStroke` carrega a cor e o gradiente carrega so a luz, em cinza, para a hora de
-	trocar uma cor de raridade ser uma linha no `RarityConfig` e nao quatro aqui.
+	The color is the tier's from `RarityConfig` (the same that paints the unboxing reel and
+	the card name in the deck), and the gradient is a shine on top of it: the `UIStroke`'s
+	`Color` carries the color and the gradient carries only the light, in gray, so changing
+	a rarity color is one line in `RarityConfig` and not four here.
 
-	Vertical (`Rotation = 90`) porque a linha e um retangulo largo e baixo: um
-	gradiente horizontal acenderia uma ponta do texto e apagaria a outra.
+	Vertical (`Rotation = 90`) because the row is a wide, short rectangle: a horizontal
+	gradient would light one end of the text and darken the other.
 ]]
 local STROKE_GRADIENT_ROTATION = 90
 local STROKE_SHEEN_TOP = 1
 local STROKE_SHEEN_BOTTOM = 0.45
 
 --[=[
-	A cara do botao `Buy` por moeda: a cor do contorno do preco, o icone ao lado dele
-	e o tamanho desse icone.
+	The `Buy` button's look per currency: the price outline's color, the icon next to it,
+	and that icon's size.
 
-	Fica aqui e nao no `ShopConfig` porque e desenho: o config diz de qual chave de
-	`Data.Stats` a caixa cobra (e o servidor cobra dali), e quem traduz isso em cor e
-	imagem e a tela. Os containers sao autorados um por caixa, entao sem isto a
-	Crate Of Beginnings continuaria com o icone da Shard ao lado de um preco em
-	Coins -- a arte foi desenhada quando a loja tinha uma moeda so.
+	It lives here and not in `ShopConfig` because it is drawing: the config says which
+	`Data.Stats` key the crate charges (and the server charges from there), and the screen
+	translates that into color and image. Containers are authored one per crate, so
+	without this the Crate Of Beginnings would keep the Shard icon next to a price in
+	Coins: the art was drawn when the shop had a single currency.
 
-	`IconScale` vai no `UIScale` autorado dentro do `ImageLabel`. As duas artes nao
-	pesam o mesmo na mesma caixa: a moeda de Coins e mais cheia que a Shard, e sai
-	grande demais no tamanho que a Shard pede. E escrito nas **duas** moedas, e nao
-	so na que encolhe, porque o `UIScale` e do container e nao da moeda -- um preco
-	que voltasse para Shards ficaria com o icone encolhido do dono anterior.
+	`IconScale` goes on the `UIScale` authored inside the `ImageLabel`. The two arts do not
+	weigh the same in the same box: the Coins coin is fuller than the Shard, and comes out
+	too large at the size the Shard needs. It is written on **both** currencies, not only
+	the one that shrinks, because the `UIScale` belongs to the container, not the
+	currency: a price that went back to Shards would keep the previous owner's shrunk
+	icon.
 
-	A chave e a mesma de `ShopConfig.CURRENCIES`. Moeda sem entrada aqui deixa o
-	botao como o designer autorou, que e melhor do que apagar o icone dele.
+	The key is the same as `ShopConfig.CURRENCIES`. A currency with no entry here leaves
+	the button as the designer authored it, which beats hiding its icon.
 ]=]
 local CURRENCY_STYLE = {
 	Shards = {
@@ -158,33 +159,34 @@ local CURRENCY_STYLE = {
 }
 
 --[=[
-	Dono da `StarterGui.ShopUI`: acha o container de cada caixa, escreve nele o que
-	muda e toca a `OpenShop` no painel.
+	Owner of `StarterGui.ShopUI`: finds each crate's container, writes what changes into
+	it, and plays `OpenShop` on the panel.
 
-	**Ele nao cria container nenhum.** Cada caixa tem o container dela autorado na
-	`ScrollingFrame`, com ilustracao, moldura e cor proprias, e o codigo so acha pelo
-	nome (o `Key` da caixa, ver `CrateConfig`) e preenche tres coisas: o nome na
-	`BoxArt`, o preco no `Buy` (com a cor e o icone da moeda dele) e a lista de
-	raridades no `Frame`. Antes existia um `ShopItemWrapper` autorado que ele clonava
-	por item -- nao serve mais, porque clonar um template so daria tres caixas com a
-	cara da primeira.
+	**It creates no container.** Each crate has its own container authored in the
+	`ScrollingFrame`, with its own illustration, frame, and color, and the code only finds
+	it by name (the crate's `Key`; see `CrateConfig`) and fills in three things: the name
+	on `BoxArt`, the price on `Buy` (with its currency's color and icon), and the rarity
+	list on `Frame`. Cloning a single template per item would give three crates that look
+	like the first.
 
-	Dentro de cada container, a linha de raridade **e um template por caixa**: a
-	`Rarity` autorada e a arte daquela caixa, e ela e clonada uma vez por raridade
-	que a caixa pode dropar, da mais comum (em cima) para a mais rara (embaixo).
+	Inside each container, the rarity row **is a per-crate template**: the authored
+	`Rarity` is that crate's art, and it is cloned once per rarity the crate can drop,
+	from most common (top) to rarest (bottom).
 
-	As **chances** nao estao em config compartilhado: elas sao do servidor, e chegam
-	pelo `CrateOdds` depois de um `RequestCrateOdds`. Ate elas chegarem o container
-	fica sem linha nenhuma, e nao com o numero autorado -- placeholder de designer na
-	tela do jogador e pior do que espaco vazio por meio segundo.
+	The **chances** are not in a shared config: they belong to the server, and arrive
+	through `CrateOdds` after a `RequestCrateOdds`. Until they arrive the container has no
+	rows at all, not the authored number: a designer placeholder on the player's screen is
+	worse than half a second of empty space.
 
-	Andar a menos de `ShopConfig.OPEN_RADIUS` da parte da loja abre, e sair fecha.
-	`Open`/`Close`/`Toggle` sao publicos, entao qualquer outra coisa (o botao da HUD,
-	um comando do Cmdr) move o mesmo painel.
+	Walking within `ShopConfig.OPEN_RADIUS` of the shop part opens it, and leaving closes
+	it. `Open`/`Close`/`Toggle` are public, so anything else (the HUD button, a Cmdr
+	command) moves the same panel.
 
-	Quem reage ao jogador **chegando** e o `ShopKeeperController`, num raio maior em
-	volta do mesmo ponto. Ele escuta o `PurchaseResult` daqui para saber se despede o
-	jogador bem ou mal, e este controller nao sabe que ele existe.
+	`ShopKeeperController` reacts to the player **arriving**, in a larger radius around the
+	same point. It listens to `PurchaseResult` here to know whether to say goodbye nicely
+	or not, and this controller does not know it exists.
+
+	See docs/lobby/shop.md.
 ]=]
 local ShopController = {
 	Controllers = {
@@ -192,8 +194,8 @@ local ShopController = {
 		InterfaceController = {},
 		MusicController = {},
 
-		-- As outras lojas da mesma `ScreenGui`. So para saber se alguma esta aberta
-		-- antes de apagar a ScreenGui das tres -- ver o `CanDisable` no `construct`.
+		-- The other shops in the same `ScreenGui`. Only to know whether any is open
+		-- before disabling the ScreenGui of all three; see `CanDisable` in `construct`.
 		RoundCardShopController = {},
 		RobuxShopController = {},
 	},
@@ -216,19 +218,19 @@ local ShopController = {
 --[[ INTERNAL ]]
 
 --[=[
-	Uma porcentagem como a arte escreve: `40%`, `85.99%`, `0.14%`.
+	A percentage the way the art writes it: `40%`, `85.99%`, `0.14%`.
 
-	Duas casas e o suficiente para a menor chance da tabela (a Cosmic na Crate Of
-	Nature, 0,14%) nao virar "0%", e o zero a direita cai fora para o caso redondo
-	nao virar "40.00%" ao lado de um "85.99%".
+	Two decimals are enough for the table's smallest chance (Cosmic in the Crate Of
+	Nature, 0.14%) not to become "0%", and the trailing zero drops so the round case does
+	not become "40.00%" next to an "85.99%".
 ]=]
 local function formatPercent(chance : number) : string
 	local rounded = math.floor(chance * 100 + 0.5) / 100
 
-	-- Chance que existe mas nao cabe em duas casas vira `<0.01%`, e nao `0%`: a
-	-- linha esta ali porque a raridade pode sair, e escrever zero seria mentir.
-	-- Nenhum pool de hoje chega perto disso (a menor e 0,14%), mas quem mexer nos
-	-- numeros nao vai descobrir esta regra pelo bug.
+	-- A chance that exists but does not fit in two decimals becomes `<0.01%`, not `0%`: the
+	-- row is there because the rarity can drop, and writing zero would be a lie.
+	-- No pool today comes close (the smallest is 0.14%), but whoever changes the
+	-- numbers will not discover this rule through a bug.
 	if rounded <= 0 then
 		return "<0.01%"
 	end
@@ -241,13 +243,12 @@ local function formatPercent(chance : number) : string
 end
 
 --[=[
-	Veste o botao `Buy` com a moeda que aquela caixa cobra: o contorno do preco e o
-	icone ao lado dele.
+	Dresses the `Buy` button with the currency that crate charges: the price outline and
+	the icon next to it.
 
-	As tres caixas foram autoradas quando a loja so cobrava em Shards, entao as tres
-	nascem com o icone e o azul da Shard. Escrever os dois aqui e o que faz uma caixa
-	em Coins se ler como Coins sem o designer precisar tocar em container nenhum
-	quando um preco mudar de moeda.
+	The three crates were authored when the shop only charged in Shards, so all three are
+	born with the Shard's icon and blue. Writing both here is what makes a Coins crate read
+	as Coins without the designer touching any container when a price changes currency.
 ]=]
 local function styleBuyButton(buy : Instance, currency : string)
 	local style = CURRENCY_STYLE[currency]
@@ -269,8 +270,8 @@ local function styleBuyButton(buy : Instance, currency : string)
 
 	icon.Image = style.Icon
 
-	-- O `UIScale` e autorado dentro do icone. Sem ele so o tamanho do designer vale,
-	-- que e o que ja acontecia antes de as moedas se separarem.
+	-- The `UIScale` is authored inside the icon. Without it only the designer's size
+	-- applies.
 	local scale = icon:FindFirstChildWhichIsA("UIScale")
 	if scale and style.IconScale then
 		scale.Scale = style.IconScale
@@ -278,17 +279,16 @@ local function styleBuyButton(buy : Instance, currency : string)
 end
 
 --[=[
-	Pinta o contorno de uma linha com a cor da raridade dela, com um brilho de cima
-	para baixo.
+	Paints a row's outline with its rarity's color, with a top-to-bottom shine.
 
-	O `UIStroke` autorado e o da caixa (preto na Crate Of Nature, verde na Fragmented
-	Crate), e ele nao diz nada sobre a raridade da linha -- as quatro linhas de uma
-	caixa sairiam iguais. Aqui ele passa a ser a cor do tier, e a linha se le sozinha
-	antes de o jogador chegar no texto.
+	The authored `UIStroke` is the crate's (black on the Crate Of Nature, green on the
+	Fragmented Crate), and it says nothing about the row's rarity: a crate's four rows
+	would come out identical. Here it becomes the tier's color, and the row reads on its
+	own before the player reaches the text.
 
-	O gradiente e reaproveitado quando ja existe um autorado (o template da Crate Of
-	Beginnings tem um) em vez de um segundo ser criado ao lado: dois `UIGradient` no
-	mesmo `UIStroke` e a Roblox escolhendo um deles por ordem de arvore.
+	The gradient is reused when an authored one exists (the Crate Of Beginnings template
+	has one) instead of creating a second one beside it: two `UIGradient`s on the same
+	`UIStroke` means Roblox picking one by tree order.
 ]=]
 local function styleRarityStroke(label : TextLabel, rarity : string)
 	local stroke = label:FindFirstChildWhichIsA("UIStroke")
@@ -314,15 +314,15 @@ local function styleRarityStroke(label : TextLabel, rarity : string)
 end
 
 --[=[
-	Escreve as linhas de raridade de um container, da mais comum para a mais rara.
+	Writes a container's rarity rows, from most common to rarest.
 
-	A `Rarity` autorada dentro do container e o template daquela caixa: ela sai da
-	tela no bind e volta clonada, uma vez por raridade com chance maior que zero. A
-	ordem e a do `RarityConfig`, e nao a da chance -- na caixa lendaria a Epic e a
-	Legendary empatam em 40%, e ordenar por numero poria as duas na frente da Rare.
+	The `Rarity` authored inside the container is that crate's template: it leaves the
+	screen on bind and comes back cloned, once per rarity with a chance above zero. The
+	order is `RarityConfig`'s, not by chance: in the legendary crate Epic and Legendary tie
+	at 40%, and sorting by number would put both before Rare.
 
-	Sem odds (elas ainda nao chegaram do servidor) o container fica vazio de
-	proposito. Ver o comentario da classe.
+	With no odds (they have not arrived from the server yet) the container stays empty on
+	purpose. See the class comment.
 ]=]
 function ShopController:_renderOdds(entry)
 	local template = entry.RarityTemplate
@@ -369,10 +369,10 @@ function ShopController:_renderOdds(entry)
 end
 
 --[=[
-	Liga um container autorado ao item da loja que ele representa.
+	Binds an authored container to the shop item it represents.
 
-	Devolve nil quando o container nao tem a estrutura que a arte promete -- e um
-	container quebrado some da loja em vez de aparecer sem preco.
+	Returns nil when the container lacks the structure the art promises: a broken
+	container disappears from the shop instead of showing without a price.
 ]=]
 function ShopController:_bindContainer(container : Instance, item)
 	local boxArt = container:FindFirstChild(BOX_ART_NAME)
@@ -380,7 +380,7 @@ function ShopController:_bindContainer(container : Instance, item)
 	local buy = container:FindFirstChild(BUY_BUTTON_NAME)
 
 	if not oddsFrame or not buy then
-		warn(`[ShopController]: container '{container.Name}' has no {ODDS_FRAME_NAME}/{BUY_BUTTON_NAME}.`)
+		log:StudioWarn(`container '{container.Name}' has no {ODDS_FRAME_NAME}/{BUY_BUTTON_NAME}.`)
 		return nil
 	end
 
@@ -388,16 +388,16 @@ function ShopController:_bindContainer(container : Instance, item)
 	container:SetAttribute("ShopItemId", item.Id)
 	container.Visible = true
 
-	-- O nome mora dentro da ilustracao, e nao ao lado dela.
+	-- The name lives inside the illustration, not next to it.
 	local nameLabel = boxArt and boxArt:FindFirstChildWhichIsA("TextLabel")
 	if nameLabel then
 		nameLabel.Text = string.upper(item.DisplayName)
 	end
 
 	--[[
-		O preco com o desconto do VIP, pela mesma `ShopConfig.priceFor` que o servidor
-		usa para cobrar: o numero no botao e o numero que sai da carteira porque e a
-		mesma conta, e nao porque alguem lembrou de mexer nos dois.
+		The price with the VIP discount, through the same `ShopConfig.priceFor` the server
+		uses to charge: the number on the button is the number that leaves the wallet because
+		it is the same math, not because someone remembered to change both.
 	]]
 	local priceLabel = buy:FindFirstChildWhichIsA("TextLabel")
 	if priceLabel then
@@ -412,21 +412,20 @@ function ShopController:_bindContainer(container : Instance, item)
 		end))
 
 		--[[
-			O peso do botao (crescer no hover, afundar no aperto) e do `ButtonUtil`: a
-			loja de cartas usa o mesmo, e as duas tem de responder ao toque do mesmo
-			jeito. Vai no `ItemMaid`, junto do resto do bind do container -- um `_render`
-			novo desconecta tudo e cancela o tween que estiver no meio.
+			The button's weight (grow on hover, sink on press) comes from `ButtonUtil`: the card
+			shop uses the same, and both must respond to touch the same way. It goes in
+			`ItemMaid`, along with the rest of the container's bind: a new `_render`
+			disconnects everything and cancels any tween midway.
 		]]
 		ButtonUtil.bindFeedback(buy, self.ItemMaid)
 	end
 
 	--[[
-		A linha autorada vira template e sai da tela.
+		The authored row becomes a template and leaves the screen.
 
-		Ela e clonada antes de ser destruida porque a arte dela e a **daquela caixa**:
-		nao ha um template unico de linha em lugar nenhum, e o que separa a linha da
-		Crate Of Nature da linha da Fragmented Crate e exatamente o que o designer
-		autorou aqui dentro.
+		It is cloned before being destroyed because its art is **that crate's**: there is no
+		single row template anywhere, and what separates the Crate Of Nature's row from the
+		Fragmented Crate's is exactly what the designer authored in here.
 	]]
 	local authored = oddsFrame:FindFirstChild(RARITY_TEMPLATE_NAME)
 	local template = nil
@@ -435,7 +434,7 @@ function ShopController:_bindContainer(container : Instance, item)
 		template = authored:Clone()
 		authored:Destroy()
 	else
-		warn(`[ShopController]: container '{container.Name}' has no {RARITY_TEMPLATE_NAME} to clone.`)
+		log:StudioWarn(`container '{container.Name}' has no {RARITY_TEMPLATE_NAME} to clone.`)
 	end
 
 	local entry = {
@@ -452,12 +451,12 @@ function ShopController:_bindContainer(container : Instance, item)
 end
 
 --[=[
-	Preenche a loja inteira a partir do config.
+	Fills the whole shop from the config.
 
-	Container sem item na tabela fica escondido, e item sem container autorado sai
-	da loja com um aviso -- e o caso da lendaria hoje (ver `ShopConfig.ITEMS`). Os
-	dois sao avisados uma vez so por nome: um container que falta e um erro de
-	autoria, e repetir por respawn so enche o output.
+	A container with no item in the table stays hidden, and an item with no authored
+	container leaves the shop with a warning: that is the legendary one's case today (see
+	`ShopConfig.ITEMS`). Both warn only once per name: a missing container is an authoring
+	error, and repeating it per respawn only fills the output.
 ]=]
 function ShopController:_render()
 	if not self.List then
@@ -475,7 +474,7 @@ function ShopController:_render()
 		if not container or not container:IsA("GuiObject") then
 			if not self.WarnedMissing[item.Container] then
 				self.WarnedMissing[item.Container] = true
-				warn(`[ShopController]: no container '{item.Container}' in {SHOP_UI_NAME}.{WRAPPER_NAME}.{PANEL_NAME}.{LIST_NAME}, skipping '{item.Id}'.`)
+				log:StudioWarn(`no container '{item.Container}' in {SHOP_UI_NAME}.{WRAPPER_NAME}.{PANEL_NAME}.{LIST_NAME}, skipping '{item.Id}'.`)
 			end
 
 			continue
@@ -489,8 +488,8 @@ function ShopController:_render()
 		end
 	end
 
-	-- Container que nao e de nenhum item da tabela: escondido, e nao destruido. Ele
-	-- e trabalho de designer, e a loja nao e dona dele.
+	-- A container that belongs to no item in the table: hidden, not destroyed. It
+	-- is designer work, and the shop does not own it.
 	for _, child in self.List:GetChildren() do
 		if child:IsA("GuiObject") and not claimed[child] then
 			child.Visible = false
@@ -499,17 +498,17 @@ function ShopController:_render()
 end
 
 --[=[
-	Pede as chances ao servidor, e insiste ate elas chegarem.
+	Asks the server for the chances, and insists until they arrive.
 
-	A insistencia existe porque o **identificador do evento nasce no servidor** (ver
-	a nota sobre eventos no README da raiz): o cliente pode ligar a loja antes de o
-	`ShopService` ter registrado o `Listen` do `RequestCrateOdds`, e um pedido feito
-	nessa janela se perde. Sem repetir, a loja ficaria sem linha de raridade pelo
-	resto da sessao por causa de meio segundo de ordem de boot.
+	The insisting exists because **the event identifier is created on the server** (see
+	docs/architecture/me-framework.md): the client may hook up the shop before
+	`ShopService` registered its `RequestCrateOdds` `Listen`, and a request made in that
+	window is lost. Without retrying, the shop would have no rarity rows for the rest of
+	the session because of half a second of boot order.
 
-	O laco para no primeiro `CrateOdds` que chegar e tem teto de tentativas: se o
-	servidor nao responde depois disso, ele nao vai responder, e ficar pedindo para
-	sempre so esconderia o problema.
+	The loop stops at the first `CrateOdds` that arrives and has an attempt cap: if the
+	server does not answer after that, it will not, and asking forever would only hide the
+	problem.
 ]=]
 function ShopController:_requestOdds()
 	if self.CrateOdds or self.OddsRequested then
@@ -529,7 +528,7 @@ function ShopController:_requestOdds()
 		end
 
 		if not self.CrateOdds then
-			warn("[ShopController]: no CrateOdds from the server -- the crates show no rarity rows.")
+			log:StudioWarn("no CrateOdds from the server -- the crates show no rarity rows.")
 		end
 	end)
 end
@@ -555,8 +554,8 @@ function ShopController:_updateShards()
 end
 
 --[=[
-	O preco de um item para este jogador. A gamepass VIP tira 20%, e a conta e a mesma
-	do servidor -- o `ShopConfig.priceFor` le a chave `Gamepasses` da propria replica.
+	An item's price for this player. The VIP gamepass takes 20%, and the math is the same
+	as the server's: `ShopConfig.priceFor` reads the replica's own `Gamepasses` key.
 ]=]
 function ShopController:_priceOf(item) : number
 	local replica = self.Replica
@@ -576,9 +575,9 @@ function ShopController:_watchShards()
 		local connection = replica:OnChange(function(_action, path)
 			local key = path[1]
 
-			-- `Gamepasses` entra porque o VIP muda o preco escrito no botao: comprar a
-			-- pass com a loja aberta tem de reprecar a tela, e nao esperar a proxima
-			-- abertura.
+			-- `Gamepasses` is included because VIP changes the price written on the button: buying
+			-- the pass with the shop open must reprice the screen, not wait for the next
+			-- opening.
 			if key == "Gamepasses" then
 				self:_render()
 				return
@@ -602,11 +601,11 @@ end
 	world (a map swap reparents it, so the reference is re-resolved instead of held
 	forever). Warns once per marker so a missing one is visible without spamming.
 
-	**A busca e recursiva dentro do mapa, e nao so nos filhos diretos.** Os dois
-	marcadores vivem agrupados no modelo da loja (`Map.Shop`), e nao soltos em `Map`:
-	procurar so um nivel abaixo achava nada, o botao da HUD nao teleportava e a
-	proximidade nunca abria o painel. O nome de cada marcador e unico no mapa, entao
-	descer a arvore acha o mesmo part de sempre onde quer que o artista o agrupe.
+	**The lookup is recursive inside the map, not only its direct children.** Both markers
+	are grouped in the shop model (`Map.Shop`), not loose in `Map`: looking one level down
+	would find nothing, the HUD button would not teleport, and proximity would never open
+	the panel. Each marker's name is unique on the map, so walking down the tree finds the
+	same part wherever the artist groups it.
 ]=]
 function ShopController:_getMapPart(partName : string) : Instance?
 	return MarkerUtil.find(
@@ -619,10 +618,10 @@ function ShopController:_getMapPart(partName : string) : Instance?
 end
 
 --[=[
-	Onde a loja fica, para quem precisa medir contra o mesmo centro que a proximidade
-	mede. Publico por causa do `ShopKeeperController`: o vendedor levanta num raio
-	maior em volta **deste** ponto, e nao do corpo dele, para que os dois raios sejam
-	concentricos -- chegar ao balcao nunca pode acontecer sem ele ter levantado antes.
+	Where the shop is, for anyone who needs to measure against the same center proximity
+	measures. Public because of `ShopKeeperController`: the shopkeeper stands up in a
+	larger radius around **this** point, not their body, so the two radii are concentric:
+	reaching the counter can never happen without them having stood up first.
 ]=]
 function ShopController:GetReferencePosition() : Vector3?
 	local pivot = MarkerUtil.pivotOf(self:_getMapPart(ShopConfig.REFERENCE_PART_NAME))
@@ -630,16 +629,15 @@ function ShopController:GetReferencePosition() : Vector3?
 end
 
 --[=[
-	O conteudo da loja numa copia nova da `ShopUI`. O painel em si -- a moldura, a
-	`OpenShop`, o X, o borrao e o pedido de tela -- e do `ProximityPanel`, que chama
-	isto no fim do bind dele. A `ShopUI` e `ResetOnSpawn`, entao roda de novo a cada
-	respawn.
+	The shop's content on a new copy of `ShopUI`. The panel itself (the frame, `OpenShop`,
+	the X, the blur, and the screen request) belongs to `ProximityPanel`, which calls this at
+	the end of its bind. `ShopUI` is `ResetOnSpawn`, so this runs again on every respawn.
 ]=]
 function ShopController:_onBind(screenGui : ScreenGui, panel : GuiObject)
 	local list = panel:WaitForChild(LIST_NAME, 10)
 
 	if not list then
-		warn(`[ShopController]: could not find {SHOP_UI_NAME}.{WRAPPER_NAME}.{PANEL_NAME}.{LIST_NAME}.`)
+		log:StudioWarn(`could not find {SHOP_UI_NAME}.{WRAPPER_NAME}.{PANEL_NAME}.{LIST_NAME}.`)
 		return
 	end
 
@@ -648,14 +646,14 @@ function ShopController:_onBind(screenGui : ScreenGui, panel : GuiObject)
 	self.List = list
 
 	--[[
-		O contador de shards e opcional: o painel novo ainda nao traz um, e a loja
-		abre e fecha por proximidade sem precisar dele.
+		The shards counter is optional: the new panel does not have one yet, and the shop
+		opens and closes by proximity without needing it.
 
-		A busca comeca **dentro do painel** e so depois cai para a ScreenGui inteira.
-		A ordem importa porque o painel antigo (`ShopUI.ImageLabel`, escondido) ainda
-		tem um `CurrentShards`, e ele vem antes na arvore: procurando direto na
-		ScreenGui, um contador novo autorado no painel de hoje perderia para o velho e
-		nunca seria escrito.
+		The lookup starts **inside the panel** and only then falls back to the whole
+		ScreenGui. Order matters because the old panel (`ShopUI.ImageLabel`, hidden) still
+		has a `CurrentShards`, and it comes first in the tree: searching the ScreenGui
+		directly, a new counter authored on today's panel would lose to the old one and never
+		be written.
 	]]
 	self.ShardsLabel = panel:FindFirstChild(SHARDS_LABEL_NAME, true)
 		or screenGui:FindFirstChild(SHARDS_LABEL_NAME, true)
@@ -678,7 +676,7 @@ function ShopController:_bindHud(screenGui : ScreenGui)
 	local button = hudFrame and UIUtil.waitForDescendant(hudFrame, HUD_BUTTON_NAME, 10)
 
 	if not button or not button:IsA("GuiButton") then
-		warn(`[ShopController]: could not find {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
+		log:StudioWarn(`could not find {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
 		return
 	end
 
@@ -688,7 +686,7 @@ function ShopController:_bindHud(screenGui : ScreenGui)
 	end))
 end
 
---- A HUD, pelo botao que leva ate a loja. A `ShopUI` e seguida pelo `ProximityPanel`.
+--- The HUD, through the button that goes to the shop. `ProximityPanel` follows `ShopUI`.
 function ShopController:_observeUI()
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
@@ -729,10 +727,10 @@ end
 	The client owns its own character, so moving it here is enough; the server sees
 	the new position through the usual replication.
 
-	O pouso fica **fora** do `OPEN_RADIUS`, que hoje e o balcao (5 studs) e nao o
-	patio inteiro. Entao o botao abre a loja na mao, pelo `EnterRange` -- que marca a
-	entrada junto, senao a travessia de saida nunca aconteceria e a loja aberta pelo
-	botao ficaria pendurada na tela por mais longe que ele andasse.
+	The landing is **outside** `OPEN_RADIUS`, which is the counter (5 studs), not the
+	whole yard. So the button opens the shop by hand, through `EnterRange`, which marks the
+	entry too, or the exit crossing would never happen and the shop opened by the button
+	would stay stuck on screen however far they walked.
 ]=]
 function ShopController:TeleportToShop() : boolean
 	local character = Players.LocalPlayer.Character
@@ -768,11 +766,11 @@ function ShopController:Toggle()
 end
 
 --[=[
-	Reescreve os containers a partir do config. So faz falta quando o config muda em
-	tempo de execucao.
+	Rewrites the containers from the config. Only needed when the config changes at
+	runtime.
 
-	Nao pede as odds de novo: elas sao config vezes config no servidor e nao mudam
-	durante a sessao.
+	It does not ask for the odds again: they are config times config on the server and do
+	not change during the session.
 ]=]
 function ShopController:Refresh()
 	self:_render()
@@ -780,10 +778,9 @@ end
 
 function ShopController:construct()
 	--[[
-		As odds sao ouvidas antes de a UI ser observada de proposito: a resposta pode
-		chegar antes de o primeiro bind terminar, e o `_renderOdds` de cada entry
-		desenha do zero -- chegar cedo demais so significa que a loja ja abre com as
-		linhas prontas.
+		The odds are listened to before the UI is observed on purpose: the answer may arrive
+		before the first bind finishes, and each entry's `_renderOdds` draws from scratch:
+		arriving too early only means the shop opens with the rows already there.
 	]]
 	Framework:Listen("CrateOdds", function(odds)
 		if typeof(odds) ~= "table" then
@@ -800,13 +797,14 @@ function ShopController:construct()
 	Framework:Listen("ShopPurchaseResult", function(itemId : string, success : boolean, reason : string?)
 		if success then
 			--[[
-				Qual dos dois sons toca sai do config, e nao do servidor: o resultado
-				carrega o id do item, e o preco daquele id e publico. Mandar a moeda pela
-				rede so daria ao cliente uma segunda versao de uma coisa que ele ja sabe.
+				Which of the two sounds plays comes from the config, not the server: the result
+				carries the item id, and that id's price is public. Sending the currency over the
+				network would only give the client a second version of something it already
+				knows.
 
-				E a primeira coisa que acontece com a resposta: o `PurchaseResult` sai
-				depois, porque quem escuta o sinal pode fazer qualquer coisa, e nada disso
-				pode entrar na frente do som.
+				It is the first thing that happens with the response: `PurchaseResult` goes out
+				afterward, because listeners to the signal may do anything, and none of it may
+				get ahead of the sound.
 			]]
 			local item = ShopConfig.getItem(itemId)
 			local sound = item and BUY_SOUNDS[item.Currency]
@@ -821,12 +819,11 @@ function ShopController:construct()
 	end)
 
 	--[[
-		Os dois sons da compra baixam agora, e nao no primeiro clique.
+		Both purchase sounds download now, not on the first click.
 
-		`Sound:Play()` num asset que ainda nao chegou espera o download -- e num som
-		que confirma uma acao essa espera e a resposta inteira. O preload roda em
-		thread propria dentro do `PreloadSFX`, entao ele nao segura o boot do
-		controller.
+		`Sound:Play()` on an asset that has not arrived waits for the download, and for a
+		sound confirming an action that wait is the whole response. The preload runs on its
+		own thread inside `PreloadSFX`, so it does not hold up the controller's boot.
 	]]
 	local music = self.Controllers.MusicController
 	if music then
@@ -839,8 +836,8 @@ function ShopController:construct()
 	end
 
 	--[[
-		O painel: a moldura, a `OpenShop`, o borrao, o pedido de tela e a proximidade
-		do balcao. O que esta loja tem de proprio entra pelo `OnBind`.
+		The panel: the frame, `OpenShop`, the blur, the screen request, and counter
+		proximity. What is specific to this shop comes in through `OnBind`.
 	]]
 	self.Proximity = ProximityPanel.new({
 		Name = "ShopController",
@@ -856,8 +853,8 @@ function ShopController:construct()
 		Interval = ShopConfig.PROXIMITY_INTERVAL,
 		InterfaceController = self.Controllers.InterfaceController,
 
-		-- A `ShopUI` e dividida com a loja de cartas e a de Robux: fechar esta com
-		-- uma delas aberta nao pode apagar a ScreenGui das tres.
+		-- `ShopUI` is shared with the card shop and the Robux shop: closing this one with
+		-- one of them open must not disable the ScreenGui of all three.
 		CanDisable = function()
 			local cardShop = self.Controllers.RoundCardShopController
 			local robuxShop = self.Controllers.RobuxShopController
@@ -901,19 +898,19 @@ function ShopController:init()
 	self.Maid:GiveTask(self.ItemMaid)
 	self.Maid:GiveTask(self.HudMaid)
 
-	-- O `ProximityPanel` desta loja, criado no `construct`.
+	-- This shop's `ProximityPanel`, created in `construct`.
 	self.Proximity = nil
 
-	-- Uma entrada por caixa desenhada: o item, o container dela e as linhas de
-	-- raridade que estao na tela agora.
+	-- One entry per drawn crate: the item, its container, and the rarity rows
+	-- on screen now.
 	self.Entries = {}
 
-	-- As chances por item, vindas do servidor -- nil enquanto a resposta nao chega.
+	-- The chances per item, from the server: nil until the answer arrives.
 	self.CrateOdds = nil
 	self.OddsRequested = false
 
-	-- Marker parts in the map, by name, and the names already warned about. O mesmo
-	-- mapa guarda o container que faltou, pela mesma razao: avisar uma vez.
+	-- Marker parts in the map, by name, and the names already warned about. The same
+	-- map keeps the missing container, for the same reason: warn once.
 	self.MapParts = {}
 	self.WarnedMissing = {}
 end

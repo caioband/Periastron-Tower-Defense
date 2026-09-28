@@ -8,28 +8,31 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("RoundCardStarterService")
 
 local RoundCardShopConfig = SharedConfig.RoundCardShopConfig
 
 --[=[
-	O kit inicial de cartas de round, garantido em todo perfil aberto.
+	The starter kit of round cards, guaranteed on every open profile.
 
-	O `Data.Template` entrega o `STARTER_CARDS` a quem chega, e só a quem chega: o
-	reconcile do `DataService` cria a chave `RoundCards` onde ela falta, mas nunca
-	mexe numa que já existe. Sem este service, toda carta acrescentada ao kit valeria
-	apenas para contas criadas depois dela -- dois jogadores na mesma sala montariam
-	a oferta de round a partir de catálogos diferentes, sem nada na tela dizendo por
-	quê.
+	`Data.Template` hands `STARTER_CARDS` to newcomers, and only to newcomers:
+	`DataService`'s reconcile creates the `RoundCards` key where it is missing, but
+	never touches one that exists. Without this service, every card added to the kit
+	would apply only to accounts created after it: two players in the same room
+	would build the round offer from different catalogs, with nothing on screen
+	saying why.
 
-	Ele escreve **só o que falta**, e só quando falta: o perfil que já está em dia não
-	é tocado. Carta que o jogador comprou com shards já está no `RoundCards` dele e
-	por isso não aparece na lista -- ninguém é reembolsado nem tem compra desfeita.
+	It writes **only what is missing**, and only when something is: a profile that
+	is up to date is not touched. A card the player bought with shards is already in
+	their `RoundCards`, so it does not show in the list: nobody is refunded and no
+	purchase is undone.
 
-	Fica em `common/` porque as duas places abrem perfil: o jogador pode entrar pelo
-	lobby ou cair direto numa partida, e a oferta de round é montada na Game a partir
-	do que estiver escrito aqui.
+	It lives in `common/` because both places open profiles: the player can enter
+	through the Lobby or land directly in a match, and the round offer is built in
+	Game from what is written here.
 ]=]
 local RoundCardStarterService = {
 	Services = {
@@ -40,11 +43,11 @@ local RoundCardStarterService = {
 --[[ INTERNAL ]]
 
 --[=[
-	Escreve no perfil deste jogador as cartas do kit que ainda faltam.
+	Writes the kit cards this player is still missing to their profile.
 
-	Roda uma vez por perfil carregado. A lista é conferida de novo **dentro** do
-	`Update`, e não só antes dele: entre a leitura e a escrita cabe uma compra na loja
-	de cartas do lobby, e o `RoundCards` que vale é o que estiver na mão do callback.
+	It runs once per loaded profile. The list is checked again **inside** `Update`,
+	not only before it: a purchase in the Lobby card shop fits between the read and
+	the write, and the `RoundCards` that counts is the one in the callback's hands.
 ]=]
 function RoundCardStarterService:_seed(player : Player)
 	local dataService = self.Services.DataService
@@ -68,16 +71,16 @@ function RoundCardStarterService:_seed(player : Player)
 		return unlocked
 	end)
 
-	print(string.format("[RoundCardStarterService]: %s ganhou o kit que faltava (%s).",
+	log:Debug(string.format("%s received the missing starter kit (%s).",
 		player.Name, table.concat(missing, ", ")))
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function RoundCardStarterService:construct()
 	local dataService = self.Services.DataService
 	if not dataService then
-		warn("[RoundCardStarterService]: sem DataService; o kit de perfis antigos nao vai ser escrito.")
+		log:Warn("no DataService; the starter kit will not be backfilled on old profiles.")
 		return
 	end
 
@@ -85,7 +88,7 @@ function RoundCardStarterService:construct()
 		self:_seed(player)
 	end)
 
-	-- Quem carregou antes deste service subir: o sinal deles ja passou.
+	-- Players who loaded before this service started: their signal already fired.
 	for _, player in Players:GetPlayers() do
 		self:_seed(player)
 	end

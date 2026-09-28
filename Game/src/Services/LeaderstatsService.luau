@@ -10,51 +10,51 @@ local Me = require(Vendor.Me)
 local Framework = Me.new()
 
 --[[
-	O `leaderstats` da partida: Damage e Cash na lista de jogadores.
+	The match `leaderstats`: Damage and Cash in the player list.
 
-	Os dois são da **sessão**, não do perfil: o dano é o placar que decide o MVP
-	(`MobService.SessionDamage`) e o Cash é o dinheiro do round
-	(`MobService.SessionCash`), aquele que compra e vende torre. Nenhum dos dois é
-	salvo, e os dois voltam a zero quando o round recomeça.
+	Both belong to the **session**, not the profile: damage is the scoreboard that
+	decides the MVP (`MobService.SessionDamage`) and Cash is the round's money
+	(`MobService.SessionCash`), the one that buys and sells towers. Neither is saved,
+	and both go back to zero when the round restarts.
 
-	> Não confundir com o `leaderstats` da Lobby, que mostra Coins, Wins e Shards —
-	> aquilo é perfil, e `Coins` é o `Stats.Cash` guardado. As duas colunas daqui
-	> morrem com o servidor.
+	> Not to be confused with the Lobby's `leaderstats`, which shows Coins, Wins, and
+	> Shards: those are profile values, and `Coins` is the stored `Stats.Cash`. The two
+	> columns here die with the server.
 
-	**Por que aqui é polling, e na Lobby não.** Lá toda escrita passa por um funil
-	(`DataService:Update`) e acontece de vez em quando, então um sinal por escrita é
-	exato e barato. Aqui é o contrário, por dois motivos:
+	**Why polling here and not in the Lobby.** There every write goes through a funnel
+	(`DataService:Update`) and happens once in a while, so a signal per write is exact
+	and cheap. Here it is the opposite, for two reasons:
 
-	- **frequência**: o dano cresce a cada golpe em cada mob. Com AOE e meia dúzia de
-	  torres são dezenas de escritas por segundo, e escrever o `IntValue` em todas
-	  replicaria muito mais do que a lista consegue mostrar. Uma leitura a cada
-	  `REFRESH_INTERVAL` custa duas comparações por jogador e a coluna fica igual na
-	  tela.
-	- **os zeros**: o fim de round limpa o placar com `table.clear(SessionDamage)`,
-	  que não é escrita nenhuma — um desenho movido a evento continuaria mostrando o
-	  dano da partida passada. Lendo o estado, a volta ao zero sai de graça.
+	- **frequency**: damage grows with every hit on every enemy. With AOE and half a
+	  dozen towers that is dozens of writes per second, and writing the `IntValue` on
+	  every one would replicate far more than the list can show. A read every
+	  `REFRESH_INTERVAL` costs two comparisons per player and the column looks the same
+	  on screen.
+	- **the zeros**: round end clears the scoreboard with `table.clear(SessionDamage)`,
+	  which is no write at all: an event-driven display would keep showing the last
+	  match's damage. Reading the state, the reset to zero comes for free.
 
-	A escrita só acontece quando o valor muda, então parado o service não replica
-	nada.
+	The write only happens when the value changes, so while idle the service
+	replicates nothing.
 ]]
 
 local FOLDER_NAME = "leaderstats"
 
 --[[
-	De quanto em quanto tempo as colunas são relidas.
+	How often the columns are reread.
 
-	Quatro vezes por segundo: rápido o bastante para o número parecer ao vivo — a
-	lista de jogadores nem fica aberta o tempo todo — e devagar o bastante para o
-	dano de uma wave inteira caber em poucas dezenas de escritas.
+	Four times a second: fast enough for the number to look live (the player list is
+	not even open all the time) and slow enough for a whole wave's damage to fit in a
+	few dozen writes.
 ]]
 local REFRESH_INTERVAL = 0.25
 
 --[[
-	Uma linha por coluna, **na ordem em que elas aparecem** na lista de jogadores: a
-	Roblox desenha na ordem em que os valores entram na pasta.
+	One line per column, **in the order they appear** in the player list: Roblox draws
+	them in the order the values enter the folder.
 
-	`Read` recebe o jogador e devolve o número da coluna. Column nova é uma linha
-	aqui.
+	`Read` receives the player and returns the column's number. A new column is one
+	line here.
 ]]
 local ENTRIES = {
 	{
@@ -85,14 +85,13 @@ local LeaderstatsService = {
 --[[ INTERNAL ]]
 
 --[=[
-	A pasta do jogador, criada com as colunas já dentro se ainda não existir.
+	The player's folder, created with the columns already inside if it does not exist.
 
-	Ela é parenteada **por último**, de propósito: a lista de jogadores começa a
-	desenhar assim que a pasta aparece, e uma pasta vazia por um frame pisca uma
-	linha sem coluna nenhuma.
+	It is parented **last**, on purpose: the player list starts drawing as soon as the
+	folder appears, and an empty folder for one frame flashes a row with no columns.
 
-	A pasta vive no `Player`, que sobrevive ao respawn — então isto roda uma vez por
-	jogador, e todo o resto é escrita de valor.
+	The folder lives on the `Player`, which survives respawn, so this runs once per
+	player, and everything else is value writes.
 ]=]
 local function ensureFolder(player : Player) : Folder
 	local existing = player:FindFirstChild(FOLDER_NAME)
@@ -117,9 +116,10 @@ end
 --[[ API ]]
 
 --[=[
-	Relê as colunas de um jogador. `IntValue` já trunca, mas o `math.floor` explícito
-	deixa a comparação valer sobre o mesmo número que vai ser escrito — sem ele, um
-	dano fracionário marcaria "mudou" a cada golpe sem a coluna nunca mudar na tela.
+	Rereads a player's columns. `IntValue` already truncates, but the explicit
+	`math.floor` makes the comparison use the same number that will be written:
+	without it, fractional damage would mark "changed" on every hit without the
+	column ever changing on screen.
 ]=]
 function LeaderstatsService:Refresh(player : Player)
 	if not player.Parent then
@@ -147,11 +147,11 @@ function LeaderstatsService:RefreshAll()
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function LeaderstatsService:construct()
-	-- Quem entra no meio da partida já aparece com as colunas, mesmo que o primeiro
-	-- tique do relógio ainda não tenha vindo.
+	-- A player joining mid-match already shows up with the columns, even if the
+	-- clock's first tick has not come yet.
 	Players.PlayerAdded:Connect(function(player : Player)
 		self:Refresh(player)
 	end)

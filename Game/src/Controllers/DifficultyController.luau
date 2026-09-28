@@ -10,29 +10,31 @@ local Configs = Shared:WaitForChild("Config")
 
 local SharedConfig = require(Configs.SharedConfig)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local Framework = Me.new()
+local log = Log.new("DifficultyController")
 
 local UnlockConfig = SharedConfig.DifficultyUnlockConfig
 
 local SELECTED_TRANSPARENCY = 0
 local IDLE_TRANSPARENCY = 0.4
 
--- O frame do cadeado dentro do botao, e o rotulo dele. Botao sem `Locked` e um
--- botao que a arte declarou como sempre aberto -- ver `collectLock`.
+-- The lock frame inside the button, and its label. A button without `Locked` is a
+-- button the art declared as always open; see `collectLock`.
 local LOCK_NAME = "Locked"
 local LOCK_LABEL_NAME = "Time"
 
 local DifficultyController = {
 	Buttons = {},
 
-	-- O que a partida pede para a hotbar (dificuldade decidida ou não). Ver
+	-- What the match asks of the hotbar (difficulty decided or not). See
 	-- `setHotbarVisible`.
 	HotbarWanted = false,
 
-	-- Quem está segurando a hotbar fora da tela: `{ [motivo] = true }`. Ver `HoldHotbar`.
+	-- Who is holding the hotbar off screen: `{ [reason] = true }`. See `HoldHotbar`.
 	HotbarHolds = {},
 
-	-- { [dificuldade] = { Button, Frame, Label, WasActive, WasAutoButtonColor } }
+	-- { [difficulty] = { Button, Frame, Label, WasActive, WasAutoButtonColor } }
 	Locks = {},
 }
 
@@ -50,9 +52,9 @@ function DifficultyController:updateClock(state)
 end
 
 --[=[
-	A hotbar so aparece com a dificuldade ja decidida. Antes disso nao ha partida
-	nenhuma — o servidor esta esperando todo mundo carregar, ou a votacao esta
-	aberta — e as cartas nao teriam onde ser colocadas.
+	The hotbar only appears once the difficulty is decided. Before that there is no
+	match (the server is waiting for everyone to load, or the vote is open) and the
+	cards would have nowhere to be placed.
 ]=]
 function DifficultyController:setHotbarVisible(visible : boolean)
 	self.HotbarWanted = visible == true
@@ -61,12 +63,12 @@ function DifficultyController:setHotbarVisible(visible : boolean)
 end
 
 --[=[
-	Escreve o `Visible` do `TowerContainer`: a partida pede **e** ninguém segura.
+	Writes `TowerContainer`'s `Visible`: the match asks for it **and** nobody holds it.
 
-	Continua havendo um dono só do interruptor (este controller); quem precisa da
-	hotbar fora da tela por um tempo pede com `HoldHotbar`, em vez de escrever o
-	`Visible` por fora — o `DifficultyLocked` ou o próximo estado da votação
-	acenderiam a hotbar de volta no meio do pedido.
+	There is still a single owner of the switch (this controller); anyone who needs
+	the hotbar off screen for a while asks with `HoldHotbar` instead of writing
+	`Visible` from outside: `DifficultyLocked` or the vote's next state would light the
+	hotbar back up mid-request.
 ]=]
 function DifficultyController:applyHotbar()
 	if self.hotbar then
@@ -75,11 +77,11 @@ function DifficultyController:applyHotbar()
 end
 
 --[=[
-	Segura (ou solta) a hotbar fora da tela em nome de `reason`. Soltar o último
-	pedido devolve a hotbar ao que a partida quer — se a dificuldade ainda não foi
-	decidida, ela continua escondida.
+	Holds (or releases) the hotbar off screen on behalf of `reason`. Releasing the last
+	request returns the hotbar to what the match wants: if the difficulty has not been
+	decided yet, it stays hidden.
 
-	Hoje quem pede é o `TutorialStepController`, no passo do Ready (`HideDeck`).
+	Today `TutorialStepController` asks for it, on the Ready step (`HideDeck`).
 ]=]
 function DifficultyController:HoldHotbar(reason : string, held : boolean)
 	self.HotbarHolds[reason] = if held then true else nil
@@ -88,22 +90,20 @@ function DifficultyController:HoldHotbar(reason : string, held : boolean)
 end
 
 --[=[
-	Confere se cada botao do board tem um preset do outro lado.
+	Checks that each button on the board has a preset on the other side.
 
-	O nome da instancia **e** o voto: o controller dispara `SelectDifficulty` com
-	ele, e o servidor recusa em silencio o que nao existir no `DifficultyConfig`.
-	Um botao com o nome errado nao quebra nada visivelmente -- ele so nunca conta
-	voto, e o jogador fica clicando num botao morto sem nenhum aviso em lugar
-	nenhum.
+	The instance name **is** the vote: the controller fires `SelectDifficulty` with it,
+	and the server silently refuses anything not in `DifficultyConfig`. A button with
+	the wrong name breaks nothing visibly: it just never counts a vote, and the player
+	keeps clicking a dead button with no warning anywhere.
 
-	Foi exatamente o que aconteceu: o board tinha `Extreme` escrito "IMPOSSIBLE"
-	(voto recusado, dificuldade inalcancavel) e `Impossible` escrito "NIGHTMARE"
-	(voto aceito como Impossible, com o jogador lendo Nightmare e recebendo o
-	premio da de baixo). Nenhum dos dois deixava rastro.
+	A board that had `Extreme` labeled "IMPOSSIBLE" (vote refused, difficulty
+	unreachable) and `Impossible` labeled "NIGHTMARE" (vote accepted as Impossible,
+	with the player reading Nightmare and getting the lower one's reward) left no
+	trace at all. This check is what catches that.
 
-	A lista de presets so chega do servidor (`state.options`), entao a conferencia
-	nao tem como acontecer no bind -- ela mora aqui, na primeira vez que um estado
-	chega, e roda uma vez so.
+	The preset list only comes from the server (`state.options`), so the check cannot
+	happen at bind: it lives here, the first time a state arrives, and runs once.
 ]=]
 function DifficultyController:auditButtons(options : { string }?)
 	if self.audited or not options then return end
@@ -116,27 +116,27 @@ function DifficultyController:auditButtons(options : { string }?)
 
 	for name in self.Buttons do
 		if not known[name] then
-			warn(string.format(
-				"[DifficultyController]: o botao '%s' do DifficultyBoard nao e uma dificuldade (%s). O voto dele e recusado pelo servidor -- renomeie a instancia para o nome do preset.",
+			log:StudioWarn(string.format(
+				"DifficultyBoard button '%s' is not a difficulty (%s). The server refuses its vote; rename the instance to the preset name.",
 				name, table.concat(options, ", ")))
 		end
 	end
 
 	for _, name in options do
 		if not self.Buttons[name] then
-			warn(string.format(
-				"[DifficultyController]: a dificuldade '%s' nao tem botao no DifficultyBoard; ninguem consegue votar nela.",
+			log:StudioWarn(string.format(
+				"difficulty '%s' has no button on the DifficultyBoard; nobody can vote for it.",
 				name))
 		end
 	end
 end
 
 --[=[
-	Guarda o cadeado de um botao, se ele tiver um.
+	Stores a button's lock, if it has one.
 
-	O estado de origem do botao vai junto (`WasActive`, `WasAutoButtonColor`) porque
-	destrancar tem de **devolver** o que a arte autorou, e nao chutar `true`: um botao
-	que nasceu sem `AutoButtonColor` nao pode ganhar o efeito ao abrir.
+	The button's original state goes along (`WasActive`, `WasAutoButtonColor`) because
+	unlocking must **restore** what the art authored, not guess `true`: a button born
+	without `AutoButtonColor` must not gain the effect when it opens.
 ]=]
 function DifficultyController:collectLock(button : ImageButton)
 	local frame = button:FindFirstChild(LOCK_NAME)
@@ -152,11 +152,11 @@ function DifficultyController:collectLock(button : ImageButton)
 end
 
 --[=[
-	As vitorias e o XP deste jogador, ou nil enquanto a replica nao chegou.
+	This player's wins and XP, or nil until the replica arrives.
 
-	Nil e o chute seguro: sem perfil, `isUnlocked` responde "trancado" e a tela mostra
-	tudo travado. Errar para o outro lado abriria o Nightmare por um instante e o
-	fecharia na cara do jogador quando o perfil chegasse.
+	Nil is the safe guess: without a profile, `isUnlocked` answers "locked" and the
+	screen shows everything locked. Erring the other way would open Nightmare for an
+	instant and shut it in the player's face when the profile arrived.
 ]=]
 function DifficultyController:stats() : { [string] : any }?
 	local replica = self.replica
@@ -166,15 +166,16 @@ function DifficultyController:stats() : { [string] : any }?
 end
 
 --[=[
-	Pinta o cadeado de cada botao a partir do perfil de agora.
+	Paints each button's lock from the current profile.
 
-	Tres coisas mudam juntas, e por isso moram na mesma funcao: o `Locked` aparece, o
-	botao para de responder e o rotulo diz o que falta. Deixar o botao vivo por baixo
-	de um cadeado desenhado seria uma dificuldade que parece trancada e vota no clique.
+	Three things change together, which is why they live in the same function:
+	`Locked` appears, the button stops responding, and the label says what is missing.
+	Leaving the button alive under a drawn lock would be a difficulty that looks locked
+	and votes on click.
 
-	`Active = false` ja basta para o `MouseButton1Click` nao disparar -- o clique
-	confere de novo mesmo assim, porque um botao sem `Locked` na arte nunca passa por
-	aqui e continuaria clicavel.
+	`Active = false` is already enough for `MouseButton1Click` not to fire; the click
+	checks again anyway, because a button without `Locked` in the art never goes
+	through here and would stay clickable.
 ]=]
 function DifficultyController:renderLocks()
 	local stats = self:stats()
@@ -194,21 +195,22 @@ function DifficultyController:renderLocks()
 end
 
 --[=[
-	Segura a replica do jogador e repinta os cadeados a cada escrita em `Stats`.
+	Holds the player's replica and repaints the locks on every write to `Stats`.
 
-	Mesmo formato do contador do HUD e do cadeado dos mapas: o `DataService` escreve a
-	chave `Stats` inteira, mas a escuta e o `OnChange` para que a escrita mais funda
-	(`Stats.DifficultyWins`) tambem conte. Assim a vitoria que abre o Hard aparece no
-	board do proximo round sem o jogador trocar de servidor.
+	The same shape as the HUD counter and the map locks: `DataService` writes the whole
+	`Stats` key, but the listener is `OnChange` so a deeper write
+	(`Stats.DifficultyWins`) also counts. That way the win that opens Hard shows on the
+	next round's board without the player switching servers.
 ]=]
 function DifficultyController:watchProfile()
 	task.spawn(function()
 		--[[
-			O `DataController` e pedido aqui, e nao pela tabela `Controllers` que o resto
-			dos controllers declara no topo: aquela tabela e preenchida no `start`, e este
-			controller monta no `init`. Com a GUI ja na tela o `construct` nao cede em
-			nenhum `WaitForChild` e termina inteiro antes de qualquer `start` rodar -- a
-			referencia ainda seria o placeholder vazio. O `Get` com yield espera o loader.
+			`DataController` is requested here, not through the `Controllers` table the
+			other controllers declare at the top: that table is filled in `start`, and
+			this controller builds in `init`. With the GUI already on screen, `construct`
+			does not yield on any `WaitForChild` and finishes before any `start` runs, so
+			the reference would still be the empty placeholder. The yielding `Get` waits
+			for the loader.
 		]]
 		local dataController = Framework:Get("DataController", false, true)
 
@@ -274,8 +276,8 @@ function DifficultyController:construct()
 	if hotbar then
 		self.hotbar = hotbar
 
-		-- Escondida de saida: o cliente costuma terminar de carregar antes de o
-		-- servidor abrir a votacao, e ate o primeiro estado chegar nao ha partida.
+		-- Hidden from the start: the client usually finishes loading before the server
+		-- opens the vote, and until the first state arrives there is no match.
 		hotbar.Visible = false
 	end
 
@@ -300,8 +302,8 @@ function DifficultyController:construct()
 		end
 	end
 
-	-- Antes de a replica chegar tudo aparece trancado, e e assim que fica se ela nunca
-	-- chegar: o servidor recusaria o voto de qualquer jeito.
+	-- Before the replica arrives everything shows locked, and it stays that way if it
+	-- never arrives: the server would refuse the vote anyway.
 	self:renderLocks()
 	self:watchProfile()
 

@@ -9,6 +9,7 @@ local Util = Shared:WaitForChild("Util")
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local SharedConfig = require(Configs.SharedConfig)
 local ButtonUtil = require(Util.ButtonUtil)
@@ -18,30 +19,32 @@ local RobuxShopConfig = SharedConfig.RobuxShopConfig
 local GamepassConfig = SharedConfig.GamepassConfig
 
 local Framework = Me.new()
+local log = Log.new("RobuxShopController")
 
 local GUI = RobuxShopConfig.Gui
 
 --[[ CONSTANTS ]]
 
 --[=[
-	O nome do pedido ao `InterfaceController`: enquanto a loja esta aberta, a tela e
-	so dela.
+	The name of the `InterfaceController` request: while the shop is open, the screen is
+	its alone.
 
-	Proprio, e nao o `"Shop"` das outras lojas: uma GUI so volta quando o **ultimo**
-	pedido sai, e dividir o nome faria uma devolver a tela que a outra pediu.
+	Its own, not the other shops' `"Shop"`: a GUI only comes back when the **last**
+	request leaves, and sharing the name would let one give back the screen the other
+	asked for.
 ]=]
 local HIDE_REASON = "RobuxShop"
 
 --[=[
-	O botao da HUD que abre a loja: `HUD.HUDLeft.Wrapper.RobuxShop`, vizinho do
-	`Contracts` na coluna da esquerda.
+	The HUD button that opens the shop: `HUD.HUDLeft.Wrapper.RobuxShop`, next to
+	`Contracts` in the left column.
 
-	**Esta loja nao tem lugar no mapa.** As outras duas abrem por proximidade e o
-	botao da HUD so leva o jogador ate la; aqui o botao *e* a porta -- ver o
-	`ProximityPanel` sem `GetReference`.
+	**This shop has no place on the map.** The other two open by proximity and the HUD
+	button only takes the player there; here the button *is* the door; see
+	`ProximityPanel` without `GetReference`.
 
-	O crescer e o afundar do botao continuam sendo do `HUDButtonController`, que anima
-	as duas colunas. Daqui sai so o clique.
+	The button's grow and sink still belong to `HUDButtonController`, which animates both
+	columns. Only the click comes from here.
 ]=]
 local HUD_UI_NAME = "HUD"
 local HUD_FRAME_NAME = "HUDLeft"
@@ -49,57 +52,59 @@ local HUD_BUTTON_NAME = "RobuxShop"
 
 local WAIT_TIMEOUT = 10
 
--- O `UIScale` que o `ButtonUtil` precisa para dar peso ao botao. As linhas foram
--- autoradas sem ele, e criar um aqui nao atrapalha quem ja tenha o seu.
+-- The `UIScale` `ButtonUtil` needs to give the button weight. The rows were
+-- authored without it, and creating one here does not get in the way of those that have one.
 local SCALE_NAME = "BuyScale"
 
--- O botao da pass que o jogador ja tem fica meio apagado, e nao escondido: a arte da
--- linha foi desenhada com ele no lugar. O mesmo numero do CLAIM ja resgatado.
+-- The button of a pass the player already owns is dimmed, not hidden: the row's art
+-- was drawn with it in place. The same number as an already claimed CLAIM.
 local DISABLED_TRANSPARENCY = 0.55
 
 --[=[
-	A loja de Robux do lobby: `StarterGui.ShopUI.RobuxShop`.
+	The Lobby Robux shop: `StarterGui.ShopUI.RobuxShop`.
 
-	Seis gamepasses e tres packs de coins, cada um num `BUY`. **Este controller nao
-	credita nada**: ele abre o prompt da Roblox e para por ai. A pass vira beneficio
-	quando o `MonetizationService` reconfere o perfil (`RecalibratePasses`), e o pack
-	vira coins quando o recibo chega no `RobuxShopService` -- os dois no servidor, os
-	dois voltando para ca pela replica.
+	Six gamepasses and three coin packs, each on a `BUY`. **This controller credits
+	nothing**: it opens Roblox's prompt and stops there. The pass becomes a benefit when
+	`MonetizationService` rechecks the profile (`RecalibratePasses`), and the pack becomes
+	coins when the receipt reaches `RobuxShopService`: both on the server, both coming back
+	here through the replica.
 
-	O `OWNED` e a leitura do mesmo perfil: `Data.Gamepasses` diz o que este jogador ja
-	tem, e a linha correspondente apaga o botao. Cancelar o prompt nao muda nada, que e
-	o certo -- nada aqui e escrito no clique.
+	`OWNED` is a reading of the same profile: `Data.Gamepasses` says what this player
+	already owns, and the matching row dims its button. Canceling the prompt changes
+	nothing, which is right: nothing here is written on the click.
 
-	**A `ShopUI` e dividida com as outras duas lojas.** As tres sao irmas dentro dela e
-	nenhuma manda no `Enabled` sozinha: quem diz qual painel esta na tela e o `Visible`
-	do wrapper de cada uma (ver o `CanDisable` no `construct`).
+	**`ShopUI` is shared with the other two shops.** The three are siblings inside it and
+	none controls `Enabled` alone: each one's wrapper `Visible` says which panel is on
+	screen (see `CanDisable` in `construct`).
+
+	See docs/common/gamepasses.md.
 ]=]
 local RobuxShopController = {
 	Controllers = {
 		DataController = {},
 		InterfaceController = {},
 
-		-- As outras duas lojas da mesma `ScreenGui`. So para saber se alguma esta
-		-- aberta antes de apagar a ScreenGui das tres -- ver o `CanDisable`.
+		-- The other two shops in the same `ScreenGui`. Only to know whether any is
+		-- open before disabling the ScreenGui of all three; see `CanDisable`.
 		ShopController = {},
 		RoundCardShopController = {},
 
-		-- O selo `New` do botao da HUD, que volta cinco minutos depois de cada
-		-- abertura. Ver o `BeforeOpen` no `construct`.
+		-- The HUD button's `New` badge, which comes back five minutes after each
+		-- opening. See `BeforeOpen` in `construct`.
 		HUDBadgeController = {},
 	},
 }
 
 --[[ INTERNAL ]]
 
---- O `Data` da replica, ou nil enquanto ela nao chegou.
+--- The replica's `Data`, or nil until it arrives.
 function RobuxShopController:_profile()
 	local replica = self.Replica
 
 	return replica and replica.Data or nil
 end
 
---- Se este jogador tem a pass. Sem perfil vale "nao tem", e nao erro.
+--- Whether this player owns the pass. With no profile it counts as "does not", not an error.
 function RobuxShopController:_owns(key : string) : boolean
 	local profile = self:_profile()
 
@@ -107,19 +112,18 @@ function RobuxShopController:_owns(key : string) : boolean
 end
 
 --[=[
-	Liga uma linha da vitrine pelo nome dela.
+	Hooks up a storefront row by its name.
 
-	A busca e em profundidade a partir do painel: as linhas moram em duas
-	`ScrollingFrame` de **mesmo nome** (as passes numa, os packs na outra), entao o
-	caminho ate a lista nao distingue uma da outra -- mas `GP1` e `DEVPROD1` sao unicos
-	na tela toda.
+	The lookup is by depth from the panel: the rows live in two `ScrollingFrame`s with
+	**the same name** (passes in one, packs in the other), so the path to the list does not
+	tell them apart, but `GP1` and `DEVPROD1` are unique on the whole screen.
 ]=]
 function RobuxShopController:_bindRow(panel : GuiObject, frameName : string, maid, onClick : () -> ())
 	local row = panel:FindFirstChild(frameName, true)
 	local button = row and row:FindFirstChild(GUI.Buy, true)
 
 	if not button or not button:IsA("GuiButton") then
-		warn(`[RobuxShopController]: nao achei {frameName}.{GUI.Buy} em {GUI.ScreenGui}.{GUI.Wrapper} -- essa linha nao compra nada.`)
+		log:StudioWarn(`could not find {frameName}.{GUI.Buy} in {GUI.ScreenGui}.{GUI.Wrapper}; that row buys nothing.`)
 		return nil
 	end
 
@@ -138,18 +142,18 @@ function RobuxShopController:_bindRow(panel : GuiObject, frameName : string, mai
 		Button = button,
 		Label = label,
 
-		-- A transparencia autorada, lida uma vez: e para ela que o botao volta quando
-		-- a linha esta a venda.
+		-- The authored transparency, read once: it is what the button returns to when
+		-- the row is for sale.
 		Image = button:IsA("ImageButton") and button.ImageTransparency or 0,
 		Text = label and label.TextTransparency or 0,
 	}
 end
 
 --[=[
-	O conteudo numa copia nova da `ShopUI`: as seis passes e os tres packs.
+	The content on a new copy of `ShopUI`: the six passes and the three packs.
 
-	O painel em si (moldura, animacao, borrao, tela) e do `ProximityPanel`, e o `maid`
-	daqui e o dele -- uma copia nova desliga os cliques da anterior.
+	The panel itself (frame, animation, blur, screen) belongs to `ProximityPanel`, and the
+	`maid` here is its maid: a new copy disconnects the previous one's clicks.
 ]=]
 function RobuxShopController:_onBind(panel : GuiObject, maid)
 	self.Rows = {}
@@ -170,10 +174,11 @@ function RobuxShopController:_onBind(panel : GuiObject, maid)
 end
 
 --[=[
-	O botao conforme o perfil: apagado e sem clique para a pass que o jogador ja tem.
+	The button according to the profile: dimmed and unclickable for a pass the player
+	already owns.
 
-	Pack de coins nunca passa por aqui -- ele pode ser comprado de novo quantas vezes
-	quiser, e o botao dele fica sempre como foi autorado.
+	A coin pack never goes through here: it can be bought again as many times as wanted,
+	and its button always stays as authored.
 ]=]
 function RobuxShopController:_writeOwned(entry, owned : boolean)
 	local button = entry.Button
@@ -203,17 +208,17 @@ function RobuxShopController:_render()
 end
 
 --[=[
-	Abre o prompt de uma gamepass.
+	Opens a gamepass prompt.
 
-	So abre o que ainda da para comprar: o botao ja esta apagado, e isto e a mesma
-	conferencia do outro lado do clique -- um prompt de pass que o jogador ja tem so
-	diria a ele o que a linha ja dizia.
+	It only opens what can still be bought: the button is already dimmed, and this is the
+	same check on the other side of the click: a prompt for a pass the player owns would
+	only tell them what the row already said.
 ]=]
 function RobuxShopController:_promptPass(key : string)
 	local pass = GamepassConfig.PASSES[key]
 
 	if not pass then
-		warn(`[RobuxShopController]: a pass '{key}' nao esta no GamepassConfig.`)
+		log:StudioWarn(`pass '{key}' is not in GamepassConfig.`)
 		return
 	end
 
@@ -225,20 +230,20 @@ function RobuxShopController:_promptPass(key : string)
 end
 
 --[=[
-	Abre o prompt de um pack de coins.
+	Opens a coin pack prompt.
 
-	Sem debounce, como o reroll: `PromptProductPurchase` nao empilha janelas. E sem
-	credito nenhum aqui -- quem paga e o recibo, no `RobuxShopService`.
+	No debounce, like the reroll: `PromptProductPurchase` does not stack windows. And no
+	credit at all here: the receipt pays, in `RobuxShopService`.
 ]=]
 function RobuxShopController:_promptPack(pack)
 	MarketplaceService:PromptProductPurchase(Players.LocalPlayer, pack.ProductId)
 end
 
 --[=[
-	Liga o botao da HUD, que abre a loja.
+	Hooks up the HUD button that opens the shop.
 
-	Maid proprio: a `HUD` e a `ShopUI` sao `ScreenGui` diferentes e a engine as refaz
-	em momentos diferentes, entao o bind de uma nao pode desconectar o da outra.
+	Its own maid: `HUD` and `ShopUI` are different `ScreenGui`s and the engine rebuilds
+	them at different times, so one's bind must not disconnect the other's.
 ]=]
 function RobuxShopController:_bindHud(screenGui : ScreenGui)
 	local hudFrame = screenGui:WaitForChild(HUD_FRAME_NAME, WAIT_TIMEOUT)
@@ -247,7 +252,7 @@ function RobuxShopController:_bindHud(screenGui : ScreenGui)
 	if not button or not button:IsA("GuiButton") then
 		if not self.WarnedButton then
 			self.WarnedButton = true
-			warn(`[RobuxShopController]: nao achei {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
+			log:StudioWarn(`could not find {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
 		end
 
 		return
@@ -259,7 +264,7 @@ function RobuxShopController:_bindHud(screenGui : ScreenGui)
 	end))
 end
 
---- A HUD, pelo botao que abre a loja. A `ShopUI` e seguida pelo `ProximityPanel`.
+--- The HUD, through the button that opens the shop. `ProximityPanel` follows `ShopUI`.
 function RobuxShopController:_observeUI()
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
@@ -277,9 +282,9 @@ function RobuxShopController:_observeUI()
 end
 
 --[=[
-	Segue o perfil: a pass comprada no meio da sessao chega aqui pela replica, porque
-	o `MonetizationService` reconfere e reescreve `Data.Gamepasses` assim que o prompt
-	fecha. E por isso que a linha vira `OWNED` sozinha, com a loja aberta.
+	Follows the profile: a pass bought mid-session arrives here through the replica,
+	because `MonetizationService` rechecks and rewrites `Data.Gamepasses` as soon as the
+	prompt closes. That is why the row turns `OWNED` on its own, with the shop open.
 ]=]
 function RobuxShopController:_watchProfile()
 	task.spawn(function()
@@ -329,9 +334,9 @@ end
 
 function RobuxShopController:construct()
 	--[[
-		O painel: a moldura, a `OpenShop`, o borrao e o pedido de tela. **Sem
-		`GetReference`** -- esta loja nao tem ponto no mapa, entao nada mede distancia
-		e ela vive do botao da HUD e do X.
+		The panel: the frame, `OpenShop`, the blur, and the screen request. **No
+		`GetReference`**: this shop has no point on the map, so nothing measures distance
+		and it lives on the HUD button and the X.
 	]]
 	self.Proximity = ProximityPanel.new({
 		Name = "RobuxShopController",
@@ -342,8 +347,8 @@ function RobuxShopController:construct()
 		HideReason = HIDE_REASON,
 		InterfaceController = self.Controllers.InterfaceController,
 
-		-- A `ShopUI` e dividida com a loja de caixas e a de cartas: fechar esta com
-		-- uma delas aberta nao pode apagar a ScreenGui das tres.
+		-- `ShopUI` is shared with the crate shop and the card shop: closing this one with
+		-- one of them open must not disable the ScreenGui of all three.
 		CanDisable = function()
 			local crateShop = self.Controllers.ShopController
 			local cardShop = self.Controllers.RoundCardShopController
@@ -355,12 +360,12 @@ function RobuxShopController:construct()
 			self:_onBind(panel, maid)
 		end,
 
-		-- O perfil pode ter mudado com a loja fechada (uma pass comprada na pagina do
-		-- jogo, por exemplo): a vitrine entra ja com o que vale agora.
+		-- The profile may have changed with the shop closed (a pass bought on the game's
+		-- page, for example): the storefront opens already showing what applies now.
 		BeforeOpen = function()
 			self:_render()
 
-			-- A loja foi aberta: o selo apaga e o relogio dele recomeca.
+			-- The shop was opened: the badge goes off and its clock restarts.
 			local badges = self.Controllers.HUDBadgeController
 			if badges then
 				badges:NoteSeen(HUD_BUTTON_NAME)
@@ -389,11 +394,11 @@ end
 function RobuxShopController:init()
 	self.Maid = Maid.new()
 
-	-- O clique do botao da HUD, que a engine refaz a cada respawn.
+	-- The HUD button's click, which the engine rebuilds on every respawn.
 	self.HudMaid = Maid.new()
 	self.Maid:GiveTask(self.HudMaid)
 
-	-- [nome da linha] = { Button, Label, Image, Text }
+	-- [row name] = { Button, Label, Image, Text }
 	self.Rows = {}
 
 	self.Replica = nil

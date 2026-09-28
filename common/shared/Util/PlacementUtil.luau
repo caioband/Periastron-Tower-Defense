@@ -1,73 +1,69 @@
 --[[
-	O que o posicionamento pergunta sobre o caminho.
+	What unit placement asks about the path.
 
-	Mora aqui, e nao em cada lado, porque a pergunta e feita duas vezes: o cliente
-	faz para pintar o fantasma de verde ou vermelho, o servidor faz para aceitar
-	ou recusar. Se as duas contas divergirem o jogador ve fantasma verde e a
-	unidade nao nasce -- ou pior, o contrario.
+	It lives here, not on each side, because the question is asked twice: the
+	client asks to paint the ghost green or red, the server asks to accept or
+	refuse. If the two answers diverge the player sees a green ghost and the unit
+	does not spawn, or worse, the reverse. See docs/game/unit-placement.md.
 ]]
 local Players = game:GetService("Players")
 
 local PlacementUtil = {}
 
 --[[
-	Quanto de ar acima do caminho ainda conta como caminho.
+	How much air above the path still counts as path.
 
-	Ate existir, o unico teste era a caixa da propria unidade encostando no
-	trilho, e o trilho e fino (25 cm) e fica rente ao chao. Qualquer coisa que
-	levantasse a unidade um palmo -- a beirada de uma ponte, uma pedra sobre a
-	trilha, um degrau -- tirava o caminho de dentro da caixa e a torre passava a
-	valer em cima dele.
+	Without it, the only test was the unit's own box touching the rail, and the
+	rail is thin (25 cm) and flush with the floor. Anything that lifted the unit a
+	hand's width (the edge of a bridge, a rock over the path, a step) took the path
+	out of the box, and the tower became valid on top of it.
 
-	Quatro studs e a altura do mob mais alto do jogo (o Redcliff Champion, 3,35)
-	com folga: e o espaco que o caminho de fato ocupa enquanto a wave passa.
+	Four studs is the tallest enemy in the game (the Redcliff Champion, 3.35) with
+	margin: the space the path actually occupies while a wave passes.
 ]]
 PlacementUtil.PathClearance = 4
 
 --[[
-	O grupo de colisao do fantasma.
+	The ghost's collision group.
 
-	Fica aqui, e nao em cada lado, porque os dois usam: o `CollisionService`
-	(servidor) registra o grupo e o declara nao-colidivel com todo o resto, e o
-	`UnitPlacementController` (cliente) poe as parts do fantasma nele. Grupo so
-	existe se o servidor registrar, entao os dois precisam falar o mesmo nome.
+	It lives here because both sides use it: `CollisionService` (server) registers
+	the group and makes it non-collidable with everything, and
+	`UnitPlacementController` (client) puts the ghost parts in it. A group only
+	exists if the server registers it, so both must use the same name.
 
-	> Nada mais pode entrar neste grupo. As perguntas de posicionamento
-	> (`GetPartsInPart` e companhia) sao feitas com `OverlapParams` no grupo
-	> `Default`, e part de um grupo nao-colidivel com `Default` fica **invisivel**
-	> para elas -- geometria de mapa aqui dentro seria terreno que o fantasma
-	> atravessa sem nunca ficar vermelho. O fantasma pode porque ele e justamente o
-	> que ninguem deve enxergar.
+	> Nothing else may join this group. Placement queries (`GetPartsInPart` and
+	> friends) use `OverlapParams` in the `Default` group, and a part in a group
+	> that does not collide with `Default` is **invisible** to them: map geometry in
+	> here would be terrain the ghost passes through without turning red. The ghost
+	> may, because it is exactly what nobody should see.
 ]]
 PlacementUtil.GhostCollisionGroup = "PlacementGhost"
 
 --[[
-	O grupo de colisao dos personagens de jogador.
+	The player characters' collision group.
 
-	Existe pelo mesmo motivo do de cima, e o par entre os dois e o ponto: fantasma e
-	personagem nao se colidem. O `CollisionService` (servidor) registra os dois e
-	declara o par, e e ele tambem quem poe **toda BasePart** de cada personagem aqui
-	dentro -- corpo, acessorio e o que mais nascer no modelo depois.
+	It exists for the same reason, and the pair between the two is the point: ghost
+	and character do not collide. `CollisionService` (server) registers both and
+	declares the pair, and it also puts **every BasePart** of each character here
+	(body, accessories, and anything added to the model later).
 
-	Ao contrario do grupo do fantasma, este colide com todo o resto normalmente:
-	personagem continua batendo no mapa, nos outros personagens e nas unidades
-	posicionadas. So o fantasma fica de fora.
+	Unlike the ghost group, this one collides with everything else normally:
+	characters still hit the map, other characters, and placed units. Only the
+	ghost is left out.
 
-	> Isto **nao** tira o personagem das perguntas de posicionamento. O
-	> `FindBlockingCharacter` consulta com `OverlapParams` no grupo `Default`, e o
-	> que vale ali e a colidibilidade entre o grupo do params e o da part: como este
-	> grupo colide com `Default`, o personagem continua aparecendo na consulta e
-	> continua bloqueando o lugar.
+	> This does **not** remove characters from placement queries.
+	> `FindBlockingCharacter` queries with `OverlapParams` in `Default`, and what
+	> counts is collidability between the params' group and the part's: since this
+	> group collides with `Default`, a character still shows up and still blocks.
 ]]
 PlacementUtil.CharacterCollisionGroup = "Character"
 
 --[=[
-	A caixa que testa o caminho: o volume da propria unidade mais a coluna de
-	`PathClearance` studs debaixo dela.
+	The box that tests the path: the unit's own volume plus a column of
+	`PathClearance` studs under it.
 
-	Devolve `CFrame, Vector3` para alimentar o mesmo `GetPartsInPart` dos dois
-	lados -- a rotacao vem junto porque a unidade pode ter sido girada antes de
-	ser largada.
+	Returns `CFrame, Vector3` to feed the same `GetPartsInPart` on both sides; the
+	rotation comes along because the unit may have been rotated before dropping.
 ]=]
 function PlacementUtil.PathProbe(cf : CFrame, size : Vector3) : (CFrame, Vector3)
 	local clearance = PlacementUtil.PathClearance
@@ -77,22 +73,21 @@ function PlacementUtil.PathProbe(cf : CFrame, size : Vector3) : (CFrame, Vector3
 end
 
 --[=[
-	O personagem de jogador que estiver dentro da caixa da unidade, ou `nil` se o
-	lugar estiver livre.
+	The player character inside the unit's box, or `nil` if the spot is free.
 
-	So personagem de jogador, de proposito. Mob e unidade ja colocada tambem tem
-	Humanoid, mas nenhum dos dois entra aqui: a unidade ja e barrada pela distancia
-	minima entre torres, e o mob nao existe como modelo no servidor -- quem clona os
-	mobs e o `MobController`, no cliente. Bloquear mob so de um lado deixaria o
-	fantasma vermelho num lugar que o servidor aceitaria, que e exatamente a
-	divergencia que este modulo existe para evitar.
+	Only player characters, on purpose. Enemies and placed units also have a
+	Humanoid, but neither counts here: units are already blocked by the minimum
+	tower distance, and enemies do not exist as models on the server
+	(`MobController` clones them on the client). Blocking enemies on one side only
+	would paint the ghost red where the server would accept, exactly the divergence
+	this module exists to prevent.
 
-	A caixa e a bounding box cheia da unidade, a mesma dos dois lados: o fantasma e
-	desenhado a 80% do tamanho, mas quem vai ocupar o chao e a unidade inteira.
+	The box is the unit's full bounding box, the same on both sides: the ghost is
+	drawn at 80% size, but the whole unit will occupy the ground.
 
-	Acessorio nao conta. Chapeu e asa saem metros fora do corpo e sao parts
-	consultaveis como qualquer outra -- sem essa excecao, o jogador veria o
-	posicionamento recusado por um lugar que, na tela, esta vazio.
+	Accessories do not count. Hats and wings stick out far from the body and are
+	queryable like any part; without this exception, the player would see
+	placement refused on a spot that looks empty.
 ]=]
 function PlacementUtil.FindBlockingCharacter(cf : CFrame, size : Vector3) : Model?
 	local characters = {}

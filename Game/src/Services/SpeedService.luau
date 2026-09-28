@@ -15,56 +15,57 @@ local Framework = Me.new()
 local SpeedConfig = SharedConfig.SpeedConfig
 
 --[[
-	A velocidade da partida, e ela e uma so para a sala inteira.
+	The match speed, and there is a single one for the whole room.
 
-	O botao `Interface.Speed` e de todo mundo: quem clica acelera a partida dos
-	outros junto. Nao ha por que ser diferente -- a simulacao (mob andando, torre
-	atacando, wave nascendo) e do servidor, entao ou todos jogam acelerado ou
-	ninguem joga. O que o cliente faz com o numero e desenhar a arte certa no
-	botao e mover os modelos de mob no mesmo ritmo.
+	The `Interface.Speed` button belongs to everyone: whoever clicks speeds up the
+	match for the others too. There is no reason for it to differ: the simulation
+	(enemies walking, towers attacking, waves spawning) belongs to the server, so
+	either everyone plays sped up or nobody does. What the client does with the number
+	is draw the right art on the button and move enemy models at the same pace.
 
-	**Como a velocidade chega no jogo.** Este service so guarda o degrau e ajusta
-	o `GameClock` do servidor; nenhuma regra de gameplay olha para ele. Quem faz o
-	jogo correr mais rapido e o relogio: `MobService`, `UnitService` e
-	`WaveService` pedem o "agora" a ele em vez de `os.clock()`, e todas as
-	duracoes encolhem sozinhas. Ver `Shared.Util.GameClock`.
+	**How speed reaches the game.** This service only keeps the step and adjusts the
+	server's `GameClock`; no gameplay rule looks at it. The clock is what makes the
+	game run faster: `MobService`, `UnitService`, and `WaveService` ask it for "now"
+	instead of `os.clock()`, and every duration shrinks on its own. See
+	`Shared.Util.GameClock`.
 
-	**O cliente pede, o servidor decide.** O clique manda o degrau desejado (e nao
-	um "avanca um"): dois jogadores clicando no mesmo instante param os dois no
-	1,5x, em vez de um empurrar o outro ate o 2x. O indice vem pela rede, entao
-	passa pelo `SpeedConfig.IsValid` antes de valer.
+	**The client asks, the server decides.** The click sends the desired step (not
+	"advance one"): two players clicking at the same instant both land on 1.5x,
+	instead of one pushing the other to 2x. The index comes over the network, so it
+	goes through `SpeedConfig.IsValid` before it counts.
 
-	**Volta ao 1x a cada round.** O service esta na lista de round-scoped do
-	`WaveService`: partida nova comeca na velocidade normal, e nao no 2x que
-	alguem deixou ligado na anterior.
+	**Back to 1x every round.** The service is in `WaveService`'s round-scoped list: a
+	new match starts at normal speed, not at the 2x someone left on in the previous one.
+
+	See docs/game/match-speed.md.
 ]]
 
--- Quanto tempo real um mesmo jogador espera entre dois cliques aceitos. Sem
--- isto, segurar o clique vira uma rajada de broadcast para a sala inteira.
+-- How much real time the same player waits between two accepted clicks. Without
+-- this, holding the click becomes a burst of broadcasts to the whole room.
 local CLICK_COOLDOWN = 0.15
 
 local SpeedService = {
 	Services = {},
 
-	-- O degrau em uso, indice de `SpeedConfig.Steps`.
+	-- The step in use, an index into `SpeedConfig.Steps`.
 	Index = SpeedConfig.DEFAULT_INDEX,
 
 	--[[
-		A escala imposta por fora do botao (hoje, a carta Time Acceleration), e o
-		token do override que esta valendo. Nil quando quem manda e o degrau.
+		The scale imposed from outside the button (today, the Time Acceleration card),
+		and the token of the override in effect. Nil when the step rules.
 	]]
 	Override = nil,
 	OverrideToken = 0,
 
-	-- [UserId] = os.clock() do ultimo clique aceito.
+	-- [UserId] = os.clock() of the last accepted click.
 	LastClick = {},
 }
 
 --[[ INTERNAL ]]
 
 --[=[
-	Manda o degrau atual. Com `player`, so para ele (quem acabou de entrar ou de
-	carregar a interface); sem, para a sala inteira.
+	Sends the current step. With `player`, only to them (someone who just joined or
+	loaded the interface); without it, to the whole room.
 ]=]
 function SpeedService:broadcast(player : Player?)
 	if player then
@@ -79,9 +80,9 @@ function SpeedService:broadcast(player : Player?)
 end
 
 --[=[
-	Manda a escala imposta por fora do botao. Sai separada do degrau porque as
-	duas coisas convivem: o botao continua marcando o degrau que a sala escolheu
-	enquanto a carta acelera o relogio por cima.
+	Sends the scale imposed from outside the button. It goes separately from the step
+	because the two coexist: the button keeps showing the step the room chose while
+	the card speeds up the clock on top.
 ]=]
 function SpeedService:broadcastOverride()
 	for _, player in Players:GetPlayers() do
@@ -89,7 +90,7 @@ function SpeedService:broadcastOverride()
 	end
 end
 
---- A escala que o relogio deve estar agora: o override, se houver; o degrau, se nao.
+--- The scale the clock should be at now: the override if there is one, otherwise the step.
 function SpeedService:effectiveScale() : number
 	return self.Override or SpeedConfig.GetScale(self.Index)
 end
@@ -105,8 +106,8 @@ function SpeedService:GetScale() : number
 end
 
 --[=[
-	Troca o degrau da sala. Devolve `false` para pedido invalido ou para o degrau
-	que ja esta valendo -- nesse caso nada e replicado.
+	Changes the room's step. Returns `false` for an invalid request or for the step
+	already in effect; in that case nothing is replicated.
 ]=]
 function SpeedService:SetIndex(index : number) : boolean
 	if not SpeedConfig.IsValid(index) then return false end
@@ -114,8 +115,8 @@ function SpeedService:SetIndex(index : number) : boolean
 
 	self.Index = index
 
-	-- Com um override no ar, o degrau troca a arte do botao e nao o relogio: quem
-	-- manda no tempo e a carta ate ela vencer.
+	-- With an override active, the step changes the button's art and not the clock: the
+	-- card rules time until it expires.
 	GameClock.SetScale(self:effectiveScale())
 
 	self:broadcast()
@@ -124,20 +125,20 @@ function SpeedService:SetIndex(index : number) : boolean
 end
 
 --[=[
-	Impoe uma escala por fora do botao, por `duration` **segundos reais**. Quem
-	chama e o `CardShopService` (carta Time Acceleration).
+	Imposes a scale from outside the button, for `duration` **real seconds**.
+	`CardShopService` calls it (the Time Acceleration card).
 
-	Fora do ciclo do botao de proposito: 3x nao e um degrau do `SpeedConfig`, e
-	nao ha arte para ele -- o botao continua marcando o degrau que a sala
-	escolheu, e o override so mexe no relogio.
+	Outside the button's cycle on purpose: 3x is not a `SpeedConfig` step, and there is
+	no art for it: the button keeps showing the step the room chose, and the override
+	only touches the clock.
 
-	Os segundos sao reais, e nao de partida. Um override de 15s medido no proprio
-	relogio que ele acelera duraria 5 segundos de tela, e o que a carta promete e
-	quinze segundos de jogo acelerado.
+	The seconds are real, not match time. A 15s override measured on the very clock it
+	speeds up would last 5 seconds of screen time, and what the card promises is
+	fifteen seconds of sped-up play.
 
-	Vencido o prazo, o relogio volta ao degrau que estiver valendo naquele momento
-	-- e nao ao que valia quando a carta foi usada: alguem pode ter clicado no
-	botao no meio dos quinze segundos.
+	When the deadline passes, the clock returns to the step in effect at that moment,
+	not the one in effect when the card was used: someone may have clicked the button
+	during the fifteen seconds.
 ]=]
 function SpeedService:SetOverride(scale : number?, duration : number?)
 	self.OverrideToken += 1
@@ -150,7 +151,7 @@ function SpeedService:SetOverride(scale : number?, duration : number?)
 	if not self.Override or not duration or duration <= 0 then return end
 
 	task.delay(duration, function()
-		-- Outro override entrou no meio: o prazo dele e que manda agora.
+		-- Another override came in midway: its deadline rules now.
 		if self.OverrideToken ~= token then return end
 
 		self.Override = nil
@@ -159,7 +160,7 @@ function SpeedService:SetOverride(scale : number?, duration : number?)
 	end)
 end
 
---- Partida nova comeca no 1x, mesmo que a anterior tenha acabado acelerada.
+--- A new match starts at 1x, even if the previous one ended sped up.
 function SpeedService:ResetRound()
 	table.clear(self.LastClick)
 
@@ -167,7 +168,7 @@ function SpeedService:ResetRound()
 	self:SetIndex(SpeedConfig.DEFAULT_INDEX)
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function SpeedService:construct()
 	GameClock.SetScale(self:effectiveScale())
@@ -180,8 +181,8 @@ function SpeedService:construct()
 		self:SetIndex(index)
 	end)
 
-	-- O controller pergunta ao ligar: quem entra no meio da partida ja pega o
-	-- botao na velocidade em que a sala esta.
+	-- The controller asks when it starts: a player joining mid-match already gets the
+	-- button at the room's speed.
 	Framework:Listen("RequestGameSpeed", function(player : Player)
 		self:broadcast(player)
 	end)

@@ -17,6 +17,7 @@ local GameClock = require(Shared.Util.GameClock)
 
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 local Signal = require(Packages.Signal)
 
 local WaveConfig = ServerConfig.Wave
@@ -26,6 +27,7 @@ local UnlockConfig = SharedConfig.DifficultyUnlockConfig
 local TutorialConfig = SharedConfig.TutorialConfig
 
 local Framework = Me.new()
+local log = Log.new("WaveService")
 
 local DataConfig = ServerConfig.Data
 
@@ -33,21 +35,21 @@ local INTERMISSION_TIME = 60
 local WAVE_INTERVAL = 1.25
 local SELECTION_TIME = 15
 
--- Respiro entre o ultimo voto de recomecar e o round de fato reiniciar, para o
--- contador cheio aparecer na tela antes dela sair.
+-- A breather between the last play-again vote and the round actually restarting, so
+-- the full counter shows on screen before it leaves.
 local PLAY_AGAIN_DELAY = 1.5
 local MAX_WAVES = DataConfig.MAX_WAVES
 local BASE_WINNING_XP = DataConfig.BASE_WINNING_XP
 
--- Coins e shards de fim de partida sao o numero cheio de cada preset
--- (`WinCash`/`WinShards`), e nao uma base multiplicada -- so o XP continua assim.
+-- End-of-match coins and shards are each preset's full number
+-- (`WinCash`/`WinShards`), not a multiplied base; only XP still works that way.
 local DifficultyConfig = ServerConfig.Difficulty
 
 local PortalConfig = SharedConfig.PortalConfig
 
 --[[
-	Estados do round. `Finished` e o unico em que a votacao de recomecar aceita
-	voto — antes disso o botao nem esta na tela.
+	Round states. `Finished` is the only one where the play-again vote accepts votes;
+	before that the button is not even on screen.
 ]]
 local ROUND_STATE = {
 	Idle = "Idle",
@@ -55,8 +57,8 @@ local ROUND_STATE = {
 	Finished = "Finished",
 }
 
--- Services que guardam estado de partida e sabem se limpar sozinhos. Cada um
--- expoe `ResetRound()`; quem entrar nessa lista passa a ser zerado junto.
+-- Services that keep match state and know how to clean themselves. Each one
+-- exposes `ResetRound()`; anything added to this list gets reset along with it.
 local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService", "WeatherRoundService", "SpeedService", "CardShopService" }
 
 local WaveService = {
@@ -74,56 +76,56 @@ local WaveService = {
 		Ended = Signal.new(),
 
 		--[[
-			Disparado no comeco de cada wave, com o numero dela e o preset em uso.
+			Fired at the start of each wave, with its number and the preset in use.
 
-			Quem escuta hoje e o `WeatherRoundService`, que joga o dado do clima e
-			liga o que estava agendado. Fica como sinal e nao como chamada direta
-			porque o round nao precisa saber que existe clima: se o service sumir, o
-			`setWave` continua igual.
+			`WeatherRoundService` listens today, rolling the weather die and turning on
+			what was scheduled. It is a signal and not a direct call because the round
+			does not need to know weather exists: if the service goes away, `setWave`
+			stays the same.
 		]]
 		WaveStarted = Signal.new(),
 
 		--[[
-			O round entrou em `Running` (`RoundStarted`) e saiu dele (`RoundClosed`),
-			seja pelo fim da partida, seja por um `StopRound`/`ResetRound` no meio.
+			The round entered `Running` (`RoundStarted`) and left it (`RoundClosed`),
+			whether by the end of the match or by a `StopRound`/`ResetRound` midway.
 
-			Quem escuta e o `MatchStatsService`, que conta o tempo de cada jogador
-			dentro da partida. `RoundClosed` so dispara para um round que estava
-			rodando: o reset da tela de resultado (`Finished`) nao fecha nada.
+			`MatchStatsService` listens, counting each player's time in the match.
+			`RoundClosed` only fires for a round that was running: the results screen's
+			reset (`Finished`) closes nothing.
 		]]
 		RoundStarted = Signal.new(),
 		RoundClosed = Signal.new(),
 
 		--[[
-			(won : boolean, preset) -- a partida chegou ao fim de verdade: ultima wave
-			vencida ou base no chao. Dispara depois das recompensas, com os jogadores que
-			estavam na sala. Reset e saida nao disparam isto (so o `RoundClosed`).
+			(won : boolean, preset): the match actually ended: last wave won or base
+			down. Fires after rewards, with the players who were in the room. Resets and
+			leaves do not fire this (only `RoundClosed`).
 
-			Quem escuta e o `ContractTrackerService`: a vitoria dos contratos e esta, com
-			o mapa, a dificuldade e a vida da base de agora.
+			`ContractTrackerService` listens: this is the contracts' win, with the map,
+			the difficulty, and the current base health.
 		]]
 		MatchFinished = Signal.new(),
 	},
 	ReadyPlayers = {},
 	PlayAgainVotes = {},
 
-	-- Quanto cada jogador ja recebeu neste round, por UserId. Zerado a cada round.
+	-- How much each player already received this round, by UserId. Reset every round.
 	PaidRewards = {},
 	GameOver = false,
 	State = ROUND_STATE.Idle,
 
-	-- Incrementado a cada Start/Stop. Todo ponto de espera do round confere se a
-	-- geracao ainda e a dele; se nao for, aquele round foi descartado e a corotina
-	-- se encerra sozinha. E o que torna o reset seguro em qualquer ponto, mesmo
-	-- que o cancelamento da thread falhe.
+	-- Incremented on every Start/Stop. Every wait point in the round checks whether the
+	-- generation is still its own; if not, that round was discarded and the coroutine
+	-- ends on its own. That is what makes a reset safe at any point, even if canceling
+	-- the thread fails.
 	Generation = 0
 }
 
 function WaveService:setWave(waveCount : number)
 	self.WaveCount = waveCount
 
-	-- A composicao da wave e segredo de servidor; o cliente so precisa do "tem
-	-- boss?" para trocar a musica junto com o comeco da wave.
+	-- The wave composition is a server secret; the client only needs "is there a
+	-- boss?" to switch the music at the start of the wave.
 	local preset = self.Difficulty or self.Services.DifficultyService:GetSelected()
 	local hasBoss = WaveConfig.HasBoss(waveCount, preset and preset.Name)
 
@@ -210,25 +212,27 @@ function WaveService:runIntermission(duration)
 end
 
 --[=[
-	Recompensa de fim de partida: coins, shards e XP de uma vez.
+	End-of-match reward: coins, shards, and XP at once.
 
-	Coins e XP sao lineares na fracao de waves sobrevividas. Shards nao: so
-	entram depois de `SHARD_WAVE_THRESHOLD` e dai seguem uma curva, entao a moeda
-	cara se concentra em quem chega perto do fim.
+	Coins and XP are linear in the fraction of waves survived. Shards are not: they only
+	start after `SHARD_WAVE_THRESHOLD` and then follow a curve, so the expensive currency
+	concentrates on those who get close to the end.
 ]=]
 --[=[
-	Quantas waves a partida tem. Cada dificuldade define a sua (`MaxWaves`);
-	`DataConfig.MAX_WAVES` fica so como fallback para preset sem o campo.
+	How many waves the match has. Each difficulty sets its own (`MaxWaves`);
+	`DataConfig.MAX_WAVES` is only a fallback for a preset without the field.
 ]=]
 --[=[
-	Paga o premio de wave concluida a todos os jogadores da partida.
+	Pays the wave-completion reward to every player in the match.
 
-	E o unico dinheiro do jogo que nao depende do que o jogador fez: nao e por
-	dano, nem por morte, nem de farm -- e por a wave ter acabado. Por isso sai
-	igual para todo mundo, inclusive para quem entrou no meio da partida.
+	It is the only money in the game that does not depend on what the player did: not
+	for damage, kills, or farms, but for the wave having ended. So it goes out equally
+	to everyone, including players who joined mid-match.
 
-	Quem chama e o `runRound`, depois da checagem de game over: wave que terminou
-	porque a base caiu nao paga.
+	`runRound` calls it, after the game-over check: a wave that ended because the base
+	fell does not pay.
+
+	See docs/game/rewards.md.
 ]=]
 function WaveService:payWaveCash()
 	local amount = WaveConfig.GetWaveCash(self.WaveCount)
@@ -248,27 +252,27 @@ function WaveService:getMaxWaves(preset)
 end
 
 --[=[
-	O premio de uma partida, pela fracao de waves sobrevividas.
+	A match's reward, by the fraction of waves survived.
 
-	`lost` e o que separa a base ter caido de o jogador ter chegado ao fim:
+	`lost` separates the base falling from the player reaching the end:
 
-	* **Derrota** (`true`): shard nenhum, e os coins saem multiplicados pelo
-	  `LOSS_CASH_MULTIPLIER`. Perder na ultima wave nao pode pagar quase o mesmo que
-	  vencer -- a run inteira e o produto, e nao o tempo em pe.
-	* **Vitoria ou saida** (`false`/`nil`): a conta cheia. O `GrantLeaveReward` chama
-	  sem o argumento de proposito: quem sai no meio de um round que ainda esta
-	  rodando nao perdeu, a partida dele so nao terminou.
+	* **Defeat** (`true`): no shards, and coins are multiplied by
+	  `LOSS_CASH_MULTIPLIER`. Losing on the last wave must not pay almost as much as
+	  winning: the whole run is the product, not the time standing.
+	* **Victory or leaving** (`false`/`nil`): the full math. `GrantLeaveReward` calls
+	  without the argument on purpose: someone leaving a round that is still running did
+	  not lose, their match just did not end.
 ]=]
 function WaveService:computeReward(preset, lost : boolean?)
-	-- Sem preset (uma saida antes de a votacao terminar) o premio e o do padrao, que
-	-- e o mesmo que os multiplicadores `or 1` davam quando a base era a do Medio.
+	-- Without a preset (a leave before the vote ended) the reward is the default's,
+	-- the same the `or 1` multipliers gave when the base was Medium's.
 	preset = preset or DifficultyConfig.Get(nil)
 
 	local maxWaves = self:getMaxWaves(preset)
 	local wavesSurvived = math.clamp(self.WaveCount or 0, 0, maxWaves)
 	local progress = maxWaves > 0 and (wavesSurvived / maxWaves) or 0
 
-	-- O premio da run completa e o do preset; quem sai antes leva a fracao de waves.
+	-- The full-run reward is the preset's; someone leaving early gets the fraction of waves.
 	local coins = (preset.WinCash or 0) * progress
 	local xp = BASE_WINNING_XP * progress * (preset.WinXpMultiplier or 1)
 
@@ -282,8 +286,8 @@ function WaveService:computeReward(preset, lost : boolean?)
 	if lost then
 		coins *= (DataConfig.LOSS_CASH_MULTIPLIER or 1)
 
-		-- Zerado depois da curva, e nao pulando a conta: a derrota nao muda **quando**
-		-- os shards comecariam a cair, ela tira todos eles.
+		-- Zeroed after the curve, not by skipping the math: defeat does not change **when**
+		-- shards would start dropping, it removes all of them.
 		shards = 0
 	end
 
@@ -295,17 +299,18 @@ function WaveService:computeReward(preset, lost : boolean?)
 end
 
 --[=[
-	A recompensa **deste** jogador: a base da partida, ja multiplicada pelas gamepasses
-	que o perfil dele declara (2x Coins, 1.5x Shards, o XP do VIP).
+	**This** player's reward: the match base, already multiplied by the gamepasses their
+	profile declares (2x Coins, 1.5x Shards, the VIP's XP).
 
-	A base e uma so para a sala inteira -- ela sai das waves sobrevividas e da
-	dificuldade, que sao da partida e nao de ninguem. O que e de cada um e o
-	multiplicador, e por isso ele entra aqui e nao no `computeReward`: duas pessoas na
-	mesma run terminam com numeros diferentes sem que a run tenha duas contas.
+	The base is a single one for the whole room: it comes from the waves survived and the
+	difficulty, which belong to the match and not to anyone. What belongs to each player
+	is the multiplier, which is why it comes in here and not in `computeReward`: two
+	people in the same run end with different numbers without the run having two
+	computations.
 
-	Perfil que nao carregou multiplica por 1: recompensa cheia do jogo base, nunca
-	zero. E arredondado no fim, e nao antes -- multiplicar um numero ja arredondado
-	perde o meio ponto duas vezes.
+	A profile that has not loaded multiplies by 1: the base game's full reward, never
+	zero. It is rounded at the end, not before: multiplying an already rounded number
+	loses the half point twice.
 ]=]
 function WaveService:rewardsFor(player : Player, rewards)
 	local dataService = self.Services.DataService
@@ -321,17 +326,17 @@ function WaveService:rewardsFor(player : Player, rewards)
 end
 
 --[=[
-	Credita a recompensa da partida no perfil do jogador, descontando o que ele ja
-	recebeu neste round.
+	Credits the match reward to the player's profile, minus what they already received
+	this round.
 
-	O desconto e o que faz a recompensa de saida conviver com a de fim de round.
-	Sem ele, dois casos quebram: quem sai no exato instante do fim seria pago pelo
-	`onRoundEnded` e de novo pela saida, e quem sai na wave 19 e volta para o mesmo
-	round levaria as duas recompensas cheias.
+	The discount is what lets the leave reward coexist with the round-end reward.
+	Without it, two cases break: someone leaving at the exact instant of the end would
+	be paid by `onRoundEnded` and again on leave, and someone leaving on wave 19 and
+	returning to the same round would get both rewards in full.
 
-	Como a conta cresce com a wave e o que ja foi pago sai fora, o total de quem
-	entra e sai no meio da partida nunca passa do que recebeu quem ficou o round
-	inteiro. Devolve `false` quando nao ha nada a pagar.
+	Since the math grows with the wave and what was already paid is subtracted, the
+	total of someone joining and leaving mid-match never exceeds what someone who stayed
+	the whole round received. Returns `false` when there is nothing to pay.
 ]=]
 function WaveService:grantReward(player : Player, rewards) : boolean
 	local paid = self.PaidRewards[player.UserId]
@@ -354,9 +359,9 @@ function WaveService:grantReward(player : Player, rewards) : boolean
 	dataService:Update(player, "Stats", function(stats)
 		stats.Cash = (stats.Cash or 0) + coins
 
-		-- O total ganho, que nunca desce (a MOST COINS). Os ganhos de coins do jogo sao
-		-- este e o resgate de contrato (`ContractService`); os outros `+=` no `Cash`
-		-- sao estorno de compra e o Cmdr.
+		-- The total earned, which never goes down (MOST COINS). The game's coin gains are
+		-- this and contract claims (`ContractService`); the other `+=` on `Cash`
+		-- are purchase refunds and Cmdr.
 		stats.CoinsEarned = (tonumber(stats.CoinsEarned) or 0) + coins
 
 		stats.Shards = (stats.Shards or 0) + shards
@@ -368,22 +373,22 @@ function WaveService:grantReward(player : Player, rewards) : boolean
 end
 
 --[=[
-	A recompensa de quem sai antes do fim -- por vontade propria ou porque o
-	servidor esta desligando.
+	The reward for someone leaving before the end, by choice or because the server is
+	shutting down.
 
-	E a mesma conta do fim de round (`computeReward`), que ja e proporcional as
-	waves sobrevividas: quem sai na wave 18 de 20 leva quase tudo, quem sai na 2
-	leva quase nada. Nada e disparado para o cliente: nao ha tela de resultado
-	para quem esta indo embora.
+	It is the same math as the round end (`computeReward`), already proportional to the
+	waves survived: someone leaving on wave 18 of 20 gets almost everything, someone
+	leaving on 2 gets almost nothing. Nothing is sent to the client: there is no results
+	screen for someone who is leaving.
 
-	So enquanto o round esta rodando. Em `Finished` o `onRoundEnded` ja pagou todo
-	mundo que estava na sala, e em `Idle` nao existe partida para pagar -- sair na
-	votacao de dificuldade ou no intervalo nao vale recompensa nenhuma, e a conta
-	devolveria zero de qualquer forma (wave 0).
+	Only while the round is running. In `Finished`, `onRoundEnded` already paid everyone
+	in the room, and in `Idle` there is no match to pay: leaving during the difficulty
+	vote or the intermission earns no reward, and the math would return zero anyway
+	(wave 0).
 
-	Quem chama e o `DataService`, com o perfil ainda aberto (ver `OnBeforeRelease`),
-	e nao o `PlayerRemoving` daqui: e o que garante que o credito entra antes da
-	sessao fechar nos dois caminhos de saida.
+	`DataService` calls it, with the profile still open (see `OnBeforeRelease`), not the
+	`PlayerRemoving` here: that guarantees the credit goes in before the session closes
+	on both exit paths.
 ]=]
 function WaveService:GrantLeaveReward(player : Player)
 	if self.State ~= ROUND_STATE.Running then return end
@@ -392,8 +397,8 @@ function WaveService:GrantLeaveReward(player : Player)
 	local rewards = self:rewardsFor(player, self:computeReward(preset))
 
 	if self:grantReward(player, rewards) then
-		print(string.format(
-			"[WaveService]: %s saiu na wave %d/%d; recompensa proporcional paga (%d coins, %d shards, %d XP).",
+		log:Debug(string.format(
+			"%s left at wave %d/%d; prorated reward paid (%d coins, %d shards, %d XP).",
 			player.Name, self.WaveCount or 0, self:getMaxWaves(preset), rewards.coins, rewards.shards, rewards.xp))
 	end
 end
@@ -402,8 +407,8 @@ function WaveService:onRoundEnded(won : boolean)
 	local preset = self.Difficulty or self.Services.DifficultyService:GetSelected()
 	local maxWaves = self:getMaxWaves(preset)
 
-	-- Aqui a partida acabou, entao "nao venceu" quer dizer derrota -- e nao "ainda
-	-- esta rodando", que e o caso do `GrantLeaveReward`.
+	-- Here the match is over, so "did not win" means defeat, not "still
+	-- running", which is `GrantLeaveReward`'s case.
 	local rewards = self:computeReward(preset, not won)
 	local dataService = self.Services.DataService
 
@@ -411,15 +416,15 @@ function WaveService:onRoundEnded(won : boolean)
 	local mvp = mobService and mobService:GetMVP() or nil
 
 	for _, player in Players:GetPlayers() do
-		-- Uma conta por jogador: a base e da partida, as gamepasses sao de cada um.
-		-- E este numero -- o que ele de fato recebeu -- que vai para a tela dele.
+		-- One computation per player: the base belongs to the match, the gamepasses to each player.
+		-- This number (what they actually received) is what goes to their screen.
 		local playerRewards = self:rewardsFor(player, rewards)
 
 		self:grantReward(player, playerRewards)
 
 		if won then
-			-- O tutorial vencido encerra o assunto no perfil. O `TutorialService` é
-			-- comum às duas places, então quem escreve aqui é o mesmo que lê no lobby.
+			-- A won tutorial settles the matter on the profile. `TutorialService` is
+			-- common to both places, so what writes here is the same that reads in the Lobby.
 			local tutorialMatch = self.Services.TutorialMatchService
 			if tutorialMatch and tutorialMatch:IsTutorial() then
 				local tutorialService = Framework:Get("TutorialService", false, false)
@@ -428,8 +433,8 @@ function WaveService:onRoundEnded(won : boolean)
 					tutorialService:Complete(player)
 				end
 
-				-- A vitoria tambem e o passo 10 do funil de onboarding, e e ela que diz
-				-- ao `TutorialMatchService` que a saida deste jogador nao e abandono.
+				-- The win is also onboarding funnel step 10, and it tells
+				-- `TutorialMatchService` this player's leave is not abandonment.
 				tutorialMatch:NoteWon()
 
 				local analytics = Framework:Get("AnalyticsService", false, false)
@@ -440,28 +445,28 @@ function WaveService:onRoundEnded(won : boolean)
 			end
 
 			--[[
-				A vitoria no perfil. E o unico lugar que escreve `Stats.Wins` -- a coluna
-				"Wins" do leaderstats da Lobby le exatamente esta chave, e sem isto ela
-				ficava parada no zero do template para sempre.
+				The win on the profile. It is the only place that writes `Stats.Wins`: the
+				Lobby leaderstats' "Wins" column reads exactly this key, and without this it
+				would stay at the template's zero forever.
 
-				Separado do `grantReward` de proposito: aquilo e proporcional as waves e
-				tambem paga quem sai no meio; isto e binario e so vale para quem estava na
-				sala quando a ultima wave caiu.
+				Separate from `grantReward` on purpose: that is proportional to the waves and
+				also pays those who leave midway; this is binary and only applies to those in
+				the room when the last wave fell.
 			]]
 			if dataService then
 				dataService:Update(player, "Stats", function(stats)
 					stats.Wins = (stats.Wins or 0) + 1
 
 					--[[
-						A mesma vitoria contada de novo, agora com a dificuldade em que ela
-						aconteceu -- e o que destrava as dificuldades de cima
-						(`SharedConfig.DifficultyUnlockConfig`). O total acima nao serve para
-						isso: ele nao sabe dizer se as vitorias sao do Easy ou do Impossible.
+						The same win counted again, now with the difficulty it happened on:
+						that is what unlocks the higher difficulties
+						(`SharedConfig.DifficultyUnlockConfig`). The total above does not work
+						for that: it cannot say whether the wins are Easy's or Impossible's.
 
-						A chave nasce aqui, na primeira vitoria naquela dificuldade, em vez de
-						vir pronta do template -- a lista de presets e do config do servidor, e
-						copia-la para dentro do perfil seria a mesma lista em dois lugares. Quem
-						le trata chave ausente como zero.
+						The key is created here, on the first win at that difficulty, instead of
+						coming ready from the template: the preset list belongs to the server
+						config, and copying it into the profile would be the same list in two
+						places. Readers treat a missing key as zero.
 					]]
 					local difficultyWins = stats[UnlockConfig.WINS_KEY]
 					if typeof(difficultyWins) ~= "table" then
@@ -488,12 +493,12 @@ function WaveService:onRoundEnded(won : boolean)
 	end
 
 	--[[
-		O fecho do roteiro do tutorial: a tela de resultado é a última coisa que ele
-		aponta, e o passo abre junto dela. Quem espera a tela terminar de se revelar
-		para acender o holofote é o cliente — daqui não dá para saber em que ponto da
-		animação ela está.
+		The tutorial script's wrap-up: the results screen is the last thing it points at,
+		and the step opens with it. The client waits for the screen to finish revealing
+		before lighting the spotlight: from here there is no way to know where the
+		animation is.
 
-		Fora do tutorial não faz nada.
+		Outside the tutorial it does nothing.
 	]]
 	local tutorial = self.Services.TutorialMatchService
 	if tutorial then
@@ -506,8 +511,8 @@ end
 function WaveService:getArrowLeadTime()
 	local cfg = SharedConfig.ArrowConfig
 
-	-- A rota mais longa manda: as setas do lado mais comprido precisam chegar ao
-	-- fim antes do primeiro mob nascer.
+	-- The longest route rules: the arrows on the longer side must reach the end
+	-- before the first enemy spawns.
 	local longest = 0
 	for _, route in self.Services.MobService:getRoutes() do
 		longest = math.max(longest, route.smooth.length)
@@ -518,21 +523,21 @@ function WaveService:getArrowLeadTime()
 	return lastArrowFinish + cfg.Buffer
 end
 
---[[ ciclo de vida do round ]]
+--[[ round lifecycle ]]
 
 function WaveService:isCurrent(generation : number)
 	return self.Generation == generation
 end
 
 --[=[
-	Espera a wave terminar de um jeito que possa ser abortado.
+	Waits for the wave to end in a way that can be aborted.
 
-	`Signal:Wait()` nao serve aqui: se a thread do round for cancelada enquanto
-	espera, a conexao interna do sinal fica pendurada e o proximo `Fire` tenta
-	acordar uma thread morta. Aqui a conexao e nossa, e `StopRound` a solta antes
-	de cancelar a thread.
+	`Signal:Wait()` does not work here: if the round's thread is canceled while waiting,
+	the signal's internal connection is left hanging and the next `Fire` tries to wake a
+	dead thread. Here the connection is ours, and `StopRound` releases it before
+	canceling the thread.
 
-	Retorna false quando o round foi descartado durante a espera.
+	Returns false when the round was discarded during the wait.
 ]=]
 function WaveService:awaitWaveEnd(generation : number)
 	local thread = coroutine.running()
@@ -566,10 +571,10 @@ function WaveService:runRound(generation : number)
 	self:waitForAllPlayers()
 	if not self:isCurrent(generation) then return end
 
-	-- O tutorial não vota: a partida dele é desenhada para ser vencida, e escolher
-	-- `Nightmare` nela seria escolher perder. Recebendo um preset do
-	-- `TutorialMatchService`, a votação nem abre — e o cliente, que só mostra a tela
-	-- quando o servidor a anuncia, não mostra nada.
+	-- The tutorial does not vote: its match is designed to be won, and choosing
+	-- `Nightmare` there would be choosing to lose. Receiving a preset from
+	-- `TutorialMatchService`, the vote does not even open, and the client, which only shows
+	-- the screen when the server announces it, shows nothing.
 	local tutorial = self.Services.TutorialMatchService
 	local forced = tutorial and tutorial:GetForcedPreset()
 
@@ -577,19 +582,19 @@ function WaveService:runRound(generation : number)
 	if not self:isCurrent(generation) then return end
 	self.Difficulty = preset
 
-	-- Pular a votação não pode significar "ninguém decidiu nada": é o estado de
-	-- dificuldade decidida que faz a hotbar aparecer na tela.
+	-- Skipping the vote must not mean "nobody decided anything": the decided-difficulty
+	-- state is what makes the hotbar appear on screen.
 	if forced then
 		self.Services.DifficultyService:Force(TutorialConfig.Match.Difficulty)
 	end
 
 	--[[
-		O primeiro passo do tutorial acontece **aqui**, no intervalo, e não numa wave:
-		ele aponta o botão de Ready e fecha quando a contagem termina — no tempo dela
-		ou antes, se o jogador clicar. Ele abre antes da contagem de propósito, para a
-		fala correr com o relógio ainda cheio.
+		The tutorial's first step happens **here**, in the intermission, not in a wave: it
+		points at the Ready button and closes when the countdown ends, on time or earlier
+		if the player clicks. It opens before the countdown on purpose, so the dialog runs
+		with the clock still full.
 
-		Fora do tutorial as duas chamadas não fazem nada.
+		Outside the tutorial both calls do nothing.
 	]]
 	if tutorial then
 		tutorial:BeginIntermission()
@@ -606,9 +611,9 @@ function WaveService:runRound(generation : number)
 	while not self.GameOver do
 		self:setWave((self.WaveCount or 0) + 1)
 
-		-- O roteiro do tutorial abre **antes** de os mobs nascerem, e pode segurar a
-		-- wave enquanto o passo não for cumprido (a wave 1 não nasce com o mapa
-		-- vazio). Fora do tutorial as duas chamadas não fazem nada.
+		-- The tutorial script opens **before** enemies spawn, and may hold the
+		-- wave while the step is not completed (wave 1 does not spawn with the map
+		-- empty). Outside the tutorial both calls do nothing.
 		if tutorial then
 			tutorial:BeginStep(self.WaveCount)
 			tutorial:AwaitStep(self.WaveCount)
@@ -617,14 +622,14 @@ function WaveService:runRound(generation : number)
 		end
 
 		--[[
-			Tempo real de proposito, mesmo acelerado: esta espera existe para as setas do
-			caminho terminarem de correr antes do primeiro mob nascer, e quem as
-			desenha e o `WaveController`, que anima em tempo de tela. Encurtar so
-			este lado poria o mob no mapa com a seta ainda no meio da rota.
+			Real time on purpose, even when sped up: this wait exists for the path arrows to
+			finish running before the first enemy spawns, and `WaveController` draws them,
+			animating in screen time. Shortening only this side would put the enemy on the
+			map with the arrow still midway through the route.
 
-			So a wave 1 espera, porque so a wave 1 tem seta: o cliente as toca uma vez
-			para ensinar o caminho, e da wave 2 em diante nao ha nada correndo na rota
-			para esperar -- a espera seria tempo parado com o mapa vazio.
+			Only wave 1 waits, because only wave 1 has arrows: the client plays them once
+			to teach the path, and from wave 2 on there is nothing running on the route to
+			wait for; the wait would be idle time with an empty map.
 		]]
 		if self.WaveCount == 1 then
 			task.wait(self:getArrowLeadTime())
@@ -632,34 +637,33 @@ function WaveService:runRound(generation : number)
 		end
 
 		--[[
-			A base pode cair **entre** duas waves.
+			The base can fall **between** two waves.
 
-			Quem sobra no mapa e a wave pulada (`SkipWave`): o laco segue em frente com
-			os inimigos dela ainda andando, e eles continuam chegando ao fim do caminho
-			durante o intervalo, durante o passo do tutorial e durante a espera das
-			setas aqui em cima. O `onGameOver` do `MobService` levanta a bandeira nesse
-			meio tempo, mas o `Ended` dele nao acorda ninguem -- o laco nao estava
-			esperando fim de wave nenhum.
+			What is left on the map is the skipped wave (`SkipWave`): the loop moves on
+			with its enemies still walking, and they keep reaching the end of the path
+			during the intermission, the tutorial step, and the arrow wait above.
+			`MobService`'s `onGameOver` raises the flag in the meantime, but its `Ended`
+			wakes nobody: the loop was not waiting for any wave end.
 
-			Sem esta checagem a wave seguinte nascia assim mesmo e a partida seguia com
-			a base no chao. A wave anunciada agora nao chegou a nascer, entao o contador
-			volta para a ultima que de fato aconteceu: e dele que sai a recompensa.
+			Without this check the next wave would spawn anyway and the match would go on
+			with the base down. The wave announced now never spawned, so the counter goes
+			back to the last one that actually happened: the reward comes from it.
 		]]
 		if self.GameOver then
 			self.WaveCount = math.max(0, (self.WaveCount or 1) - 1)
 			break
 		end
 
-		-- Tempo real, como a espera das setas logo acima: e daqui que o `SkipService`
-		-- conta os segundos ate oferecer a votacao de pular.
+		-- Real time, like the arrow wait just above: `SkipService` counts from here the
+		-- seconds until offering the skip vote.
 		self.WaveStartedAt = os.clock()
 		self.Services.MobService:SpawnWave(self.WaveCount)
 
 		if not self:awaitWaveEnd(generation) then return end
 		if self.GameOver then break end
 
-		-- Antes da checagem de vitoria de proposito: a ultima wave tambem e uma wave
-		-- concluida, e ela paga como as outras.
+		-- Before the victory check on purpose: the last wave is also a completed
+		-- wave, and it pays like the others.
 		self:payWaveCash()
 
 		if self.WaveCount >= self:getMaxWaves(preset) then
@@ -668,7 +672,7 @@ function WaveService:runRound(generation : number)
 			break
 		end
 
-		-- O respiro entre waves e ritmo de partida, entao encolhe junto com ela.
+		-- The breather between waves is match pace, so it shrinks with it.
 		GameClock.Wait(preset.WaveInterval or WAVE_INTERVAL)
 		if not self:isCurrent(generation) then return end
 	end
@@ -676,23 +680,22 @@ function WaveService:runRound(generation : number)
 	self:onRoundEnded(won)
 end
 
---[[ pular a wave ]]
+--[[ skipping the wave ]]
 
 --[=[
-	Se a wave que esta no ar agora pode ser pulada.
+	Whether the wave on now can be skipped.
 
-	Sao quatro condicoes, e todas as quatro sao sobre o laco do round, nao sobre o
-	jogador: o round tem que estar rodando, o laco tem que estar **esperando o fim
-	de uma wave** (`WaveAwaiter`), a wave tem que ter acabado de nascer inteira
-	(`AllMobsSpawned`) e tem que existir uma proxima wave.
+	There are four conditions, all about the round loop, not the player: the round must
+	be running, the loop must be **waiting for a wave to end** (`WaveAwaiter`), the wave
+	must have finished spawning (`AllMobsSpawned`), and there must be a next wave.
 
-	O `AllMobsSpawned` e o mais importante dos quatro: pular no meio de um spawn
-	poria duas corotinas de `SpawnWave` no ar ao mesmo tempo, e a primeira a
-	terminar diria que a wave inteira nasceu quando so uma delas nasceu.
+	`AllMobsSpawned` is the most important of the four: skipping mid-spawn would put two
+	`SpawnWave` coroutines in the air at once, and the first to finish would say the whole
+	wave spawned when only one of them did.
 
-	A ultima wave nao pula porque nao ha para onde: `WaveCount >= MaxWaves` e a
-	condicao de vitoria logo abaixo do `awaitWaveEnd`, e adiantar isso seria
-	entregar a partida com os inimigos ainda no caminho.
+	The last wave does not skip because there is nowhere to go: `WaveCount >= MaxWaves`
+	is the victory condition right below `awaitWaveEnd`, and bringing it forward would
+	hand over the match with enemies still on the path.
 ]=]
 function WaveService:CanSkipWave() : boolean
 	if self.State ~= ROUND_STATE.Running or self.GameOver then return false end
@@ -705,35 +708,35 @@ function WaveService:CanSkipWave() : boolean
 end
 
 --[=[
-	Comeca a proxima wave sem esperar a atual acabar. Quem chama e o `SkipService`,
-	quando a votacao fecha.
+	Starts the next wave without waiting for the current one to end. `SkipService` calls
+	it when the vote closes.
 
-	E o mesmo `Ended` que o `MobService` dispara quando o ultimo mob morre: para o
-	laco do round, a wave acabou, e ela paga como qualquer outra (o dinheiro de wave
-	e a renda das farms). A diferenca esta no mapa, nao no codigo — os mobs que
-	sobraram continuam andando, continuam pagando por dano e por morte, e continuam
-	podendo derrubar a base. Pular e trocar espera por risco, e nao por desconto.
+	It is the same `Ended` `MobService` fires when the last enemy dies: to the round
+	loop, the wave is over, and it pays like any other (wave money and farm income). The
+	difference is on the map, not in the code: the leftover enemies keep walking, keep
+	paying for damage and kills, and can still take down the base. Skipping trades
+	waiting for risk, not for a discount.
 
-	Os dois `Ended` nao se atrapalham: enquanto a proxima wave nao chama
-	`awaitWaveEnd` de novo ninguem esta escutando, e a partir dai o `MobService` so
-	dispara quando **todos** os mobs vivos morrerem, os que sobraram inclusive.
+	The two `Ended`s do not interfere: until the next wave calls `awaitWaveEnd` again
+	nobody is listening, and from then on `MobService` only fires when **all** living
+	enemies die, leftovers included.
 ]=]
 function WaveService:SkipWave() : boolean
 	if not self:CanSkipWave() then return false end
 
-	print(string.format("[WaveService]: wave %d pulada por votacao.", self.WaveCount or 0))
+	log:Debug(string.format("wave %d skipped by vote.", self.WaveCount or 0))
 	self.Signals.Ended:Fire()
 
 	return true
 end
 
 --[=[
-	Comeca um round do zero. Nao limpa nada — quem quer partida limpa chama
-	`ResetRound()`, que zera os services e chama isto no fim.
+	Starts a round from scratch. It cleans nothing: for a clean match call
+	`ResetRound()`, which resets the services and calls this at the end.
 ]=]
 function WaveService:StartRound()
 	if self.State == ROUND_STATE.Running then
-		warn("[WaveService]: StartRound ignorado, ja existe um round em andamento.")
+		log:StudioWarn("StartRound ignored; a round is already running.")
 		return false
 	end
 
@@ -750,14 +753,14 @@ function WaveService:StartRound()
 	self.RoundThread = task.spawn(function()
 		self:runRound(generation)
 
-		-- So encerra se ninguem tiver comecado outro round no meio do caminho.
+		-- Only ends if nobody started another round along the way.
 		if self:isCurrent(generation) then
 			self.State = ROUND_STATE.Finished
 			self.RoundThread = nil
 
 			self.Signals.RoundClosed:Fire()
 
-			-- A votacao de recomecar abre junto com a tela de resultado.
+			-- The play-again vote opens with the results screen.
 			self:broadcastPlayAgain()
 		end
 	end)
@@ -766,17 +769,17 @@ function WaveService:StartRound()
 end
 
 --[=[
-	Aborta o que estiver acontecendo — votacao, intervalo, wave no meio — e deixa
-	o servidor em Idle. Nao limpa mobs nem unidades; isso e `ResetRound`.
+	Aborts whatever is going on (vote, intermission, mid-wave) and leaves the server in
+	Idle. It does not clear enemies or units; that is `ResetRound`.
 ]=]
 function WaveService:StopRound(reason : string?)
 	local wasRunning = self.State == ROUND_STATE.Running
 
-	-- Invalida a geracao antes de tudo: o que escapar do cancelamento encontra
-	-- uma geracao diferente no proximo ponto de espera e se encerra sozinho.
+	-- Invalidates the generation before anything else: whatever escapes the cancellation
+	-- finds a different generation at the next wait point and ends on its own.
 	self.Generation += 1
 
-	-- Um recomecar agendado nao pode sobreviver a um stop.
+	-- A scheduled play-again must not survive a stop.
 	self:cancelPlayAgainRestart()
 
 	if self.WaveAwaiter then
@@ -784,7 +787,7 @@ function WaveService:StopRound(reason : string?)
 		self.WaveAwaiter = nil
 	end
 
-	-- Cancelar a propria thread mataria quem pediu o stop.
+	-- Canceling our own thread would kill whoever asked for the stop.
 	if self.RoundThread and self.RoundThread ~= coroutine.running() then
 		pcall(task.cancel, self.RoundThread)
 	end
@@ -801,25 +804,24 @@ function WaveService:StopRound(reason : string?)
 	end
 
 	if reason then
-		print(string.format("[WaveService]: round interrompido (%s).", reason))
+		log:Debug(string.format("round interrupted (%s).", reason))
 	end
 end
 
---- Se existe um round em `Running` agora (da espera pelos jogadores ate o fim).
+--- Whether a round is `Running` now (from waiting for players until the end).
 function WaveService:IsRoundRunning() : boolean
 	return self.State == ROUND_STATE.Running
 end
 
 --[=[
-	Devolve a partida ao ponto zero. Pode ser chamado a qualquer momento — durante
-	a votacao de dificuldade, no meio de uma wave, na tela de resultado — e de
-	qualquer lugar do servidor:
+	Returns the match to zero. It can be called at any time (during the difficulty vote,
+	mid-wave, on the results screen) and from anywhere on the server:
 
 		local Framework = require(ReplicatedStorage.Shared.Vendor.Me).new()
 		Framework:Get("WaveService"):ResetRound()
 
-	`autoStart = false` deixa o servidor parado em Idle esperando um
-	`StartRound()`; qualquer outro valor recomeca na hora.
+	`autoStart = false` leaves the server stopped in Idle waiting for a `StartRound()`;
+	any other value restarts immediately.
 ]=]
 function WaveService:ResetRound(autoStart : boolean?)
 	self:StopRound("reset")
@@ -837,8 +839,8 @@ function WaveService:ResetRound(autoStart : boolean?)
 		end
 	end
 
-	-- So `RoundRestarted`: disparar `SetWave` aqui faria o cliente tocar o som e as
-	-- setas de uma "wave 0". Quem zera o contador e o proprio WaveController.
+	-- Only `RoundRestarted`: firing `SetWave` here would make the client play the sound
+	-- and arrows of a "wave 0". WaveController resets the counter itself.
 	for _, player in Players:GetPlayers() do
 		Framework:Fire("RoundRestarted", player)
 	end
@@ -848,7 +850,7 @@ function WaveService:ResetRound(autoStart : boolean?)
 	end
 end
 
---[[ votacao de recomecar ]]
+--[[ play-again vote ]]
 
 function WaveService:playAgainTally()
 	local voted = 0
@@ -885,13 +887,13 @@ function WaveService:cancelPlayAgainRestart()
 end
 
 --[=[
-	Unanimidade entre quem esta no servidor. Quem sai deixa de contar, entao um
-	jogador que abandona a tela de resultado nao trava o recomeco dos outros.
+	Unanimity among those on the server. Players who leave stop counting, so a player
+	who abandons the results screen does not block the others' restart.
 
-	Fechada a votacao, o reset espera PLAY_AGAIN_DELAY — tempo de o ultimo
-	jogador ver o contador cheio antes da tela sair. A janela e cancelavel: quem
-	tirar o voto (ou entrar no servidor) nesse intervalo derruba o agendamento, e
-	a condicao e conferida de novo na hora de disparar.
+	Once the vote closes, the reset waits PLAY_AGAIN_DELAY, time for the last player to
+	see the full counter before the screen leaves. The window is cancelable: anyone
+	removing their vote (or joining the server) in that interval drops the schedule, and
+	the condition is checked again at firing time.
 ]=]
 function WaveService:evaluatePlayAgain()
 	if self.State ~= ROUND_STATE.Finished then
@@ -908,8 +910,8 @@ function WaveService:evaluatePlayAgain()
 	if self.PlayAgainRestart then return end
 
 	self.PlayAgainRestart = task.delay(PLAY_AGAIN_DELAY, function()
-		-- Limpo primeiro: o ResetRound abaixo passa por StopRound, que cancelaria
-		-- justamente esta thread se ela ainda estivesse registrada.
+		-- Cleared first: the ResetRound below goes through StopRound, which would cancel
+		-- exactly this thread if it were still registered.
 		self.PlayAgainRestart = nil
 
 		if self.State ~= ROUND_STATE.Finished then return end
@@ -921,24 +923,24 @@ function WaveService:evaluatePlayAgain()
 	end)
 end
 
---[[ saida para o lobby ]]
+--[[ leaving to the Lobby ]]
 
 function WaveService:sendToLobby(player : Player)
 	if not player or not player.Parent then return end
 
-	-- O caixa da partida e volatil, mas o premio do round ja foi para o perfil:
-	-- salvar antes de sair evita perder a ultima recompensa.
+	-- Match cash is volatile, but the round reward already went to the profile:
+	-- saving before leaving avoids losing the last reward.
 	local dataService = self.Services.DataService
 	if dataService and dataService.Save then
 		dataService:Save(player)
 	end
 
 	--[[
-		A volta do tutorial leva um bilhete: `TutorialDone`.
+		The return from the tutorial carries a ticket: `TutorialDone`.
 
-		É com ele que o lobby sabe apontar a loja assim que o jogador cai lá — e é
-		**só** um bilhete, nada é gravado no perfil. Empurrãozinho que acontece uma
-		vez, logo depois da partida, e não um marco que sobrevive a um logout.
+		That is how the Lobby knows to point at the shop as soon as the player lands
+		there, and it is **only** a ticket: nothing is saved to the profile. A nudge that
+		happens once, right after the match, not a milestone that survives a logout.
 	]]
 	local tutorialMatch = self.Services.TutorialMatchService
 	local options = nil
@@ -953,7 +955,7 @@ function WaveService:sendToLobby(player : Player)
 	end)
 
 	if not success then
-		warn(string.format("[WaveService]: teleporte de %s para o lobby falhou (%s).", player.Name, tostring(err)))
+		log:Warn(string.format("teleport of %s to the lobby failed (%s).", player.Name, tostring(err)))
 		Framework:Fire("LobbyTeleportFailed", player)
 	end
 end
@@ -987,11 +989,10 @@ function WaveService:construct()
 	end)
 
 	--[[
-		A recompensa de saida nao entra aqui: ela precisa do perfil aberto, e a
-		ordem entre este `PlayerRemoving` e o do `DataService` nao e garantida. Quem
-		chama o `GrantLeaveReward` e o proprio `DataService`, logo antes de fechar a
-		sessao -- o que cobre tambem o desligamento do servidor, onde `PlayerRemoving`
-		nem sempre chega a disparar.
+		The leave reward does not go here: it needs the profile open, and the order
+		between this `PlayerRemoving` and `DataService`'s is not guaranteed.
+		`DataService` itself calls `GrantLeaveReward`, right before closing the session,
+		which also covers server shutdown, where `PlayerRemoving` does not always fire.
 	]]
 	local dataService = self.Services.DataService
 	if dataService and dataService.OnBeforeRelease then
@@ -1003,7 +1004,7 @@ function WaveService:construct()
 	Players.PlayerRemoving:Connect(function(player)
 		self.PlayAgainVotes[player.UserId] = nil
 
-		-- O que saiu podia ser o unico voto faltando.
+		-- The player who left may have been the only missing vote.
 		if self.State == ROUND_STATE.Finished then
 			task.defer(function()
 				self:broadcastPlayAgain()
@@ -1013,7 +1014,7 @@ function WaveService:construct()
 	end)
 
 	TeleportService.TeleportInitFailed:Connect(function(player, _result, message)
-		warn(string.format("[WaveService]: TeleportInitFailed para %s (%s).", player.Name, tostring(message)))
+		log:Warn(string.format("TeleportInitFailed for %s (%s).", player.Name, tostring(message)))
 		Framework:Fire("LobbyTeleportFailed", player)
 	end)
 

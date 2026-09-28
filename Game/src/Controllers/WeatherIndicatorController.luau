@@ -1,6 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
 local Player = Players.LocalPlayer
@@ -14,71 +13,59 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("WeatherIndicatorController")
 
 local WeatherConfig = SharedConfig.WeatherConfig
 local Config = WeatherConfig.Indicator
 
--- Quão perto do repouso a escala precisa estar para a lista poder ser escrita. Um
--- tween que termina não cai exatamente no alvo em toda máquina, e a diferença que
--- importa aqui é a de uma animação em curso, que é ordens de grandeza maior.
+-- How close to rest the scale must be for the list to be written. A tween that
+-- ends does not land exactly on the target on every machine, and the difference that
+-- matters here is that of an animation in progress, which is orders of magnitude larger.
 local SCALE_EPSILON = 0.001
 
 --[[
-	A escala do painel, no output do Studio.
+	The HUD weather indicator: the corner button and the panel it opens.
 
-	É o jeito de descobrir os dois números de `Indicator.Responsive` em vez de tentar:
-	ele mostra a altura de cada tela e o fator que saiu dela. **A conta da letra não é
-	daqui** — ela sai do `RichTextController:FitSize`, que imprime a linha dele (ver
-	`RichTextConfig.Fit.Debug`).
+	Two sibling pieces in `Interface` (see `WeatherConfig.Indicator.Gui`):
 
-	Mesmo motivo do `roundPrint` do `WeatherRoundService`: só no Studio, porque é
-	informação de quem está desenhando a tela, e não do jogador.
-]]
-local IS_STUDIO = RunService:IsStudio()
+	  1. `WeatherButton`: the icon of the active weather, and the panel's **toggle**.
+	     Press it and the panel comes in, press again and it leaves;
+	  2. `IndicatorWeather`: the panel: the icon again, the weather name, how many waves
+	     it still lasts, and the list of what it does.
 
-local function indicatorPrint(...)
-	if not IS_STUDIO then return end
-	print("[WeatherIndicatorController]", ...)
-end
+	**With no active weather there is no indicator.** The button hides and the panel
+	closes, even if open: "clear sky" is not a state worth occupying a corner of the
+	screen.
 
---[[
-	O indicador de clima do HUD: o botão no canto e o painel que ele abre.
+	**The `New` badge** (the button's optional child) lights with it while the player has
+	not opened the panel this match: without it the button is an icon nobody discovers
+	is clickable. See `PanelSeen`.
 
-	Duas peças irmãs na `Interface` (ver `WeatherConfig.Indicator.Gui`):
+	**The animation is on the panel's `UIScale`**, the authored one when it exists. Scale,
+	not position, so the entrance works in whatever corner the designer anchors the
+	panel.
 
-	  1. `WeatherButton` — o ícone do clima que está no ar, e o **interruptor** do
-	     painel. Aperta e ele entra, aperta de novo e ele sai;
-	  2. `IndicatorWeather` — o painel: o ícone outra vez, o nome do clima, quantas
-	     waves ele ainda vale e a lista do que ele faz.
+	**The lines are rich text**, written one after another by `RichTextController`. The
+	color inside them is built here (see `markup`): a number takes the color of what it
+	does to the player, and a unit type takes the type's color.
 
-	**Sem clima no ar não há indicador.** O botão some e o painel fecha, mesmo estando
-	aberto — "céu limpo" não é um estado que valha um canto da tela ocupado.
+	**Where what it says comes from.** The current weather comes from `WeatherController`
+	(`WeatherChanged`); the wave it lasts until comes from `WeatherDuration`, which
+	`WeatherRoundService` sends with the name; the current wave comes from `SetWave`.
 
-	**O selo `New`** (a filha opcional do botão) acende com ele enquanto o jogador não
-	tiver aberto o painel nesta partida: sem ele o botão é um ícone que ninguém
-	descobre ser clicável. Ver `PanelSeen`.
+	The three arrive in different events and **their order is not guaranteed**, so
+	nothing here is computed on the arrival of one of them: each notification only stores
+	what it brought and asks for a redraw, and the remaining-waves math comes from the
+	whole state. That is also why `WeatherDuration` carries the weather name: a deadline
+	whose name is not the active weather's is another weather's deadline, and does not
+	show.
 
-	**A animação é no `UIScale`** do painel, o autorado quando existe. Escala, e não
-	posição, para a entrada funcionar em qualquer canto em que o designer ancore o
-	painel.
+	It lives in Game: match weather only exists here.
 
-	**As linhas são texto rico**, escritas uma depois da outra pelo
-	`RichTextController`. A cor dentro delas é montada aqui (ver `markup`): o número
-	entra na cor do que ele faz com o jogador e o tipo de unidade na cor do tipo.
-
-	**De onde vem o que ele diz.** O clima de agora é do `WeatherController`
-	(`WeatherChanged`); até que wave ele vale é do `WeatherDuration`, que o
-	`WeatherRoundService` manda com o nome junto; a wave de agora é do `SetWave`.
-
-	Os três chegam em eventos diferentes e **a ordem entre eles não é garantida**, por
-	isso nada aqui é calculado na chegada de um deles: cada aviso só guarda o que
-	trouxe e manda redesenhar, e a conta das waves restantes sai do estado inteiro. É
-	também por isso que o `WeatherDuration` traz o nome do clima — prazo cujo nome não
-	é o do clima no ar é prazo de outro clima, e não aparece.
-
-	Fica na Game: clima de partida só existe aqui.
+	See docs/game/weather-in-match.md.
 ]]
 
 local WeatherIndicatorController = {
@@ -88,7 +75,7 @@ local WeatherIndicatorController = {
 	}
 }
 
--- As peças da tela.
+-- The screen pieces.
 WeatherIndicatorController.Button = nil :: GuiButton?
 WeatherIndicatorController.ButtonImage = nil :: ImageLabel?
 WeatherIndicatorController.NewBadge = nil :: GuiObject?
@@ -100,68 +87,70 @@ WeatherIndicatorController.DurationLabel = nil :: TextLabel?
 WeatherIndicatorController.Container = nil :: GuiObject?
 
 --[[
-	A escala que o designer desenhou, quando ele escreveu uma. `Scale.Open` do config
-	cobre o `UIScale` que nasce em zero (ou o que este controller cria).
+	The scale the designer drew, when they wrote one. The config's `Scale.Open` covers a
+	`UIScale` that starts at zero (or one this controller creates).
 
-	É lida no `bind`, antes de a animação escrever a primeira vez no `UIScale` — depois
-	disso o valor de lá é o da animação, e não o do designer.
+	It is read in `bind`, before the animation writes to the `UIScale` for the first
+	time: after that, the value there is the animation's, not the designer's.
 
-	A escala de repouso **não** é esta: é esta vezes o fator da tela. Ver `openScale`.
+	The resting scale is **not** this: it is this times the screen factor. See
+	`openScale`.
 ]]
 WeatherIndicatorController.AuthoredScale = 1
 
--- O molde de uma linha, quando o designer desenhou um. Ver `lineFrame`.
+-- A line's template, when the designer drew one. See `lineFrame`.
 WeatherIndicatorController.Template = nil :: GuiObject?
 
--- Uma entrada por linha da lista, reusada entre climas: `{ Frame, Handle }`.
+-- One entry per list line, reused across weathers: `{ Frame, Handle }`.
 WeatherIndicatorController.Lines = {}
 
--- O painel está aberto? É o estado do interruptor, e não o do tween.
+-- Is the panel open? It is the toggle's state, not the tween's.
 WeatherIndicatorController.IsOpen = false
 
 --[[
-	O jogador já abriu o painel nesta partida?
+	Has the player opened the panel this match?
 
-	É o interruptor do selo `New`: enquanto for `false`, o selo acende em **toda**
-	tempestade — o aviso não é sobre o clima que chegou, é sobre o botão que ninguém
-	abriu ainda, e um clima ignorado deixa a descoberta para o próximo. Abrir o painel
-	o aposenta pelo resto da partida.
+	It is the `New` badge's switch: while `false`, the badge lights on **every** storm:
+	the notice is not about the weather that arrived, it is about the button nobody has
+	opened yet, and an ignored weather leaves the discovery for the next one. Opening the
+	panel retires it for the rest of the match.
 
-	Mora no cliente e não no perfil: é por partida, e o `RoundRestarted` o zera.
+	It lives on the client and not the profile: it is per match, and `RoundRestarted`
+	resets it.
 ]]
 WeatherIndicatorController.PanelSeen = false
 
--- A wave de agora, e o prazo que o servidor mandou: o nome do clima e a última wave
--- em que ele vale.
+-- The current wave, and the deadline the server sent: the weather name and the last
+-- wave it lasts.
 WeatherIndicatorController.Wave = 0
 WeatherIndicatorController.EndsName = nil :: string?
 WeatherIndicatorController.EndsWave = nil :: number?
 
 --[[
-	Sobe a cada abertura e a cada fechamento.
+	Goes up on every open and every close.
 
-	Duas coisas conferem se ainda são da vez delas antes de mexer na tela: a escrita
-	das linhas, que dorme entre uma e outra, e o fim do tween de saída, que apaga o
-	painel. Sem isto, um clima que trocasse no meio da escrita escreveria por cima da
-	lista nova, e uma reabertura rápida seria apagada pelo fim da saída anterior.
+	Two things check whether it is still their turn before touching the screen: writing
+	the lines, which sleeps between one and the next, and the end of the exit tween,
+	which hides the panel. Without this, a weather changing mid-write would write over
+	the new list, and a quick reopen would be hidden by the previous exit's end.
 ]]
 WeatherIndicatorController.Token = 0
 
--- O tween de escala em curso, para o clique seguinte emendar nele em vez de brigar.
+-- The scale tween in progress, so the next click chains onto it instead of fighting.
 WeatherIndicatorController.ScaleTween = nil :: Tween?
 
--- Sobe a cada mudança de tela, para só a última do lote reescrever a lista. Ver
+-- Goes up on every screen change, so only the batch's last one rewrites the list. See
 -- `onViewportChanged`.
 WeatherIndicatorController.ViewportToken = 0
 
---[[ TELA ]]
+--[[ SCREEN ]]
 
 --[=[
-	Acha as peças na `PlayerGui`.
+	Finds the pieces in `PlayerGui`.
 
-	Devolve `false` quando o botão ou o painel não existem nesta place (ou ainda não
-	replicaram) — o controller então não faz nada, em vez de estourar em cima de um
-	`nil`. O que é opcional (os labels, o molde de linha) só avisa e segue.
+	Returns `false` when the button or the panel does not exist in this place (or has not
+	replicated yet): the controller then does nothing, instead of erroring on a `nil`.
+	What is optional (the labels, the line template) only warns and moves on.
 ]=]
 function WeatherIndicatorController:bind() : boolean
 	local screen = PlayerGui:WaitForChild(Config.Gui.Screen, 60)
@@ -169,13 +158,13 @@ function WeatherIndicatorController:bind() : boolean
 	local panel = screen and screen:WaitForChild(Config.Gui.Frame, 60)
 
 	if not button or not button:IsA("GuiButton") then
-		warn(`[WeatherIndicatorController]: nao achei o botao {Config.Gui.Screen}.{Config.Gui.Button} na PlayerGui.`)
+		log:StudioWarn(`could not find the {Config.Gui.Screen}.{Config.Gui.Button} button in PlayerGui.`)
 
 		return false
 	end
 
 	if not panel or not panel:IsA("GuiObject") then
-		warn(`[WeatherIndicatorController]: nao achei o painel {Config.Gui.Screen}.{Config.Gui.Frame} na PlayerGui.`)
+		log:StudioWarn(`could not find the {Config.Gui.Screen}.{Config.Gui.Frame} panel in PlayerGui.`)
 
 		return false
 	end
@@ -184,11 +173,11 @@ function WeatherIndicatorController:bind() : boolean
 	self.Panel = panel
 
 	--[[
-		Onde o ícone do botão é escrito.
+		Where the button's icon is written.
 
-		Normalmente é o próprio botão, que é um `ImageButton`. Botão que não seja de
-		imagem continua servindo: vale a filha com o mesmo nome da imagem do painel
-		(`Gui.Image`), que é onde um botão desenhado como moldura guarda o ícone dele.
+		Normally it is the button itself, an `ImageButton`. A button that is not an image
+		still works: the child with the same name as the panel's image (`Gui.Image`)
+		applies, which is where a button drawn as a frame keeps its icon.
 	]]
 	if button:IsA("ImageButton") then
 		self.ButtonImage = button :: any
@@ -198,17 +187,17 @@ function WeatherIndicatorController:bind() : boolean
 		if inner and (inner:IsA("ImageLabel") or inner:IsA("ImageButton")) then
 			self.ButtonImage = inner :: any
 		else
-			warn(`[WeatherIndicatorController]: o {Config.Gui.Button} nao e um ImageButton nem tem uma {Config.Gui.Image} dentro; o icone dele nao vai mudar.`)
+			log:StudioWarn(`{Config.Gui.Button} is not an ImageButton and has no {Config.Gui.Image} inside; its icon will not change.`)
 		end
 	end
 
 	--[[
-		O selo de novidade, se o designer desenhou um.
+		The new badge, if the designer drew one.
 
-		É **opcional** de propósito, e por isso não há aviso na falta dele: o indicador
-		inteiro funciona sem o selo, e um botão sem filha `New` é um botão sem selo, não
-		um botão quebrado. Nasce apagado — quem o acende é o `refreshButton`, e só junto
-		com um clima no ar.
+		It is **optional** on purpose, which is why there is no warning when missing: the
+		whole indicator works without the badge, and a button without a `New` child is a
+		button without a badge, not a broken button. It starts off: `refreshButton` lights
+		it, and only along with an active weather.
 	]]
 	local badge = button:FindFirstChild(Config.Gui.New)
 	if badge and badge:IsA("GuiObject") then
@@ -217,9 +206,9 @@ function WeatherIndicatorController:bind() : boolean
 	end
 
 	--[[
-		O `UIScale` é o autorado, quando existe: assim o designer decide a escala de
-		repouso do painel e a animação só escreve nela. Sem um, criar é inofensivo — um
-		`UIScale` de escala 1 não muda nada do que está desenhado.
+		The `UIScale` is the authored one when it exists: that way the designer decides the
+		panel's resting scale and the animation only writes to it. Without one, creating it
+		is harmless: a scale-1 `UIScale` changes nothing that is drawn.
 	]]
 	local scale = panel:FindFirstChildWhichIsA("UIScale")
 	if not scale then
@@ -237,7 +226,7 @@ function WeatherIndicatorController:bind() : boolean
 	if image and (image:IsA("ImageLabel") or image:IsA("ImageButton")) then
 		self.Image = image :: any
 	else
-		warn(`[WeatherIndicatorController]: o {Config.Gui.Frame} nao tem a imagem {Config.Gui.Image}.`)
+		log:StudioWarn(`{Config.Gui.Frame} has no {Config.Gui.Image} image.`)
 	end
 
 	local nameLabel = panel:FindFirstChild(Config.Gui.Name)
@@ -245,7 +234,7 @@ function WeatherIndicatorController:bind() : boolean
 		self.NameLabel = nameLabel
 		self:makeResponsive(nameLabel)
 	else
-		warn(`[WeatherIndicatorController]: o {Config.Gui.Frame} nao tem o label {Config.Gui.Name}.`)
+		log:StudioWarn(`{Config.Gui.Frame} has no {Config.Gui.Name} label.`)
 	end
 
 	local durationLabel = panel:FindFirstChild(Config.Gui.Duration)
@@ -253,7 +242,7 @@ function WeatherIndicatorController:bind() : boolean
 		self.DurationLabel = durationLabel
 		self:makeResponsive(durationLabel)
 	else
-		warn(`[WeatherIndicatorController]: o {Config.Gui.Frame} nao tem o label {Config.Gui.Duration}.`)
+		log:StudioWarn(`{Config.Gui.Frame} has no {Config.Gui.Duration} label.`)
 	end
 
 	local container = panel:FindFirstChild(Config.Gui.Container)
@@ -261,9 +250,8 @@ function WeatherIndicatorController:bind() : boolean
 		self.Container = container
 
 		--[[
-			O molde de linha, se o designer desenhou um. Ele próprio nunca aparece: o que
-			entra na lista são os clones, e o original fica apagado como referência de
-			tamanho e margem.
+			The line template, if the designer drew one. It never shows itself: clones go
+			into the list, and the original stays hidden as a size and margin reference.
 		]]
 		local template = container:FindFirstChild(Config.Gui.Line)
 		if template and template:IsA("GuiObject") then
@@ -271,11 +259,11 @@ function WeatherIndicatorController:bind() : boolean
 			self.Template = template
 		end
 	else
-		warn(`[WeatherIndicatorController]: o {Config.Gui.Frame} nao tem o {Config.Gui.Container}; a lista de efeitos nao vai aparecer.`)
+		log:StudioWarn(`{Config.Gui.Frame} has no {Config.Gui.Container}; the effect list will not show.`)
 	end
 
-	-- O painel nasce fechado, de qualquer jeito que o designer o tenha deixado no
-	-- Studio: quem o abre é o botão.
+	-- The panel starts closed, however the designer left it in Studio: the button
+	-- opens it.
 	panel.Visible = false
 	scale.Scale = Config.Scale.Closed
 
@@ -283,23 +271,23 @@ function WeatherIndicatorController:bind() : boolean
 end
 
 --[=[
-	O fator da tela: quanto o painel cresce acima da resolução de referência.
+	The screen factor: how much the panel grows above the reference resolution.
 
-	O painel é desenhado em pixels, e pixel não cresce com a tela — o mesmo painel numa
-	tela de 1440 ocupa a mesma área de pixels que numa de 1080, e por isso parece menor
-	nela. Este fator devolve a proporção, e tudo dentro do painel vem junto: a letra das
-	linhas é medida da caixa **depois** de o fator estar aplicado.
+	The panel is drawn in pixels, and pixels do not grow with the screen: the same panel
+	on a 1440 screen takes the same pixel area as on a 1080 one, so it looks smaller
+	there. This factor restores the proportion, and everything inside the panel follows:
+	the lines' text is measured from the box **after** the factor is applied.
 
-	A referência é uma **altura** de tela, em pixels (1080 num monitor 1080p, e não 1920):
-	referência grande demais joga o fator abaixo de 1 em qualquer tela, o `Min` o prende
-	em 1 e os dois números do config param de fazer efeito, sem erro nenhum aparecer.
+	The reference is a screen **height**, in pixels (1080 on a 1080p monitor, not 1920):
+	a reference that is too large pushes the factor below 1 on every screen, `Min` pins it
+	at 1, and the config's two numbers stop having any effect, with no error showing up.
 
-	`Min` segura o celular no lugar: tela menor que a referência não encolhe o painel,
-	porque lá ele já ocupa a fração certa da tela. `Max` fecha o teto, para o painel não
-	dobrar de tamanho num 4K e passar a competir com o jogo.
+	`Min` keeps mobile in place: a screen smaller than the reference does not shrink the
+	panel, because there it already takes the right share of the screen. `Max` sets the
+	ceiling, so the panel does not double in size on 4K and start competing with the game.
 
-	Sem câmera (o quadro entre o join e o primeiro `CurrentCamera`) o fator é 1: o painel
-	abre no tamanho desenhado, e a primeira mudança de tela corrige.
+	With no camera (the frame between join and the first `CurrentCamera`) the factor is 1:
+	the panel opens at its drawn size, and the first screen change corrects it.
 ]=]
 function WeatherIndicatorController:viewportFactor() : number
 	local camera = workspace.CurrentCamera
@@ -318,26 +306,27 @@ function WeatherIndicatorController:viewportFactor() : number
 end
 
 --[=[
-	A escala de repouso do painel: a autorada, corrigida pela tela.
+	The panel's resting scale: the authored one, corrected by the screen.
 
-	É calculada a cada uso em vez de guardada porque a tela muda no meio da partida —
-	girar o celular, arrastar a janela — e uma cópia guardada seria a escala da tela
-	anterior. Ver `onViewportChanged`.
+	It is computed on every use instead of cached because the screen changes mid-match
+	(rotating the phone, dragging the window), and a cached copy would be the previous
+	screen's scale. See `onViewportChanged`.
 ]=]
 function WeatherIndicatorController:openScale() : number
 	return self.AuthoredScale * self:viewportFactor()
 end
 
 --[=[
-	Faz um label do designer encolher com a tela.
+	Makes a designer's label shrink with the screen.
 
-	`TextScaled` sozinho resolveria o celular e estragaria o monitor: o texto passaria a
-	ocupar o label inteiro, maior do que foi desenhado. Ligar o `TextScaled` **com** um
-	teto no tamanho autorado dá as duas coisas — o desenho original onde há espaço, e a
-	letra encolhendo onde não há.
+	`TextScaled` alone would fix mobile and break the monitor: the text would fill the
+	whole label, bigger than drawn. Turning on `TextScaled` **with** a cap at the
+	authored size gives both: the original drawing where there is room, and the text
+	shrinking where there is not.
 
-	Label que já chega com `TextScaled` ligado fica como está: o `TextSize` dele não
-	significa mais nada, e virar teto cravaria a letra num número que ninguém escolheu.
+	A label that already arrives with `TextScaled` on stays as it is: its `TextSize` no
+	longer means anything, and using it as a cap would pin the text at a number nobody
+	chose.
 ]=]
 function WeatherIndicatorController:makeResponsive(label : TextLabel)
 	if not Config.Labels.Scale or label.TextScaled then return end
@@ -353,15 +342,15 @@ function WeatherIndicatorController:makeResponsive(label : TextLabel)
 		constraint.Parent = label
 	end
 
-	-- A ordem importa: o `MaxTextSize` não pode ficar abaixo do `MinTextSize` que está
-	-- lá, nem o contrário, senão a propriedade é recusada.
+	-- Order matters: `MaxTextSize` must not go below the `MinTextSize` that is
+	-- there, nor the reverse, or the property is refused.
 	constraint.MinTextSize = 1
 	constraint.MaxTextSize = math.max(authored, Config.Labels.MinTextSize)
 	constraint.MinTextSize = math.min(Config.Labels.MinTextSize, constraint.MaxTextSize)
 end
 
 --[=[
-	O clima que está no ar agora, ou `nil`.
+	The weather active now, or `nil`.
 ]=]
 function WeatherIndicatorController:current() : string?
 	local weather = self.Controllers.WeatherController
@@ -369,13 +358,14 @@ function WeatherIndicatorController:current() : string?
 	return weather and weather:GetCurrent() or nil
 end
 
---[[ CONTEÚDO ]]
+--[[ CONTENT ]]
 
 --[=[
-	As linhas do clima, cada uma como `{ Text, Kind }`.
+	The weather's lines, each as `{ Text, Kind }`.
 
-	O config aceita string ou tabela (ver `Indicator.Details`), e é aqui que as duas
-	formas viram uma só, para quem escreve não ter de conferir o tipo a cada linha.
+	The config accepts a string or a table (see `Indicator.Details`), and this is where
+	the two shapes become one, so the writer does not have to check the type on every
+	line.
 ]=]
 function WeatherIndicatorController:details(weatherName : string) : { { Text : string, Kind : string? } }
 	local lines = Config.Details[weatherName] or Config.UnknownDetails
@@ -393,19 +383,20 @@ function WeatherIndicatorController:details(weatherName : string) : { { Text : s
 end
 
 --[=[
-	A linha com as cores dentro dela.
+	The line with the colors inside it.
 
-	Duas passadas, e as duas só pintam pedaços:
+	Two passes, and both only paint pieces:
 
-	  1. **o número** — `+10%`, `-60%`, `20s`. O sinal escolhe a cor, e `kind` manda
-	     quando o sinal engana (`+40% ENEMY HP` cresce e é péssimo). Número sem sinal
-	     é debuff, que é o que os stuns de hoje são;
-	  2. **o tipo de unidade** — `FIRE`, `ICE`, `ELEC`... na cor do tipo, para o
-	     jogador achar o que é dele sem ler a linha inteira.
+	  1. **the number**: `+10%`, `-60%`, `20s`. The sign picks the color, and `kind` rules
+	     when the sign is misleading (`+40% ENEMY HP` goes up and is terrible). A number
+	     with no sign is a debuff, which is what today's stuns are;
+	  2. **the unit type**: `FIRE`, `ICE`, `ELEC`... in the type's color, so the player
+	     finds what concerns them without reading the whole line.
 
-	A ordem das duas não importa: o que a primeira insere é `[color=85,170,255]`, e
-	nenhum nome de tipo é escrito em minúsculas nem com dígitos. A fronteira `%f` na
-	segunda é o que impede o nome de ser achado no meio de outra palavra.
+	The order of the two does not matter: what the first inserts is
+	`[color=85,170,255]`, and no type name is written in lowercase or with digits. The
+	`%f` frontier in the second is what keeps a name from being found inside another
+	word.
 ]=]
 function WeatherIndicatorController:markup(text : string, kind : string?) : string
 	local colors = Config.Colors
@@ -418,8 +409,8 @@ function WeatherIndicatorController:markup(text : string, kind : string?) : stri
 		return `[color={color}]{token}[/color]`
 	end
 
-	-- Duas chamadas em vez de uma: `[%%s]` num conjunto seria "porcento ou espaço",
-	-- porque `%s` lá dentro continua sendo a classe de espaço em branco.
+	-- Two calls instead of one: `[%%s]` in a set would be "percent or whitespace",
+	-- because `%s` inside it is still the whitespace class.
 	local painted = string.gsub(text, "[%+%-]?%d+%%", paint)
 	painted = string.gsub(painted, "[%+%-]?%d+s", paint)
 
@@ -431,15 +422,15 @@ function WeatherIndicatorController:markup(text : string, kind : string?) : stri
 end
 
 --[=[
-	A frase do prazo, ou `nil` quando não há um.
+	The deadline sentence, or `nil` when there is none.
 
-	A conta é feita **agora**, e não na chegada do aviso: o prazo é uma wave-alvo e o
-	jogador joga waves inteiras com o painel fechado. A wave que está rodando conta,
-	então um clima de 4 waves que acabou de entrar diz "ENDS IN 4 WAVES" e o último
-	diz "ENDS IN 1 WAVE".
+	The math is done **now**, not when the notification arrives: the deadline is a target
+	wave and the player plays whole waves with the panel closed. The running wave counts,
+	so a 4-wave weather that just arrived says "ENDS IN 4 WAVES" and the last one says
+	"ENDS IN 1 WAVE".
 
-	Sem prazo nenhum — clima ligado na mão pelo comando `weather` — não há frase, e o
-	label simplesmente não aparece.
+	With no deadline at all (a weather turned on by hand with the `weather` command)
+	there is no sentence, and the label simply does not appear.
 ]=]
 function WeatherIndicatorController:endsText() : string?
 	local current = self:current()
@@ -462,12 +453,12 @@ function WeatherIndicatorController:endsText() : string?
 end
 
 --[=[
-	O ícone do clima de agora, no botão e no painel.
+	The current weather's icon, on the button and on the panel.
 ]=]
 function WeatherIndicatorController:refreshIcon(weatherName : string)
 	local icon = Config.Icons[weatherName]
 	if not icon then
-		warn(`[WeatherIndicatorController]: o clima "{weatherName}" nao tem icone em WeatherConfig.Indicator.Icons.`)
+		log:StudioWarn(`weather "{weatherName}" has no icon in WeatherConfig.Indicator.Icons.`)
 
 		return
 	end
@@ -482,7 +473,7 @@ function WeatherIndicatorController:refreshIcon(weatherName : string)
 end
 
 --[=[
-	O botão: ele existe enquanto houver clima no ar, e só.
+	The button: it exists while there is an active weather, and only then.
 ]=]
 function WeatherIndicatorController:refreshButton()
 	local button = self.Button
@@ -493,8 +484,9 @@ function WeatherIndicatorController:refreshButton()
 	button.Visible = current ~= nil
 
 	--[[
-		O selo vive a vida do botão, menos quando o painel já foi aberto: sem clima ele
-		some com o botão, e depois da primeira abertura não volta mais nesta partida.
+		The badge lives the button's life, except once the panel has been opened: with no
+		weather it goes away with the button, and after the first open it does not return
+		this match.
 	]]
 	local badge = self.NewBadge
 	if badge then
@@ -507,8 +499,8 @@ function WeatherIndicatorController:refreshButton()
 end
 
 --[=[
-	O topo do painel: ícone, nome e prazo. Sem prazo, o label do prazo se apaga em vez
-	de mostrar uma frase pela metade.
+	The top of the panel: icon, name, and deadline. With no deadline, the deadline label
+	hides instead of showing half a sentence.
 ]=]
 function WeatherIndicatorController:refreshHeader()
 	local current = self:current()
@@ -529,19 +521,19 @@ function WeatherIndicatorController:refreshHeader()
 	end
 end
 
---[[ LINHAS ]]
+--[[ LINES ]]
 
 --[=[
-	A peça da linha `index`, criando-a na primeira vez.
+	The piece for line `index`, creating it the first time.
 
-	As peças são reusadas entre climas: a lista muda de conteúdo muitas vezes por
-	partida e destruir para recriar jogaria fora o render de texto de cada uma junto.
-	Sobra do clima anterior fica apagada, não destruída (ver `refreshLines`).
+	Pieces are reused across weathers: the list changes content many times per match, and
+	destroying to recreate would throw away each one's text render too. Leftovers from the
+	previous weather are hidden, not destroyed (see `refreshLines`).
 
-	Com molde no Studio, a peça é um clone dele; sem molde, um Frame de
-	`Line.HeightScale` da altura do `Container` — fração, e não pixel, para a peça
-	encolher junto com o painel no celular. Nos dois casos o `LayoutOrder` é o índice,
-	para a ordem na tela ser a ordem escrita no config.
+	With a template in Studio, the piece is a clone of it; without one, a Frame
+	`Line.HeightScale` of the `Container`'s height: a fraction, not pixels, so the piece
+	shrinks with the panel on mobile. In both cases `LayoutOrder` is the index, so the
+	on-screen order is the order written in the config.
 ]=]
 function WeatherIndicatorController:lineFrame(index : number) : GuiObject?
 	local container = self.Container
@@ -569,7 +561,7 @@ function WeatherIndicatorController:lineFrame(index : number) : GuiObject?
 end
 
 --[=[
-	O handle de texto rico da linha `index`, com a peça dela criada se preciso.
+	The rich text handle for line `index`, creating its piece if needed.
 ]=]
 function WeatherIndicatorController:lineEntry(index : number) : { Frame : GuiObject, Handle : any }?
 	local existing = self.Lines[index]
@@ -597,7 +589,7 @@ function WeatherIndicatorController:lineEntry(index : number) : { Frame : GuiObj
 end
 
 --[=[
-	Apaga o que estiver escrito nas linhas, sem desfazer o pool.
+	Clears whatever is written on the lines, without undoing the pool.
 ]=]
 function WeatherIndicatorController:clearLines()
 	for _, entry in self.Lines do
@@ -606,14 +598,14 @@ function WeatherIndicatorController:clearLines()
 end
 
 --[=[
-	Escreve a lista do clima que está no ar, uma linha depois da outra.
+	Writes the active weather's list, one line after another.
 
-	O `Stagger` é o que dá o efeito de lista se montando em vez de aparecer pronta, e
-	é por isso que a escrita mora numa thread própria: ela dorme entre uma linha e a
-	seguinte, e o clique que a começou não pode esperar por isso.
+	`Stagger` is what gives the effect of a list building up instead of appearing ready,
+	and that is why writing lives on its own thread: it sleeps between one line and the
+	next, and the click that started it must not wait for that.
 
-	Sobra do clima anterior é **apagada**, e não destruída: a peça fica no pool para a
-	próxima lista mais comprida reusá-la.
+	Leftovers from the previous weather are **hidden**, not destroyed: the piece stays in
+	the pool for the next, longer list to reuse.
 ]=]
 function WeatherIndicatorController:refreshLines()
 	local current = self:current()
@@ -646,17 +638,23 @@ function WeatherIndicatorController:refreshLines()
 		entries[index] = { Entry = entry, Line = line }
 	end
 
-	-- O texto **sem** as cores: quem mede a largura é o `FitSize`, e marcação não ocupa
-	-- largura nenhuma na tela.
+	-- The text **without** the colors: `FitSize` measures the width, and markup takes no
+	-- width on screen.
 	local texts = {}
 	for _, line in lines do
 		table.insert(texts, line.Text)
 	end
 
-	indicatorPrint(string.format(
-		-- %.0f, e nao %d: `ViewportSize` e float, e `%d` com float sem representacao
-		-- inteira e erro, nao arredondamento.
-		"tela %.0f de altura | fator %.2f | escala %.2f",
+	--[[
+		The panel scale, in the Studio Output. It is how you find the two numbers in
+		`Indicator.Responsive` instead of guessing: it shows the height of each screen
+		and the factor that came out of it. The text size math is not logged here; it
+		comes from `RichTextController:FitSize` (see `RichTextConfig.Fit.Debug`).
+	]]
+	log:Debug(string.format(
+		-- %.0f, not %d: `ViewportSize` is a float, and `%d` with a float that has no
+		-- integer representation is an error, not rounding.
+		"screen %.0f tall | factor %.2f | scale %.2f",
 		(workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y) or 0,
 		self:viewportFactor(),
 		(self.Scale and self.Scale.Scale) or 1
@@ -670,19 +668,19 @@ function WeatherIndicatorController:refreshLines()
 
 			local queued = entries[index]
 			if queued then
-				-- Peça criada agora só mede depois da passada de layout.
+				-- A freshly created piece only measures after the layout pass.
 				richText:AwaitLayout(queued.Entry.Frame, Config.Line.MeasureTimeout)
 
 				if self.Token ~= token then return end
 
 				--[[
-					O tamanho sai da primeira peça medida e vale para a lista inteira: as peças
-					são todas do mesmo tamanho, e a conta é da frase mais comprida (ver
-					`RichTextController:FitSize`) — medir de novo a cada linha só abriria a
-					chance de duas linhas saírem com letras diferentes.
+					The size comes from the first measured piece and applies to the whole list:
+					the pieces are all the same size, and the math uses the longest sentence (see
+					`RichTextController:FitSize`); measuring again on each line would only open
+					the chance of two lines coming out with different text sizes.
 
-					A conta dorme na primeira vez (a largura da frase é medida por uma chamada
-					assíncrona), então o token é conferido de novo depois dela.
+					The math yields the first time (the sentence width is measured by an
+					asynchronous call), so the token is checked again after it.
 				]]
 				if not size then
 					size = richText:FitSize(queued.Entry.Frame, texts, Config.Text, Config.Line.Fit)
@@ -704,25 +702,25 @@ function WeatherIndicatorController:refreshLines()
 end
 
 --[=[
-	A tela mudou de tamanho: o painel volta à escala de repouso da tela nova e a lista é
-	reescrita na medida nova.
+	The screen changed size: the panel returns to the new screen's resting scale and the
+	list is rewritten at the new measurement.
 
-	Girar o celular ou arrastar a janela muda duas coisas: o fator da tela (e com ele a
-	escala de repouso do painel) e a caixa de cada linha, e com ela as duas contas da
-	letra — a proporção da altura e o que a linha mais comprida precisa de largura. O
-	renderizador reescala o que já está escrito junto com a caixa, o que salva a
-	proporção, mas não desfaz uma quebra de linha que a largura nova não pede mais.
+	Rotating the phone or dragging the window changes two things: the screen factor (and
+	with it the panel's resting scale) and each line's box, and with it both text size
+	computations: the height ratio and the width the longest line needs. The renderer
+	rescales what is already written along with the box, which keeps the proportion, but
+	does not undo a line break the new width no longer needs.
 
-	Quem escreve a escala nova é o próprio `writeLinesWhenSettled`: ele já existe para
-	não escrever em painel fora do repouso, e painel fora do repouso sem tween nenhum é
-	exatamente o que uma tela nova deixa.
+	`writeLinesWhenSettled` itself writes the new scale: it already exists to avoid
+	writing on a panel out of rest, and a panel out of rest with no tween at all is
+	exactly what a new screen leaves.
 
-	Só vale com o painel aberto, e o compasso é de quem chegou por último: um arraste de
-	janela dispara isto a cada quadro, e reescrever a lista em cada um deles seria a
-	animação de digitação recomeçando sem parar.
+	It only applies with the panel open, and the last arrival sets the pace: a window drag
+	fires this every frame, and rewriting the list on each would be the typing animation
+	restarting nonstop.
 
-	É a **tela** que é escutada, e não o tamanho do painel: o painel muda de tamanho a
-	cada quadro da própria animação de entrada, e essa mudança não é uma tela nova.
+	The **screen** is listened to, not the panel size: the panel changes size on every
+	frame of its own entrance animation, and that change is not a new screen.
 ]=]
 function WeatherIndicatorController:onViewportChanged()
 	if not self.IsOpen then return end
@@ -738,26 +736,26 @@ function WeatherIndicatorController:onViewportChanged()
 end
 
 --[=[
-	Escreve a lista com o painel na escala de repouso, e não antes.
+	Writes the list with the panel at its resting scale, and not before.
 
-	É a única porta pela qual a lista entra, e existe por causa de como o texto rico se
-	dimensiona: ele guarda o tamanho da caixa no instante do render e escala o texto
-	pela razão entre o tamanho de agora e aquele. Como o `AbsoluteSize` de um filho já
-	vem multiplicado pelo `UIScale` do painel, escrever no meio da entrada mede a caixa
-	quase fechada — e a linha termina do tamanho da tela quando o painel chega ao fim,
-	ou não aparece, quando a escala ainda estava em zero e o render foi descartado por
-	medir zero.
+	It is the only door the list enters through, and it exists because of how rich text
+	sizes itself: it stores the box size at render time and scales the text by the ratio
+	between the current size and that one. Since a child's `AbsoluteSize` already comes
+	multiplied by the panel's `UIScale`, writing mid-entrance measures the box almost
+	closed, and the line ends up screen-sized when the panel reaches the end, or does not
+	appear, when the scale was still zero and the render was discarded for measuring zero.
 
-	Quem decide não é o estado do tween, é a **escala**: painel já no repouso escreve na
-	hora, painel fora dele espera. Esperar o tween é o caminho normal; o `else` cobre o
-	painel que ficou fora do repouso sem tween nenhum (um `Cancel` no meio), e aí a
-	escala é escrita na mão e a lista sai um quadro depois, o tempo de o layout medir.
+	The **scale** decides, not the tween's state: a panel already at rest writes
+	immediately, a panel out of rest waits. Waiting for the tween is the normal path; the
+	`else` covers a panel left out of rest with no tween at all (a `Cancel` midway), and
+	then the scale is written by hand and the list comes a frame later, the time for
+	layout to measure.
 
-	A lista anterior é apagada enquanto se espera: ela não pode ficar na tela por baixo
-	da animação de uma abertura que ainda não escreveu.
+	The previous list is cleared while waiting: it must not stay on screen under the
+	animation of an opening that has not written yet.
 
-	`Cancelled` não escreve: é o fechamento (ou outra abertura) tendo derrubado o tween,
-	e quem o derrubou já decidiu o que a tela mostra.
+	`Cancelled` does not write: it is the close (or another open) having knocked the tween
+	down, and whoever knocked it down already decided what the screen shows.
 ]=]
 function WeatherIndicatorController:writeLinesWhenSettled()
 	local uiScale = self.Scale
@@ -798,14 +796,14 @@ function WeatherIndicatorController:writeLinesWhenSettled()
 	end)
 end
 
---[[ ABRIR E FECHAR ]]
+--[[ OPEN AND CLOSE ]]
 
 --[=[
-	Leva o `UIScale` a uma escala, cancelando o tween anterior.
+	Takes the `UIScale` to a scale, canceling the previous tween.
 
-	`Cancel` para o tween sem devolver a propriedade: a escala fica onde chegou e o
-	novo parte dali, que é o que faz o clique no meio da animação emendar em vez de
-	saltar.
+	`Cancel` stops the tween without restoring the property: the scale stays where it got
+	and the new one starts from there, which is what makes a click mid-animation chain
+	instead of jumping.
 ]=]
 function WeatherIndicatorController:tweenScale(scale : number, info : TweenInfo) : Tween?
 	local uiScale = self.Scale
@@ -823,15 +821,15 @@ function WeatherIndicatorController:tweenScale(scale : number, info : TweenInfo)
 end
 
 --[=[
-	Abre o painel: cresce, e a lista entra quando ele para de crescer (ver
+	Opens the panel: it grows, and the list comes in when it stops growing (see
 	`writeLinesWhenSettled`).
 
-	A escala de chegada é a **autorada** no `UIScale` corrigida pela tela (ver
-	`openScale`): painel desenhado em 0.8 abre em 0.8 na tela de referência, e maior que
-	isso numa tela maior.
+	The arrival scale is the **authored** one on the `UIScale` corrected by the screen
+	(see `openScale`): a panel drawn at 0.8 opens at 0.8 on the reference screen, and
+	larger than that on a larger screen.
 
-	Sem clima no ar não abre — o botão nem está lá, mas o `Toggle` é público e o estado
-	da tela não pode depender de quem o chama.
+	With no active weather it does not open: the button is not even there, but `Toggle` is
+	public and the screen state must not depend on who calls it.
 ]=]
 function WeatherIndicatorController:Open()
 	local panel = self.Panel
@@ -840,9 +838,9 @@ function WeatherIndicatorController:Open()
 	self.IsOpen = true
 
 	--[[
-		Abrir é a descoberta: o selo se aposenta aqui, e não no clique do botão, porque
-		quem chama o `Open` não é só ele — e o que aposenta o aviso é o painel ter sido
-		visto, de onde quer que a abertura tenha vindo.
+		Opening is the discovery: the badge retires here, not on the button click, because
+		the button is not the only caller of `Open`, and what retires the notice is the
+		panel having been seen, wherever the opening came from.
 	]]
 	self.PanelSeen = true
 
@@ -859,11 +857,11 @@ function WeatherIndicatorController:Open()
 end
 
 --[=[
-	Fecha o painel. `instant` pula a animação — é o que o clima acabando e o round
-	recomeçando precisam.
+	Closes the panel. `instant` skips the animation: that is what a weather ending and a
+	round restarting need.
 
-	O texto é apagado junto: a lista tem de entrar escrevendo na próxima abertura, e
-	não já pronta por baixo da animação de entrada.
+	The text is cleared too: the list must come in writing on the next open, not already
+	finished under the entrance animation.
 ]=]
 function WeatherIndicatorController:Close(instant : boolean?)
 	local panel = self.Panel
@@ -871,7 +869,7 @@ function WeatherIndicatorController:Close(instant : boolean?)
 
 	self.IsOpen = false
 
-	-- Derruba a escrita que ainda estiver em curso, e marca esta saída.
+	-- Knocks down any write still in progress, and marks this exit.
 	self.Token += 1
 	local token = self.Token
 
@@ -901,8 +899,8 @@ function WeatherIndicatorController:Close(instant : boolean?)
 	end
 
 	tween.Completed:Once(function()
-		-- Só apaga se esta saída ainda é a da vez: reabrir antes do fim da animação
-		-- deixa o painel aberto, e quem chegou depois manda.
+		-- Only hides if this exit is still the current one: reopening before the animation
+		-- ends leaves the panel open, and the later arrival rules.
 		if self.Token ~= token or self.IsOpen then return end
 
 		panel.Visible = false
@@ -910,7 +908,7 @@ function WeatherIndicatorController:Close(instant : boolean?)
 end
 
 --[=[
-	O interruptor do botão.
+	The button's toggle.
 ]=]
 function WeatherIndicatorController:Toggle()
 	if self.IsOpen then
@@ -921,8 +919,8 @@ function WeatherIndicatorController:Toggle()
 end
 
 --[=[
-	O clima mudou: o botão acompanha, e o painel aberto se refaz — ou fecha, quando o
-	céu limpou.
+	The weather changed: the button follows, and the open panel rebuilds, or closes when
+	the sky cleared.
 ]=]
 function WeatherIndicatorController:refresh()
 	self:refreshButton()
@@ -938,13 +936,13 @@ function WeatherIndicatorController:refresh()
 	if self.IsOpen then
 		self:refreshHeader()
 
-		-- Pode ser um clima que trocou no meio da animação de entrada, e aí a lista nova
-		-- espera pelo mesmo motivo que a primeira esperou.
+		-- It may be a weather that changed mid-entrance, and then the new list
+		-- waits for the same reason the first one did.
 		self:writeLinesWhenSettled()
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function WeatherIndicatorController:construct()
 	if not self:bind() then return end
@@ -959,10 +957,10 @@ function WeatherIndicatorController:construct()
 
 	Framework:Listen("WeatherChanged", function()
 		--[[
-			O `WeatherController` é quem guarda o clima de agora, e ele escuta o mesmo
-			aviso. Ler dele um quadro depois dispensa manter uma segunda cópia do mesmo
-			estado aqui — e uma cópia a menos é uma chance a menos de as duas
-			discordarem.
+			`WeatherController` keeps the current weather, and it listens to the same
+			notification. Reading from it one frame later avoids keeping a second copy of
+			the same state here, and one fewer copy is one fewer chance of the two
+			disagreeing.
 		]]
 		task.defer(function()
 			self:refresh()
@@ -970,9 +968,9 @@ function WeatherIndicatorController:construct()
 	end)
 
 	--[[
-		O prazo do clima no ar, com o nome junto: o nome é o que separa este prazo do
-		prazo de um clima que já saiu, já que a ordem entre este aviso e o
-		`WeatherChanged` não é garantida.
+		The active weather's deadline, with the name: the name is what separates this
+		deadline from that of a weather that already left, since the order between this
+		notification and `WeatherChanged` is not guaranteed.
 	]]
 	Framework:Listen("WeatherDuration", function(weatherName : any, untilWave : any)
 		self.EndsName = if typeof(weatherName) == "string" then weatherName else nil
@@ -984,21 +982,21 @@ function WeatherIndicatorController:construct()
 	Framework:Listen("SetWave", function(wave : any)
 		self.Wave = tonumber(wave) or self.Wave
 
-		-- A frase do prazo conta a wave que está rodando, então ela envelhece a cada
-		-- wave mesmo sem o clima mudar.
+		-- The deadline sentence counts the running wave, so it ages every wave even
+		-- without the weather changing.
 		self:refreshHeader()
 	end)
 
 	--[[
-		Round novo não herda o prazo do anterior, nem o painel aberto do jogador que
-		estava lendo quando a partida virou.
+		A new round does not inherit the previous one's deadline, nor the open panel of the
+		player who was reading when the match turned over.
 	]]
 	Framework:Listen("RoundRestarted", function()
 		self.Wave = 0
 		self.EndsName = nil
 		self.EndsWave = nil
 
-		-- Partida nova, descoberta nova: o selo volta no primeiro clima dela.
+		-- New match, new discovery: the badge returns on its first weather.
 		self.PanelSeen = false
 
 		self:Close(true)
@@ -1006,8 +1004,8 @@ function WeatherIndicatorController:construct()
 	end)
 
 	--[[
-		Tela que muda de tamanho (janela, rotação do celular) muda a conta da letra, e a
-		lista aberta é reescrita na medida nova. Ver `onViewportChanged`.
+		A screen that changes size (window, phone rotation) changes the text math, and the
+		open list is rewritten at the new measurement. See `onViewportChanged`.
 	]]
 	local camera = workspace.CurrentCamera
 	if camera then
@@ -1016,17 +1014,17 @@ function WeatherIndicatorController:construct()
 		end)
 	end
 
-	-- Quem entra no meio de uma tempestade precisa do prazo dela.
+	-- A player joining in the middle of a storm needs its deadline.
 	Framework:Fire("RequestWeatherDuration")
 end
 
 --[=[
-	O clima com que este cliente entrou.
+	The weather this client joined with.
 
-	O `WeatherChanged` de quem chega no meio da tempestade é pedido pelo
-	`WeatherController`, no `construct` dele, e pode ter ido e voltado antes de o
-	`Listen` daqui existir. Ler o estado dele aqui — depois de todos os `init` — é o que
-	garante o botão certo na tela mesmo nessa ordem.
+	The `WeatherChanged` for a player arriving mid-storm is requested by
+	`WeatherController`, in its `construct`, and may have gone and come back before the
+	`Listen` here existed. Reading its state here (after every `init`) is what guarantees
+	the right button on screen even in that order.
 ]=]
 function WeatherIndicatorController:start()
 	if not self.Button then return end

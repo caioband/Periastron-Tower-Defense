@@ -9,26 +9,27 @@ local SharedConfig = require(Configs.SharedConfig)
 local Config = SharedConfig.RichTextConfig
 
 --[[
-	O backend de reserva: texto puro num TextLabel.
+	The fallback backend: plain text in a TextLabel.
 
-	Ele existe para dois trabalhos.
+	It exists for two jobs.
 
-	O primeiro é ser a rede de segurança. Se o vendor sair do sync, quebrar num
-	update da engine ou errar o require, o controller desce para cá e a frase
-	aparece — sem tremor, sem cor, sem máquina de escrever, mas aparece. Aviso de
-	restart de servidor que some porque uma biblioteca de texto quebrou é um
-	estrago grande para uma causa pequena.
+	The first is being the safety net. If the vendor falls out of sync, breaks on an
+	engine update, or fails its require, the controller drops down to this and the
+	sentence appears: no shake, no color, no typewriter, but it appears. A server
+	restart warning that vanishes because a text library broke is a big loss for a
+	small cause.
 
-	O segundo é ser a prova de que a troca de tecnologia funciona. Dois backends
-	obrigam a interface a ser de verdade: o que o `RichTextController` sabe fazer é
-	o que os dois sabem responder. O terceiro backend, se vier, entra pela mesma
-	porta.
+	The second is proving that swapping technology works. Two backends force the
+	interface to be real: what `RichTextController` can do is what both can answer.
+	A third backend, if one comes, enters through the same door.
 
-	**O que ele não faz.** Efeito nenhum: os aliases viram vazio (menos `[br]`, que
-	vira quebra de linha de verdade). `[event=...]` não dispara — `OnEvent` aqui
-	nunca chama de volta, e quem sincroniza fala com câmera precisa ter um caminho
-	que não dependa só dele. `OnFinished` chama assim que o texto entra, porque aqui
-	não existe digitação para esperar.
+	**What it does not do.** No effects: aliases become empty (except `[br]`, which
+	becomes a real line break). `[event=...]` does not fire: `OnEvent` here never
+	calls back, and anything that syncs dialog with the camera needs a path that
+	does not depend on it alone. `OnFinished` calls as soon as the text is in,
+	because there is no typing to wait for here.
+
+	See docs/common/rich-text.md.
 ]]
 
 local Backend = {
@@ -40,12 +41,12 @@ local LABEL_NAME = "RichTextPlain"
 --[[ INTERNAL ]]
 
 --[=[
-	O TextLabel onde escrever.
+	The TextLabel to write into.
 
-	Container que já é um objeto de texto é o próprio label — é o caso comum, e
-	respeitar o que o designer autorou (fonte, tamanho, âncora) vale mais que
-	qualquer coisa que a gente escolhesse. Container que é Frame ganha um label
-	preenchendo ele, criado uma vez e reusado.
+	A container that is already a text object is the label itself: that is the common
+	case, and respecting what the designer authored (font, size, anchor) beats
+	anything we would choose. A Frame container gets a label filling it, created once
+	and reused.
 ]=]
 local function resolveLabel(container : GuiObject) : TextLabel | TextButton | TextBox
 	if container:IsA("TextLabel") or container:IsA("TextButton") or container:IsA("TextBox") then
@@ -69,10 +70,10 @@ local function resolveLabel(container : GuiObject) : TextLabel | TextButton | Te
 	return label
 end
 
---[[ API DO BACKEND ]]
+--[[ BACKEND API ]]
 
 --[=[
-	Não carrega nada, então não falha nunca. É o que faz dele o último da fila em
+	Loads nothing, so it never fails. That is what makes it last in line in
 	`RichTextConfig.Backends`.
 ]=]
 function Backend.Load() : boolean
@@ -80,10 +81,10 @@ function Backend.Load() : boolean
 end
 
 --[=[
-	Alias conhecido some; `[br]` vira quebra de linha. Nome que não é alias devolve
-	`nil` e volta a ser texto comum, igual nos outros backends — a regra de o que é
-	tag e o que é colchete solto tem de ser a mesma nos dois, senão o texto muda de
-	sentido quando a reserva entra.
+	A known alias disappears; `[br]` becomes a line break. A name that is not an alias
+	returns `nil` and goes back to being plain text, as in the other backends: the
+	rule for what is a tag and what is a stray bracket must be the same in both, or
+	the text changes meaning when the fallback kicks in.
 ]=]
 function Backend.Tag(name : string, _value : string?, _closing : boolean) : string?
 	if not Config.Aliases[name] then
@@ -107,10 +108,10 @@ function Backend.Create(container : GuiObject) : any
 end
 
 --[=[
-	As opções que sobrevivem sem efeito nenhum: cor, tamanho, fonte, alinhamento.
+	The options that survive without any effect: color, size, font, alignment.
 
-	Só aplica o que foi pedido — o que o designer deixou no label continua valendo
-	para o resto.
+	It only applies what was requested: what the designer left on the label still
+	applies for the rest.
 ]=]
 function Backend.Apply(object : any, options : any)
 	local label = object.Label
@@ -158,11 +159,11 @@ function Backend.Apply(object : any, options : any)
 end
 
 --[=[
-	Escreve tudo de uma vez.
+	Writes everything at once.
 
-	A tag crua de biblioteca (o `<...>` que quem tem pressa escreve direto) sai aqui
-	também: no HyperText ela vira efeito, e o que vira efeito lá não pode virar
-	rabisco na tela aqui.
+	A raw library tag (the `<...>` someone in a hurry writes directly) is stripped
+	here too: in HyperText it becomes an effect, and what becomes an effect there
+	must not become a scribble on screen here.
 ]=]
 function Backend.Render(object : any, text : string, _options : any)
 	local plain = (string.gsub(text, "<[^<>]->", ""))
@@ -200,7 +201,7 @@ function Backend.Destroy(object : any)
 end
 
 --[=[
-	Nunca está escrevendo: o texto aparece inteiro dentro do `Render`.
+	Never writing: the text appears whole inside `Render`.
 ]=]
 function Backend.IsRendering(_object : any) : boolean
 	return false
@@ -222,9 +223,9 @@ function Backend.OnFinished(object : any, callback : (skipped : boolean) -> ()) 
 end
 
 --[=[
-	Não dispara nada: sem digitação, não existe "a frase chegou no meio". Devolve a
-	função de desconectar mesmo assim para quem chama não precisar saber em que
-	backend está.
+	Fires nothing: without typing, there is no "the sentence reached the middle". It
+	still returns the disconnect function so callers do not need to know which
+	backend they are on.
 ]=]
 function Backend.OnEvent(_object : any, _callback : (name : string) -> ()) : () -> ()
 	return function() end

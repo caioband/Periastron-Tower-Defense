@@ -8,20 +8,22 @@ local Configs = Shared:WaitForChild("Config")
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local SharedConfig = require(Configs.SharedConfig)
 local ShopConfig = SharedConfig.ShopConfig
 
 local Framework = Me.new()
+local log = Log.new("ShopKeeperController")
 
 --[[ CONSTANTS ]]
 
 --[=[
-	Os quatro momentos da visita, na ordem em que eles acontecem.
+	The four moments of the visit, in the order they happen.
 
-	`GREETING` e `LEAVING` sao gestos com fim -- eles tocam uma vez e caem sozinhos no
-	estado de descanso seguinte. `AWAY` e `ATTENDING` sao as duas poses em que o
-	vendedor fica parado esperando alguma coisa, e por isso sao as unicas em loop.
+	`GREETING` and `LEAVING` are gestures with an end: they play once and fall into the
+	next resting state on their own. `AWAY` and `ATTENDING` are the two poses where the
+	shopkeeper stands waiting for something, which is why they are the only loops.
 ]=]
 local AWAY = "Away"
 local GREETING = "Greeting"
@@ -29,23 +31,25 @@ local ATTENDING = "Attending"
 local LEAVING = "Leaving"
 
 --[=[
-	O vendedor da loja da lobby: ele descansa sozinho, levanta quando ve o jogador
-	chegando, atende no balcao e se despede -- bem ou mal, conforme o jogador tenha
-	levado alguma coisa.
+	The Lobby shopkeeper: rests on their own, stands up on seeing the player approach,
+	serves at the counter, and says goodbye, nicely or not, depending on whether the
+	player took anything.
 
-	**Ele mede a distancia contra o `ShopPartReference`, e nao contra o proprio
-	corpo.** E o mesmo centro que o `ShopController` usa para abrir a loja, so que num
-	raio maior (`KEEPER_APPROACH_RADIUS` contra `OPEN_RADIUS`). Dois raios
-	concentricos garantem a ordem da cena: nao existe chegar ao balcao sem ter cruzado
-	o raio de fora antes, entao a loja nunca abre com o vendedor ainda sentado.
+	**Distance is measured against `ShopPartReference`, not the body.** It is the same
+	center `ShopController` uses to open the shop, just with a larger radius
+	(`KEEPER_APPROACH_RADIUS` against `OPEN_RADIUS`). Two concentric radii guarantee the
+	scene's order: there is no reaching the counter without crossing the outer radius
+	first, so the shop never opens with the shopkeeper still seated.
 
-	Tudo aqui e **cliente**. O modelo e do servidor e esta ancorado, entao tocar as
-	animacoes daqui as mantem locais: cada jogador ve o vendedor atendendo a ele
-	proprio, em vez de ver o vendedor levantar porque um estranho do outro lado da
-	lobby passou perto.
+	Everything here is **client**. The model belongs to the server and is anchored, so
+	playing the animations from here keeps them local: each player sees the shopkeeper
+	serving them, instead of seeing them stand up because a stranger across the Lobby
+	walked by.
 
-	O `ShopController` nao sabe que este controller existe. A conversa e de mao unica,
-	pelo `PurchaseResult` dele.
+	`ShopController` does not know this controller exists. The conversation is one way,
+	through its `PurchaseResult`.
+
+	See docs/lobby/shop.md.
 ]=]
 local ShopKeeperController = {
 	Controllers = {
@@ -56,12 +60,12 @@ local ShopKeeperController = {
 --[[ INTERNAL ]]
 
 --[=[
-	O modelo do vendedor, cacheado ate ele sair do mundo.
+	The shopkeeper's model, cached until it leaves the world.
 
-	Procurado em profundidade sob o mapa pelo mesmo motivo que os marcadores da loja
-	(ver `ShopController:_getMapPart`): quem agrupa o modelo e o artista, e o codigo
-	so tem o nome dele. Sair do mundo joga fora os tracks junto -- eles pertencem ao
-	`Animator` daquele modelo, e o do mapa seguinte e outro.
+	Looked up by depth under the map for the same reason as the shop markers (see
+	`ShopController:_getMapPart`): the artist groups the model, and the code only has its
+	name. Leaving the world throws the tracks away too: they belong to that model's
+	`Animator`, and the next map's is a different one.
 ]=]
 function ShopKeeperController:_getModel() : Model?
 	local cached = self.Model
@@ -84,7 +88,7 @@ function ShopKeeperController:_getModel() : Model?
 	if not model then
 		if not self.WarnedMissing then
 			self.WarnedMissing = true
-			warn(`[ShopKeeperController]: no {ShopConfig.KEEPER_MODEL_NAME} under Workspace.{ShopConfig.REFERENCE_PARENT_NAME}.`)
+			log:StudioWarn(`no {ShopConfig.KEEPER_MODEL_NAME} under Workspace.{ShopConfig.REFERENCE_PARENT_NAME}.`)
 		end
 
 		self.Model = nil
@@ -96,12 +100,12 @@ function ShopKeeperController:_getModel() : Model?
 end
 
 --[=[
-	O `AnimationTrack` de uma das animacoes do vendedor, carregado na primeira vez que
-	ele precisa dela.
+	The `AnimationTrack` of one of the shopkeeper's animations, loaded the first time it is
+	needed.
 
-	Ele nao tem `Humanoid`: quem carrega e o `Animator` do `AnimationController`
-	autorado no modelo. Uma animacao que nao esta la avisa uma vez e devolve nil, e a
-	maquina de estados segue sem o gesto em vez de parar a visita inteira.
+	There is no `Humanoid`: the `Animator` of the `AnimationController` authored on the
+	model loads it. An animation that is not there warns once and returns nil, and the
+	state machine moves on without the gesture instead of stopping the whole visit.
 ]=]
 function ShopKeeperController:_getTrack(animationName : string) : AnimationTrack?
 	local track = self.Tracks[animationName]
@@ -120,7 +124,7 @@ function ShopKeeperController:_getTrack(animationName : string) : AnimationTrack
 	if not animator or not animation or not animation:IsA("Animation") then
 		if not self.WarnedTracks[animationName] then
 			self.WarnedTracks[animationName] = true
-			warn(`[ShopKeeperController]: no {animationName} (or no Animator) under {model:GetFullName()}.`)
+			log:StudioWarn(`no {animationName} (or no Animator) under {model:GetFullName()}.`)
 		end
 
 		return nil
@@ -133,11 +137,10 @@ function ShopKeeperController:_getTrack(animationName : string) : AnimationTrack
 end
 
 --[=[
-	Troca a animacao que esta tocando pela desta, com crossfade.
+	Swaps the playing animation for this one, with a crossfade.
 
-	O track anterior e parado na mao: sem `Humanoid` nao ha ninguem resolvendo
-	prioridade por cima, entao dois tracks tocando ao mesmo tempo somariam as duas
-	poses num vendedor torto.
+	The previous track is stopped by hand: without a `Humanoid` nobody resolves priority on
+	top, so two tracks playing at once would add both poses into a crooked shopkeeper.
 ]=]
 function ShopKeeperController:_play(animationName : string, looped : boolean) : AnimationTrack?
 	local track = self:_getTrack(animationName)
@@ -159,15 +162,15 @@ function ShopKeeperController:_play(animationName : string, looped : boolean) : 
 end
 
 --[=[
-	Toca um gesto uma vez e, quando ele acaba, entra no estado de descanso seguinte.
+	Plays a gesture once and, when it ends, enters the next resting state.
 
-	O encadeamento vive no `ChainMaid`, que o `_setState` limpa antes de qualquer
-	troca. E o que impede o jogador que vai embora no meio do `GetUp` de ver o
-	vendedor sentar no balcao um segundo depois de ja ter se despedido dele: o
-	`Stopped` do gesto abandonado morre junto com o estado que o pediu.
+	The chaining lives in `ChainMaid`, which `_setState` clears before any change. That is
+	what keeps a player who leaves in the middle of `GetUp` from seeing the shopkeeper sit
+	at the counter a second after already saying goodbye: the abandoned gesture's `Stopped`
+	dies with the state that asked for it.
 
-	Sem o track (animacao faltando no modelo), o estado seguinte entra na hora -- o
-	vendedor perde o gesto, mas nao trava no meio da visita.
+	Without the track (animation missing on the model), the next state comes in right away:
+	the shopkeeper loses the gesture, but does not stall mid-visit.
 ]=]
 function ShopKeeperController:_playThen(animationName : string, nextState : string)
 	local track = self:_play(animationName, false)
@@ -191,12 +194,12 @@ function ShopKeeperController:_playThen(animationName : string, nextState : stri
 	self.ChainMaid:GiveTask(track.Stopped:Connect(advance))
 
 	--[[
-		O `Stopped` manda no ritmo; o teto so existe para o caso de ele nunca chegar,
-		que e o que acontece com um `Animation` cujo asset nao carregou -- ele nao toca,
-		nao para, e o vendedor ficaria parado no meio do gesto para sempre.
+		`Stopped` sets the pace; the cap only exists for the case where it never arrives,
+		which is what happens with an `Animation` whose asset did not load: it does not
+		play, does not stop, and the shopkeeper would stay frozen mid-gesture forever.
 
-		A thread nao e cancelada, so desarmada: `task.cancel` numa que ja terminou
-		reclama, e um `advance` que nao faz nada custa menos que o pcall em volta.
+		The thread is not canceled, only disarmed: `task.cancel` on one that already ended
+		complains, and an `advance` that does nothing costs less than the pcall around it.
 	]]
 	task.delay(ShopConfig.KEEPER_GESTURE_TIMEOUT, advance)
 
@@ -206,7 +209,7 @@ function ShopKeeperController:_playThen(animationName : string, nextState : stri
 end
 
 --[=[
-	A unica porta de entrada da maquina de estados.
+	The state machine's only entry point.
 ]=]
 function ShopKeeperController:_setState(state : string)
 	if state == self.State then
@@ -224,9 +227,9 @@ function ShopKeeperController:_setState(state : string)
 		self:_play(ShopConfig.KEEPER_ATTEND_ANIMATION, true)
 	elseif state == LEAVING then
 		--[[
-			A despedida sai do que a visita rendeu, e a visita e o que aconteceu desde
-			que o jogador cruzou o raio -- nao a sessao inteira. Quem comprou ontem e
-			voltou hoje so para olhar leva o `ByeByeEvil` igual.
+			The goodbye comes from what the visit yielded, and the visit is what happened since
+			the player crossed the radius, not the whole session. Someone who bought yesterday
+			and came back today just to look gets `ByeByeEvil` all the same.
 		]]
 		local farewell = self.Sold
 			and ShopConfig.KEEPER_FAREWELL_SOLD_ANIMATION
@@ -237,24 +240,24 @@ function ShopKeeperController:_setState(state : string)
 end
 
 --[=[
-	Garante que a pose de descanso esta mesmo tocando.
+	Makes sure the resting pose is actually playing.
 
-	O `_setState` pede a pose uma vez so, e ela e a coisa certa a fazer para um gesto
-	-- mas um modelo que ainda nao carregou no boot faria essa unica tentativa cair no
-	vazio, e o vendedor ficaria congelado ate a proxima travessia de raio. Um mapa
-	trocado faz o mesmo, jogando os tracks do modelo antigo fora.
+	`_setState` asks for the pose only once, which is the right thing for a gesture, but
+	a model that has not loaded at boot would make that single attempt fall into the void,
+	and the shopkeeper would stay frozen until the next radius crossing. A changed map does
+	the same, throwing the old model's tracks away.
 
-	Como os dois estados de descanso sao loops, "a pose nao esta tocando" e sempre um
-	erro, e um que da para consertar sozinho no proximo tick.
+	Since both resting states are loops, "the pose is not playing" is always an error, and
+	one that can fix itself on the next tick.
 ]=]
 function ShopKeeperController:_ensureResting()
 	if self.State ~= AWAY and self.State ~= ATTENDING then
 		return
 	end
 
-	-- Revalida o modelo antes de olhar para o track: e o `_getModel` que joga fora os
-	-- tracks de um modelo que saiu do mundo, e um track orfao ainda responde que esta
-	-- tocando.
+	-- Revalidates the model before looking at the track: `_getModel` throws away the
+	-- tracks of a model that left the world, and an orphaned track still answers that it is
+	-- playing.
 	self:_getModel()
 
 	if self.CurrentTrack and self.CurrentTrack.IsPlaying then
@@ -269,10 +272,10 @@ function ShopKeeperController:_ensureResting()
 end
 
 --[=[
-	Entrou ou saiu do raio de aproximacao.
+	Entered or left the approach radius.
 
-	So a **travessia** age, do mesmo jeito que a proximidade da loja: parado dentro do
-	raio o vendedor fica no `IdleBench`, sem repetir o `GetUp` a cada meio segundo.
+	Only the **crossing** acts, just like shop proximity: standing inside the radius, the
+	shopkeeper stays in `IdleBench`, without repeating `GetUp` every half second.
 ]=]
 function ShopKeeperController:_update()
 	self:_ensureResting()
@@ -295,8 +298,8 @@ function ShopKeeperController:_update()
 	self.PlayerNear = near
 
 	if near then
-		-- A visita comeca zerada: o vendedor lembra do que o jogador levou **desta**
-		-- vez, e nao da compra da visita passada.
+		-- The visit starts from zero: the shopkeeper remembers what the player took **this**
+		-- time, not the previous visit's purchase.
 		self.Sold = false
 		self:_setState(GREETING)
 	else
@@ -321,9 +324,9 @@ end
 
 function ShopKeeperController:construct()
 	--[[
-		Uma compra que deu certo em qualquer momento da visita ja garante a despedida
-		boa. Nao importa se a loja fechou entre a compra e a saida: comprar e ir embora
-		pelo raio continua sendo a mesma visita.
+		A successful purchase at any moment of the visit already earns the nice goodbye. It
+		does not matter if the shop closed between the purchase and leaving: buying and
+		leaving through the radius is still the same visit.
 	]]
 	local shop = self.Controllers.ShopController
 
@@ -335,8 +338,8 @@ function ShopKeeperController:construct()
 		end))
 	end
 
-	-- Descansando desde o primeiro segundo: e assim que o jogador que acabou de
-	-- entrar encontra o vendedor, do outro lado da praca.
+	-- Resting from the first second: that is how a player who just joined
+	-- finds the shopkeeper, across the plaza.
 	self:_setState(AWAY)
 	self:_watch()
 end

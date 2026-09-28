@@ -16,40 +16,42 @@ local Framework = Me.new()
 local CardModifier = SharedConfig.CardModifier
 
 --[=[
-	As regras que as cartas de round deixaram valendo no campo.
+	The rules round cards left in effect on the field.
 
-	Uma carta de round quase nunca faz uma coisa e acaba -- ela muda como a partida
-	funciona dali em diante. O Trumpet acelera todo mundo, o Overcharge separa
-	Electric do resto, o cajado desenha um anel onde a regra so vale la dentro e o
-	Bloxy Cola dobra a cadencia de uma torre por dez segundos. Este service e a
-	lista dessas regras: quem entra, quando sai e quem precisa saber.
+	A round card almost never does one thing and ends: it changes how the match works
+	from then on. The Trumpet speeds everyone up, Overcharge separates Electric from
+	the rest, a staff draws a ring where the rule only applies inside, and Bloxy Cola
+	doubles one tower's attack speed for ten seconds. This service is the list of those
+	rules: who enters, when they leave, and who needs to know.
 
-	**A gramatica nao mora aqui.** Quem responde "este modificador vale para esta
-	unidade, e quanto?" e o `CardModifier`, que e compartilhado justamente porque as
-	duas pontas precisam da mesma resposta: o servidor cobra o dano por ele, e o
-	circulo de alcance que o jogador ve na tela sai da mesma conta. Aqui so mora o
-	**estado**: a lista viva, o prazo de cada um e a replicacao.
+	**The grammar does not live here.** `CardModifier` answers "does this modifier
+	apply to this unit, and how much?", and it is shared precisely because both ends
+	need the same answer: the server charges damage by it, and the range circle the
+	player sees on screen comes from the same math. Only **state** lives here: the live
+	list, each entry's deadline, and replication.
 
-	## O prazo
+	## The deadline
 
-	Modificador com `Duration` ganha um `ExpiresAt` no relogio da **partida**, e nao
-	no real: os dez segundos do Bloxy Cola sao dez segundos de jogo, entao acelerar
-	para 3x encurta o buff junto com todo o resto -- do mesmo jeito que o
-	atordoamento, a carga do raio e o Time Stop.
+	A modifier with `Duration` gets an `ExpiresAt` on the **match** clock, not real
+	time: Bloxy Cola's ten seconds are ten seconds of play, so speeding up to 3x
+	shortens the buff along with everything else, the same as stuns, lightning
+	charge, and Time Stop.
 
-	Sem `Duration` o modificador vale ate o fim do round. E o padrao de propriedade:
-	um buff de campo comprado com o caixa da partida e uma decisao de build, e um
-	prazo curto transformaria toda carta de regra numa versao pior das bebidas.
+	Without `Duration` the modifier lasts until the end of the round. That is the
+	default on purpose: a field buff bought with match cash is a build decision, and a
+	short deadline would turn every rule card into a worse version of the drinks.
 
-	## A replicacao
+	## Replication
 
-	O cliente recebe a lista inteira a cada mudanca, e nao um "entrou X". Sao poucos
-	registros (uma partida cheia tem uma duzia), e a lista completa e o unico jeito
-	de quem entra no meio da partida -- ou de quem recarrega a interface -- ver o
-	mesmo campo que o servidor ve. O mesmo motivo do `_sendState` do `CardShopService`.
+	The client receives the whole list on every change, not an "X entered". There are
+	few records (a full match has a dozen), and the complete list is the only way for
+	someone joining mid-match (or reloading the interface) to see the same field the
+	server sees. The same reason as `CardShopService`'s `_sendState`.
 
-	Ele precisa dela para duas coisas: desenhar o anel dos cajados no chao e mostrar
-	no card o alcance que a torre tem de verdade.
+	The client needs it for two things: drawing the staffs' rings on the ground and
+	showing the tower's real range on the card.
+
+	See docs/game/round-cards.md.
 ]=]
 local CardModifierService = {
 	Services = {
@@ -57,9 +59,9 @@ local CardModifierService = {
 	},
 
 	--[[
-		Os modificadores valendo agora. E uma lista, e nao um dicionario por carta:
-		duas copias da mesma carta empilham de proposito, e cada uso e um registro
-		proprio com o `Uid` da compra que o gerou.
+		The modifiers in effect now. It is a list, not a per-card dictionary: two copies
+		of the same card stack on purpose, and each use is its own record with the
+		`Uid` of the purchase that created it.
 	]]
 	Active = {},
 }
@@ -67,13 +69,12 @@ local CardModifierService = {
 --[[ INTERNAL ]]
 
 --[=[
-	Tira da lista o que ja venceu. Devolve `true` se alguma coisa saiu.
+	Removes what already expired from the list. Returns `true` if anything left.
 
-	Rodado na leitura, e nao num laco de Heartbeat: quem le e o combate, sessenta
-	vezes por segundo, e um laco proprio so acordaria para descobrir que ninguem
-	venceu. O preco disso e um buff que vence sem ninguem olhando ficar na lista
-	ate a proxima leitura -- e como a leitura e o proprio combate, isso nunca dura
-	mais que um quadro.
+	Run on read, not in a Heartbeat loop: combat is the reader, sixty times a second,
+	and a loop of its own would only wake up to find nothing expired. The price is that
+	a buff expiring with nobody looking stays in the list until the next read, and
+	since the reader is combat itself, that never lasts more than a frame.
 ]=]
 function CardModifierService:_prune() : boolean
 	local now = GameClock.Now()
@@ -94,12 +95,12 @@ end
 --[[ API ]]
 
 --[=[
-	A lista viva, ja sem o que venceu.
+	The live list, without what expired.
 
-	Devolve a lista **de verdade**, e nao uma copia: ela e lida por unidade e por
-	estatistica a cada quadro de combate, e copiar ali seria alocar algumas centenas
-	de tabelas por segundo para nao mudar nada. Ninguem escreve nela por fora -- as
-	unicas maos que mexem sao o `Apply` e o `Remove` daqui.
+	Returns the **real** list, not a copy: it is read per unit and per stat every
+	combat frame, and copying there would allocate a few hundred tables per second to
+	change nothing. Nobody writes to it from outside: the only hands on it are `Apply`
+	and `Remove` here.
 ]=]
 function CardModifierService:GetActive()
 	if self:_prune() then
@@ -110,23 +111,23 @@ function CardModifierService:GetActive()
 end
 
 --[=[
-	Poe uma lista de modificadores no campo.
+	Puts a list of modifiers on the field.
 
-	`records` sao os registros crus que a carta declarou no `RoundCardConfig`, e
-	`options` e o que so o **uso** sabe:
+	`records` are the raw records the card declared in `RoundCardConfig`, and
+	`options` is what only the **use** knows:
 
-	| Campo | O que e |
+	| Field | What it is |
 	| --- | --- |
-	| `Uid` | o uid da carta usada; e por ele que o `Remove` a tira |
-	| `Card` | o `Id` da carta, para o log e para a cor do anel na tela |
-	| `Duration` | segundos de partida; sem isso, o registro dura o round |
-	| `Zone` | `{ Position, Radius }`, para os registros marcados com `Zone = true` |
-	| `UnitId` | a torre escolhida, para os registros marcados com `Target = true` |
-	| `OwnerUserId` | quem usou a carta; e por ele que o `FindZoneOverlap` separa as areas |
+	| `Uid` | the used card's uid; `Remove` takes it off by this |
+	| `Card` | the card's `Id`, for the log and the ring's color on screen |
+	| `Duration` | match seconds; without it, the record lasts the round |
+	| `Zone` | `{ Position, Radius }`, for records marked `Zone = true` |
+	| `UnitId` | the chosen tower, for records marked `Target = true` |
+	| `OwnerUserId` | who used the card; `FindZoneOverlap` separates areas by it |
 
-	Os registros sao **copiados**, e nunca apontados: o do config e a declaracao da
-	carta, e duas copias da mesma carta na mesma partida escreveriam alvo e prazo uma
-	por cima da outra se as duas apontassem para a mesma tabela.
+	The records are **copied**, never referenced: the config's is the card's
+	declaration, and two copies of the same card in the same match would write target
+	and deadline over each other if both pointed to the same table.
 ]=]
 function CardModifierService:Apply(records, options) : number
 	if typeof(records) ~= "table" then return 0 end
@@ -147,9 +148,10 @@ function CardModifierService:Apply(records, options) : number
 			ExpiresAt = expiresAt,
 
 			--[[
-				Quem usou a carta. Ele nao muda o que o modificador faz -- o efeito e da sala,
-				venha de quem vier --, e existe para uma pergunta so: se a proxima area **deste
-				jogador** pode cair aqui. Ver o `FindZoneOverlap`.
+				Who used the card. It does not change what the modifier does (the effect
+				belongs to the room, whoever it came from), and it exists for a single
+				question: whether **this player's** next area may land here. See
+				`FindZoneOverlap`.
 			]]
 			OwnerUserId = options.OwnerUserId,
 
@@ -166,9 +168,9 @@ function CardModifierService:Apply(records, options) : number
 		}
 
 		--[[
-			Os dois campos que so o uso preenche. Um registro que **pede** zona e nao
-			recebe uma fica de fora: sem centro nem raio ele viraria um buff global, que
-			e exatamente o oposto do que um cajado de area promete.
+			The two fields only the use fills in. A record that **asks** for a zone and
+			does not get one is left out: with no center or radius it would become a
+			global buff, which is exactly the opposite of what an area staff promises.
 		]]
 		if record.Zone then
 			if not options.Zone then continue end
@@ -191,7 +193,7 @@ function CardModifierService:Apply(records, options) : number
 	return added
 end
 
---- Tira do campo tudo que veio de um uso. Serve para desfazer o que uma carta fez.
+--- Removes from the field everything that came from one use. It undoes what a card did.
 function CardModifierService:Remove(uid : any) : number
 	local removed = 0
 
@@ -210,25 +212,26 @@ function CardModifierService:Remove(uid : any) : number
 end
 
 --[=[
-	A area deste jogador que uma nova de raio `radius` em `position` encostaria, ou
-	`nil` se o lugar esta livre.
+	This player's area that a new one of radius `radius` at `position` would touch, or
+	`nil` if the spot is free.
 
-	**Duas areas do mesmo jogador nao podem se tocar**: a conta e a distancia entre os
-	centros contra a soma dos raios, que e o teste de dois circulos se cruzando. Sem
-	ela, empilhar tres cajados no mesmo punhado de torres multiplicava os tres buffs
-	no mesmo lugar, e a decisao que a carta vende -- *onde* desenhar o anel -- deixava
-	de existir: o melhor lugar era sempre o lugar do anel anterior.
+	**Two areas of the same player must not touch**: the math is the distance between
+	centers against the sum of the radii, the test for two intersecting circles.
+	Without it, stacking three staffs on the same handful of towers multiplied the
+	three buffs in the same place, and the decision the card sells (*where* to draw the
+	ring) disappeared: the best spot was always the previous ring's spot.
 
-	**So as do proprio jogador contam.** Numa sala de quatro, negar o lugar por causa
-	do cajado de outro jogador tiraria do mapa os poucos pontos que valem a pena para
-	quem chegou depois, e a disputa por chao nao e o que a carta cobra. Cada um
-	arruma o proprio tabuleiro.
+	**Only the player's own count.** In a room of four, denying a spot because of
+	another player's staff would take away the few worthwhile spots from whoever came
+	later, and competing for ground is not what the card charges for. Each player
+	arranges their own board.
 
-	O `Y` sai da conta: o anel e um circulo no chao, e o mapa tem altura. Medir em
-	tres dimensoes deixaria duas areas coladas passarem so porque uma esta numa rampa.
+	`Y` is left out of the math: the ring is a circle on the ground, and the map has
+	height. Measuring in three dimensions would let two touching areas pass just
+	because one is on a ramp.
 
-	Le pelo `GetActive`, e nao pela lista crua: uma zona que ja venceu -- os dez
-	segundos do Staff of Healing -- nao segura mais lugar nenhum.
+	It reads through `GetActive`, not the raw list: a zone that already expired (the
+	Staff of Healing's ten seconds) no longer holds any spot.
 ]=]
 function CardModifierService:FindZoneOverlap(userId : number?, position : Vector3, radius : number)
 	if typeof(position) ~= "Vector3" or typeof(radius) ~= "number" then return nil end
@@ -249,19 +252,19 @@ function CardModifierService:FindZoneOverlap(userId : number?, position : Vector
 end
 
 --[=[
-	O multiplicador de uma estatistica que nao e de unidade nenhuma -- a lentidao que
-	o gelo deixa, a queimadura que o fogo deixa.
+	The multiplier for a stat that belongs to no unit: the slow ice leaves, the burn
+	fire leaves.
 
-	Atalho para quem so tem a estatistica na mao (o `MobService`) e nao teria por que
-	conhecer o `CardModifier`.
+	A shortcut for code that only has the stat in hand (`MobService`) and has no reason
+	to know `CardModifier`.
 ]=]
 function CardModifierService:GetGlobal(stat : string) : number
 	return CardModifier.Global(self:GetActive(), stat)
 end
 
 --[=[
-	Zera junto com o round. As cartas sao de partida, e as regras que elas deixaram
-	tambem: um anel de cajado nao pode sobreviver a tela de resultado.
+	Resets with the round. Cards belong to the match, and so do the rules they left: a
+	staff's ring must not survive the results screen.
 ]=]
 function CardModifierService:ResetRound()
 	if #self.Active == 0 then return end
@@ -270,9 +273,9 @@ function CardModifierService:ResetRound()
 	self:_broadcast()
 end
 
---[[ REPLICACAO ]]
+--[[ REPLICATION ]]
 
---- Manda a lista inteira para um jogador (ou para todos, sem `player`).
+--- Sends the whole list to a player (or to everyone, without `player`).
 function CardModifierService:_broadcast(player : Player?)
 	if player then
 		Framework:Fire("RoundCardModifiers", player, self.Active)
@@ -284,17 +287,17 @@ function CardModifierService:_broadcast(player : Player?)
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function CardModifierService:construct()
-	-- So o servidor dispara este; sem o Listen vazio o cliente ficaria dez segundos
-	-- esperando o identificador aparecer (ver o README da raiz).
+	-- Only the server fires this one; without the empty Listen the client would wait
+	-- ten seconds for the identifier to appear (see docs/architecture/me-framework.md).
 	Framework:Listen("RoundCardModifiers", function() end)
 
 	--[[
-		O cliente pergunta quando termina de ligar a interface. Sem isso, quem entra no
-		meio da partida nao veria os aneis que ja estao no chao nem o alcance de verdade
-		das torres -- e so descobriria os dois na proxima carta usada.
+		The client asks when it finishes setting up the interface. Without this, a player
+		joining mid-match would not see the rings already on the ground nor the towers'
+		real range, and would only discover both at the next card used.
 	]]
 	Framework:Listen("RequestRoundCardModifiers", function(player : Player)
 		self:_broadcast(player)

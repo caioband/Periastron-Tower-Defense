@@ -14,24 +14,26 @@ local Framework = Me.new()
 local Config = SharedConfig.WeatherConfig
 
 --[[
-	Áudio do clima, no cliente.
+	Weather audio, on the client.
 
-	As partículas e a iluminação chegam sozinhas — as primeiras pela replicação do
-	`workspace.Weather`, a segunda pelo `LightingApplied`. Som não: ele é local de
-	cada cliente, e é o que este controller cuida.
+	Particles and lighting arrive on their own: the first through `workspace.Weather`
+	replication, the second through `LightingApplied`. Sound does not: it is local
+	to each client, and it is what this controller handles.
 
-	- **ambiente**: enquanto o clima estiver ligado, o loop de
-	  `WeatherConfig.Ambience` toca ao fundo, entrando e saindo com fade.
-	- **estouro**: cada raio toca um clone próprio, com fade no fim para a cauda não
-	  cortar seca. Sem `Key`, de propósito — dois raios seguidos se sobrepõem em vez
-	  de um derrubar o outro.
+	- **ambience**: while the weather is on, the `WeatherConfig.Ambience` loop plays
+	  in the background, fading in and out.
+	- **crack**: each strike plays its own clone, with a fade at the end so the tail
+	  does not cut off abruptly. No `Key`, on purpose: two strikes in a row overlap
+	  instead of one cutting off the other.
 
-	O estouro é 3D: quem chama é o `VFXController`, passando o Attachment da ponta do
-	raio como pai, então o som sai de onde o raio bateu em vez de tocar no ouvido de
-	todo mundo igual. A política de áudio (qual som, qual fade) fica aqui; o
-	`VFXController` só entrega a âncora.
+	The crack is 3D: `VFXController` calls it, passing the Attachment at the bolt's
+	tip as the parent, so the sound comes from where the bolt hit instead of playing
+	the same in everyone's ear. The audio policy (which sound, which fade) lives
+	here; `VFXController` only provides the anchor.
 
-	Fica em `common/` como o `WeatherService`.
+	It lives in `common/`, like `WeatherService`.
+
+	See docs/common/weather.md.
 ]]
 
 local WeatherController = {
@@ -43,22 +45,23 @@ local WeatherController = {
 WeatherController.Current = nil :: string?
 
 --[=[
-	O clima que este cliente esta vendo, ou nil.
+	The weather this client is seeing, or nil.
 
-	E a fonte de verdade do cliente para os efeitos de clima: o alcance que o
-	`TargetingController` usa para procurar alvo, o circulo que o
-	`UnitPlacementController` desenha e os numeros do card saem todos daqui, com os
-	multiplicadores do `WeatherConfig` por cima. O servidor faz a mesma conta com o
-	valor dele, entao os dois lados mostram o mesmo numero.
+	It is the client's source of truth for weather effects: the range
+	`TargetingController` uses to look for targets, the circle
+	`UnitPlacementController` draws, and the card's numbers all come from here, with
+	the `WeatherConfig` multipliers on top. The server does the same math with its
+	own value, so both sides show the same number.
 
-	Quem precisa reagir a troca (redesenhar um circulo, atualizar um label) escuta
-	o proprio `WeatherChanged`; este metodo e so para ler o estado atual.
+	Anything that needs to react to the change (redraw a circle, update a label)
+	listens to `WeatherChanged` itself; this method is only for reading the current
+	state.
 ]=]
 function WeatherController:GetCurrent() : string?
 	return self.Current
 end
 
---[[ AMBIENTE ]]
+--[[ AMBIENCE ]]
 
 function WeatherController:_stopAmbience(fade: number?)
 	local music = self.Controllers.MusicController
@@ -68,7 +71,7 @@ function WeatherController:_stopAmbience(fade: number?)
 end
 
 --[=[
-	Troca o som de fundo para o do clima pedido. `nil` desliga.
+	Switches the background sound to the requested weather's. `nil` turns it off.
 ]=]
 function WeatherController:SetWeather(name: string?)
 	if name == self.Current then
@@ -84,16 +87,16 @@ function WeatherController:SetWeather(name: string?)
 	local ambience = name and Config.Ambience[name]
 
 	if not ambience then
-		-- Clima novo sem ambiente (ou clima nenhum): sai com o fade do que estava.
+		-- A new weather without ambience (or no weather): the current one fades out.
 		local outgoing = previous and Config.Ambience[previous]
 		self:_stopAmbience(outgoing and outgoing.Fade)
 		return
 	end
 
 	--[[
-		O `PlaySFX` com Key já derruba o anterior, mas cortado. Parar antes com o
-		fade do clima que sai faz a troca de um clima para outro cruzar em vez de
-		estalar.
+		`PlaySFX` with a Key already stops the previous sound, but abruptly. Stopping
+		it first with the outgoing weather's fade makes a switch between weathers
+		crossfade instead of pop.
 	]]
 	local outgoing = previous and Config.Ambience[previous]
 	if outgoing then
@@ -101,7 +104,7 @@ function WeatherController:SetWeather(name: string?)
 	end
 
 	music:PlaySFX(ambience.Sound, {
-		-- O asset não vem em loop, e ambiente sem loop acabaria no meio do clima.
+		-- The asset does not loop, and a non-looping ambience would end mid-weather.
 		Looped = true,
 		Key = Config.AmbienceKey,
 		Fade = ambience.Fade,
@@ -109,14 +112,15 @@ function WeatherController:SetWeather(name: string?)
 	})
 end
 
---[[ ESTOURO ]]
+--[[ CRACK ]]
 
 --[=[
-	Estouro de um raio.
+	A strike's crack.
 
-	`parent` é o Attachment da ponta do raio; o Sound vira filho dele e sai do ponto
-	de impacto. Sem `parent` o som cai para 2D — não deveria acontecer no fluxo
-	normal, mas um estouro no ouvido é melhor do que estouro nenhum.
+	`parent` is the Attachment at the bolt's tip; the Sound becomes its child and
+	comes from the impact point. Without `parent` the sound falls back to 2D: it
+	should not happen in the normal flow, but a crack in the ear beats no crack at
+	all.
 ]=]
 function WeatherController:PlayStrikeSound(parent: Instance?)
 	local music = self.Controllers.MusicController
@@ -132,15 +136,15 @@ function WeatherController:PlayStrikeSound(parent: Instance?)
 	})
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function WeatherController:construct()
 	Framework:Listen("WeatherChanged", function(name: string?)
 		self:SetWeather(if typeof(name) == "string" then name else nil)
 	end)
 
-	-- Com que clima este cliente entrou: quem chega no meio da tempestade precisa
-	-- do ambiente tocando.
+	-- Which weather this client joined with: a player arriving mid-storm needs the
+	-- ambience playing.
 	Framework:Fire("RequestWeather")
 end
 

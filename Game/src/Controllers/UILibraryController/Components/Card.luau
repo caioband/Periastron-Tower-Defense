@@ -17,16 +17,18 @@ local SharedConfig = require(Configs.SharedConfig)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("Card")
 
 --[[ CONSTANTS ]]
 local WRAPPER_NAME = "CardWrapper"
 local CARD_NAME = "Card"
 local BUTTON_NAME = "Button"
 
--- A carta dentro do wrapper que a loja de round entrega. Ela e o proprio botao,
--- ao contrario da carta de unidade, que tem um `Button` por dentro.
+-- The card inside the wrapper the round shop hands over. It is the button itself,
+-- unlike a unit card, which has a `Button` inside.
 local ROUND_CARD_NAME = "CardTemplate"
 local COUNT_NAME = "Count"
 local COST_NAME = "Cost"
@@ -35,36 +37,34 @@ local UNIT_NAME_NAME = "UnitName"
 local COUNT_LAYER_NAME = "CountLayer"
 
 --[[
-	O arco.
+	The arc.
 
-	A carta cai pelo **quadrado** da distancia ate o vertice, e a queda e medida em
-	alturas de carta -- por isso mexer no tamanho da carta no Studio abre ou fecha o
-	arco inteiro sozinho, sem numero nenhum para acertar aqui.
+	A card drops by the **square** of its distance to the apex, and the drop is measured
+	in card heights: that is why changing the card size in Studio opens or closes the
+	whole arc on its own, with no number to adjust here.
 
-	A curva e normalizada pela distancia da carta mais longe: a que esta na ponta
-	sempre cai `ARC_SPREAD` e sempre inclina `ARC_TILT`, seja qual for o tamanho do
-	deck e onde esteja o vertice. Sem isso, escolher a primeira carta de um deck de
-	seis jogaria a ultima quase uma altura inteira para baixo (o quadrado de 5),
-	para fora do container.
+	The curve is normalized by the farthest card's distance: the one at the end always
+	drops `ARC_SPREAD` and always tilts `ARC_TILT`, whatever the deck size and wherever
+	the apex is. Without that, choosing the first card of a six-card deck would push the
+	last one almost a full height down (the square of 5), out of the container.
 
-	A inclinacao acompanha o lado do arco: quem esta a esquerda do vertice tomba
-	para a esquerda, quem esta a direita tomba para a direita, e o vertice fica em
-	pe. Os oito graus da ponta sao os mesmos do leque que estava autorado antes.
+	The tilt follows the arc's side: cards left of the apex lean left, cards right of it
+	lean right, and the apex stands upright. The eight degrees at the end match the fan
+	the authored layout had.
 ]]
 local ARC_SPREAD = 0.23
 local ARC_TILT = 8
 
 --[[
-	A reacomodacao inteira dura `ARC_TOTAL_TIME`, do primeiro movimento ao ultimo.
+	The whole re-layout lasts `ARC_TOTAL_TIME`, from the first move to the last.
 
-	As cartas nao saem todas juntas: uma fatia do tempo (`ARC_STAGGER_SHARE`) e
-	gasta escalonando as saidas, e o que sobra e a duracao de cada uma. Como o
-	intervalo total e sempre a mesma fatia, o deck de duas cartas e o de seis
-	terminam no mesmo instante -- o que muda e so o quao apertado fica o intervalo
-	entre uma e outra.
+	The cards do not all leave together: a slice of the time (`ARC_STAGGER_SHARE`) is
+	spent staggering the starts, and what remains is each one's duration. Since the total
+	interval is always the same slice, a two-card deck and a six-card deck finish at the
+	same instant; only how tight the gap between one and the next gets changes.
 
-	O atraso vai no proprio `TweenInfo`, e nao num `task.delay`: enquanto ele nao
-	vence, o tween nao escreve nada, e cancelar o tween cancela a espera junto.
+	The delay lives in the `TweenInfo` itself, not a `task.delay`: until it expires, the
+	tween writes nothing, and canceling the tween cancels the wait too.
 ]]
 local ARC_TOTAL_TIME = 0.3
 local ARC_STAGGER_SHARE = 0.4
@@ -72,36 +72,35 @@ local ARC_EASING = Enum.EasingStyle.Quad
 local ARC_DIRECTION = Enum.EasingDirection.Out
 
 --[[
-	A escala de cada carta sai de duas coisas que se **multiplicam**: onde ela
-	descansa (1, ou `SELECTED_SCALE` se ela e a escolhida) vezes `HOVER_SCALE`
-	enquanto o mouse esta em cima dela.
+	Each card's scale comes from two things that **multiply**: where it rests (1, or
+	`SELECTED_SCALE` if it is the selected one) times `HOVER_SCALE` while the mouse is over
+	it.
 
-	Os dois eram alternativas, e o maior ganhava. Como `HOVER_SCALE` e o maior dos
-	dois, escolher uma carta **com o mouse em cima dela** -- que e como todo clique
-	de mouse acontece -- ia de 1.2 para 1.2: a carta era escolhida e nao mexia um
-	pixel, e o unico momento em que a escolha aparecia era ao tirar o mouse dali. No
-	celular, onde nao ha hover, a mesma escolha animava normalmente.
+	As alternatives, with the larger one winning, they would break: since `HOVER_SCALE` is
+	the larger of the two, selecting a card **with the mouse over it** (which is how every
+	mouse click happens) would go from 1.2 to 1.2: the card would be selected without
+	moving a pixel, and the selection would only show when the mouse moved away. On
+	mobile, with no hover, the same selection would animate normally.
 
-	Multiplicados, a carta escolhida sob o mouse vai a 1.32 e o clique responde na
-	hora; hover em carta nao escolhida continua exatamente em 1.2, e escolhida sem
-	mouse em cima continua em 1.1. Toda troca e o mesmo tween, entao nenhuma delas
-	salta.
+	Multiplied, the selected card under the mouse goes to 1.32 and the click responds
+	right away; hovering an unselected card stays exactly at 1.2, and a selected card
+	without the mouse over it stays at 1.1. Every change is the same tween, so none of
+	them jumps.
 
-	As cartas se sobrepoem bastante, entao a que cresce tambem vem para a frente --
-	senao ela cresceria por baixo da vizinha.
+	The cards overlap a lot, so the one that grows also comes to the front, or it would
+	grow underneath its neighbor.
 ]]
 local HOVER_SCALE = 1.2
 local SELECTED_SCALE = 1.1
 local SCALE_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 --[[
-	Quanto da largura que uma carta ganha ao crescer e devolvido em espaco para as
-	vizinhas. Em 1, a carta que cresce empurra o vizinho exatamente o quanto ela
-	invadiu; abaixo disso, parte do crescimento e absorvida pela sobreposicao que o
-	leque ja tem.
+	How much of the width a card gains when growing is given back as space to its
+	neighbors. At 1, the growing card pushes the neighbor exactly as much as it intruded;
+	below that, part of the growth is absorbed by the overlap the fan already has.
 
-	O empurrao e simetrico -- metade para cada lado --, entao a mao continua
-	centrada por mais que uma carta no meio dela cresca.
+	The push is symmetric (half to each side), so the hand stays centered however much a
+	card in the middle of it grows.
 ]]
 local PUSH_SHARE = 1
 
@@ -110,41 +109,40 @@ local SELECTED_ZINDEX = 5
 local HOVER_ZINDEX = 10
 
 --[[
-	Sem unidade sobrando, a carta nao fica na mao: ela cai para fora do deck, e a
-	mao so fecha a vaga quando ela termina de sair. Quando a unidade volta a
-	existir, o caminho e o mesmo ao contrario -- a vaga reabre e a carta sobe de
-	volta para o arco.
+	With no units left, the card does not stay in the hand: it drops out of the deck, and
+	the hand only closes its slot when it finishes leaving. When the unit exists again,
+	the path is the same in reverse: the slot reopens and the card rises back into the
+	arc.
 
-	A queda e medida em alturas de carta, como o resto do arco, entao ela continua
-	saindo inteira da tela se o tamanho da carta mudar.
+	The drop is measured in card heights, like the rest of the arc, so it still leaves the
+	screen entirely if the card size changes.
 ]]
 local EXIT_DROP = 1.2
 local EXIT_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local RESTORE_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 --[[
-	Com uma carta escolhida, **as outras** apagam um pouco -- elas e tudo o que tem
-	dentro, mais o contador delas, que mora fora da carta mas e parte dela.
+	With a card selected, **the others** dim a little: them and everything inside, plus
+	their counter, which lives outside the card but is part of it.
 
-	O valor e uma fracao do caminho que falta ate a transparencia total, e nao um
-	valor fixo: assim ele se compoe com o que a peca ja tinha (uma carta sem estoque
-	ja esta em 0.25) sem nunca passar de 1, e o estado normal de cada peca continua
-	sendo o que o designer deixou.
+	The value is a fraction of the way left to full transparency, not a fixed value: that
+	way it composes with what the piece already had (a card with no stock is already at
+	0.25) without ever passing 1, and each piece's normal state is still what the designer
+	left.
 ]]
 local DIM_AMOUNT = 0.35
 
 --[[
-	O quanto uma carta **trancada** apaga. Mais forte que o `DIM_AMOUNT` de propósito:
-	apagar por não estar escolhida é dizer "essa não é a da vez"; apagar por estar
-	trancada é dizer "essa não dá para usar agora", e as duas não podem parecer a
-	mesma coisa.
+	How much a **locked** card dims. Stronger than `DIM_AMOUNT` on purpose: dimming for not
+	being selected says "this is not the one now"; dimming for being locked says "this one
+	cannot be used now", and the two must not look alike.
 ]]
 local LOCKED_AMOUNT = 0.6
 
--- Sem dinheiro para o custo: carta em vermelho, mas sem apagar.
+-- Not enough money for the cost: the card goes red, but does not dim.
 local NO_CASH_COLOR = Color3.fromRGB(255, 70, 70)
 
--- Uma tecla por carta da hotbar.
+-- One key per hotbar card.
 local KEYBINDS = {
 	One = 1,
 	Two = 2,
@@ -155,40 +153,41 @@ local KEYBINDS = {
 }
 
 --[=[
-	A hotbar da partida: uma carta por unidade do deck, clonadas do `CardWrapper`
-	que o designer deixou autorado no `TowerContainer`.
+	The match hotbar: one card per deck unit, cloned from the `CardWrapper` the designer
+	authored in `TowerContainer`.
 
-	O `UIListLayout` do container e quem espalha os **wrappers** na horizontal; o
-	que este modulo desenha e a posicao **Y da carta dentro do wrapper** e a
-	inclinacao dela, e e dai que sai o arco. Separar os dois e o que deixa o arco
-	existir sem brigar com o layout.
+	The container's `UIListLayout` spreads the **wrappers** horizontally; what this module
+	draws is the **card's Y position inside the wrapper** and its tilt, and that is where
+	the arc comes from. Keeping the two separate is what lets the arc exist without
+	fighting the layout.
 
-	Quem alimenta este modulo e o `CardController`, pelo `doComponent`.
+	`CardController` feeds this module, through `doComponent`.
 
-	**Nem toda carta da mao vem do deck.** As cartas compradas na loja de round
-	(`RoundCardShopController`) entram por `addRound` e ficam em `self.entries` do
-	mesmo jeito que as outras: elas caem no arco, crescem no hover, sao empurradas
-	pelas vizinhas e apagam quando outra carta e escolhida. O que muda e so a
-	origem -- o wrapper delas vem pronto de outro molde, e quem sabe o que o clique
-	faz e quem as entregou.
+	**Not every card in the hand comes from the deck.** Cards bought in the round shop
+	(`RoundCardShopController`) come in through `addRound` and sit in `self.entries` just
+	like the others: they fall into the arc, grow on hover, get pushed by neighbors, and
+	dim when another card is selected. Only the origin differs: their wrapper comes ready
+	from another template, and whoever handed them over knows what the click does.
 
-	A diferenca fica em dois campos do `entry`:
+	The difference lives in two `entry` fields:
 
-	| Campo | Carta de unidade | Carta de round |
+	| Field | Unit card | Round card |
 	| --- | --- | --- |
 	| `Kind` | `"Unit"` | `"Round"` |
-	| `Unit` | o nome da unidade | `nil` |
+	| `Unit` | the unit name | `nil` |
 
-	`Unit` vazio e o que tira a carta de round de tudo que e do deck: preco, clima,
-	contador, estoque e a nocao de "carta escolhida". Todo o resto -- o arco, a
-	escala, a apagada, a saida -- e o mesmo codigo.
+	An empty `Unit` is what takes a round card out of everything deck related: price,
+	weather, counter, stock, and the notion of "selected card". Everything else (the arc,
+	the scale, the dimming, the exit) is the same code.
+
+	See docs/game/hotbar.md.
 ]=]
 local module = {}
 
 module.entries = {}
 module.byUnit = {}
 
--- As cartas de round que estao na mao agora, por `uid` da compra.
+-- The round cards in hand now, by purchase `uid`.
 module.byRound = {}
 
 module.counts = {}
@@ -196,40 +195,40 @@ module.cash = 0
 module.selected = nil
 
 --[[
-	A carta de **round** escolhida, pelo `uid` da compra.
+	The selected **round** card, by purchase `uid`.
 
-	Ela e um estado separado do `selected` porque as duas nao se identificam do
-	mesmo jeito -- uma carta de unidade e um nome de unidade, e uma de round e uma
-	compra --, mas as duas sao a mesma ideia: o que esta na mao do jogador agora. Por
-	isso so uma das duas pode estar valendo (ver `setSelected`), e as duas passam
-	pelo mesmo crescer e pela mesma apagada das vizinhas.
+	It is a state separate from `selected` because the two are not identified the same
+	way (a unit card is a unit name, and a round card is a purchase), but both are the
+	same idea: what is in the player's hand now. That is why only one of the two can be in
+	effect (see `setSelected`), and both go through the same growing and the same dimming
+	of neighbors.
 ]]
 module.selectedRound = nil
 
 --[[
-	A mao inteira escondida sem ninguem perder o lugar. Quem liga e desliga e o
-	`RoundCardShopController`, enquanto a aba da loja esta aberta -- as cartas do
-	jogador saem da tela e voltam exatamente como estavam.
+	The whole hand hidden without anyone losing their place. `RoundCardShopController`
+	turns it on and off while the shop tab is open: the player's cards leave the screen and
+	come back exactly as they were.
 
-	E um estado do componente, e nao um `Visible` escrito de fora, justamente
-	porque o `Visible` de cada wrapper ja tem dono aqui (`_setPresence`): carta sem
-	unidade sobrando fica fora da tela por conta propria, e devolver "tudo aceso"
-	na volta a poria de volta na mao.
+	It is a component state, not a `Visible` written from outside, precisely because each
+	wrapper's `Visible` already has an owner here (`_setPresence`): a card with no units
+	left stays off screen on its own, and restoring "everything on" on the way back would
+	put it back in the hand.
 ]]
 module.hidden = false
 
 --[[ INTERNAL ]]
 
 --[=[
-	O molde, tirado da tela na primeira vez que alguem precisa dele.
+	The template, taken off the screen the first time someone needs it.
 
-	O `CardWrapper` que veio autorado nao e uma carta: e o desenho de uma. Ele sai
-	do container junto, entao a hotbar na tela e sempre 100% deck.
+	The authored `CardWrapper` is not a card: it is the drawing of one. It leaves the
+	container too, so the hotbar on screen is always 100% deck.
 
-	As cores "normais" de cada peca sao lidas do molde, e nao escritas aqui: se o
-	designer trocar o roxo do contorno, o estado normal acompanha. O mesmo vale para
-	onde o contador mora dentro da carta, que e o que o `_followCounts` reproduz
-	depois de tirar o contador de dentro dela.
+	Each piece's "normal" colors are read from the template, not written here: if the
+	designer changes the outline's purple, the normal state follows. The same goes for
+	where the counter lives inside the card, which is what `_followCounts` reproduces
+	after taking the counter out of it.
 ]=]
 local template : Frame? = nil
 local defaults = {}
@@ -241,7 +240,7 @@ local function getTemplate() : Frame?
 
 	local authored = TowerContainer:FindFirstChild(WRAPPER_NAME)
 	if not authored then
-		warn(`[Card]: nao achei o {WRAPPER_NAME} autorado no TowerContainer.`)
+		log:StudioWarn(`could not find the authored {WRAPPER_NAME} in TowerContainer.`)
 		return nil
 	end
 
@@ -258,8 +257,8 @@ local function getTemplate() : Frame?
 		CountImage = countHolder and countHolder.ImageColor3,
 		CountStroke = countLabel and countLabel:FindFirstChildOfClass("UIStroke") and countLabel:FindFirstChildOfClass("UIStroke").Color,
 
-		-- Onde o contador fica dentro da carta, em escala dela. E o que sobra do
-		-- vinculo depois que ele sai de dentro do card.
+		-- Where the counter sits inside the card, in its scale. It is what remains of the
+		-- link after it leaves the card.
 		CountCenter = countHolder and Vector2.new(
 			countHolder.Position.X.Scale + countHolder.Size.X.Scale * (0.5 - countHolder.AnchorPoint.X),
 			countHolder.Position.Y.Scale + countHolder.Size.Y.Scale * (0.5 - countHolder.AnchorPoint.Y)
@@ -273,18 +272,17 @@ local function getTemplate() : Frame?
 end
 
 --[=[
-	A camada onde moram os contadores.
+	The layer where the counters live.
 
-	Eles precisam ficar num plano so, na frente de **todas** as cartas: como as
-	cartas se sobrepoem, um contador que continuasse dentro do proprio card sumiria
-	atras do card vizinho -- a `Interface` e `ZIndexBehavior.Sibling`, entao um
-	descendente nunca desenha acima de um irmao do pai dele.
+	They must sit on a single plane, in front of **all** the cards: since the cards
+	overlap, a counter that stayed inside its own card would vanish behind the neighboring
+	card: `Interface` is `ZIndexBehavior.Sibling`, so a descendant never draws above a
+	sibling of its parent.
 
-	A camada e o ultimo filho do `TowerContainer` e desenha por cima dos wrappers.
-	Ela tambem entra no `UIListLayout`, entao a largura dela e escolhida para
-	**anular a propria vaga**: com o espacamento negativo que o layout tem, uma
-	celula de +12px seguida de -12px de padding soma zero, e as cartas continuam
-	centradas exatamente onde estavam.
+	The layer is the last child of `TowerContainer` and draws over the wrappers. It also
+	enters the `UIListLayout`, so its width is chosen to **cancel its own slot**: with the
+	layout's negative spacing, a +12px cell followed by -12px of padding adds up to zero,
+	and the cards stay centered exactly where they were.
 ]=]
 local function ensureCountLayer() : Frame?
 	local existing = TowerContainer:FindFirstChild(COUNT_LAYER_NAME)
@@ -303,8 +301,8 @@ local function ensureCountLayer() : Frame?
 	layer.Size = UDim2.fromOffset(math.max(width, 0), 0)
 	layer.ZIndex = HOVER_ZINDEX + 1
 
-	-- Ultimo da fila: assim ele desenha depois de todo wrapper. (`LayoutOrder` e
-	-- inteiro, entao o "infinito" aqui e so um numero grande.)
+	-- Last in line: that way it draws after every wrapper. (`LayoutOrder` is an
+	-- integer, so "infinity" here is just a large number.)
 	layer.LayoutOrder = 1e6
 	layer.Parent = TowerContainer
 
@@ -312,8 +310,8 @@ local function ensureCountLayer() : Frame?
 end
 
 --[=[
-	Onde a carta descansa quando ela e o vertice, e o quanto o arco derruba as
-	outras. A altura sai do tamanho da propria carta, em escala do wrapper.
+	Where the card rests when it is the apex, and how much the arc drops the others. The
+	height comes from the card's own size, in wrapper scale.
 ]=]
 local function cardHeightScale(card : GuiObject) : number
 	local height = card.Size.Y.Scale
@@ -322,7 +320,7 @@ local function cardHeightScale(card : GuiObject) : number
 end
 
 --[=[
-	Que propriedades de transparencia cada tipo de peca tem.
+	Which transparency properties each piece type has.
 ]=]
 local function fadeProperties(object : Instance) : { string }?
 	if object:IsA("UIStroke") then
@@ -339,12 +337,12 @@ local function fadeProperties(object : Instance) : { string }?
 end
 
 --[=[
-	As transparencias que a carta tem **antes** de qualquer coisa mexer nela, uma
-	entrada por peca -- a carta, os textos, os contornos e o contador.
+	The transparencies the card has **before** anything touches it, one entry per piece:
+	the card, the texts, the outlines, and the counter.
 
-	Sao lidas do clone recem-feito, entao "voltar ao estado original" e literal: o
-	alvo do fade e sempre o que o designer deixou no molde, e nao um valor escrito
-	aqui.
+	They are read from the freshly made clone, so "back to the original state" is literal:
+	the fade's target is always what the designer left on the template, not a value
+	written here.
 ]=]
 local function captureFades(roots : { Instance? })
 	local fades = {}
@@ -378,11 +376,11 @@ local function captureFades(roots : { Instance? })
 end
 
 --[=[
-	A largura autorada da carta em pixels, **sem** a escala.
+	The card's authored width in pixels, **without** the scale.
 
-	E lida do `Size` contra o wrapper, e nao do `AbsoluteSize`: durante o tween do
-	hover o absoluto esta no meio do caminho, e o empurrao ficaria perseguindo o
-	proprio efeito. Lida na hora, ela tambem acompanha a janela mudando de tamanho.
+	It is read from `Size` against the wrapper, not from `AbsoluteSize`: during the hover
+	tween the absolute value is halfway there, and the push would chase its own effect.
+	Read at the moment, it also follows the window changing size.
 ]=]
 function module:_cardWidth(entry) : number
 	local size = entry.Card.Size
@@ -391,8 +389,8 @@ function module:_cardWidth(entry) : number
 end
 
 --[=[
-	As cartas que estao na mao agora. Carta sem unidade sobrando saiu do deck, entao
-	ela nao conta para o arco nem para os atalhos -- a mao fecha a vaga dela.
+	The cards in hand now. A card with no units left has left the deck, so it counts for
+	neither the arc nor the shortcuts: the hand closes its slot.
 ]=]
 function module:_liveEntries()
 	local live = {}
@@ -407,8 +405,8 @@ function module:_liveEntries()
 end
 
 --[=[
-	Onde a carta descansa quando ela esta fora da mao: reta abaixo do lugar dela,
-	longe o bastante para sair inteira da tela.
+	Where the card rests when it is out of the hand: straight below its place, far enough
+	to leave the screen entirely.
 ]=]
 function module:_exitGoal(entry) : UDim2
 	local base = entry.BasePosition
@@ -420,16 +418,17 @@ function module:_exitGoal(entry) : UDim2
 end
 
 --[=[
-	Tira (ou devolve) a carta da tela.
+	Removes (or restores) the card from the screen.
 
-	Sao duas metades: o wrapper, que e quem ocupa a vaga na fila, e o contador, que
-	mora na camada de cima e por isso **nao** some junto com ele. Esquecer o segundo
-	deixaria o numero de uma carta que ja saiu boiando na hotbar.
+	There are two halves: the wrapper, which occupies the slot in the row, and the counter,
+	which lives on the upper layer and therefore does **not** disappear with it.
+	Forgetting the second would leave the number of a card that already left floating in
+	the hotbar.
 
-	`present` e guardado no proprio entry porque ele e a **intencao** ("esta carta
-	deveria estar na mao?"), e a mao inteira pode estar escondida por cima disso
-	(`setHidden`). Sem separar os dois, sair da aba da loja acenderia de volta
-	tambem as cartas que estavam fora da tela por nao ter unidade sobrando.
+	`present` is stored in the entry itself because it is the **intent** ("should this card
+	be in the hand?"), and the whole hand may be hidden on top of that (`setHidden`).
+	Without separating the two, leaving the shop tab would also light back up the cards
+	that were off screen for having no units left.
 ]=]
 function module:_setPresence(entry, present : boolean)
 	entry.Present = present
@@ -444,14 +443,15 @@ function module:_setPresence(entry, present : boolean)
 end
 
 --[=[
-	Poe ou tira a carta da mao.
+	Puts the card in or takes it out of the hand.
 
-	**Tirar** e uma queda de meio segundo, e a vaga dela so fecha quando ela termina
-	de cair -- por isso o `_layout` sai do `Completed`, e nao daqui. **Por de volta**
-	e o contrario: a vaga reabre na hora e a carta sobe do lugar onde parou.
+	**Taking it out** is a half-second drop, and its slot only closes when it finishes
+	falling, which is why `_layout` comes from `Completed`, not from here. **Putting it
+	back** is the reverse: the slot reopens right away and the card rises from where it
+	stopped.
 
-	`instant` e para a montagem da mao, onde uma carta que ja nasce sem unidade nao
-	tem de onde cair; quem chama assim tambem cuida do `_layout`.
+	`instant` is for building the hand, where a card born with no units has nowhere to
+	fall from; callers doing that also take care of `_layout`.
 ]=]
 function module:_setAvailable(entry, available : boolean, instant : boolean?) : boolean
 	if entry.Available == available then
@@ -460,7 +460,7 @@ function module:_setAvailable(entry, available : boolean, instant : boolean?) : 
 
 	entry.Available = available
 
-	-- Enquanto a carta entra ou sai, quem manda na posicao dela e este tween.
+	-- While the card enters or leaves, this tween owns its position.
 	entry.ExitMaid:DoCleaning()
 	entry.ArcMaid:DoCleaning()
 
@@ -479,7 +479,7 @@ function module:_setAvailable(entry, available : boolean, instant : boolean?) : 
 		end)
 
 		tween.Completed:Connect(function(state : Enum.PlaybackState)
-			-- Cancelado e o caminho de quem voltou no meio da queda.
+			-- Canceled is the path of a card that came back mid-drop.
 			if state ~= Enum.PlaybackState.Completed or entry.Available then
 				return
 			end
@@ -499,7 +499,7 @@ function module:_setAvailable(entry, available : boolean, instant : boolean?) : 
 		return true
 	end
 
-	-- O `_layout` leva a carta de onde ela parou ate a vaga dela, no tempo da volta.
+	-- `_layout` takes the card from where it stopped to its slot, at the return timing.
 	entry.Returning = true
 	self:_layout()
 
@@ -507,34 +507,34 @@ function module:_setAvailable(entry, available : boolean, instant : boolean?) : 
 end
 
 --[=[
-	O indice do vertice do arco: o meio do deck.
+	The index of the arc's apex: the middle of the deck.
 
-	A carta do meio quando o numero e impar, e as **duas** do meio quando e par --
-	as duas ficam a mesma distancia de `(n+1)/2`, entao as duas sobem juntas.
+	The middle card when the count is odd, and the **two** middle ones when it is even:
+	both are the same distance from `(n+1)/2`, so both rise together.
 
-	A carta escolhida nao mexe no vertice: quem mostra que ela esta escolhida e a
-	escala dela (`SELECTED_SCALE`), nao a posicao.
+	The selected card does not move the apex: its scale (`SELECTED_SCALE`) shows it is
+	selected, not its position.
 ]=]
 function module:_vertex(count : number) : number
 	return (count + 1) / 2
 end
 
 --[=[
-	Reposiciona e inclina **todas** as cartas. Roda quando o deck muda de tamanho e
-	quando o vertice muda de lugar.
+	Repositions and tilts **all** the cards. Runs when the deck changes size and when the
+	apex moves.
 
-	A carta (ou as duas) que esta no vertice fica exatamente na posicao que o
-	designer deixou no molde e em pe; a que esta mais longe dele cai `ARC_SPREAD` e
-	inclina `ARC_TILT`, e o resto se distribui entre esses dois extremos -- a queda
-	pelo quadrado da distancia, a inclinacao pela distancia com sinal.
+	The card (or the two) at the apex stays exactly where the designer left it on the
+	template and upright; the one farthest from it drops `ARC_SPREAD` and tilts `ARC_TILT`,
+	and the rest spread between those two extremes: the drop by the square of the
+	distance, the tilt by the signed distance.
 
-	Medir contra o menor e o maior quadrado da lista e o que resolve os dois casos de
-	uma vez: com numero par e sem selecao, as **duas** do meio empatam na menor
-	distancia e sobem juntas; com o vertice numa ponta, a carta do outro extremo para
-	no mesmo lugar de sempre em vez de sair pela base do container.
+	Measuring against the list's smallest and largest square is what solves both cases at
+	once: with an even count and no selection, the **two** middle ones tie at the smallest
+	distance and rise together; with the apex at one end, the card at the other end stops
+	in the usual place instead of leaving through the bottom of the container.
 
-	As cartas saem escalonadas, da esquerda para a direita, e a ultima termina em
-	`ARC_TOTAL_TIME` contado do inicio de tudo.
+	The cards leave staggered, left to right, and the last one ends at `ARC_TOTAL_TIME`
+	counted from the very start.
 ]=]
 function module:_layout(instant : boolean?)
 	local live = self:_liveEntries()
@@ -554,24 +554,24 @@ function module:_layout(instant : boolean?)
 		farthest = math.max(farthest, square)
 	end
 
-	-- Deck de uma carta so (ou de duas, sem selecao): todas empatam, e o arco e uma
-	-- linha reta na altura do molde.
+	-- A one-card deck (or two, with no selection): all tie, and the arc is a straight
+	-- line at the template's height.
 	local span = farthest - closest
 	local reach = math.sqrt(farthest)
 
-	-- O escalonamento: a ultima carta comeca em `spread` e termina junto com o
-	-- total, porque `spread + duration` e exatamente `ARC_TOTAL_TIME`.
-	-- Carta sozinha nao tem entre quem escalonar, entao o tempo todo vira duracao.
+	-- The stagger: the last card starts at `spread` and ends with the total,
+	-- because `spread + duration` is exactly `ARC_TOTAL_TIME`.
+	-- A single card has no one to stagger against, so all the time becomes duration.
 	local spread = if count > 1 then ARC_TOTAL_TIME * ARC_STAGGER_SHARE else 0
 	local duration = ARC_TOTAL_TIME - spread
 	local step = if count > 1 then spread / (count - 1) else 0
 
 	--[[
-		O quanto cada carta pede de espaco a mais por estar crescida.
+		How much extra space each card asks for for being grown.
 
-		A largura sai do tamanho autorado da carta na hora (`_cardWidth`), e nao de
-		um numero guardado: assim mexer no `Size` da carta tambem reacomoda o deck,
-		e nao so mexer na escala dela.
+		The width comes from the card's authored size at the moment (`_cardWidth`), not a
+		stored number: that way changing the card's `Size` also re-lays out the deck, not
+		only changing its scale.
 	]]
 	local extra = {}
 	for index, entry in live do
@@ -586,8 +586,8 @@ function module:_layout(instant : boolean?)
 		local drop = ARC_SPREAD * entry.Height * ratio
 		local tilt = if reach > 0 then ARC_TILT * (distance / reach) else 0
 
-		-- Quem esta a esquerda de uma carta crescida sai para a esquerda, quem esta a
-		-- direita sai para a direita, e ela mesma nao anda.
+		-- Cards to the left of a grown card move left, cards to the right move
+		-- right, and the card itself does not move.
 		local shift = 0
 		for other = 1, count do
 			if other < index then
@@ -611,8 +611,8 @@ function module:_layout(instant : boolean?)
 			continue
 		end
 
-		-- Carta voltando para a mao faz o caminho inteiro no tempo da volta; o resto
-		-- do deck se acomoda no escalonado de sempre.
+		-- A card returning to the hand makes the whole trip at the return timing; the rest
+		-- of the deck settles with the usual stagger.
 		local info = if entry.Returning
 			then RESTORE_INFO
 			else TweenInfo.new(duration, ARC_EASING, ARC_DIRECTION, 0, false, (index - 1) * step)
@@ -629,13 +629,13 @@ function module:_layout(instant : boolean?)
 end
 
 --[=[
-	Cola cada contador na carta dele.
+	Sticks each counter to its card.
 
-	O contador saiu de dentro do card para poder desenhar na frente de todos eles,
-	entao o vinculo que era de parentesco virou esta conta, refeita a cada quadro: o
-	centro sai da posicao que ele tinha dentro da carta, girado pela inclinacao dela
-	e medido em cima do tamanho **absoluto** do card -- que ja inclui o `UIScale` do
-	hover. Passar o mouse cresce a carta e o contador junto.
+	The counter left the card so it can draw in front of all of them, so the link that was
+	parenting became this computation, redone every frame: the center comes from the
+	position it had inside the card, rotated by the card's tilt and measured on the card's
+	**absolute** size, which already includes the hover's `UIScale`. Hovering grows the
+	card and the counter together.
 ]=]
 function module:_followCounts()
 	local layerPosition = self.CountLayer and self.CountLayer.AbsolutePosition
@@ -690,11 +690,11 @@ local function getParts(card : GuiObject, badge : GuiObject?)
 end
 
 --[=[
-	O clima no ceu, do jeito que o `ToggleTower` tambem pergunta.
+	The weather in the sky, the way `ToggleTower` also asks.
 
-	Pedido na hora em vez de guardado: o preco da carta e reescrito em dois momentos
-	so (quando a carta nasce e quando o clima troca), e nos dois a resposta certa e a
-	de agora.
+	Asked at the moment instead of cached: the card price is rewritten at only two moments
+	(when the card is born and when the weather changes), and at both the right answer is
+	the current one.
 ]=]
 local function getWeather()
 	local weatherController = Framework:Get("WeatherController", false, false)
@@ -702,11 +702,11 @@ local function getWeather()
 end
 
 --[=[
-	O que custa colocar a unidade agora -- com o desconto do clima, se houver (a
-	chuva tira 25% do Ice).
+	What placing the unit costs now, with the weather discount if any (rain takes 25% off
+	Ice).
 
-	Mesma funcao que o servidor cobra em `PlaceUnit`, de proposito: e o que impede a
-	carta de mostrar um preco e a colocacao descontar outro.
+	The same function the server charges in `PlaceUnit`, on purpose: it keeps the card
+	from showing one price while placement charges another.
 ]=]
 local function placeCost(unitName : string?) : number
 	if not unitName then return 0 end
@@ -714,8 +714,8 @@ local function placeCost(unitName : string?) : number
 	return SharedConfig.UnitUpgradeConfig:GetPlaceCost(unitName, getWeather())
 end
 
--- Estado visual da carta: sem estoque tem prioridade sobre falta de dinheiro, ja
--- que sem unidade a carta nao pode ser usada de jeito nenhum.
+-- The card's visual state: out of stock takes priority over lack of money, since
+-- without units the card cannot be used at all.
 function module:_resolveState(unitName : string?) : string
 	if unitName and SharedConfig.UnitStats[unitName] and self.cash < placeCost(unitName) then
 		return "NoCash"
@@ -725,8 +725,8 @@ function module:_resolveState(unitName : string?) : string
 end
 
 --[=[
-	Escreve o preco na carta. Fica numa funcao propria porque ele nao e mais fixo:
-	entrar ou sair um clima que mexe em `Cost` reescreve todos.
+	Writes the price on the card. It is its own function because the price is not fixed:
+	a weather that changes `Cost` entering or leaving rewrites all of them.
 ]=]
 function module:_writeCost(entry)
 	if not entry.Parts.Cost then return end
@@ -735,17 +735,17 @@ function module:_writeCost(entry)
 end
 
 --[=[
-	Escreve a transparencia de cada peca da carta.
+	Writes each card piece's transparency.
 
-	Hoje so existe um motivo para uma peca apagar: o `Dimmed`, que e "tem outra carta
-	escolhida". A conta parte sempre do valor autorado, entao desfaze-lo devolve
-	exatamente o original.
+	Today there is only one reason for a piece to dim: `Dimmed`, meaning "another card is
+	selected". The math always starts from the authored value, so undoing it restores
+	exactly the original.
 ]=]
 function module:_applyTransparency(entry)
 	entry.FadeMaid:DoCleaning()
 
-	-- Trancada manda em apagada: as duas são o mesmo canal, e a mais forte é a que
-	-- o jogador precisa entender primeiro.
+	-- Locked outranks dimmed: both are the same channel, and the stronger is the one
+	-- the player needs to understand first.
 	local dim = if entry.Locked then LOCKED_AMOUNT elseif entry.Dimmed then DIM_AMOUNT else 0
 
 	for _, fade in entry.Fades do
@@ -800,8 +800,8 @@ function module:_applyState(entry)
 end
 
 --[=[
-	Escreve o contador e decide se a carta continua na mao: zerou, ela cai para fora;
-	voltou a ter unidade, ela sobe de volta.
+	Writes the counter and decides whether the card stays in the hand: at zero, it drops
+	out; with units again, it rises back.
 ]=]
 function module:_writeCount(entry, instant : boolean?)
 	if entry.Parts.CountLabel then
@@ -813,8 +813,8 @@ function module:_writeCount(entry, instant : boolean?)
 end
 
 --[=[
-	Com alguma carta escolhida, todas as outras apagam um pouco. Sem escolha nenhuma
-	-- ou nela mesma --, nada apaga.
+	With a card selected, all the others dim a little. With no selection (or on the
+	selected card itself), nothing dims.
 ]=]
 function module:_setDimmed(entry)
 	local hasSelection = self.selected ~= nil or self.selectedRound ~= nil
@@ -829,12 +829,12 @@ function module:_setDimmed(entry)
 end
 
 --[=[
-	Se esta e a carta que esta na mao do jogador agora.
+	Whether this is the card in the player's hand now.
 
-	Carta de round se identifica pelo `uid` da compra e carta de unidade pelo nome
-	da unidade, entao a pergunta e uma so mas a chave e outra. O `~= nil` dos dois
-	lados nao e detalhe: sem ele, `nil == nil` daria "escolhida" para **todas** as
-	cartas de round sempre que nao houvesse unidade equipada.
+	A round card is identified by the purchase `uid` and a unit card by the unit name, so
+	the question is one but the key differs. The `~= nil` on both sides is not a detail:
+	without it, `nil == nil` would make **every** round card "selected" whenever no unit
+	was equipped.
 ]=]
 function module:_isSelected(entry) : boolean
 	if entry.Uid ~= nil then
@@ -845,22 +845,22 @@ function module:_isSelected(entry) : boolean
 end
 
 --[=[
-	Onde a escala da carta descansa quando o mouse nao esta em cima dela: 1.1 se ela
-	e a escolhida, 1 no resto do tempo.
+	Where the card's scale rests when the mouse is not over it: 1.1 if it is the selected
+	one, 1 otherwise.
 ]=]
 function module:_restScale(entry) : number
 	return if self:_isSelected(entry) then SELECTED_SCALE else 1
 end
 
 --[=[
-	Leva a escala da carta ao estado em que ela deveria estar. Um tween so para
-	todas as trocas -- entrar e sair do mouse, ser escolhida, deixar de ser --,
-	entao nenhuma delas salta.
+	Takes the card's scale to the state it should be in. A single tween for every change
+	(mouse entering and leaving, being selected, stopping being selected), so none of them
+	jumps.
 
-	Sai fora quando o alvo nao mudou: sem isso, um `setSelected` que nao mexe nesta
-	carta reiniciaria a animacao dela do meio do caminho. Devolve se mexeu, porque
-	carta que muda de tamanho reacomoda o deck -- e quem chama e que sabe se isso e
-	uma carta so ou varias de uma vez.
+	It bails out when the target did not change: without that, a `setSelected` that does
+	not touch this card would restart its animation mid-way. Returns whether it changed,
+	because a card that changes size re-lays out the deck, and the caller knows whether
+	that is one card or several at once.
 ]=]
 function module:_applyScale(entry) : boolean
 	local target = self:_restScale(entry)
@@ -896,9 +896,8 @@ function module:_setHovered(entry, hovered : boolean)
 end
 
 --[=[
-	Quem esta na frente de quem. A carta debaixo do mouse ganha de todas; a
-	escolhida fica na frente das vizinhas, porque ela esta maior que elas e nao pode
-	crescer por baixo.
+	Who is in front of whom. The card under the mouse beats all; the selected one stays
+	in front of its neighbors, because it is bigger than them and must not grow underneath.
 ]=]
 function module:_refreshDepth(entry)
 	if entry.Hovered then
@@ -910,22 +909,22 @@ function module:_refreshDepth(entry)
 end
 
 --[=[
-	Monta o `entry` de uma carta ja desenhada e a poe na mao.
+	Builds the `entry` of an already drawn card and puts it in the hand.
 
-	Tudo que e do arco mora aqui, e nada disto sabe de onde a carta veio: a escala,
-	a posicao e a rotacao de descanso, a lista de transparencias para a apagada, os
-	maids e os tres eventos do botao. E o que faz uma carta comprada na loja se
-	comportar exatamente como uma carta de unidade -- ela cai no arco, cresce no
-	hover, empurra as vizinhas e apaga quando outra e escolhida, pelo mesmo codigo.
+	Everything about the arc lives here, and none of it knows where the card came from:
+	the scale, the resting position and rotation, the transparency list for dimming, the
+	maids, and the button's three events. It is what makes a card bought in the shop
+	behave exactly like a unit card: it falls into the arc, grows on hover, pushes its
+	neighbors, and dims when another is selected, through the same code.
 
-	Quem chama diz o que e especifico da origem:
+	The caller says what is specific to the origin:
 
-	| Campo | O que e |
+	| Field | What it is |
 	| --- | --- |
-	| `Wrapper` / `Card` | as duas pecas: o wrapper ocupa a vaga na fila, a carta e que anima |
-	| `Button` | quem recebe o clique; a carta de unidade tem um `Button` dentro, a de round e o proprio botao |
-	| `Badge` | o contador, que ja saiu para a camada de cima (so a carta de unidade tem) |
-	| `Activate` | o que o clique (e o atalho de teclado) faz |
+	| `Wrapper` / `Card` | the two pieces: the wrapper takes the slot in the row, the card is what animates |
+	| `Button` | what receives the click; a unit card has a `Button` inside, a round card is the button itself |
+	| `Badge` | the counter, already moved to the upper layer (only unit cards have one) |
+	| `Activate` | what the click (and the keyboard shortcut) does |
 ]=]
 function module:_buildEntry(config)
 	local wrapper = config.Wrapper
@@ -945,8 +944,8 @@ function module:_buildEntry(config)
 		Kind = config.Kind,
 		Unit = config.Unit,
 
-		-- So a carta de round tem: e o `uid` da compra, e e por ele que ela e a
-		-- escolhida (ver `_isSelected`).
+		-- Only round cards have it: it is the purchase `uid`, and it is how the card is
+		-- the selected one (see `_isSelected`).
 		Uid = config.Uid,
 
 		Activate = config.Activate,
@@ -959,8 +958,8 @@ function module:_buildEntry(config)
 		Parts = getParts(card, badge),
 		Height = cardHeightScale(card),
 
-		-- A posicao e a rotacao que o molde tem sao as do vertice: e delas que o
-		-- arco desce e inclina.
+		-- The template's position and rotation are the apex's: the arc drops and tilts
+		-- from them.
 		BasePosition = card.Position,
 		BaseRotation = card.Rotation,
 
@@ -969,7 +968,7 @@ function module:_buildEntry(config)
 		ScaleTarget = 1,
 		Present = true,
 
-		-- Lido do clone intocado: e para ca que qualquer apagada volta.
+		-- Read from the untouched clone: any dimming returns here.
 		Fades = captureFades({ card, badge }),
 
 		Maid = Maid.new(),
@@ -985,13 +984,13 @@ function module:_buildEntry(config)
 	entry.Maid:GiveTask(entry.FadeMaid)
 	entry.Maid:GiveTask(entry.ExitMaid)
 
-	-- O contador nao mora mais no wrapper, entao ele nao morre junto com ele.
+	-- The counter no longer lives in the wrapper, so it does not die with it.
 	if badge then
 		entry.Maid:GiveTask(badge)
 	end
 
-	-- Mexer no tamanho da carta (no Studio, ou em tempo de execucao) reacomoda o
-	-- deck pelo mesmo caminho que a escala.
+	-- Changing the card size (in Studio, or at runtime) re-lays out the
+	-- deck through the same path as the scale.
 	entry.Maid:GiveTask(card:GetPropertyChangedSignal("Size"):Connect(function()
 		self:_layout()
 	end))
@@ -1017,12 +1016,12 @@ function module:_buildEntry(config)
 end
 
 --[=[
-	A ordem da fila e o que decide o arco: `_vertex` conta a partir dela, e o
-	`UIListLayout` espalha os wrappers por ela.
+	The row order is what decides the arc: `_vertex` counts from it, and `UIListLayout`
+	spreads the wrappers by it.
 
-	Corre `self.entries` inteiro em vez de guardar um contador porque a lista muda
-	pelos dois lados -- o deck e reconstruido do zero a cada troca, e as cartas de
-	round entram e saem no meio de tudo isso.
+	It walks all of `self.entries` instead of keeping a counter because the list changes
+	from both sides: the deck is rebuilt from scratch on every change, and round cards come
+	and go in the middle of all that.
 ]=]
 function module:_reindex()
 	for index, entry in self.entries do
@@ -1042,8 +1041,8 @@ function module:_createEntry(unitName : string, index : number, callbackDo : (st
 
 	wrapper.Name = unitName
 
-	-- O contador sai da carta e vai para a camada de cima, onde ele nao some atras
-	-- do card vizinho. Quem o mantem colado na carta e o `_followCounts`.
+	-- The counter leaves the card for the upper layer, where it does not vanish behind
+	-- the neighboring card. `_followCounts` keeps it stuck to the card.
 	local badge = card:FindFirstChild(COUNT_NAME)
 	if badge and self.CountLayer then
 		badge.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -1070,12 +1069,11 @@ function module:_createEntry(unitName : string, index : number, callbackDo : (st
 	self:_writeCost(entry)
 
 	--[[
-		A arte da carta e por unidade, e e a carta inteira: o `Card` e um ImageLabel,
-		nao uma moldura com a ilustracao dentro.
+		The card art is per unit, and it is the whole card: `Card` is an ImageLabel, not a
+		frame with the illustration inside.
 
-		Unidade sem id no `CardConfig` fica com a arte que o `CardWrapper` trouxe
-		autorada -- carta com a arte errada e melhor do que carta invisivel na hotbar,
-		e o config diz quais unidades ainda estao nesse caso.
+		A unit with no id in `CardConfig` keeps the art the `CardWrapper` came authored
+		with: a card with the wrong art beats an invisible card in the hotbar.
 	]]
 	local cardImage = SharedConfig.CardConfig.GetImage(unitName)
 	if cardImage and (card:IsA("ImageLabel") or card:IsA("ImageButton")) then
@@ -1088,14 +1086,14 @@ end
 --[[ EXTERNAL ]]
 
 --[=[
-	Derruba as cartas de unidade. As de round **ficam**.
+	Removes the unit cards. Round cards **stay**.
 
-	`clean` e a primeira coisa que o `set` faz, e `set` e "redesenhe a hotbar a
-	partir do deck". Uma carta comprada na loja nao veio do deck e nao tem como ser
-	reconstruida a partir dele: destrui-la aqui faria trocar de unidade no meio da
-	partida evaporar uma carta que o jogador pagou.
+	`clean` is the first thing `set` does, and `set` means "redraw the hotbar from the
+	deck". A card bought in the shop did not come from the deck and cannot be rebuilt from
+	it: destroying it here would make switching units mid-match evaporate a card the
+	player paid for.
 
-	Quem quer a mao inteira vazia chama `destroy`.
+	To empty the whole hand, call `destroy`.
 ]=]
 function module:clean()
 	local kept = {}
@@ -1119,7 +1117,7 @@ function module:clean()
 	return true
 end
 
---- Derruba as cartas de round. So o `destroy` passa por aqui.
+--- Removes the round cards. Only `destroy` goes through here.
 function module:_cleanRound()
 	for _, entry in self.entries do
 		if entry.Kind == "Round" then
@@ -1130,33 +1128,31 @@ function module:_cleanRound()
 	self.entries = {}
 	self.byRound = {}
 
-	-- A carta escolhida saiu da mao junto com todas as outras.
+	-- The selected card left the hand along with all the others.
 	self.selectedRound = nil
 	self.roundCleared = nil
 end
 
 --[=[
-	Desenha a hotbar a partir do deck.
+	Draws the hotbar from the deck.
 
-	`Cards` e a lista de unidades na ordem dos slots (ver `DeckConfig.unitList`).
-	Cada uma vira um clone do molde, e no fim todas sao acomodadas no arco de uma
-	vez -- e por isso que tirar ou por uma carta reposiciona o deck inteiro.
+	`Cards` is the list of units in slot order (see `DeckConfig.unitList`). Each becomes a
+	clone of the template, and at the end all are laid into the arc at once: that is why
+	removing or adding a card repositions the whole deck.
 
-	As cartas de round que o jogador ja tinha comprado sobrevivem a isto e voltam
-	para a fila **depois** das de unidade: elas nao vem do deck, e a ordem dos
-	slots e a do deck.
+	The round cards the player had already bought survive this and return to the row
+	**after** the unit cards: they do not come from the deck, and slot order is the deck's.
 ]=]
 --[=[
-	Tranca a hotbar em algumas cartas.
+	Locks the hotbar to some cards.
 
-	`allowed` é `{ [unidade] = true }`; `nil` destranca tudo. A carta trancada fica
-	com `Active = false` (o clique não é aceito nem pelo botão) e apaga mais que uma
-	carta simplesmente não escolhida.
+	`allowed` is `{ [unit] = true }`; `nil` unlocks everything. A locked card gets
+	`Active = false` (the click is not accepted even by the button) and dims more than a
+	merely unselected card.
 
-	A lista fica **guardada no componente**, e não aplicada uma vez: a hotbar é
-	remontada a cada troca de deck e a cada recomeço de round, e a tranca tem de
-	sobreviver a isso — senão vencer a partida e jogar de novo devolveria todas as
-	cartas no primeiro passo do tutorial.
+	The list is **stored in the component**, not applied once: the hotbar is rebuilt on
+	every deck change and every round restart, and the lock must survive that, or winning
+	the match and playing again would bring back every card on the tutorial's first step.
 ]=]
 function module:setAllowed(allowed : { [string] : boolean }?)
 	self.allowed = allowed
@@ -1167,8 +1163,8 @@ function module:setAllowed(allowed : { [string] : boolean }?)
 end
 
 --[=[
-	Aplica a tranca a uma carta. Carta de round (sem `Unit`) nunca é trancada por
-	aqui: quem cuida dela é o `TutorialStepController`, no pedido de uso.
+	Applies the lock to a card. A round card (no `Unit`) is never locked here:
+	`TutorialStepController` handles it, on the use request.
 ]=]
 function module:_applyAllowed(entry)
 	local allowed = self.allowed == nil
@@ -1182,22 +1178,22 @@ function module:_applyAllowed(entry)
 	entry.Locked = not allowed
 
 	--[[
-		A tranca cai na carta **e** no botão dela.
+		The lock falls on the card **and** its button.
 
-		A carta de unidade é só a arte: quem recebe o clique é o `Button` dentro dela
-		(ver `_buildEntry`). Desligar apenas a arte deixava a carta apagada e clicável
-		— a unidade trancada do tutorial equipava normalmente, e o jogador só descobria
-		a tranca quando o servidor recusasse a colocação (`CanPlace`), com o fantasma
-		já na mão.
+		A unit card is only the art: the `Button` inside it receives the click (see
+		`_buildEntry`). Turning off only the art would leave the card dimmed and clickable:
+		the tutorial's locked unit would equip normally, and the player would only discover
+		the lock when the server refused the placement (`CanPlace`), with the ghost already
+		in hand.
 
-		Na carta de round os dois são o mesmo objeto, e aí a volta escreve duas vezes
-		no mesmo lugar — o que não custa nada e evita um caso especial.
+		On a round card the two are the same object, and then the loop writes twice to the
+		same place, which costs nothing and avoids a special case.
 
-		`Interactable` entra junto do `Active` porque os botões da hotbar têm
-		`InputSink` em `Activate`, e escrever no `Active` não escreve no `InputSink`:
-		é o `Interactable` que garante que a carta trancada não responda a clique
-		nenhum. O `CardController` ainda pergunta ao `AllowsCard` antes de equipar —
-		trancar a tela é educação, e a regra não pode depender só dela.
+		`Interactable` goes along with `Active` because the hotbar buttons have `InputSink`
+		on `Activate`, and writing `Active` does not write `InputSink`: `Interactable` is
+		what guarantees the locked card responds to no click at all. `CardController` still
+		asks `AllowsCard` before equipping: locking the screen is courtesy, and the rule
+		must not depend on it alone.
 	]]
 	for _, object in { entry.Card, entry.Button } do
 		if not object:IsA("GuiObject") then
@@ -1214,9 +1210,9 @@ function module:_applyAllowed(entry)
 	end
 
 	--[[
-		Carta que trancou com o ponteiro em cima não recebe mais o `MouseLeave` — ele
-		morre junto com a interação —, e ficaria crescida no arco para sempre. A saída
-		é dada aqui, na hora de trancar.
+		A card locked with the pointer over it no longer receives `MouseLeave` (it dies with
+		the interaction) and would stay grown in the arc forever. The exit is applied here,
+		at lock time.
 	]]
 	if not allowed and entry.Hovered then
 		self:_setHovered(entry, false)
@@ -1226,15 +1222,15 @@ function module:_applyAllowed(entry)
 end
 
 --[=[
-	A carta desta unidade na hotbar, ou `nil` se ela não está lá agora.
+	This unit's card in the hotbar, or `nil` if it is not there now.
 
-	Devolve a **carta**, e não o wrapper que a embala: o wrapper é a vaga no
-	`UIListLayout` — ele tem a folga do arco, o espaço do contador e o que mais o
-	layout precisar —, e um destaque desenhado em cima dele abraça esse vazio em vez
-	da arte. Quem aponta quer a carta.
+	It returns the **card**, not the wrapper around it: the wrapper is the slot in the
+	`UIListLayout` (it has the arc's slack, the counter's space, and whatever else the
+	layout needs), and a highlight drawn over it hugs that empty space instead of the art.
+	Pointers want the card.
 
-	Existe para quem precisa apontar uma carta e não desenhá-la: hoje o
-	`TutorialStepController`. É leitura — quem chama não mexe no que recebe.
+	It exists for code that needs to point at a card without drawing it: today
+	`TutorialStepController`. It is read-only: the caller does not modify what it gets.
 ]=]
 function module:getCard(unitName : string) : GuiObject?
 	local entry = self.byUnit[unitName]
@@ -1243,8 +1239,8 @@ function module:getCard(unitName : string) : GuiObject?
 end
 
 function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ())
-	-- Primeira montagem nasce pronta; troca de deck com a hotbar ja na tela entra
-	-- animada, que e o unico momento em que uma carta e de fato posta ou tirada.
+	-- The first build is born ready; a deck change with the hotbar already on screen
+	-- animates, which is the only moment a card is actually added or removed.
 	local hadCards = #self.entries > 0
 
 	self:clean()
@@ -1257,8 +1253,8 @@ function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ()
 	self.counts = Counts or {}
 	self.maid = Maid.new()
 
-	-- O que o `clean` deixou de pe sao as cartas de round; as de unidade entram na
-	-- frente delas.
+	-- What `clean` left standing are the round cards; the unit cards go in
+	-- front of them.
 	local rounds = self.entries
 	self.entries = {}
 
@@ -1273,9 +1269,9 @@ function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ()
 			self:_refreshDepth(entry)
 			self:_applyAllowed(entry)
 
-			-- A carta escolhida pode ter sobrevivido a troca de deck: os clones sao
-			-- novos, entao a escala e a apagada precisam ser reaplicadas aqui -- o
-			-- `setSelected` sairia fora, porque o nome escolhido nao mudou.
+			-- The selected card may have survived the deck change: the clones are
+			-- new, so scale and dimming must be reapplied here; `setSelected`
+			-- would bail out, because the selected name did not change.
 			self:_applyScale(entry)
 			self:_setDimmed(entry)
 		end
@@ -1290,8 +1286,8 @@ function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ()
 	self:_layout(not hadCards)
 	self:_followCounts()
 
-	-- Os contadores seguem a carta a cada quadro: e assim que eles acompanham o
-	-- tween do arco e o crescer do hover sem um frame de atraso.
+	-- The counters follow the card every frame: that is how they track the
+	-- arc tween and the hover growth without a frame of lag.
 	self.maid:GiveTask(RunService.RenderStepped:Connect(function()
 		self:_followCounts()
 	end))
@@ -1299,23 +1295,23 @@ function module:set(Cards : { string }, Counts : {}, callbackDo : (string) -> ()
 	self.maid:GiveTask(UserInputService.InputBegan:Connect(function(input, gpe)
 		if gpe then return end
 
-		-- Hotbar fora da tela e hotbar que nao responde: quem esconde o
-		-- TowerContainer (o DifficultyController, antes da partida comecar) e quem
-		-- esconde a mao inteira (a aba da loja de round) nao precisam se lembrar de
-		-- desligar os atalhos tambem.
+		-- A hotbar off screen is a hotbar that does not respond: whatever hides
+		-- TowerContainer (DifficultyController, before the match starts) and whatever
+		-- hides the whole hand (the round shop tab) need not remember to also
+		-- turn off the shortcuts.
 		if not TowerContainer.Visible or self.hidden then return end
 
-		-- O numero segue o que esta na tela: carta que caiu para fora nao ocupa
-		-- tecla, do mesmo jeito que nao ocupa vaga. E o `Activate` de cada uma sabe
-		-- o que fazer -- equipar a unidade, ou gastar a carta de round.
+		-- The number follows what is on screen: a card that dropped out takes no
+		-- key, just as it takes no slot. And each one's `Activate` knows
+		-- what to do: equip the unit, or spend the round card.
 		local index = KEYBINDS[input.KeyCode.Name]
 		local entry = index and self:_liveEntries()[index]
 
 		--[[
-			Carta trancada não responde à tecla, do mesmo jeito que não responde ao
-			clique: o `Active = false` do `_applyAllowed` segura o dedo, mas nunca
-			segurou o teclado — o atalho falava direto com o `Activate`, e no tutorial
-			era o caminho aberto para equipar justamente a unidade que o passo tranca.
+			A locked card does not respond to the key, just as it does not respond to the
+			click: `_applyAllowed`'s `Active = false` stops the finger, but not the keyboard:
+			the shortcut talks straight to `Activate`, and in the tutorial it would be the
+			open path to equipping exactly the unit the step locks.
 		]]
 		if entry and not entry.Locked then
 			entry.Activate()
@@ -1334,27 +1330,26 @@ function module:setCount(unitName : string, count : number)
 	end
 end
 
---[[ CARTAS DE ROUND ]]
+--[[ ROUND CARDS ]]
 
 --[=[
-	Poe na mao uma carta comprada na loja de round.
+	Puts a card bought in the round shop into the hand.
 
-	O `wrapper` chega **pronto** -- o `RoundCardShopController` clonou o molde dele,
-	escreveu titulo, descricao e arte e tirou a placa de preco. Deste lado ela vira
-	uma carta da hotbar como qualquer outra: entra na fila, cai no arco, cresce no
-	hover e apaga quando outra e escolhida.
+	The `wrapper` arrives **ready**: `RoundCardShopController` cloned its template, wrote
+	the title, description, and art, and removed the price plate. On this side it becomes a
+	hotbar card like any other: it enters the row, falls into the arc, grows on hover, and
+	dims when another is selected.
 
-	Duas normalizacoes acontecem aqui, e as duas sao sobre o **molde de origem** ser
-	outro. A carta da loja e ancorada no canto (`0, 0`) e a da hotbar no centro: sem
-	trocar isso, a inclinacao do arco giraria a carta em torno do canto superior
-	esquerdo dela, e o crescer do hover a empurraria para o lado em vez de crescer no
-	lugar.
+	Two normalizations happen here, both because the **source template** is different. The
+	shop card is anchored at the corner (`0, 0`) and the hotbar's at the center: without
+	changing that, the arc's tilt would rotate the card around its top-left corner, and the
+	hover growth would push it sideways instead of growing in place.
 
-	A entrada e a mesma de uma carta que volta a ter estoque: ela nasce fora da mao
-	e **sobe** para a vaga, empurrando as vizinhas no caminho.
+	The entrance is the same as a card that gets stock back: it is born out of the hand and
+	**rises** into the slot, pushing its neighbors along the way.
 
-	`uid` e por compra, e nao por carta: a mesma carta comprada duas vezes sao duas
-	cartas na mao, e usar uma nao pode mexer na outra.
+	`uid` is per purchase, not per card: the same card bought twice is two cards in hand,
+	and using one must not touch the other.
 ]=]
 function module:addRound(uid : string, wrapper : Frame, activate : () -> ()) : boolean
 	if not uid or not wrapper or self.byRound[uid] then
@@ -1363,7 +1358,7 @@ function module:addRound(uid : string, wrapper : Frame, activate : () -> ()) : b
 
 	local card = wrapper:FindFirstChild(ROUND_CARD_NAME)
 	if not card or not card:IsA("GuiObject") then
-		warn(`[Card]: a carta de round '{uid}' veio sem o {ROUND_CARD_NAME}.`)
+		log:StudioWarn(`round card '{uid}' arrived without its {ROUND_CARD_NAME}.`)
 		wrapper:Destroy()
 		return false
 	end
@@ -1379,7 +1374,7 @@ function module:addRound(uid : string, wrapper : Frame, activate : () -> ()) : b
 		Wrapper = wrapper,
 		Card = card,
 
-		-- A carta da loja e o proprio botao; a de unidade tem um `Button` dentro.
+		-- The shop card is the button itself; a unit card has a `Button` inside.
 		Button = if card:IsA("GuiButton") then card else card:FindFirstChild(BUTTON_NAME),
 		Activate = activate,
 	})
@@ -1387,8 +1382,8 @@ function module:addRound(uid : string, wrapper : Frame, activate : () -> ()) : b
 	table.insert(self.entries, entry)
 	self.byRound[uid] = entry
 
-	-- Fora da mao para poder entrar nela: o `_setAvailable` logo abaixo e que faz a
-	-- carta subir para a vaga e o resto do deck abrir espaco.
+	-- Out of the hand so it can enter: `_setAvailable` just below is what makes the
+	-- card rise into its slot and the rest of the deck make room.
 	entry.Available = false
 	entry.Card.Position = self:_exitGoal(entry)
 	self:_setPresence(entry, false)
@@ -1402,13 +1397,12 @@ function module:addRound(uid : string, wrapper : Frame, activate : () -> ()) : b
 end
 
 --[=[
-	Tira da mao a carta de round que foi usada.
+	Removes the used round card from the hand.
 
-	Ela sai como qualquer outra carta que deixa o deck: cai para fora da tela, e a
-	vaga so fecha quando ela termina de cair (`EXIT_INFO`). O `entry` sai da lista no
-	fim da queda, e nao no comeco, porque enquanto ela esta caindo ela ainda ocupa a
-	vaga dela -- fechar antes faria o deck se reacomodar por baixo da carta que ainda
-	esta na tela.
+	It leaves like any other card leaving the deck: it drops off screen, and the slot only
+	closes when it finishes falling (`EXIT_INFO`). The `entry` leaves the list at the end
+	of the drop, not the start, because while it is falling it still occupies its slot:
+	closing earlier would re-lay out the deck under a card still on screen.
 ]=]
 function module:removeRound(uid : string) : boolean
 	local entry = self.byRound[uid]
@@ -1419,9 +1413,9 @@ function module:removeRound(uid : string) : boolean
 	self.byRound[uid] = nil
 
 	--[[
-		A carta escolhida esta saindo da mao (foi usada, ou o servidor a devolveu):
-		sem largar a escolha aqui, as vizinhas ficariam apagadas para sempre em volta
-		de uma carta que ja nao existe.
+		The selected card is leaving the hand (it was used, or the server returned it):
+		without dropping the selection here, the neighbors would stay dimmed forever around
+		a card that no longer exists.
 	]]
 	if self.selectedRound == uid then
 		self.selectedRound = nil
@@ -1454,11 +1448,11 @@ function module:removeRound(uid : string) : boolean
 end
 
 --[=[
-	Esconde (ou devolve) a mao inteira, sem ninguem perder o lugar.
+	Hides (or restores) the whole hand, without anyone losing their place.
 
-	Quem liga e o `RoundCardShopController`, enquanto a aba da loja esta aberta. A
-	volta devolve cada carta ao estado que ela tinha (`entry.Present`), e nao um
-	"tudo aceso": carta sem unidade sobrando continua fora da tela.
+	`RoundCardShopController` turns it on while the shop tab is open. Restoring returns each
+	card to the state it had (`entry.Present`), not "everything on": a card with no units
+	left stays off screen.
 ]=]
 function module:setHidden(hidden : boolean)
 	hidden = hidden == true
@@ -1483,12 +1477,11 @@ function module:setCash(cash : number)
 end
 
 --[=[
-	O clima entrou ou saiu: reescreve o preco de cada carta e reavalia quem cabe no
-	bolso.
+	The weather came or went: rewrites each card's price and re-evaluates what the player
+	can afford.
 
-	As duas coisas juntas, e nesta ordem, porque sao a mesma mudanca vista de dois
-	lugares -- a carta que ficou 25% mais barata pode ter deixado de estar em
-	vermelho no mesmo instante.
+	Both together, and in this order, because they are the same change seen from two
+	places: a card that became 25% cheaper may have stopped being red at the same instant.
 ]=]
 function module:refreshWeather()
 	for _, entry in self.entries do
@@ -1498,8 +1491,8 @@ function module:refreshWeather()
 end
 
 --[=[
-	Qual carta esta escolhida. Ela descansa em `SELECTED_SCALE` e fica na frente das
-	vizinhas; o arco nao se mexe. `nil` devolve todas ao tamanho normal.
+	Which card is selected. It rests at `SELECTED_SCALE` and stays in front of its
+	neighbors; the arc does not move. `nil` returns all to normal size.
 ]=]
 function module:setSelected(unitName : string?)
 	if self.selected == unitName then
@@ -1509,10 +1502,10 @@ function module:setSelected(unitName : string?)
 	self.selected = unitName
 
 	--[[
-		So uma coisa por vez na mao. Por uma unidade na mao com uma carta de round
-		esperando alvo deixaria as duas em pe: o fantasma da unidade e a mira da
-		carta disputando o mesmo clique no mapa. Quem escolheu a carta e avisado pelo
-		`onCleared` do `setSelectedRound`, e desiste da mira do lado dele.
+		One thing at a time in the hand. Putting a unit in hand with a round card waiting
+		for a target would leave both up: the unit's ghost and the card's aim competing for
+		the same click on the map. Whoever selected the card is notified by
+		`setSelectedRound`'s `onCleared`, and gives up aiming on their side.
 	]]
 	if unitName and self.selectedRound then
 		local cleared = self.roundCleared
@@ -1532,30 +1525,29 @@ function module:setSelected(unitName : string?)
 		self:_setDimmed(entry)
 	end
 
-	-- Trocar de carta escolhida mexe em duas, mas o deck se reacomoda uma vez so.
+	-- Switching the selected card touches two, but the deck re-lays out only once.
 	if changed then
 		self:_layout()
 	end
 end
 
 --[=[
-	Qual carta de **round** esta escolhida, pelo `uid` da compra.
+	Which **round** card is selected, by purchase `uid`.
 
-	E o gemeo do `setSelected`, e faz exatamente a mesma coisa: a carta cresce, vem
-	para a frente e apaga as vizinhas. E o que faz uma carta de round que pede alvo
-	se comportar como uma carta de unidade equipada -- ela fica "na mao" enquanto o
-	jogador escolhe onde usa-la.
+	It is `setSelected`'s twin and does exactly the same thing: the card grows, comes to
+	the front, and dims its neighbors. It is what makes a round card that asks for a target
+	behave like an equipped unit card: it stays "in hand" while the player chooses where to
+	use it.
 
-	`onCleared` e chamado quando **outra coisa** toma a mao (o jogador equipou uma
-	unidade). Quem escolheu a carta precisa saber disso para desistir da mira, e nao
-	ha como ele descobrir sozinho: o clique que trocou de mao foi na hotbar, e nao no
-	mapa. Ele nao e chamado quando o proprio dono desfaz a escolha -- ali ele ja
-	sabe.
+	`onCleared` is called when **something else** takes the hand (the player equipped a
+	unit). Whoever selected the card needs to know, to give up aiming, and has no way to
+	find out alone: the click that switched hands was on the hotbar, not the map. It is not
+	called when the owner undoes the selection itself: then it already knows.
 
-	> Quem chama deve **largar a unidade antes** (`UnitPlacementController:clearInteraction`).
-	> O `selected` daqui e so o desenho; o fantasma que segue o mouse e a nocao de
-	> unidade equipada sao de outros dois donos, e apaga-lo por aqui os deixaria
-	> discordando da tela.
+	> Callers must **drop the unit first** (`UnitPlacementController:clearInteraction`).
+	> `selected` here is only the drawing; the ghost following the mouse and the notion of
+	> an equipped unit belong to two other owners, and clearing it from here would leave
+	> them disagreeing with the screen.
 ]=]
 function module:setSelectedRound(uid : string?, onCleared : (() -> ())?)
 	if self.selectedRound == uid then
@@ -1580,8 +1572,8 @@ end
 function module:destroy()
 	self:clean()
 
-	-- O `clean` poupa as cartas de round de proposito (ele e a reconstrucao do
-	-- deck); aqui a mao vai embora inteira.
+	-- `clean` spares round cards on purpose (it is the deck rebuild); here the whole
+	-- hand goes.
 	self:_cleanRound()
 
 	self.selected = nil

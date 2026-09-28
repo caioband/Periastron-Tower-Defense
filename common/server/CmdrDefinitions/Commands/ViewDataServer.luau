@@ -4,16 +4,16 @@ local ServerConfig = require(ServerScriptService:WaitForChild("Config"))
 local ProfileStore = require(ServerScriptService:WaitForChild("Vendor"):WaitForChild("ProfileStore"))
 
 --[[
-	`viewdata`: lê o perfil salvo de um jogador sem abrir sessão.
+	`viewdata`: reads a player's saved profile without opening a session.
 
-	É o `ProfileStore:GetAsync` (modo leitura): não trava o perfil, não salva nada,
-	e funciona com o jogador fora do servidor. Serve para olhar uma store velha
-	(`PROD_KEY_1`, depois da troca da `PROFILE_KEY`) ou uma versão antiga pela data —
-	o DataStore guarda as versões de cada chave por um tempo (hoje, 30 dias), e o
-	`VersionQuery` pega a última salva até a data pedida.
+	It is `ProfileStore:GetAsync` (read mode): it does not lock the profile, saves
+	nothing, and works with the player off the server. It is for looking at an old
+	store (`PROD_KEY_1`, after the `PROFILE_KEY` change) or an old version by date:
+	the DataStore keeps each key's versions for a while (today, 30 days), and
+	`VersionQuery` fetches the last one saved up to the requested date.
 
-	A resposta vai para o console do Cmdr e, inteira, para o log do servidor (F9 →
-	Server), que é mais fácil de copiar.
+	The answer goes to the Cmdr console and, in full, to the server log (F9 →
+	Server), which is easier to copy.
 ]]
 
 local MAX_DEPTH = 12
@@ -48,7 +48,7 @@ local function formatMillis(millis : number?) : string
 	return millis and formatTime(millis // 1000) or "?"
 end
 
--- Dump legível, chaves em ordem, para dar para comparar duas versões a olho.
+-- Readable dump, keys sorted, so two versions can be compared by eye.
 local function dump(value : any, indent : string, depth : number, out : { string })
 	if typeof(value) ~= "table" then
 		table.insert(out, typeof(value) == "string" and string.format("%q", value) or tostring(value))
@@ -101,9 +101,9 @@ return function(_context, userId : number, storeName : string?, dateText : strin
 
 	local profileKey = "Player_" .. userId
 	local ok, profile = pcall(function()
-		-- Template vazio: é leitura, e o que interessa é o que está salvo, não o que
-		-- faltaria para o template de hoje. Dentro do pcall porque o `New` erra com
-		-- nome de store inválido (vazio ou mais de 50 caracteres).
+		-- Empty template: this is a read, and what matters is what is saved, not what
+		-- today's template would be missing. Inside the pcall because `New` errors on
+		-- an invalid store name (empty or over 50 characters).
 		local store = ProfileStore.New(storeName, {})
 
 		if maxDate then
@@ -131,6 +131,8 @@ return function(_context, userId : number, storeName : string?, dateText : strin
 	dump(profile.Data, "", 0, out)
 	local body = table.concat(out)
 
+	-- Deliberately a raw `print` and not `Log`: this is output an admin asked for,
+	-- and it must reach the server log (F9 > Server) in live servers too.
 	print(`[viewdata]\n{header}\n{body}`)
 
 	return `{header}\n{body}`

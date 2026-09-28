@@ -1,15 +1,15 @@
 --[[
-	cmdr type "currencyAction": `set`, `add` ou `remove`.
+	cmdr type "currencyAction": `set`, `add`, or `remove`.
 
-	É o primeiro argumento dos comandos de moeda (`cash`, `shards`, `roundcash`),
-	e existe como tipo para o tab completar — três comandos separados por operação
-	seriam nove comandos para lembrar.
+	It is the first argument of the currency commands (`cash`, `shards`,
+	`roundcash`), and it exists as a type for tab completion: three separate
+	commands per operation would be nine commands to remember.
 
-	O `units` usa o mesmo tipo: ele não mexe em moeda, mas a operação é a mesma
-	("põe tanto", "soma tanto", "tira tanto") e um enum idêntico com outro nome só
-	daria duas listas para manter iguais.
+	`units` uses the same type: it does not touch currency, but the operation is the
+	same ("put this many", "add this many", "take this many"), and an identical enum
+	under another name would only give two lists to keep in sync.
 
-	O `MakeEnumType` do próprio Cmdr faz a busca difusa: `a` já resolve para `add`.
+	Cmdr's own `MakeEnumType` does fuzzy matching: `a` already resolves to `add`.
 ]]
 
 local ACTIONS = { "set", "add", "remove" }

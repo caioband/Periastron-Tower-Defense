@@ -1,13 +1,15 @@
 --[[
-	Configuração exclusiva do servidor.
+	Server-only configuration.
 
-	Monta em `ServerScriptService.Config` — NUNCA na ReplicatedStorage. Nada aqui
-	é replicado para o cliente: chave de DataStore, template de perfil, tabelas de
-	wave, odds de summon, pools das crates, a lista de admins do Cmdr, a
-	numeração do funil de analytics e os ids dos badges.
+	Mounted at `ServerScriptService.Config`, NEVER in ReplicatedStorage. Nothing here
+	replicates to the client: the DataStore key, the profile template, wave tables,
+	summon odds, crate pools, the Cmdr admin list, the analytics funnel numbering,
+	and badge ids.
 
-	Dado que o cliente precisa legitimamente ver vive em
+	Data the client legitimately needs lives in
 	`ReplicatedStorage.Shared.Config.SharedConfig`.
+
+	See docs/architecture/configuration.md.
 ]]
 
 type ServerConfig = {

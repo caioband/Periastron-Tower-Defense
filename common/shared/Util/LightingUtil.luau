@@ -1,8 +1,9 @@
 --[[
-	Peças comuns ao `LightingService` (servidor) e ao `LightingController`
-	(cliente): achar a pasta de presets, ler valores de um preset e interpolar.
+	Pieces shared by `LightingService` (server) and `LightingController` (client):
+	finding the presets folder, reading a preset's values, and interpolating.
 
-	Ver `SharedConfig.LightingConfig` para o formato de um preset.
+	See `SharedConfig.LightingConfig` for the preset format, and
+	docs/common/lighting.md.
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -18,13 +19,13 @@ local Config = SharedConfig.LightingConfig
 
 local LightingUtil = {}
 
---[[ PASTA DE PRESETS ]]
+--[[ PRESETS FOLDER ]]
 
 --[[
-	Acha (servidor) ou espera (cliente) a pasta de presets.
+	Finds (server) or waits for (client) the presets folder.
 
-	`create` só é verdadeiro no servidor: `Assets` é conteúdo da place, não passa
-	pelo Rojo, então a subpasta `Lighting` pode simplesmente não existir ainda.
+	`create` is only true on the server: `Assets` is place content, not synced by
+	Rojo, so the `Lighting` subfolder may simply not exist yet.
 ]]
 function LightingUtil.GetPresetsRoot(create: boolean?, timeout: number?): Folder?
 	local current: Instance = ReplicatedStorage
@@ -51,14 +52,14 @@ function LightingUtil.GetPresetsRoot(create: boolean?, timeout: number?): Folder
 	return current :: Folder
 end
 
---[[ LEITURA ]]
+--[[ READING ]]
 
 --[[
-	Valores das propriedades de uma instância de preset (Sky, Atmosphere, efeito…).
+	Property values of a preset instance (Sky, Atmosphere, an effect…).
 
-	Lê só o que está listado em `LightingConfig.Properties` para a classe dela; o
-	`pcall` cobre propriedade que a engine tenha removido ou trancado numa versão
-	nova, sem derrubar a transição inteira por causa de uma.
+	Reads only what `LightingConfig.Properties` lists for its class; the `pcall`
+	covers a property the engine removed or locked in a new version, without
+	breaking the whole transition over one.
 ]]
 function LightingUtil.ReadInstance(instance: Instance): { [string]: any }
 	local values = {}
@@ -77,9 +78,9 @@ function LightingUtil.ReadInstance(instance: Instance): { [string]: any }
 end
 
 --[[
-	Propriedades do próprio Lighting que o preset declara — que são os atributos da
-	Folder. Atributo com nome fora da lista de `LightingConfig` é ignorado (pode ser
-	anotação de quem montou o preset).
+	Properties of Lighting itself that the preset declares: the Folder's
+	attributes. An attribute whose name is not in `LightingConfig` is ignored (it
+	may be a note from whoever built the preset).
 ]]
 function LightingUtil.ReadPresetAttributes(folder: Instance): { [string]: any }
 	local attributes = folder:GetAttributes()
@@ -94,12 +95,12 @@ function LightingUtil.ReadPresetAttributes(folder: Instance): { [string]: any }
 	return values
 end
 
---[[ INTERPOLAÇÃO ]]
+--[[ INTERPOLATION ]]
 
 --[[
-	Tipos que sabem virar meio-caminho. O resto (boolean, string, EnumItem,
-	NumberSequence, ColorSequence) não interpola e é aplicado de uma vez — ver
-	`LightingController`, que decide o momento do corte.
+	Types that can be halfway. The rest (boolean, string, EnumItem,
+	NumberSequence, ColorSequence) does not interpolate and is applied at once; see
+	`LightingController`, which picks the moment of the cut.
 ]]
 local INTERPOLATORS: { [string]: (any, any, number) -> any } = {
 	number = function(a, b, t)
@@ -139,7 +140,7 @@ local INTERPOLATORS: { [string]: (any, any, number) -> any } = {
 	end,
 }
 
--- A interpolação só existe entre dois valores do mesmo tipo interpolável.
+-- Interpolation only exists between two values of the same interpolable type.
 function LightingUtil.GetInterpolator(from: any, to: any): ((any, any, number) -> any)?
 	local fromType = typeof(from)
 	if fromType ~= typeof(to) then
@@ -149,29 +150,29 @@ function LightingUtil.GetInterpolator(from: any, to: any): ((any, any, number) -
 	return INTERPOLATORS[fromType]
 end
 
--- Curva de easing sem criar Tween: `GetValue` é a mesma conta que o TweenService faz.
+-- An easing curve without creating a Tween: `GetValue` is the same math TweenService does.
 function LightingUtil.Ease(alpha: number): number
 	return TweenService:GetValue(math.clamp(alpha, 0, 1), Config.Transition.Style, Config.Transition.Direction)
 end
 
---[[ O BORRÃO DOS PAINÉIS ]]
+--[[ THE PANELS' BLUR ]]
 
 --[=[
-	O nome do `BlurEffect` que os painéis de UI compartilham.
+	The name of the `BlurEffect` the UI panels share.
 
-	**Um só para todos**, e por isso ele é procurado antes de ser criado: o
-	`UILibraryController` pendura o mesmo borrão para os painéis dele e as duas lojas
-	do lobby o reaproveitam. Dois `BlurEffect` no Lighting somam, e o fundo sairia com
-	o dobro do borrão quando dois painéis estivessem abertos.
+	**One for everyone**, so it is looked up before being created: `UILibraryController`
+	uses the same blur for its panels and the Lobby shops reuse it. Two
+	`BlurEffect`s in Lighting add up, and the background would get twice the blur
+	with two panels open.
 ]=]
 LightingUtil.UI_BLUR_NAME = "UIBlur"
 
 --[=[
-	O borrão dos painéis, criado na primeira vez que alguém pede.
+	The panels' blur, created the first time someone asks.
 
-	Ele nasce (e renasce) com a marca do `KeepAttribute`: sem ela ele é um filho do
-	Lighting que não pertence a preset nenhum, e a troca de preset o varreria. A marca
-	é (re)escrita sempre, porque a instância pode ter vindo de outro sistema sem ela.
+	It is (re)created with the `KeepAttribute` mark: without it, it is a Lighting
+	child that belongs to no preset, and a preset change would sweep it. The mark is
+	always (re)written, because the instance may come from another system without it.
 ]=]
 function LightingUtil.GetUIBlur(): BlurEffect
 	local blur = Lighting:FindFirstChild(LightingUtil.UI_BLUR_NAME)
@@ -189,16 +190,16 @@ function LightingUtil.GetUIBlur(): BlurEffect
 end
 
 --[=[
-	Leva o borrão a `size` e devolve o tween, para quem chamou poder cancelá-lo.
+	Tweens the blur to `size` and returns the tween, so the caller can cancel it.
 
-	Cancelar é o que faz dois pedidos emendarem: `Tween:Cancel()` não devolve a
-	propriedade, então fechar no meio da abertura desce a partir de onde a subida
-	chegou em vez de as duas escreverem no mesmo `Size` ao mesmo tempo. Guarde o
-	retorno num maid — um tween por painel de cada vez.
+	Canceling is what lets two requests chain: `Tween:Cancel()` does not restore
+	the property, so closing mid-open goes down from where the rise reached instead
+	of two tweens writing the same `Size`. Keep the return in a maid: one tween per
+	panel at a time.
 
-	Zerar o borrão quando ele nem existe devolve nil sem criar nada: um painel que
-	fecha sem nunca ter aberto (o bind de uma `ScreenGui` nova roda o fechamento) não
-	precisa deixar um `BlurEffect` por jogador no Lighting.
+	Zeroing a blur that does not exist returns nil and creates nothing: a panel that
+	closes without ever opening (a new `ScreenGui`'s bind runs the close) must not
+	leave a `BlurEffect` per player in Lighting.
 ]=]
 function LightingUtil.TweenUIBlur(size: number, info: TweenInfo): Tween?
 	if size <= 0 and not Lighting:FindFirstChild(LightingUtil.UI_BLUR_NAME) then

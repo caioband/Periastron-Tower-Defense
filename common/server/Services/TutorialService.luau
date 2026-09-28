@@ -13,42 +13,46 @@ local SharedConfig = require(Configs.SharedConfig)
 local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("TutorialService")
 
 local PortalConfig = SharedConfig.PortalConfig
 local Config = SharedConfig.TutorialConfig
 local AnalyticsConfig = ServerConfig.Analytics
 
 --[[
-	Quem ainda não fez o tutorial recebe a oferta ao cair no lobby.
+	Players who have not done the tutorial get the offer on arriving in the Lobby.
 
-	O perfil guarda um booleano: `Tutorial`. `false` é a única coisa que faz a oferta
-	aparecer — este service lê a chave quando o perfil carrega e, sendo `false`,
-	manda o `TutorialPrompt` para o cliente; o `TutorialController` põe a fala na
-	tela.
+	The profile keeps a boolean: `Tutorial`. `false` is the only thing that makes the
+	offer appear: this service reads the key when the profile loads and, if it is
+	`false`, sends `TutorialPrompt` to the client; `TutorialController` puts the
+	dialog on screen.
 
-	**As duas respostas encerram o assunto**, por caminhos diferentes:
+	**Both answers settle the matter**, along different paths:
 
-	  - **aceitar** teleporta o jogador sozinho para o mapa do tutorial (`:Start`), e
-	    a chave vira `true` quando ele vence as 5 waves, lá na outra place
+	  - **accepting** teleports the player alone to the tutorial map (`:Start`), and
+	    the key becomes `true` when they win the 5 waves, over in the other place
 	    (`:Complete`);
-	  - **recusar** escreve `true` na hora. Recusa é resposta, não adiamento: quem
-	    disse "não" não é perguntado de novo a cada entrada no lobby.
+	  - **declining** writes `true` right away. Declining is an answer, not a
+	    postponement: someone who said "no" is not asked again on every Lobby visit.
 
-	**Abandonar a partida no meio deixa a chave em `false`** — quem aceitou e saiu
-	antes do fim é perguntado de novo e recomeça da wave 1. O estado de meia partida
-	não existe em lugar nenhum, e voltar para a wave 3 com o mapa vazio seria pior
-	que recomeçar.
+	**Abandoning the match midway leaves the key at `false`**: a player who accepted
+	and left before the end is asked again and restarts from wave 1. A half-played
+	match state exists nowhere, and returning to wave 3 with an empty map would be
+	worse than restarting.
 
-	**Só no lobby.** O service é `common/` porque o jogo é um universo só, mas
-	oferecer tutorial a quem acabou de cair no meio de uma partida seria pior que
-	não oferecer. A porta é o `PlaceId` contra o `PortalConfig.LOBBY_PLACE_ID` — o
-	mesmo id que o botão "voltar ao lobby" usa.
+	**Lobby only.** The service is in `common/` because the game is a single
+	universe, but offering the tutorial to someone who just landed mid-match would
+	be worse than not offering it. The gate is `PlaceId` against
+	`PortalConfig.LOBBY_PLACE_ID`, the same id the "back to lobby" button uses.
 
-	> Em place não publicado (um `.rbxl` solto no Studio) o `PlaceId` é 0 e a oferta
-	> não sai sozinha. Para ver a fala nesse caso existe o `tutorial` do Cmdr, que
-	> entra pelo mesmo `:Prompt`.
+	> In an unpublished place (a loose `.rbxl` in Studio) `PlaceId` is 0 and the
+	> offer does not appear on its own. To see the dialog in that case there is
+	> Cmdr's `tutorial`, which goes through the same `:Prompt`.
+
+	See docs/common/tutorial.md.
 ]]
 
 local TutorialService = {
@@ -58,31 +62,31 @@ local TutorialService = {
 	}
 }
 
--- A chave no perfil. Uma constante porque ela aparece na leitura e na escrita, e
--- as duas têm de ser a mesma palavra.
+-- The profile key. A constant because it appears in both the read and the write,
+-- and both must be the same word.
 local DATA_KEY = "Tutorial"
 
 --[[
-	[Player] = true para quem chegou com o bilhete `TutorialDone` no teleporte.
+	[Player] = true for players who arrived with the `TutorialDone` ticket on teleport.
 
-	É o que separa a volta de verdade do `tutorialshop` do Cmdr: os dois rodam o
-	mesmo fluxo na tela, e só um deles é um jogador terminando o tutorial. Sem
-	isto, testar o passo da loja mandaria o passo 13 do funil para o painel.
+	It is what separates a real return from Cmdr's `tutorialshop`: both run the same
+	flow on screen, and only one is a player finishing the tutorial. Without this,
+	testing the shop step would send funnel step 13 to the dashboard.
 ]]
 TutorialService.Returned = {}
 
 --[[ INTERNAL ]]
 
 --[=[
-	O assunto "tutorial" já foi encerrado para este perfil?
+	Has the "tutorial" matter been settled for this profile?
 
-	Duas formas passam por aqui. A de hoje é o booleano. A outra é a tabela
-	`{ Match, Shop, Crates }`, que esta chave chegou a ser por algumas horas — e que
-	o reconcile do `DataService` **não** desfaz sozinho, porque ele só preenche o que
-	falta. Ela é lida como encerrada quando a partida tinha sido vencida.
+	Two shapes come through here. Today's is the boolean. The other is the
+	`{ Match, Shop, Crates }` table this key briefly was, which `DataService`'s
+	reconcile does **not** undo on its own, because it only fills in what is
+	missing. It reads as settled when the match had been won.
 
-	Sem isto, um perfil daquelas horas seria lido como "já fez" só por a tabela ser
-	um valor verdadeiro, e nunca mais receberia a oferta.
+	Without this, a profile from that window would read as "done" just because the
+	table is a truthy value, and would never get the offer again.
 ]=]
 local function isDone(data : any) : boolean
 	local stored = data and data[DATA_KEY]
@@ -95,10 +99,10 @@ local function isDone(data : any) : boolean
 end
 
 --[=[
-	Um passo do funil de onboarding, se o `AnalyticsService` estiver de pé.
+	A step of the onboarding funnel, if `AnalyticsService` is up.
 
-	Ele nunca deveria faltar (é `common/`, carrega nas duas places), mas o service
-	que mede não pode ser o que impede o tutorial de acontecer.
+	It should never be missing (it is `common/` and loads in both places), but the
+	measuring service must not be what stops the tutorial from happening.
 ]=]
 function TutorialService:funnel(player : Player, stepName : string)
 	local analytics = self.Services.AnalyticsService
@@ -108,18 +112,18 @@ function TutorialService:funnel(player : Player, stepName : string)
 end
 
 --[=[
-	Esta place é o lobby?
+	Is this place the Lobby?
 ]=]
 function TutorialService:isLobby() : boolean
 	return game.PlaceId == PortalConfig.LOBBY_PLACE_ID
 end
 
 --[=[
-	Oferece a quem ainda não fez.
+	Offers it to players who have not done it.
 
-	A leitura é pelo `DataService:Get`, que só chama de volta com o perfil aberto e
-	a tag `Loaded` posta — ou seja, nunca antes de o cliente ter o que precisa para
-	desenhar a fala.
+	The read goes through `DataService:Get`, which only calls back with the profile
+	open and the `Loaded` tag set, that is, never before the client has what it needs
+	to draw the dialog.
 ]=]
 function TutorialService:offer(player : Player)
 	local dataService = self.Services.DataService
@@ -129,8 +133,8 @@ function TutorialService:offer(player : Player)
 		if isDone(data) then return end
 		if not player.Parent then return end
 
-		-- O primeiro passo do funil é aqui, e não no `:Prompt`: aquele é a porta do
-		-- comando `tutorial` do Cmdr, e o funil mede jogador, não teste.
+		-- The funnel's first step is here, not in `:Prompt`: that is the entry for Cmdr's
+		-- `tutorial` command, and the funnel measures players, not tests.
 		self:funnel(player, "PromptShown")
 
 		self:Prompt({ player })
@@ -138,11 +142,11 @@ function TutorialService:offer(player : Player)
 end
 
 --[=[
-	Quem acabou de vencer o tutorial recebe o empurrãozinho da loja.
+	A player who just won the tutorial gets the nudge toward the shop.
 
-	O sinal é o `TutorialDone` que o servidor da partida embarcou no teleporte de
-	volta — não o perfil. Ele vale para **esta** entrada no lobby e mais nada: sair
-	e voltar não traz o apontamento de novo, que é o certo para um empurrão.
+	The signal is the `TutorialDone` the match server attached to the teleport back,
+	not the profile. It applies to **this** Lobby arrival and nothing else: leaving
+	and returning does not bring the pointer back, which is right for a nudge.
 ]=]
 function TutorialService:shopPrompt(player : Player)
 	if not self:isLobby() then return end
@@ -156,8 +160,8 @@ function TutorialService:shopPrompt(player : Player)
 		return
 	end
 
-	-- O bilhete é a prova de que ele veio de uma partida vencida: daqui para a
-	-- frente os dois últimos passos do funil valem para este jogador.
+	-- The ticket is proof they came from a won match: from here on, the funnel's
+	-- last two steps count for this player.
 	self.Returned[player] = true
 
 	self:funnel(player, "BackToLobby")
@@ -166,18 +170,18 @@ function TutorialService:shopPrompt(player : Player)
 end
 
 --[=[
-	A caixa foi comprada: tira o apontamento da loja.
+	The crate was bought: removes the shop pointer.
 
-	Ligado ao sinal `ItemPurchased` do `ShopService` — escutar em vez de enxertar
-	deixa a compra sem uma linha de tutorial no meio dela, do mesmo jeito que o
-	passo de colocação escuta o `UnitPlaced` em vez de morar dentro do `PlaceUnit`.
+	Connected to `ShopService`'s `ItemPurchased` signal. Listening instead of
+	grafting keeps the purchase free of tutorial lines, the same way the placement
+	step listens to `UnitPlaced` instead of living inside `PlaceUnit`.
 ]=]
 function TutorialService:watchShop()
 	if not self:isLobby() then return end
 
 	local shopService = Framework:Get("ShopService", false, false)
 	if not shopService or not shopService.Signals or not shopService.Signals.ItemPurchased then
-		warn("[TutorialService]: sem o sinal ItemPurchased; o passo da loja nao vai fechar sozinho.")
+		log:Warn("no ItemPurchased signal; the shop step will not complete on its own.")
 
 		return
 	end
@@ -196,8 +200,8 @@ end
 --[[ API ]]
 
 --[=[
-	Manda a oferta, sem olhar o perfil. É por aqui que o `tutorial` do Cmdr entra,
-	e é o que permite ver a fala sem zerar a própria data.
+	Sends the offer without looking at the profile. This is how Cmdr's `tutorial`
+	gets in, and it lets you see the dialog without resetting your own data.
 ]=]
 function TutorialService:Prompt(players : { Player })
 	for _, player in players do
@@ -206,15 +210,16 @@ function TutorialService:Prompt(players : { Player })
 end
 
 --[=[
-	O tutorial começou: manda o jogador para o mapa do tutorial.
+	The tutorial started: sends the player to the tutorial map.
 
-	O teleporte leva **duas** coisas: o mapa, que o `MapService` de lá já sabe ler, e
-	a flag `Tutorial`, que é o que faz o `TutorialMatchService` impor o preset e o
-	roteiro. As duas são necessárias e dizem coisas diferentes — carregar o mapa
-	Tutorial sem a flag é uma partida comum nele, que é como se testa o mapa.
+	The teleport carries **two** things: the map, which the other side's `MapService`
+	already knows how to read, and the `Tutorial` flag, which is what makes
+	`TutorialMatchService` impose the preset and the script. Both are needed and say
+	different things: loading the Tutorial map without the flag is a regular match on
+	it, which is how the map gets tested.
 
-	Vai **sozinho**, e não pelo portal: o tutorial é uma partida de um jogador só,
-	guiada, e juntar alguém a ela atrapalharia os dois.
+	It goes **alone**, not through the portal: the tutorial is a guided single-player
+	match, and adding someone to it would get in the way of both.
 ]=]
 function TutorialService:Start(player : Player)
 	local match = Config.Match
@@ -231,7 +236,7 @@ function TutorialService:Start(player : Player)
 	end)
 
 	if not success then
-		warn(`[TutorialService]: nao consegui teleportar {player.Name} para o tutorial: {result}`)
+		log:Warn(`could not teleport {player.Name} to the tutorial: {result}`)
 
 		return false
 	end
@@ -240,12 +245,13 @@ function TutorialService:Start(player : Player)
 end
 
 --[=[
-	Abre a **segunda parte** — a que acontece no lobby depois da partida: a fala e o
-	destaque no botão da loja, que fecham quando a caixa é comprada.
+	Opens the **second part**, the one that happens in the Lobby after the match: the
+	dialog and the shop button highlight, which close when the crate is bought.
 
-	Normalmente quem a dispara é o bilhete `TutorialDone` do teleporte de volta (ver
-	`shopPrompt`). Por aqui ela abre sem bilhete nenhum, que é o que o comando
-	`tutorialshop` precisa: testar esse passo sem ter de vencer as cinco waves antes.
+	Normally the `TutorialDone` ticket from the teleport back triggers it (see
+	`shopPrompt`). Through here it opens without any ticket, which is what the
+	`tutorialshop` command needs: testing this step without winning the five waves
+	first.
 ]=]
 function TutorialService:PromptShop(players : { Player })
 	local crateService = Framework:Get("CrateService", false, false)
@@ -253,9 +259,10 @@ function TutorialService:PromptShop(players : { Player })
 
 	for _, player in players do
 		--[[
-			A caixa que o fluxo manda comprar vem com unit épica garantida. A marca é
-			posta **aqui**, no servidor, quando o passo abre: o cliente nunca pede
-			raridade, então não há como forjar uma abrindo outra caixa.
+			The crate the flow asks the player to buy comes with a guaranteed epic unit.
+			The mark is set **here**, on the server, when the step opens: the client
+			never asks for a rarity, so there is no way to forge one by opening another
+			crate.
 		]]
 		if crateService and crateService.ForceRarity and guarantee then
 			crateService:ForceRarity(player, guarantee.Rarity)
@@ -266,14 +273,15 @@ function TutorialService:PromptShop(players : { Player })
 end
 
 --[=[
-	Devolve o jogador ao estado de quem nunca viu o tutorial.
+	Returns the player to the state of someone who never saw the tutorial.
 
-	É ferramenta de teste: o assunto se encerra na primeira resposta — vencer **ou**
-	recusar —, e sem isto conferir a oferta uma segunda vez exigiria apagar o perfil.
+	It is a test tool: the matter is settled on the first answer (winning **or**
+	declining), and without this, checking the offer a second time would require
+	deleting the profile.
 
-	Reabre a fala na hora quando ele está no lobby, que é o que quem está testando
-	quer ver e é o que o `PlayerDataLoaded` faria na próxima entrada. Não mexe em
-	mais nada: unidades, coins e crates continuam onde estavam.
+	It reopens the dialog right away when they are in the Lobby, which is what the
+	tester wants to see and what `PlayerDataLoaded` would do on the next join. It
+	touches nothing else: units, coins, and crates stay where they were.
 ]=]
 function TutorialService:Reset(player : Player)
 	local dataService = self.Services.DataService
@@ -293,13 +301,12 @@ function TutorialService:Reset(player : Player)
 end
 
 --[=[
-	Encerra o assunto: a oferta não volta mais para este jogador.
+	Settles the matter: the offer no longer returns for this player.
 
-	Os dois caminhos que chamam isto dizem coisas diferentes para o jogador e a
-	mesma coisa para o perfil — venceu as 5 waves, ou respondeu que não quer. A
-	chave não guarda **qual** dos dois foi, de propósito: nada no jogo pergunta isso,
-	e uma chave que responde mais do que se pergunta é uma chave que vai ficar
-	errada.
+	The two paths that call this say different things to the player and the same
+	thing to the profile: won the 5 waves, or answered that they do not want it. The
+	key does not store **which** one, on purpose: nothing in the game asks that, and
+	a key that answers more than it is asked is a key that will end up wrong.
 ]=]
 function TutorialService:MarkDone(player : Player)
 	local dataService = self.Services.DataService
@@ -311,30 +318,30 @@ function TutorialService:MarkDone(player : Player)
 end
 
 --[=[
-	A partida de tutorial foi vencida. Chamado da outra place, no fim das 5 waves.
+	The tutorial match was won. Called from the other place, at the end of the 5 waves.
 ]=]
 function TutorialService:Complete(player : Player)
 	self:MarkDone(player)
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function TutorialService:construct()
-	-- O identificador do evento nasce no servidor: sem este `Listen` vazio, o
-	-- `Listen` do cliente ficaria dez segundos esperando um evento que ninguém
-	-- registrou — e levaria junto o resto do `construct` dele. Vale nas duas places,
-	-- inclusive na que não oferece tutorial nenhum, porque o controller é comum.
+	-- The event identifier is created on the server: without this empty `Listen`,
+	-- the client's `Listen` would wait ten seconds for an event nobody registered,
+	-- and take the rest of its `construct` down with it. It applies in both places,
+	-- including the one that offers no tutorial, because the controller is common.
 	Framework:Listen("TutorialPrompt", function() end)
 	Framework:Listen("TutorialShopPrompt", function() end)
 	Framework:Listen("TutorialShopDone", function() end)
 
 	--[[
-		O fim do unboxing, que é o último passo do tutorial e o único que só o
-		cliente vê acontecer — o servidor sabe da compra (`ItemPurchased`), não da
-		animação que veio depois.
+		The end of the unboxing, which is the tutorial's last step and the only one
+		only the client sees happen: the server knows about the purchase
+		(`ItemPurchased`), not the animation that came after.
 
-		O bilhete do teleporte é quem autoriza: sem o `Returned`, o `tutorialshop` do
-		Cmdr mandaria o passo 13 para o painel a cada teste.
+		The teleport ticket authorizes it: without `Returned`, Cmdr's `tutorialshop`
+		would send step 13 to the dashboard on every test.
 	]]
 	Framework:Listen("TutorialShopFinished", function(player : Player)
 		if not self.Returned[player] then return end
@@ -346,11 +353,11 @@ function TutorialService:construct()
 
 	Framework:Listen("TutorialAnswered", function(player : Player, accepted : any)
 		if accepted ~= true then
-			-- Recusar é resposta, e resposta encerra: quem disse "não" não é
-			-- perguntado de novo toda vez que entra no lobby.
+			-- Declining is an answer, and an answer settles it: someone who said "no" is not
+			-- asked again every time they enter the Lobby.
 			--
-			-- O funil sozinho não sabe a diferença entre este "não" e a caixa de fala
-			-- ignorada: as duas param no passo 1. Por isso a recusa é um evento.
+			-- The funnel alone cannot tell this "no" from an ignored dialog box: both stop at
+			-- step 1. That is why declining is an event.
 			local analytics = self.Services.AnalyticsService
 			if analytics then
 				analytics:LogEvent(player, AnalyticsConfig.Events.Declined)
@@ -376,7 +383,7 @@ function TutorialService:construct()
 
 	local dataService = self.Services.DataService
 	if not dataService then
-		warn("[TutorialService]: sem DataService; a oferta de tutorial nao vai sair.")
+		log:Warn("no DataService; the tutorial offer will not be sent.")
 
 		return
 	end
@@ -386,7 +393,7 @@ function TutorialService:construct()
 		self:shopPrompt(player)
 	end)
 
-	-- Quem carregou antes deste service subir: o sinal deles já passou.
+	-- Players who loaded before this service started: their signal already fired.
 	for _, player in Players:GetPlayers() do
 		self:offer(player)
 		self:shopPrompt(player)

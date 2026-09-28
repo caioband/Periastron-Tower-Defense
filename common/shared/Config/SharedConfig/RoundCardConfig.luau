@@ -1,68 +1,68 @@
 --[[
-	A loja de cartas de round: `StarterGui.RoundCardShop`.
+	The round card shop: `StarterGui.RoundCardShop`.
 
-	De X em X waves o botão da loja entra pela direita da tela e oferece **três
-	cartas sorteadas** desta tabela. A carta comprada sai do caixa da partida
-	(o `roundcash` do `MobService`, e não o `Cash` do perfil), vai para a hotbar
-	do jogador e vale **um uso**: clicar nela dispara o efeito e a carta some.
+	Every few waves the shop button slides in from the right and offers **three
+	cards drawn** from this table. A bought card costs round cash (`MobService`'s
+	`roundcash`, not the profile's `Cash`), goes to the player's hotbar, and is worth
+	**one use**: clicking it fires the effect and the card disappears.
 
-	As cartas são de partida, e não de deck: elas não passam pelo perfil, não
-	sobrevivem ao round e não têm nada a ver com o `DeckConfig`. O que elas mexem
-	é no estado da sala — os inimigos, o relógio e o céu —, e por isso **quem
-	executa o efeito é o servidor** (`CardShopService`): daqui sai só a
-	declaração de qual efeito a carta aciona e com que número.
+	These are match cards, not deck cards: they do not go through the profile, do not
+	survive the round, and have nothing to do with `DeckConfig`. They change the
+	room's state (enemies, the clock, the sky), so **the server runs the effect**
+	(`CardShopService`); this only declares which effect a card triggers and with
+	what numbers.
 
-	Este módulo é compartilhado porque as duas pontas precisam dele: o cliente lê
-	título, descrição, preço e arte para desenhar a carta; o servidor lê o mesmo
-	`Id` para saber o que a compra autoriza e o que o uso executa. Sorteio e
-	cobrança acontecem **só no servidor** — o cliente nunca decide qual carta saiu
-	nem se o dinheiro deu.
+	It is shared because both sides need it: the client reads title, description,
+	price, and art to draw the card; the server reads the same `Id` to know what a
+	purchase authorizes and what a use runs. Drawing and charging happen **only on
+	the server**.
+
+	See docs/game/round-cards.md and docs/game/round-card-shop.md.
 ]]
 
 local RoundCardConfig = {}
 
---[[ ONDE A LOJA MORA NA GUI ]]
+--[[ WHERE THE SHOP LIVES IN THE GUI ]]
 
 --[[
-	Os nomes autorados, num lugar só. O controller não procura nada por caminho
-	escrito à mão: renomear uma peça no Studio é uma linha aqui.
+	The authored names, in one place. The controller looks nothing up by hand-written
+	path: renaming a piece in Studio is one line here.
 ]]
 RoundCardConfig.Gui = {
 	ScreenGui = "RoundCardShop",
 
-	-- O botão que fica na beirada da tela, e o `ImageButton` dentro dele.
+	-- The button at the screen edge, and the `ImageButton` inside it.
 	Frame = "RCSFrame",
 	Button = "CardShop",
 
-	-- O escurecido de tela cheia e a fileira de cartas dentro dele.
+	-- The full-screen backdrop and the row of cards inside it.
 	Background = "Background",
 	Row = "RoundCardShop",
 
-	-- O molde de uma carta: o wrapper é quem entra no `UIListLayout` da fileira,
-	-- e o template é a carta em si (é ele que anima).
+	-- A card's template: the wrapper enters the row's `UIListLayout`, and the
+	-- template is the card itself (the part that animates).
 	Wrapper = "CardWrapper",
 	Card = "CardTemplate",
 
 	Title = "CardTitle",
 	Description = "CardDescription",
 
-	-- O preço mora numa placa própria, que sai da carta quando ela vai para a
-	-- hotbar: no deck a carta já foi paga.
+	-- The price lives on its own plate, which leaves the card when it goes to the
+	-- hotbar: in the hand the card is already paid for.
 	Price = "PriceLabel",
 	PriceLabel = "CardPrice",
 }
 
---[[ QUANDO A LOJA APARECE ]]
+--[[ WHEN THE SHOP APPEARS ]]
 
 --[[
-	De quantas em quantas waves a loja é oferecida, por dificuldade.
+	Every how many waves the shop is offered, per difficulty.
 
-	O número é o intervalo, não a wave: com 4, a loja aparece nas waves 4, 8, 12…
-	Dificuldade mais longa espaça mais — o Nightmare tem 35 waves contra as 15 do
-	Easy, e um intervalo fixo faria a partida do topo ter mais que o dobro de
-	cartas da de baixo.
+	The number is the interval, not the wave: with 4, the shop appears on waves 4,
+	8, 12... Longer difficulties space it more: Nightmare has 35 waves against Easy's
+	15, and a fixed interval would give the top match more than twice the cards.
 
-	Preset sem entrada cai no `DefaultInterval`.
+	A preset without an entry falls back to `DefaultInterval`.
 ]]
 RoundCardConfig.Intervals = {
 	Easy = 4,
@@ -74,46 +74,46 @@ RoundCardConfig.Intervals = {
 
 RoundCardConfig.DefaultInterval = 4
 
---- Quantas cartas a loja mostra por oferta.
+--- How many cards the shop shows per offer.
 RoundCardConfig.DrawCount = 3
 
 --[[
-	Os **parâmetros** do marcador de keyframe do `Visual` — não são nomes de
-	marcador. A animação carrega um marcador só, o que estiver no `Visual.Marker` da
-	carta, e o parâmetro dele diz qual metade do gesto dispara.
+	The `Visual` keyframe marker's **parameters**, not marker names. The animation
+	carries a single marker (whatever the card's `Visual.Marker` says), and its
+	parameter says which half of the gesture fires.
 
-	Moram aqui porque as duas pontas precisam da mesma palavra: o cliente compara com
-	o que o marcador entrega, e o servidor procura por `VFX` na animação quando vai
-	conferir o `EffectDelay`.
+	They live here because both sides need the same word: the client compares it
+	with what the marker delivers, and the server looks for `VFX` in the animation
+	when checking `EffectDelay`.
 ]]
 RoundCardConfig.Markers = {
 	Sound = "Sound",
 	VFX = "VFX",
 }
 
---[[ COMO A CARTA É USADA ]]
+--[[ HOW A CARD IS USED ]]
 
 --[=[
-	O tipo de uso de uma carta: o que acontece entre o clique nela e o efeito.
+	A card's use type: what happens between clicking it and the effect.
 
-	| Tipo | O clique na hotbar… |
+	| Type | Clicking in the hotbar... |
 	| --- | --- |
-	| `Instant` | já é o uso. A carta some e o efeito entra |
-	| `Unit` | pede **uma unidade**: o próximo clique no mapa escolhe a torre |
-	| `Area` | pede **um lugar**: um anel segue o ponteiro e o clique confirma |
-	| `Move` | pede os dois, nesta ordem: a unidade e para onde ela vai |
+	| `Instant` | is the use. The card disappears and the effect starts |
+	| `Unit` | asks for **a unit**: the next map click picks the tower |
+	| `Area` | asks for **a spot**: a ring follows the pointer and a click confirms |
+	| `Move` | asks for both, in order: the unit and where it goes |
 
-	`Move` não é um quarto conceito, é os dois anteriores em fila — é o que o
-	Zippers precisa (qual torre, e para onde), e escrevê-lo como um tipo próprio
-	evita que a carta tenha que inventar um segundo clique por fora do fluxo.
+	`Move` is not a fourth concept, it is the two before in sequence: what Zippers
+	needs (which tower, and where to), written as its own type so the card does not
+	invent a second click outside the flow.
 
-	Carta sem `Use` é `Instant`: é o que as três cartas originais sempre foram, e
-	assim elas continuam valendo sem ganhar um campo que não muda nada.
+	A card without `Use` is `Instant`, so the original cards keep working without a
+	field that changes nothing.
 
-	**Quem confere é o servidor.** O cliente escolhe o alvo e manda junto com o uso;
-	o `CardShopService` recusa alvo que não bate com o tipo da carta — unidade que
-	não existe, ponto longe demais, alvo faltando. O tipo aqui é o que a **tela**
-	precisa saber para pedir a coisa certa.
+	**The server checks.** The client picks the target and sends it with the use;
+	`CardShopService` refuses a target that does not match the card's type (a unit
+	that does not exist, a spot too far away, a missing target). The type here is
+	what the **screen** needs to ask for the right thing.
 ]=]
 RoundCardConfig.Use = {
 	Instant = "Instant",
@@ -123,53 +123,49 @@ RoundCardConfig.Use = {
 }
 
 --[=[
-	A mira: o que o jogador vê enquanto a carta espera um alvo.
+	Aiming: what the player sees while the card waits for a target.
 
-	O anel é o mesmo modelo que o posicionamento já usa para o alcance de uma torre
-	(`Assets.UI.AOE.Ring`), e de propósito: o jogador já aprendeu que aquele
-	desenho quer dizer "esta área". Um segundo desenho para a mesma ideia só
-	ensinaria a mesma coisa duas vezes.
+	The ring is the same model placement already uses for a tower's range
+	(`Assets.UI.AOE.Ring`), on purpose: the player already learned that drawing means
+	"this area".
 
-	**Não há painel nem botão de cancelar.** Quem diz que a mira está aberta é a
-	própria carta na hotbar: ela cresce e apaga as vizinhas, exatamente como uma
-	carta de unidade equipada. Desistir é clicar nela de novo — a mesma coisa que
-	largar uma unidade —, ou Esc no PC.
+	**There is no panel or cancel button.** The card in the hotbar says aiming is
+	open: it grows and dims its neighbors, like an equipped unit card. Giving up is
+	clicking it again (the same as dropping a unit), or Esc on PC.
 
-	As cores separam o que a mira está pedindo: verde é "escolha um lugar" e amarelo
-	é "escolha uma torre". O vermelho é o terceiro estado do anel de área, e não uma
-	quarta coisa que a mira pede: ele é "aqui não" — o lugar debaixo do cursor encosta
-	numa área que **este mesmo jogador** já desenhou, e o clique ali não vale. É o
-	mesmo par verde/vermelho do fantasma de uma torre sendo posicionada, e de
-	propósito: é a frase que o jogador já sabe ler.
+	Colors separate what aiming asks for: green is "pick a spot" and yellow is "pick
+	a tower". Red is the area ring's third state: "not here", where the spot under the
+	cursor touches an area **this same player** already drew and a click does not
+	count. It is the same green/red pair as a tower's placement ghost, a sentence the
+	player already reads.
 
-	O segundo passo do Zippers -- a torre já escolhida, faltando o destino -- não tem
-	cor aqui porque ele não é uma mira: ele é o posicionamento inteiro, desenhado
-	pelo `UnitPlacementController:visualize`, com o fantasma da própria torre em
-	verde ou vermelho e o anel do alcance dela. Ver `_beginMovePlacement`.
+	Zippers' second step (tower chosen, destination missing) has no color here
+	because it is not aiming: it is full placement, drawn by
+	`UnitPlacementController:visualize`, with the tower's own ghost in green or red
+	and its range ring. See `_beginMovePlacement`.
 
-	O amarelo do `Unit` é o realce que a torre debaixo do ponteiro recebe, e ele vale
-	nos dois caminhos: a carta que não mexe em estatística nenhuma (o Zippers) é
-	pintada pelo próprio `RoundCardShopController`, e a que mexe é pintada pelo
-	`WeatherFeedbackController` junto com os ícones do que ela vai sentir — um realce
-	só na torre, senão as duas cores brigariam no mesmo modelo. Por isso a cor mora
-	aqui, e os dois a leem daqui.
+	`Unit`'s yellow is the highlight on the tower under the pointer, on both paths: a
+	card that changes no stat (Zippers) is painted by `RoundCardShopController`
+	itself, and one that does is painted by `WeatherFeedbackController` along with
+	the icons of what it will feel. One highlight on the tower, or the two colors
+	would fight on the same model. That is why the color lives here and both read it.
 ]=]
 RoundCardConfig.Targeting = {
 	RingAsset = { "AOE", "Ring" },
 
-	-- A part de dentro do anel cujo diâmetro serve de régua para a escala. O nome
-	-- veio assim do Studio, e é o mesmo que o `UnitPlacementController` procura.
+	-- The part inside the ring whose diameter is the ruler for scaling. The name came
+	-- that way from Studio, and it is the same one `UnitPlacementController` looks for.
 	RingPart = "Renge",
 
-	-- Raio do anel de uma carta de área que não declare o seu, em studs.
+	-- The ring radius for an area card that declares none, in studs.
 	DefaultRadius = 6,
 
 	--[[
-		O quão longe do centro do mapa um alvo pode estar.
+		How far from the map center a target may be.
 
-		É o mesmo teto do `PlaceUnit` e existe pelo mesmo motivo: um cliente
-		adulterado manda a posição que quiser, e um efeito de área centrado a dez mil
-		studs daqui não é jogada, é lixo no estado da sala.
+		The same cap as `PlaceUnit`, for the same reason: a tampered client sends any
+		position it wants, and an area effect centered ten thousand studs away is not a
+		play, it is garbage in the room's state.
 	]]
 	MaxDistance = 2000,
 
@@ -177,71 +173,70 @@ RoundCardConfig.Targeting = {
 		Area = Color3.fromRGB(120, 235, 140),
 		Unit = Color3.fromRGB(255, 215, 60),
 
-		-- O anel de área em cima de outra área do mesmo jogador: aqui não.
+		-- The area ring over another area of the same player: not here.
 		Blocked = Color3.fromRGB(235, 85, 85),
 	},
 }
 
 --[=[
-	O estouro que a torre solta quando uma carta de alvo único encosta nela.
+	The burst a tower emits when a single-target card lands on it.
 
-	É o nome de um asset em `Assets.VFX` -- um Attachment de emissores de rajada --,
-	pendurado na `HumanoidRootPart` da torre e estourado pelo `VFXController`. Ele é
-	o "pegou": a mira já disse qual torre, e sem nada acontecendo no instante do uso
-	a carta some da mão e o jogador fica sem saber se ela valeu.
+	The name of an asset in `Assets.VFX` (an Attachment of burst emitters), attached
+	to the tower's `HumanoidRootPart` and emitted by `VFXController`. It is the "got
+	it": aiming already said which tower, and with nothing happening at the moment
+	of use, the card leaves the hand and the player does not know whether it worked.
 
-	Quem dispara é o servidor, para todo mundo na sala ver o estouro na mesma torre
-	-- do mesmo jeito que o raio e o dinheiro da aura.
+	The server fires it, so everyone in the room sees the burst on the same tower,
+	like lightning and aura money.
 ]=]
 RoundCardConfig.AppliedVFX = "EffectUnitAppliedVFX"
 
 --[=[
-	O anel que **fica** no chão depois que a carta de área é usada.
+	The ring that **stays** on the ground after an area card is used.
 
-	Não é o mesmo da mira. O da mira é o círculo neutro do posicionamento, que só diz
-	"esta área" enquanto o jogador escolhe; este é a arte da carta, um Model por
-	efeito em `Assets.VFX.Rings` — o dourado do Robux, o vento do Winds, o azul do
-	Celestial. Ele nasce onde o jogador clicou e vive exatamente o tempo do efeito:
-	até o fim do round nos cajados de zona, e os segundos da imunidade no Staff of
+	Not the aiming one. The aiming ring is placement's neutral circle, which only
+	says "this area" while the player chooses; this is the card's art, one Model per
+	effect in `Assets.VFX.Rings` (the Robux gold, the Winds wind, the Celestial blue).
+	It appears where the player clicked and lives exactly as long as the effect:
+	until the end of the round for zone staffs, the immunity seconds for the Staff of
 	Healing.
 
-	`Path` é o caminho a partir de `ReplicatedStorage.Shared.Assets`. `Default` é o
-	anel de quem não declara um `Ring` próprio — carta nova de área aparece no chão
-	sem precisar de arte nova. `PartSuffix` é como a régua do raio é achada dentro do
-	Model: o `Celestial` traz um `Celestial_Ring`, e é o diâmetro **dessa** Part que
-	a escala usa.
+	`Path` is the path from `ReplicatedStorage.Shared.Assets`. `Default` is the ring
+	for cards without their own `Ring`, so a new area card appears on the ground
+	without new art. `PartSuffix` is how the radius ruler is found inside the Model:
+	`Celestial` has a `Celestial_Ring`, and **that** Part's diameter drives the scale.
 
-	A régua é uma Part nomeada, e não a caixa do Model, de propósito: um Model de VFX
-	tem emissor de partícula e attachment espalhados, e medir a caixa inteira faria o
-	anel encolher só porque alguém arrastou uma faísca para fora dele.
+	The ruler is a named Part, not the Model's box, on purpose: a VFX Model has
+	emitters and attachments spread around, and measuring the whole box would shrink
+	the ring just because someone dragged a spark outside it.
 ]=]
 RoundCardConfig.Rings = {
 	Path = { "VFX", "Rings" },
 	Default = "Base",
 	PartSuffix = "_Ring",
 
-	-- A pasta que o cliente cria no Workspace para guardar os aneis desenhados. Ver
+	-- The folder the client creates in the Workspace to hold drawn rings. See
 	-- `CardModifierController:_ringContainer`.
 	Container = "RoundCardRings",
 
-	-- Quanto o anel leva para crescer até o tamanho dele, em segundos reais.
+	-- How long the ring takes to grow to its size, in real seconds.
 	Grow = 0.35,
 }
 
---[[ ANIMAÇÃO ]]
+--[[ ANIMATION ]]
 
 --[[
-	Os tempos da tela, em segundos reais.
+	Screen timings, in real seconds.
 
-	Nada aqui passa pelo `GameClock`: é tempo de o jogador ler e escolher, e não
-	ritmo de partida. Acelerar o jogo para 2x não pode encurtar a leitura de três
-	cartas.
+	Nothing here goes through `GameClock`: it is time for the player to read and
+	choose, not match pace. Speeding the game to 2x must not shorten reading three
+	cards.
 ]]
 RoundCardConfig.Animation = {
 	--[[
-		O botão entra pela direita: nasce em `HiddenX` (fora da tela) e corre até o
-		X que o designer deixou autorado no `RCSFrame`. O `Circular` é o pedido —
-		ele chega devagar no fim, que é o que dá o encaixe na beirada.
+		The button slides in from the right: it starts at `HiddenX` (off screen) and
+		runs to the X the designer authored on `RCSFrame`. `Circular` arrives slowly
+		at the end, which gives the snap against the edge.
 	]]
 	HiddenX = 1,
 	SlideIn = 0.5,
@@ -249,17 +244,16 @@ RoundCardConfig.Animation = {
 	SlideEasing = Enum.EasingStyle.Circular,
 
 	--[[
-		O balanço do botão, enquanto a oferta está de pé e ninguém clicou nele.
+		The button's sway while the offer is up and nobody clicked it.
 
-		Ele sobe `IdleLift` pixels e fica lá em cima gingando entre `+IdleSwing` e
-		`-IdleSwing` graus, gastando `IdleSwingTime` em cada travessia. É chamariz: a
-		oferta vale poucas waves e o botão mora na beirada da tela, onde é fácil não
-		ver que ele chegou.
+		It rises `IdleLift` pixels and swings between `+IdleSwing` and `-IdleSwing`
+		degrees, taking `IdleSwingTime` for each pass. It is a lure: the offer lasts a
+		few waves and the button sits at the screen edge, easy to miss.
 
-		O clique desliga o balanço e devolve o botão ao que está autorado no Studio em
-		`IdleReturn` segundos. O alvo da volta é lido do `CardShop` no bind, e não
-		escrito aqui: girar ou mover o botão no Studio não deixa ele torto depois da
-		primeira loja.
+		A click stops the sway and returns the button to its authored state in
+		`IdleReturn` seconds. The return target is read from `CardShop` at bind, not
+		written here, so rotating or moving the button in Studio does not leave it
+		crooked after the first shop.
 	]]
 	IdleSwing = 10,
 	IdleSwingTime = 0.9,
@@ -268,35 +262,35 @@ RoundCardConfig.Animation = {
 	IdleReturn = 0.2,
 	IdleEasing = Enum.EasingStyle.Sine,
 
-	-- O escurecido de tela cheia. O alvo é a transparência autorada do
-	-- `Background`, e não um valor escrito aqui.
+	-- The full-screen backdrop. The target is `Background`'s authored transparency,
+	-- not a value written here.
 	BackgroundFade = 0.3,
 
 	--[[
-		A carta cai de cima: `DropOffset` é medido em alturas da própria carta,
-		então mexer no tamanho dela no Studio não deixa a queda curta demais.
+		The card drops from above: `DropOffset` is in the card's own heights, so
+		resizing it in Studio does not make the drop too short.
 
-		São duas metades, nesta ordem: primeiro a carta desce e a **imagem** dela
-		aparece (`CardDrop`); só quando isso termina é que o conteúdo — título,
-		descrição, preço, contornos, sombra — sobe de transparente até o valor
-		autorado (`CardReveal`). Revelar tudo junto faria o texto aparecer boiando
-		antes da carta existir por trás dele.
+		Two halves, in order: first the card descends and its **image** appears
+		(`CardDrop`); only when that ends does the content (title, description, price,
+		outlines, shadow) fade from transparent to its authored value (`CardReveal`).
+		Revealing everything together would make the text float before the card exists
+		behind it.
 	]]
 	DropOffset = 1.25,
 	CardDrop = 0.4,
 	CardReveal = 0.3,
 
-	--- O intervalo entre o começo de uma carta e o da seguinte.
+	--- The gap between one card's start and the next.
 	CardStagger = 0.5,
 
 	--[[
-		A saída sem compra: o clique fora das cartas toca a entrada ao contrário — o
-		conteúdo some primeiro (`CardReveal`) e só então a carta sobe de volta com a
-		imagem apagando (`CardDrop`).
+		Leaving without buying: a click outside the cards plays the entrance backward:
+		the content goes first (`CardReveal`) and only then the card rises with its
+		image fading (`CardDrop`).
 
-		O escalonamento da saída é bem mais curto que o `CardStagger` da entrada
-		porque aqui não há nada para ler: o jogador já decidiu que não quer nenhuma
-		das três, e a oferta continua de pé no botão da beirada.
+		The exit stagger is much shorter than the entrance's `CardStagger` because there
+		is nothing to read: the player already decided against all three, and the offer
+		stays up on the edge button.
 	]]
 	CardExitStagger = 0.08,
 	BackgroundFadeOut = 0.25,
@@ -306,99 +300,94 @@ RoundCardConfig.Animation = {
 }
 
 --[[
-	O tamanho que o wrapper assume ao entrar na hotbar.
+	The size the wrapper takes when it enters the hotbar.
 
-	É a única coisa que a carta de round precisa acertar na mão para conviver com
-	as de unidade: o molde dela vem da loja, onde a carta é grande, e a vaga na
-	hotbar é bem menor. Daí para a frente quem cuida dela é o `Components/Card` —
-	posição, arco, escala e ordem da fila saem todas de lá, iguais às outras.
+	The only thing a round card must get right in the hand to live with unit cards:
+	its template comes from the shop, where the card is large, and a hotbar slot is
+	much smaller. From then on `Components/Card` handles it (position, arc, scale,
+	and queue order), like the others.
 ]]
 RoundCardConfig.DeckCardSize = UDim2.fromScale(0.128, 1.07)
 
---[[ AS CARTAS ]]
+--[[ THE CARDS ]]
 
 --[[
-	O catálogo.
+	The catalog.
 
-	Cada entrada é uma carta que pode sair no sorteio:
+	Each entry is a card that can be drawn:
 
-	| Campo | O que é |
+	| Field | What it is |
 	| --- | --- |
-	| `Id` | a chave, e é ela que trafega na rede — o resto é texto de tela |
-	| `Title` / `Description` | o que o jogador lê na carta |
-	| `Price` | quanto sai do caixa da partida (`roundcash`) |
-	| `Weight` | o peso no sorteio; sem ele, 1 |
-	| `Use` | o que a carta pede antes de agir (ver `RoundCardConfig.Use`); sem ele, `Instant` |
-	| `Effect` | o nome do efeito no `CardShopService.Effects` |
-	| `Params` | os números que o efeito lê |
-	| `Image` | a arte da carta; sem ela, fica a autorada no `CardTemplate` |
-	| `Ring` | o anel que fica no chão nas cartas de área (ver `RoundCardConfig.Rings`) |
-	| `Visual` | o que o **personagem** faz ao usar a carta; sem ele, nada acontece |
+	| `Id` | the key, and what crosses the network; the rest is screen text |
+	| `Title` / `Description` | what the player reads on the card |
+	| `Price` | how much round cash (`roundcash`) it costs |
+	| `Weight` | the draw weight; without it, 1 |
+	| `Use` | what the card asks for before acting (see `RoundCardConfig.Use`); without it, `Instant` |
+	| `Effect` | the effect's name in `CardShopService.Effects` |
+	| `Params` | the numbers the effect reads |
+	| `Image` | the card art; without it, the art authored on `CardTemplate` |
+	| `Ring` | the ring left on the ground by area cards (see `RoundCardConfig.Rings`) |
+	| `Visual` | what the **character** does when using the card; without it, nothing |
 
-	O `Visual` é uma animação e o que ela dispara:
+	`Visual` is an animation and what it fires:
 
-	| Campo | O que é |
+	| Field | What it is |
 	| --- | --- |
-	| `Animation` | o `AnimationId` que toca no personagem de quem usou |
-	| `Marker` | o nome do marcador de keyframe que a animação carrega |
-	| `Sound` | o `Sound` em `SoundService` que o marcador `"Sound"` toca |
-	| `VFX` | o asset em `Assets.VFX` que o marcador `"VFX"` estoura |
-	| `EffectDelay` | em que segundo da animação o **efeito** entra (o instante do marcador `"VFX"`) |
-	| `SoundDelay` | em que segundo da animação o **som** entra (o instante do marcador `"Sound"`) |
+	| `Animation` | the `AnimationId` played on the user's character |
+	| `Marker` | the keyframe marker name the animation carries |
+	| `Sound` | the `Sound` in `SoundService` the `"Sound"` marker plays |
+	| `VFX` | the asset in `Assets.VFX` the `"VFX"` marker emits |
+	| `EffectDelay` | the second in the animation the **effect** starts (the `"VFX"` marker's instant) |
+	| `SoundDelay` | the second in the animation the **sound** starts (the `"Sound"` marker's instant) |
 
-	**Quem manda no tempo é a animação, e não um `task.delay`.** O mesmo marcador
-	dispara as duas coisas, e o que separa uma da outra é o **parâmetro** dele:
-	`"Sound"` toca o som, `"VFX"` estoura as partículas. Reanimar a carta no Moon
-	Animator remarca os dois sem passar por aqui — e é para isso que o marcador é um
-	só com dois parâmetros, em vez de dois marcadores com nomes diferentes.
+	**The animation keeps time, not a `task.delay`.** The same marker fires both, and
+	its **parameter** separates them: `"Sound"` plays the sound, `"VFX"` emits the
+	particles. Re-animating the card in Moon Animator re-marks both without going
+	through here.
 
-	`EffectDelay` e `SoundDelay` são as exceções, e são exceções necessárias: **eles
-	valem para quem não está tocando a animação**. O marcador só chega em quem
-	carregou a track — o servidor não escuta marcador nenhum, e o cliente que está
-	*assistindo* o gesto de outro jogador também não. Os dois números são cópias dos
-	instantes dos marcadores `"VFX"` e `"Sound"`, e é assim que o congelamento cai
-	junto com o estouro (no servidor) e que as partículas e o som saem no mesmo quadro
-	nas telas de todo mundo, em vez de saírem no clique.
+	`EffectDelay` and `SoundDelay` are the necessary exceptions: **they apply to
+	whoever is not playing the animation**. The marker only reaches whoever loaded the
+	track; the server listens to no marker, and neither does a client *watching*
+	another player's gesture. Both numbers copy the `"VFX"` and `"Sound"` marker
+	instants, which is how the freeze lands with the burst (on the server) and how
+	particles and sound come out on the same frame on everyone's screen.
 
-	Cópia envelhece, então o `CardShopService` confere os dois contra a animação de
-	verdade quando sobe e avisa se eles se afastarem — na tela de quem usou a carta
-	quem manda continua sendo o marcador, e um desvio aqui apareceria como o som da
-	sala saindo fora do gesto do dono.
+	Copies go stale, so `CardShopService` checks both against the real animation on
+	start and warns if they drift.
 
-	Carta nova é uma entrada aqui **mais** uma função no `CardShopService.Effects`
-	com o nome que estiver em `Effect`. O sorteio só oferece o que tem efeito do
-	outro lado: entrada com `Effect` que não existe é descartada com aviso, em vez
-	de virar uma carta que o jogador paga e não faz nada.
+	A new card is an entry here **plus** a function in `CardShopService.Effects` named
+	after its `Effect`. The draw only offers cards with an effect on the other side: an
+	entry with an unknown `Effect` is dropped with a warning instead of becoming a
+	card the player pays for that does nothing.
 
-	## A maioria das cartas usa o mesmo efeito
+	## Most cards use the same effect
 
-	Quase tudo que uma carta de round faz é **deixar uma regra valendo no campo**, e
-	essa regra tem uma gramática própria: o `CardModifier`. Por isso a maior parte
-	do catálogo tem `Effect = "Modifier"` e descreve em `Params.Modifiers` os
-	registros que ela cria — quem os guarda, poda e replica é o
-	`CardModifierService`.
+	Almost everything a round card does is **leave a rule on the field**, and that
+	rule has its own grammar: `CardModifier`. So most of the catalog has
+	`Effect = "Modifier"` and describes in `Params.Modifiers` the records it creates;
+	`CardModifierService` keeps, prunes, and replicates them.
 
-	Dentro de `Params`:
+	Inside `Params`:
 
-	| Campo | O que é |
+	| Field | What it is |
 	| --- | --- |
-	| `Modifiers` | a lista de registros do `CardModifier` que a carta cria |
-	| `Duration` | por quantos segundos de partida eles valem; sem isso, até o fim do round |
-	| `Radius` | o raio do anel, nas cartas de área -- e o alcance do efeito dentro dele |
+	| `Modifiers` | the list of `CardModifier` records the card creates |
+	| `Duration` | how many match seconds they last; without it, until the end of the round |
+	| `Radius` | the ring radius, on area cards, and the effect's reach inside it |
 
-	Dois campos dos registros são preenchidos **no uso**, e não aqui, porque eles
-	dependem do alvo que o jogador escolheu:
+	Two record fields are filled **on use**, not here, because they depend on the
+	target the player picked:
 
-	- `Zone = true` vira `{ Position = <onde ele clicou>, Radius = Params.Radius }`;
-	- `Target = true` vira `UnitId = <a torre que ele escolheu>`.
+	- `Zone = true` becomes `{ Position = <where they clicked>, Radius = Params.Radius }`;
+	- `Target = true` becomes `UnitId = <the tower they picked>`.
 
-	**Carta sem `Duration` dura o round inteiro.** Não é esquecimento: um buff de
-	campo comprado com o caixa da partida é uma decisão de build, e um prazo curto
-	transformaria toda carta de regra numa versão pior do Bloxy Cola. O prazo existe
-	onde ele é a graça da carta — as bebidas, que dobram um número por dez segundos.
+	**A card without `Duration` lasts the whole round.** Not an oversight: a field
+	buff bought with round cash is a build decision, and a short timer would turn
+	every rule card into a worse Bloxy Cola. Timers exist where they are the card's
+	point: the drinks, which double a number for ten seconds.
 ]]
 RoundCardConfig.Cards = {
-	--[[ ============================ AS ORIGINAIS ============================ ]]
+	--[[ ============================ THE ORIGINALS ============================ ]]
 
 	{
 		Id = "TimeStop",
@@ -415,8 +404,8 @@ RoundCardConfig.Cards = {
 			Sound = "TimeStopSFX",
 			VFX = "PlayerStopTime",
 
-			-- Os marcadores estão em 0,917s (`VFX`) e 0,75s (`Sound`) da animação,
-			-- que dura 1,317s.
+			-- The markers are at 0.917 s (`VFX`) and 0.75 s (`Sound`) of the animation,
+			-- which is 1.317 s long.
 			EffectDelay = 0.917,
 			SoundDelay = 0.75,
 		},
@@ -435,18 +424,17 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		Um guarda-chuva para a wave que está no ar, e não o cancelamento do clima.
+		An umbrella for the wave in progress, not a cancellation of the weather.
 
-		Um clima dura várias waves (`RoundConfig.Duration`), e a carta apaga só a de
-		agora: comprada na primeira wave de uma nevasca de três, a nevasca volta na
-		segunda. Quem quiser as três limpas compra três cartas -- e é isso que separa
-		esta carta de 300 de uma que desligasse o clima inteiro, que valeria muito
-		mais.
+		A weather lasts several waves (`RoundConfig.Duration`), and the card clears only
+		the current one: bought on the first wave of a three-wave blizzard, the blizzard
+		returns on the second. Clearing all three takes three cards, which is what
+		separates this 300 card from one that turned the whole weather off.
 
-		Comprada na última wave do clima, ele acaba ali e não volta; e com o céu já
-		limpo ela não faz nada, porque não há wave de clima para pular.
+		Bought on the weather's last wave, it ends there and does not return; with a
+		clear sky it does nothing, since there is no weather wave to skip.
 
-		Sem `Params`: a única wave que ela conhece é a atual.
+		No `Params`: the only wave it knows is the current one.
 	]]
 	{
 		Id = "WeatherReport",
@@ -459,13 +447,13 @@ RoundCardConfig.Cards = {
 		Effect = "WeatherReport",
 	},
 
-	--[[ ============================= INSTANTÂNEAS ============================= ]]
+	--[[ ============================== INSTANT ============================== ]]
 
 	--[[
-		Caixa na mão. É a única carta que paga mais do que custa, e o preço é o freio:
-		400 por 500 são 100 de lucro por uma vaga de oferta e um uso de hotbar. Mexer
-		nos dois números juntos é o que mantém a carta uma escolha em vez de um imposto
-		para quem não a compra.
+		Cash in hand. The only card that pays more than it costs, and the price is the
+		brake: 400 for 500 is 100 profit for an offer slot and a hotbar use. Changing
+		both numbers together keeps the card a choice instead of a tax on players who
+		skip it.
 	]]
 	{
 		Id = "MoneyBag",
@@ -480,13 +468,13 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		O buque para a sala inteira: 15% de cadencia em toda unidade, por 30 segundos
-		de partida.
+		The bouquet for the whole room: 15% attack speed on every unit, for 30 match
+		seconds.
 
-		O prazo e o que a poe na familia das bebidas, e nao na dos cajados: ela e uma
-		janela para empurrar uma wave dificil, e nao uma decisao de build. E, como toda
-		carta com `Duration`, ela sai do sorteio depois de usada e so volta na abertura
-		seguinte da loja (ver `CardShopService:_isTemporary`).
+		The timer puts it in the drinks' family, not the staffs': it is a window to push
+		through a hard wave, not a build decision. Like every card with `Duration`, it
+		leaves the draw after use and only returns at the next shop opening (see
+		`CardShopService:_isTemporary`).
 	]]
 	{
 		Id = "Trumpet",
@@ -506,10 +494,10 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		O trato do Overcharge: 25% a mais para Electric, 11% a menos para todo o
-		resto. Os dois lados são registros separados porque o `Exclude` é o que faz o
-		segundo pegar exatamente quem o primeiro não pegou — inclusive uma unidade
-		sem classe nenhuma, que leva o corte junto.
+		Overcharge's deal: 25% more for Electric, 11% less for everyone else. The two
+		sides are separate records because `Exclude` makes the second catch exactly
+		whoever the first did not, including a unit with no class, which takes the cut
+		too.
 	]]
 	{
 		Id = "Overcharge",
@@ -529,10 +517,10 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		`Cooldown +1.15x` no pedido original é cadência, e não recarga: o card promete
-		três buffs juntos, e aumentar a recarga em 15% seria um nerf escondido no meio
-		de dois buffs. `AttackSpeed = 1.15` é o que o jogador lê como "recarrega mais
-		rápido" no ícone do card — ver o comentário do `Feedback` no `WeatherConfig`.
+		"Cooldown +1.15x" in the original request means attack speed, not recharge: the
+		card promises three buffs together, and a 15% longer recharge would be a nerf
+		hidden between two buffs. `AttackSpeed = 1.15` is what the player reads as
+		"recharges faster" on the card icon; see the `Feedback` comment in `WeatherConfig`.
 	]]
 	{
 		Id = "WattsUp",
@@ -584,10 +572,10 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		O corpo a corpo passa a acertar quem vem atrás do alvo. É `Flags`, e não um
-		multiplicador: não existe "cortar 30% do de trás" — ou o golpe alcança a
-		fileira ou não alcança. Quem lê é o `UnitService:executeAttack`, e o número de
-		corpos por golpe está no `Params`.
+		Melee also hits whoever is behind the target. It is `Flags`, not a multiplier:
+		there is no "cleave 30% of the one behind"; the swing reaches the line or it
+		does not. `UnitService:executeAttack` reads it, and the bodies per swing are in
+		`Params`.
 	]]
 	{
 		Id = "CleaveItToMe",
@@ -601,18 +589,18 @@ RoundCardConfig.Cards = {
 		Params = {
 			Modifiers = {
 				--[[
-					Os números do corte moram no próprio `Flags`, e não numa constante do
-					`UnitService`: quem escolhe quantos corpos um corte pega é a carta, e uma
-					segunda carta de corte com números próprios não devia ter que mexer no
-					combate para existir.
+					The cleave numbers live in the `Flags` entry itself, not a
+					`UnitService` constant: the card chooses how many bodies a cleave hits,
+					and a second cleave card with its own numbers should not need combat
+					changes.
 
-					Dois corpos por golpe, e o segundo leva 30% a menos. A queda existe pelo
-					mesmo motivo da flecha do Archer (ver `UnitStats`): acertar dois de graça
-					faria o corpo a corpo dobrar de DPS em qualquer mapa que enfileire.
+					Two bodies per swing, and the second takes 30% less. The falloff exists
+					for the same reason as the Archer's arrow (see `UnitStats`): hitting two
+					for free would double melee DPS on any map that lines enemies up.
 
-					`Width` é a folga da linha que sai da unidade e passa pelo alvo — a mesma
-					ideia do `PierceWidth`, um pouco mais larga porque um golpe de corpo a
-					corpo é um arco, e não uma flecha.
+					`Width` is the slack of the line from the unit through the target, the
+					same idea as `PierceWidth`, a little wider because a melee swing is an
+					arc, not an arrow.
 				]]
 				{ Classes = { "Melee" }, Flags = { Cleave = { Targets = 2, Falloff = 0.3, Width = 3 } } },
 			},
@@ -620,9 +608,9 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		Magia que cresce com magia: +0,1% de dano por unidade Magic no mapa. Com dez
-		Magic em campo são 1%, com cinquenta são 5% — o `Scaling` é recontado a cada
-		quadro de combate, então vender uma torre encolhe o bônus na hora.
+		Magic that grows with magic: +0.1% damage per Magic unit on the map. Ten Magic
+		on the field give 1%, fifty give 5%; `Scaling` is recounted every combat frame,
+		so selling a tower shrinks the bonus at once.
 	]]
 	{
 		Id = "Abrakadabra",
@@ -632,8 +620,8 @@ RoundCardConfig.Cards = {
 		Weight = 1,
 		Use = RoundCardConfig.Use.Instant,
 
-		-- Sem `Image`: esta é a única carta nova que não veio com arte, e sem o campo
-		-- ela fica com a autorada no `CardTemplate` em vez de sumir da tela.
+		-- No `Image`: this card came without art, and without the field it keeps the art
+		-- authored on `CardTemplate` instead of vanishing from the screen.
 
 		Effect = "Modifier",
 		Params = {
@@ -644,9 +632,9 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		Gelo que trabalha melhor sozinho: a unidade Ice sem nenhuma vizinha a até dez
-		studs bate 25% mais rápido. A condição é recontada por quadro, então colocar
-		uma torre ao lado tira o bônus na hora — e vendê-la devolve.
+		Ice that works better alone: an Ice unit with no neighbor within ten studs
+		attacks 25% faster. The condition is recounted every frame, so placing a tower
+		next to it removes the bonus at once, and selling it restores it.
 	]]
 	{
 		Id = "Iceolated",
@@ -670,8 +658,9 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		O contrário do Iceolated: aqui o gelo é bom para ele e ruim para a vizinhança.
-		O segundo registro pega quem **não** é Ice e tem um Ice a até dez studs.
+		The opposite of Iceolated: here ice is good for itself and bad for its
+		neighbors. The second record catches units that are **not** Ice and have an Ice
+		within ten studs.
 	]]
 	{
 		Id = "IceToMeetYou",
@@ -698,11 +687,11 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		A lentidão que as unidades de gelo deixam no inimigo pesa 10% a mais.
+		The slow ice units leave on enemies weighs 10% more.
 
-		É um modificador **global** (sem classe, sem zona, sem unidade): ele não
-		descreve a torre, e sim o estado que ela deixou no inimigo — quem o lê é o
-		`MobService:ApplySlow`, pelo `CardModifier.Global`.
+		A **global** modifier (no class, no zone, no unit): it describes the state the
+		tower left on the enemy, not the tower. `MobService:ApplySlow` reads it through
+		`CardModifier.Global`.
 	]]
 	{
 		Id = "ChillOut",
@@ -720,8 +709,8 @@ RoundCardConfig.Cards = {
 		},
 	},
 
-	-- O outro lado do Chill Out, do lado do fogo: cada tique de queimadura cobra 20%
-	-- a mais. Também global, e pelo mesmo motivo.
+	-- Chill Out's counterpart on the fire side: each burn tick charges 20% more. Also
+	-- global, for the same reason.
 	{
 		Id = "FireHazard",
 		Title = "FIRE HAZARD",
@@ -739,14 +728,13 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		O último suspiro: enquanto a base estiver abaixo de 20% da vida, todo mundo
-		bate 20% a mais.
+		The last stand: while the base is below 20% health, everyone hits 20% harder.
 
-		> ⚠️ O pedido original era "+20% de HP nas unidades". **Unidade não tem vida
-		> neste jogo** — nada nunca ataca uma torre, e não há barra para encher. O que
-		> a carta faz é o mesmo contrato pelo lado que existe: um bônus de última hora,
-		> que só acende quando a partida está por um fio. No dia em que a torre tiver
-		> vida, é trocar `Damage` por `Health` nesta linha e mais nada.
+		> ⚠️ The original request was "+20% HP on units". **Units have no health in
+		> this game**: nothing ever attacks a tower, and there is no bar to fill. The
+		> card keeps the same promise on the side that exists: a last-minute bonus that
+		> only lights when the match is hanging by a thread. If towers ever get health,
+		> swap `Damage` for `Health` on this line.
 	]]
 	{
 		Id = "NoPainNoGain",
@@ -765,13 +753,11 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		Gelo em todo mundo de uma vez. Durante a neve ele cobra o dobro: a lentidão
-		sobe de 50% para 75% e os inimigos ainda ficam quebradiços, levando 20% a mais
-		de dano de qualquer fonte.
+		Ice on everyone at once. During snow it doubles down: the slow rises from 50% to
+		75% and enemies also become brittle, taking 20% more damage from any source.
 
-		A leitura do clima é do servidor, no instante do uso: comprar a carta esperando
-		a neve chegar é a jogada, e por isso o bônus é decidido quando ela é usada e
-		não quando é comprada.
+		The server reads the weather at the moment of use: buying the card and waiting
+		for snow is the play, so the bonus is decided when it is used, not when bought.
 	]]
 	{
 		Id = "AzureEverIce",
@@ -786,14 +772,14 @@ RoundCardConfig.Cards = {
 			Slow = 0.5,
 			Duration = 10,
 
-			-- O que muda quando a carta é usada com este clima no ar.
+			-- What changes when the card is used with this weather in effect.
 			Weather = "Snow",
 			WeatherSlow = 0.75,
 			WeatherBrittle = 1.2,
 		},
 	},
 
-	--[[ ========================== ALVO: UMA UNIDADE ========================== ]]
+	--[[ ========================== TARGET: ONE UNIT ========================== ]]
 
 	{
 		Id = "BloxyCola",
@@ -829,15 +815,15 @@ RoundCardConfig.Cards = {
 		},
 	},
 
-	--[[ ============================ ALVO: UM LUGAR ============================ ]]
+	--[[ ========================== TARGET: ONE SPOT ========================== ]]
 
 	--[[
-		Tira o atordoamento de quem está no círculo e deixa essas unidades imunes por
-		dez segundos. É a resposta ao trovão e ao congelamento da neve, que são as
-		duas coisas que hoje tiram uma torre da wave inteira.
+		Clears stuns on units in the circle and makes them immune for ten seconds. The
+		answer to thunder and snow freeze, the two things that take a tower out of a
+		whole wave today.
 
-		A imunidade tem prazo de propósito: sem ele, um cajado bem colocado apagaria a
-		mecânica do clima para aquele canto do mapa até o fim do round.
+		The immunity has a timer on purpose: without it, a well-placed staff would erase
+		the weather mechanic in that corner until the end of the round.
 	]]
 	{
 		Id = "StaffOfHealing",
@@ -854,16 +840,15 @@ RoundCardConfig.Cards = {
 			Immunity = 10,
 
 			--[[
-				Um modificador que não modifica nada.
+				A modifier that modifies nothing.
 
-				Ele existe para uma coisa só: **ser o círculo no chão**. O efeito desta
-				carta não é um multiplicador — é o `CleanseUnits`, que acontece num
-				instante —, mas a imunidade que ele deixa dura dez segundos, e o jogador
-				precisa ver até onde ela chegou e por quanto tempo. Como zona, o anel
-				nasce e morre junto com ela sem nenhum caminho de desenho próprio.
+				It exists for one thing: **being the circle on the ground**. This card's
+				effect is not a multiplier (it is `CleanseUnits`, instant), but the
+				immunity lasts ten seconds, and the player must see how far it reached and
+				for how long. As a zone, the ring appears and disappears with it without a
+				drawing path of its own.
 
-				Sem `Stats` e sem `Flags` de propósito: quem lê os multiplicadores passa
-				direto por ele.
+				No `Stats` and no `Flags` on purpose: multiplier readers skip it.
 			]]
 			Modifiers = {
 				{ Zone = true },
@@ -872,13 +857,13 @@ RoundCardConfig.Cards = {
 	},
 
 	--[[
-		Os três cajados são a mesma ideia: um anel no chão que troca uma coisa por
-		outra para quem estiver dentro dele. O primeiro registro é quem a carta
-		favorece, o segundo é o pedágio que todo o resto paga — e é o `Exclude` que
-		garante que os dois cubram exatamente o mapa inteiro sem sobreposição.
+		The three staffs are the same idea: a ring on the ground that trades one thing
+		for another for whoever stands inside. The first record is who the card favors,
+		the second is the toll everyone else pays, and `Exclude` makes the two cover the
+		whole map with no overlap.
 
-		O anel **fica**: sem `Duration`, ele vale até o fim do round. Onde o jogador o
-		desenha é a decisão inteira da carta.
+		The ring **stays**: without `Duration`, it lasts until the end of the round.
+		Where the player draws it is the card's whole decision.
 	]]
 	{
 		Id = "CelestialStaff",
@@ -919,16 +904,16 @@ RoundCardConfig.Cards = {
 			Modifiers = {
 				{ Zone = true, Stats = { HitIncome = 1.1, Damage = 0.8, AttackSpeed = 0.8 } },
 
-				-- A renda da fazenda por cima do anterior: quem está no anel e é de
-				-- renda leva os dois registros, e eles se multiplicam.
+				-- Farm income on top of the previous record: an income unit inside the ring gets
+				-- both records, and they multiply.
 				{ Zone = true, Farm = true, Stats = { Income = 1.15 } },
 			},
 		},
 	},
 
 	--[[
-		O anel de vento favorece quem tem o símbolo do arco -- que neste jogo é a
-		classe `Ranged`, a mesma que o ícone do card desenha (ver `ClassConfig.Icons`).
+		The wind ring favors units with the bow symbol, which in this game is the
+		`Ranged` class, the same the card icon draws (see `ClassConfig.Icons`).
 	]]
 	{
 		Id = "WindsStaff",
@@ -949,19 +934,19 @@ RoundCardConfig.Cards = {
 		},
 	},
 
-	--[[ ====================== ALVO: UMA UNIDADE E UM LUGAR ====================== ]]
+	--[[ ==================== TARGET: ONE UNIT AND ONE SPOT ==================== ]]
 
 	--[[
-		A única carta que mexe no tabuleiro em vez de nos números. O destino passa
-		pelas mesmas conferências de `PlaceUnit` — fora do caminho, longe das outras
-		torres, sem ninguém em cima —, e um destino recusado **não gasta a carta**.
+		The only card that changes the board instead of the numbers. The destination
+		goes through the same checks as `PlaceUnit` (off the path, away from other
+		towers, nobody standing there), and a refused destination **does not spend the
+		card**.
 
-		"As mesmas conferências" é literal: escolhida a torre, o segundo passo chama o
-		`UnitPlacementController:visualize`, o mesmo fantasma que larga uma torre
-		nova. O jogador escolhe o destino vendo o modelo da própria torre em meio-tom,
-		verde onde ela cabe e vermelho onde não, com o anel do alcance dela — e gira
-		com o R, como giraria uma torre recém-comprada. O fantasma começa no giro que
-		a torre já tem, então mudar só de lugar não custa nenhum passo a mais.
+		"The same checks" is literal: once the tower is picked, the second step calls
+		`UnitPlacementController:visualize`, the same ghost as placing a new tower. The
+		player picks the destination seeing the tower's own model half-transparent,
+		green where it fits and red where it does not, with its range ring, and rotates
+		with R. The ghost starts at the tower's current rotation.
 	]]
 	{
 		Id = "Zippers",
@@ -974,10 +959,8 @@ RoundCardConfig.Cards = {
 		Effect = "MoveUnit",
 
 		--[[
-			Sem `Params`: esta carta não tem área nem número para ajustar. O `Radius`
-			que morava aqui media o anel do segundo passo, e quem marca o destino agora
-			é o fantasma da torre — o anel que aparece é o do alcance dela, tirado das
-			estatísticas da própria unidade.
+			No `Params`: this card has no area or number to tune. The tower's ghost marks
+			the destination, and the ring shown is its range, from the unit's own stats.
 		]]
 	},
 }
@@ -989,7 +972,7 @@ for _, card in RoundCardConfig.Cards do
 	byId[card.Id] = card
 end
 
---- A carta do `Id`, ou nil. O `Id` vem pela rede, então pode vir qualquer coisa.
+--- The card for the `Id`, or nil. The `Id` comes from the network, so it can be anything.
 function RoundCardConfig.Get(id : any)
 	if typeof(id) ~= "string" then
 		return nil
@@ -999,12 +982,11 @@ function RoundCardConfig.Get(id : any)
 end
 
 --[=[
-	O tipo de uso de uma carta, sempre um dos de `RoundCardConfig.Use`.
+	A card's use type, always one of `RoundCardConfig.Use`.
 
-	Carta sem o campo — e carta que nem existe, porque o `Id` veio da rede — é
-	`Instant`. É o padrão certo nos dois casos: as três cartas originais são
-	instantâneas, e um `Id` desconhecido não pode fazer a tela entrar num modo de
-	mira do qual o jogador não teria como sair.
+	A card without the field, and a card that does not exist (the `Id` came from the
+	network), is `Instant`. The right default in both cases: an unknown `Id` must not
+	put the screen in an aiming mode the player could not leave.
 ]=]
 function RoundCardConfig.GetUse(id : any) : string
 	local card = RoundCardConfig.Get(id)
@@ -1013,7 +995,7 @@ function RoundCardConfig.GetUse(id : any) : string
 	return RoundCardConfig.Use[use] or RoundCardConfig.Use.Instant
 end
 
---- O raio do anel desta carta, para a mira e para a zona que ela deixa.
+--- This card's ring radius, for aiming and for the zone it leaves.
 function RoundCardConfig.GetRadius(id : any) : number
 	local card = RoundCardConfig.Get(id)
 	local radius = card and card.Params and card.Params.Radius
@@ -1021,7 +1003,7 @@ function RoundCardConfig.GetRadius(id : any) : number
 	return radius or RoundCardConfig.Targeting.DefaultRadius
 end
 
---- De quantas em quantas waves a loja aparece nesta dificuldade.
+--- Every how many waves the shop appears at this difficulty.
 function RoundCardConfig.GetInterval(difficultyName : string?) : number
 	local interval = difficultyName and RoundCardConfig.Intervals[difficultyName]
 
@@ -1029,10 +1011,10 @@ function RoundCardConfig.GetInterval(difficultyName : string?) : number
 end
 
 --[=[
-	Se esta wave é uma wave de loja.
+	Whether this wave is a shop wave.
 
-	Múltiplo exato do intervalo. A wave 0 fica de fora de propósito: ela não é uma
-	wave, é o intervalo antes da primeira.
+	An exact multiple of the interval. Wave 0 is left out on purpose: it is not a
+	wave, it is the intermission before the first.
 ]=]
 function RoundCardConfig.IsShopWave(waveNumber : number?, difficultyName : string?) : boolean
 	if typeof(waveNumber) ~= "number" or waveNumber < 1 then
@@ -1043,26 +1025,23 @@ function RoundCardConfig.IsShopWave(waveNumber : number?, difficultyName : strin
 end
 
 --[=[
-	Sorteia `count` cartas **sem repetir**, com peso.
+	Draws `count` cards **without repeats**, weighted.
 
-	`pool` é a lista de cartas candidatas (o service passa só as que têm efeito
-	registrado, e no lobby só as que a loja pode vender). O sorteio é sem reposição:
-	a carta que sai é tirada da urna e os pesos das outras continuam valendo entre
-	si, então uma carta rara não fica mais provável só porque a comum já saiu.
+	`pool` is the candidate list (the service passes only cards with a registered
+	effect, and in the Lobby only those the shop can sell). The draw is without
+	replacement: a drawn card leaves the urn and the others' weights stay relative, so
+	a rare card does not become likelier just because the common one came out.
 
-	Pool menor que `count` devolve a pool inteira embaralhada — três vagas com
-	duas cartas no catálogo é melhor mostrar duas do que repetir uma.
+	A pool smaller than `count` returns the whole pool shuffled: with two cards in
+	the catalog, showing two beats repeating one.
 
-	`rng` é um `Random` próprio, e é o que torna um sorteio **reproduzível**: a
-	vitrine da loja de cartas do lobby é a mesma para todo mundo durante quatro
-	horas, e ela é recalculada do zero em cada servidor a partir da hora (ver
-	`RoundCardShopConfig.stockFor`). Sem semente própria isso dependeria do
-	`math.random` global, que cada servidor gasta de um jeito diferente — dois
-	lobbies abertos ao mesmo tempo venderiam cartas diferentes, e um restart no meio
-	do bloco trocaria a vitrine antes da hora.
+	`rng` is a dedicated `Random`, which makes a draw **reproducible**: the Lobby card
+	shop's stock is recomputed from scratch on each server from the time and the
+	player (see `RoundCardShopConfig.stockFor`). With the global `math.random`, each
+	server would draw differently, and a restart mid-block would swap the stock early.
 
-	Sem `rng`, o sorteio é o de sempre (`math.random`): é o da oferta de round, que
-	é por jogador e por wave e não pode ser previsível.
+	Without `rng`, the draw uses `math.random`: the round offer's draw, which is per
+	player and per wave and must not be predictable.
 ]=]
 function RoundCardConfig.Draw(count : number, pool : { any }?, rng : Random?) : { any }
 	local candidates = {}

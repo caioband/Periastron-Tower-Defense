@@ -14,30 +14,32 @@ local Framework = Me.new()
 local SkipConfig = SharedConfig.SkipConfig
 
 --[=[
-	A votacao de pular a wave.
+	The skip-wave vote.
 
-	O prompt nao tem botao para abrir: ele aparece `SkipConfig.OfferDelay`
-	segundos depois de a wave comecar. Quem marca o comeco e o `WaveService`
-	(`WaveStartedAt`); aqui so se le o relogio.
+	The prompt has no button to open it: it appears `SkipConfig.OfferDelay` seconds
+	after the wave starts. `WaveService` marks the start (`WaveStartedAt`); this only
+	reads the clock.
 
-	Fechada a votacao, quem pula a wave e o `WaveService:SkipWave()`: a proxima
-	comeca com os mobs da anterior ainda no caminho.
+	Once the vote closes, `WaveService:SkipWave()` skips the wave: the next one starts
+	with the previous one's enemies still on the path.
 
-	**A votacao e da wave.** Dano de unidade nao fecha nada: aberta, ela so sai da
-	tela quando a wave deixa de poder ser pulada -- acabou sozinha, foi pulada ou o
-	round parou --, e os votos valem ate la.
+	**The vote belongs to the wave.** Unit damage closes nothing: once open, it only
+	leaves the screen when the wave can no longer be skipped (it ended on its own, was
+	skipped, or the round stopped), and votes count until then.
 
-	Cada abertura tem um `Token`. E ele que deixa o cliente esconder o prompt
-	quando o jogador clica em Cancel sem esconder o proximo: um token novo e uma
-	votacao nova, que aparece de novo para todo mundo.
+	Each opening has a `Token`. It lets the client hide the prompt when the player
+	clicks Cancel without hiding the next one: a new token is a new vote, which
+	appears again for everyone.
+
+	See docs/game/skip-wave.md.
 ]=]
 local SkipService = {
 	Services = {
 		WaveService = {},
 	},
 
-	-- Votos da votacao aberta, por UserId. Zerados a cada abertura e a cada
-	-- fechamento — ver o comentario acima.
+	-- Votes of the open vote, by UserId. Reset on every opening and every
+	-- closing; see the comment above.
 	Votes = {},
 	Active = false,
 	Token = 0,
@@ -60,9 +62,9 @@ function SkipService:_tally() : (number, number, number)
 end
 
 --[=[
-	O estado da votacao para um jogador. `required` vai junto porque e ele que o
-	contador da tela mostra: "1/3" e um voto dado de tres que faltam, e nao um de
-	tres jogadores.
+	The vote state for one player. `required` goes along because the on-screen
+	counter shows it: "1/3" is one vote cast out of three needed, not one of three
+	players.
 ]=]
 function SkipService:_sendTo(player : Player)
 	local voted, total, required = self:_tally()
@@ -103,8 +105,8 @@ function SkipService:_close()
 end
 
 --[=[
-	Se a votacao deveria estar na tela agora: uma wave pulavel no ar, comecada ha
-	pelo menos `OfferDelay` segundos.
+	Whether the vote should be on screen now: a skippable wave running, started at
+	least `OfferDelay` seconds ago.
 ]=]
 function SkipService:_shouldOffer() : boolean
 	local waveService = self.Services.WaveService
@@ -117,9 +119,9 @@ function SkipService:_shouldOffer() : boolean
 end
 
 --[=[
-	Conta os votos e pula a wave se der. Fecha a votacao nos dois casos: fechada
-	com sucesso ela cumpriu o que tinha para fazer, e recusada pelo `SkipWave`
-	(a wave acabou sozinha entre o voto e a contagem) ela perdeu o objeto.
+	Counts the votes and skips the wave if possible. It closes the vote either way:
+	closed successfully, it did what it had to do; refused by `SkipWave` (the wave
+	ended on its own between the vote and the count), it lost its object.
 ]=]
 function SkipService:_evaluate()
 	if not self.Active then return end
@@ -135,9 +137,9 @@ function SkipService:_evaluate()
 end
 
 --[=[
-	O laco que vigia a partida. Roda o round inteiro, e nao so quando ha wave: a
-	condicao de abrir e a mesma que a de manter aberto, entao o prompt entra e sai
-	sozinho conforme a partida trava e destrava.
+	The loop that watches the match. It runs for the whole round, not only when there
+	is a wave: the condition for opening is the same as for staying open, so the
+	prompt comes and goes on its own as the match stalls and unstalls.
 ]=]
 function SkipService:_watch()
 	task.spawn(function()
@@ -155,13 +157,13 @@ function SkipService:_watch()
 	end)
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function SkipService:construct()
 	--[[
-		`wants` e explicito em vez de alternar o voto: o prompt tem dois botoes, e o
-		Cancel precisa poder tirar o voto de quem clicou em Confirm sem depender de
-		o cliente saber em que estado ele estava.
+		`wants` is explicit instead of toggling the vote: the prompt has two buttons,
+		and Cancel must be able to remove the vote of someone who clicked Confirm
+		without relying on the client knowing what state it was in.
 	]]
 	Framework:Listen("VoteSkip", function(player : Player, wants : boolean?)
 		if not self.Active then return end
@@ -176,17 +178,18 @@ function SkipService:construct()
 	end)
 
 	--[[
-		O cliente pede o estado quando termina de carregar a Interface. Sem isso,
-		quem entra no meio de uma votacao aberta so a veria no proximo voto: o
-		`SkipState` do `PlayerAdded` sai antes de o controller dele estar escutando.
+		The client asks for the state when it finishes loading the Interface. Without
+		this, a player joining in the middle of an open vote would only see it on the
+		next vote: the `PlayerAdded` `SkipState` goes out before their controller is
+		listening.
 	]]
 	Framework:Listen("RequestSkipState", function(player : Player)
 		self:_sendTo(player)
 	end)
 
 	--[[
-		Quem entra muda quantos votos faltam para todo mundo, e quem sai tambem —
-		inclusive podendo fechar a votacao ao sair, se era ele o voto que faltava.
+		A player joining changes how many votes are missing for everyone, and so does a
+		player leaving, which may even close the vote if they were the missing vote.
 	]]
 	Players.PlayerAdded:Connect(function()
 		self:_broadcast()
@@ -214,8 +217,8 @@ function SkipService:start()
 end
 
 function SkipService:init()
-	-- So o que sai daqui para o cliente: `VoteSkip` e `RequestSkipState` ganham o
-	-- remoto no `construct`, quando os escutamos de verdade.
+	-- Only what goes from here to the client: `VoteSkip` and `RequestSkipState` get
+	-- their remote in `construct`, when we actually listen to them.
 	Framework:Listen("SkipState", function() end)
 end
 

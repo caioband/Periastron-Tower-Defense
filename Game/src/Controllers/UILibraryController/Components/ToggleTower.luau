@@ -9,15 +9,17 @@ local Interface = PlayerGui:WaitForChild("Interface", 500)
 local CardUpgrade = Interface:WaitForChild("CardUpgrade")
 
 --[=[
-	O card nao entra mais deslizando de fora da tela: ele cresce no lugar.
+	The card does not slide in from off screen: it grows in place.
 
-	A animacao de posicao brigava com a mecanica de arrastar logo abaixo -- se o
-	card nasce fora da tela e volta para um ponto fixo, o lugar que o jogador
-	escolheu com o dedo seria desfeito toda vez que ele trocasse de unidade.
-	Escalando a partir do proprio ponto, o card aparece onde quer que ele esteja.
+	A position animation would fight the drag mechanic just below: if the card were
+	born off screen and returned to a fixed point, the spot the player chose with their
+	finger would be undone every time they switched units. Scaling from its own point,
+	the card appears wherever it is.
 
-	O `UIScale` vem do StarterGui; se algum dia sumir de la, um novo e criado aqui
-	para o modulo nao quebrar.
+	The `UIScale` comes from StarterGui; if it ever goes missing there, a new one is
+	created here so the module does not break.
+
+	See docs/game/upgrade-card.md.
 ]=]
 local CardScale = CardUpgrade:FindFirstChildOfClass("UIScale")
 if not CardScale then
@@ -25,19 +27,19 @@ if not CardScale then
 	CardScale.Parent = CardUpgrade
 end
 
--- O tamanho "aberto" e o que o designer deixou na Studio, lido antes de qualquer
--- animacao mexer no valor.
+-- The "open" size is the one the designer left in Studio, read before any
+-- animation touches the value.
 local SHOWN_SCALE : number = CardScale.Scale > 0 and CardScale.Scale or 1
 CardScale.Scale = 0
 
 --[[
-	Elastic dos dois lados, mas com direcoes opostas: abrindo, o exagero acontece
-	no fim (o card passa um pouco do tamanho e assenta); fechando, no comeco (ele
-	da uma esticada e some). O fechamento e mais curto porque ninguem quer esperar
-	a animacao do card que acabou de usar.
+	Elastic on both sides, but in opposite directions: opening, the overshoot happens at
+	the end (the card goes a little past its size and settles); closing, at the start (it
+	stretches once and vanishes). Closing is shorter because nobody wants to wait for the
+	animation of the card they just used.
 
-	Elastic nunca leva a escala abaixo de zero: o excesso e sempre para o lado de
-	onde a animacao esta saindo.
+	Elastic never takes the scale below zero: the excess is always toward the side the
+	animation is leaving.
 ]]
 local SHOW_TWEEN = TweenInfo.new(0.55, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
 local HIDE_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Elastic, Enum.EasingDirection.In)
@@ -45,13 +47,13 @@ local HIDE_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Elastic, Enum.EasingDirec
 local scaleTween : Tween? = nil
 
 --[=[
-	Leva a escala do card ate `target`. O `from` opcional reinicia a animacao do
-	zero -- e o que da o "pop" toda vez que uma unidade e selecionada, mesmo que o
-	card ja estivesse na tela por causa da unidade anterior.
+	Takes the card's scale to `target`. The optional `from` restarts the animation from
+	zero: that is what gives the "pop" every time a unit is selected, even if the card was
+	already on screen because of the previous unit.
 
-	A animacao anterior e cancelada, e `Cancel` faz o `Completed` chegar como
-	`Cancelled`: por isso o `onComplete` de um fechamento interrompido no meio nao
-	esconde o card que uma nova selecao acabou de abrir.
+	The previous animation is canceled, and `Cancel` makes `Completed` arrive as
+	`Cancelled`: that is why the `onComplete` of a close interrupted midway does not hide
+	the card a new selection just opened.
 ]=]
 local function playScale(from : number?, target : number, tweenInfo : TweenInfo, onComplete : (() -> ())?)
 	if scaleTween then
@@ -80,26 +82,26 @@ local function playScale(from : number?, target : number, tweenInfo : TweenInfo,
 end
 
 --[[
-	Arrastar o card.
+	Dragging the card.
 
-	O jogador pega o card em qualquer ponto -- fundo, textos ou os proprios botoes
-	-- e larga onde quiser, no mouse ou no dedo. O ponto escolhido fica guardado
-	aqui em `cachedPosition` e vale para o resto da sessao: toda unidade que ele
-	selecionar depois abre o card no mesmo lugar.
+	The player grabs the card anywhere (background, text, or the buttons themselves) and
+	drops it wherever they want, with mouse or finger. The chosen spot is stored here in
+	`cachedPosition` and holds for the rest of the session: every unit they select
+	afterward opens the card in the same place.
 
-	O cache guarda a posicao em escala, e nao em pixels: assim o card continua no
-	mesmo canto da tela se a janela mudar de tamanho ou o aparelho girar.
+	The cache stores the position in scale, not pixels: that way the card stays in the
+	same corner of the screen if the window resizes or the device rotates.
 ]]
 local cachedPosition : UDim2 = CardUpgrade.Position
 
--- Quanto o ponteiro precisa andar para aquilo virar um arrasto. Abaixo disso e
--- clique: dedo nenhum fica perfeitamente parado, e o botao VENDER nao pode falhar
--- porque o toque escorregou dois pixels.
+-- How far the pointer must move for it to become a drag. Below that it is a
+-- click: no finger stays perfectly still, and the SELL button must not fail
+-- because the touch slid two pixels.
 local DRAG_THRESHOLD = 6
 
--- Depois de largar o card, o clique que fechou o arrasto ainda chega nos botoes.
--- Essa janela curta engole esse clique -- arrastar o card pelo VENDER nao pode
--- vender a unidade.
+-- After dropping the card, the click that ended the drag still reaches the buttons.
+-- This short window swallows that click: dragging the card by SELL must not
+-- sell the unit.
 local CLICK_BLOCK_TIME = 0.15
 
 local dragInput : InputObject? = nil
@@ -113,7 +115,7 @@ local function isClickSuppressed() : boolean
 end
 
 --[=[
-	O retangulo onde o card pode andar: o proprio ScreenGui.
+	The rectangle the card can move in: the ScreenGui itself.
 ]=]
 local function getParentRect() : (Vector2?, Vector2?)
 	local parent = CardUpgrade.Parent
@@ -126,11 +128,11 @@ local function getParentRect() : (Vector2?, Vector2?)
 end
 
 --[=[
-	Move o card seguindo o ponteiro, sem deixar ele sair da tela.
+	Moves the card following the pointer, without letting it leave the screen.
 
-	A conta e toda em pixels (`AbsolutePosition` ja e o canto de cima do card,
-	porque o `AnchorPoint` e 0,0) e so no fim vira escala -- que e o formato que o
-	cache guarda.
+	The math is all in pixels (`AbsolutePosition` is already the card's top corner,
+	because `AnchorPoint` is 0,0) and only at the end becomes scale, the format the cache
+	stores.
 ]=]
 local function moveCardTo(pointer : Vector2)
 	if not dragStart or not dragOrigin then return end
@@ -181,20 +183,20 @@ local function endDrag()
 end
 
 --[=[
-	Liga o inicio do arrasto num pedaco do card.
+	Hooks the drag start onto a piece of the card.
 
-	Os botoes tambem entram: eles engolem a entrada antes de ela chegar ao card, e
-	sem isso boa parte da area do card nao seria agarravel. Quem separa clique de
-	arrasto e o `DRAG_THRESHOLD`.
+	The buttons are included: they swallow input before it reaches the card, and without
+	this much of the card's area would not be grabbable. `DRAG_THRESHOLD` separates click
+	from drag.
 ]=]
 local function attachDragSource(instance : Instance)
 	if not instance:IsA("GuiObject") then return end
 	instance.InputBegan:Connect(beginDrag)
 end
 
--- Um `ImageLabel` so recebe entrada com `Active` ligado. De quebra, isso faz o
--- card engolir o clique: apertar nele nao vaza mais para o mundo atras, que era o
--- que desmarcava a unidade no meio de um arrasto.
+-- An `ImageLabel` only receives input with `Active` on. As a bonus, it makes the
+-- card swallow the click: pressing it no longer leaks to the world behind, which is
+-- what deselected the unit mid-drag.
 CardUpgrade.Active = true
 attachDragSource(CardUpgrade)
 
@@ -211,14 +213,14 @@ CardUpgrade.DescendantAdded:Connect(function(descendant)
 end)
 
 --[[
-	O movimento e o fim do arrasto sao ouvidos no `UserInputService`, e nao no
-	card: o dedo (ou o mouse) sai de cima do card o tempo todo enquanto arrasta, e
-	os eventos do proprio card parariam de chegar exatamente ai.
+	Drag movement and end are listened to on `UserInputService`, not the card: the finger
+	(or mouse) leaves the card all the time while dragging, and the card's own events
+	would stop arriving exactly then.
 
-	No toque, o objeto de entrada e o mesmo do comeco ao fim -- comparar por
-	identidade e o que impede um segundo dedo na tela de sequestrar o arrasto. No
-	mouse, o movimento chega como `MouseMovement`, um objeto diferente do botao
-	que esta segurando o card.
+	On touch, the input object is the same from start to end: comparing by identity is
+	what keeps a second finger on the screen from hijacking the drag. With a mouse,
+	movement arrives as `MouseMovement`, a different object from the button holding the
+	card.
 ]]
 UserInputService.InputChanged:Connect(function(input)
 	if not dragInput or not dragStart then return end
@@ -239,9 +241,9 @@ end)
 UserInputService.InputEnded:Connect(function(input)
 	if not dragInput then return end
 
-	-- No toque, so o proprio dedo termina o arrasto: outro dedo saindo da tela nao
-	-- pode largar o card no meio do caminho. No mouse basta o tipo bater, porque o
-	-- botao que solta e sempre o mesmo que apertou.
+	-- On touch, only the finger itself ends the drag: another finger leaving the screen
+	-- must not drop the card midway. With a mouse, a matching type is enough, because the
+	-- button that releases is always the one that pressed.
 	local endsDrag = input == dragInput
 		or (dragInput.UserInputType == Enum.UserInputType.MouseButton1
 			and input.UserInputType == Enum.UserInputType.MouseButton1)
@@ -251,8 +253,8 @@ UserInputService.InputEnded:Connect(function(input)
 	end
 end)
 
--- Alt-tab no meio do arrasto: o `InputEnded` do botao nunca chega, e sem isso o
--- card ficaria colado no ponteiro quando o jogador voltasse.
+-- Alt-tab mid-drag: the button's `InputEnded` never arrives, and without this the
+-- card would stay stuck to the pointer when the player came back.
 UserInputService.WindowFocusReleased:Connect(endDrag)
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -276,18 +278,18 @@ local Framework = Me.new()
 local module = {}
 module.currentUnit = nil
 
--- Os botoes de melhorar e vender estao trancados (partida de tutorial)? Escrito
--- pelo `refreshTutorialLock` e lido pelo texto dos dois botoes e pela previa do
--- proximo nivel.
+-- Are the upgrade and sell buttons locked (tutorial match)? Written by
+-- `refreshTutorialLock` and read by both buttons' text and by the next-level
+-- preview.
 module.tutorialLocked = false
 
 --[[
-	Os atalhos de teclado do card, e o que sai escrito no botao de cada um.
+	The card's keyboard shortcuts, and what is written on each one's button.
 
-	O formato de sufixo entre colchetes e o que o card ja trazia desenhado no
-	StarterGui ("First [V]"): o texto util primeiro, a tecla no fim. As tres letras
-	estao livres -- o unico atalho que o jogo ja tinha por perto e o `R`, que gira o
-	fantasma durante o posicionamento.
+	The bracketed suffix format is what the card already had drawn in StarterGui
+	("First [V]"): the useful text first, the key at the end. All three letters are free:
+	the only shortcut the game already had nearby is `R`, which rotates the ghost during
+	placement.
 ]]
 local KEYBINDS = {
 	Upgrade = Enum.KeyCode.E,
@@ -296,16 +298,15 @@ local KEYBINDS = {
 }
 
 --[=[
-	`text` com a tecla do atalho no fim: "SELL $250" vira "SELL $250 [X]".
+	`text` with the shortcut key at the end: "SELL $250" becomes "SELL $250 [X]".
 
-	Fora do PC devolve o texto cru. Celular e console nao tem tecla para apertar, e
-	os labels do card sao todos `TextScaled` num botao baixo -- quatro caracteres de
-	atalho que ninguem pode usar sairiam do tamanho justamente do numero que
-	interessa ler.
+	Off PC it returns the raw text. Mobile and console have no key to press, and the
+	card's labels are all `TextScaled` on a short button: four shortcut characters nobody
+	can use would come out of the size of exactly the number worth reading.
 
-	A escuta de teclado la embaixo nao depende deste teste: quem por acaso tiver um
-	teclado ligado num aparelho de toque continua conseguindo usar o atalho, so nao
-	ve o convite na tela.
+	The keyboard listener below does not depend on this check: someone who happens to
+	have a keyboard attached to a touch device can still use the shortcut, they just do
+	not see the hint on screen.
 ]=]
 local function withBind(text : string, keyCode : Enum.KeyCode) : string
 	if not PointerUtil.isPC() then
@@ -316,8 +317,8 @@ local function withBind(text : string, keyCode : Enum.KeyCode) : string
 end
 
 --[=[
-	Numero com no maximo `decimals` casas e sem zeros sobrando: 12.00 -> "12",
-	0.75 -> "0.75". So mexe na parte decimal, entao 100 continua "100".
+	A number with at most `decimals` places and no trailing zeros: 12.00 -> "12",
+	0.75 -> "0.75". It only touches the decimal part, so 100 stays "100".
 ]=]
 local function formatNumber(value : number, decimals : number?) : string
 	local text = string.format("%." .. (decimals or 0) .. "f", value)
@@ -331,8 +332,8 @@ local function formatNumber(value : number, decimals : number?) : string
 end
 
 --[=[
-	Stats do card sao numeros pequenos (dano, alcance); acima de mil
-	vale mais abreviar do que mostrar a casa decimal.
+	Card stats are small numbers (damage, range); above a thousand it is better to
+	abbreviate than to show the decimal place.
 ]=]
 local function formatStat(value : number) : string
 	if value >= 1000 then
@@ -343,9 +344,9 @@ local function formatStat(value : number) : string
 end
 
 --[=[
-	Cada label de stat do card tem um irmao menor logo abaixo, deixado no
-	StarterGui, que mostra o valor que a unidade vai ter depois do proximo upgrade.
-	A ordem aqui e {label que ja existia, previa dele}.
+	Each stat label on the card has a smaller sibling just below it, left in StarterGui,
+	which shows the value the unit will have after the next upgrade. The order here is
+	{existing label, its preview}.
 ]=]
 local PREVIEW_LABELS = {
 	{ stat = "DamagePerSecond", preview = "DamagePerSecondUpgrade" },
@@ -368,20 +369,20 @@ local function hidePreviewLabels()
 end
 
 --[=[
-	A partida de hoje e o tutorial?
+	Is today's match the tutorial?
 
-	No tutorial a torre colocada nao sobe de nivel **nem e vendida**: o roteiro
-	ensina colocar, comprar, usar carta e acelerar, e o dinheiro da partida esta
-	contado para o deck -- gastar num upgrade no meio do caminho e chegar no passo
-	do fecho sem com que comprar as outras torres, e vender a Slingshot da wave 1 e
-	desfazer o passo que o roteiro acabou de dar por cumprido.
+	In the tutorial a placed tower is not upgraded **nor sold**: the script teaches
+	placing, buying, using a card, and speeding up, and the match money is counted for
+	the deck: spending on an upgrade along the way reaches the wrap-up step with nothing
+	to buy the other towers with, and selling wave 1's Slingshot undoes the step the
+	script just counted as done.
 
-	Quem recusa de verdade e o `TutorialMatchService`, no servidor (`CanUpgrade` e
-	`CanSell`); daqui sai so o que o jogador ve: os botoes trancados e as teclas
-	mudas.
+	`TutorialMatchService`, on the server, does the real refusing (`CanUpgrade` and
+	`CanSell`); only what the player sees comes from here: locked buttons and silent keys.
 
-	Sem o controller na mao a resposta e nao -- partida comum e o caso de sempre, e
-	trancar o upgrade de quem nao esta no tutorial seria o erro mais caro dos dois.
+	Without the controller in hand the answer is no: a regular match is the usual case,
+	and locking the upgrade of someone not in the tutorial would be the costlier mistake
+	of the two.
 ]=]
 local function inTutorial() : boolean
 	local tutorial = Framework:Get("TutorialStepController", false, false)
@@ -390,37 +391,35 @@ local function inTutorial() : boolean
 end
 
 --[[
-	O clima entra nos numeros de combate do card.
+	Weather enters the card's combat numbers.
 
-	E o mesmo motivo do circulo de alcance no chao: durante a neblina a unidade
-	procura alvo num raio menor, e um card que continuasse mostrando o alcance
-	seco estaria mentindo sobre a unidade que o jogador esta olhando. Quem
-	redesenha o card na troca de clima e o `UnitPlacementController`.
+	It is the same reason as the range circle on the ground: during fog the unit looks for
+	targets in a smaller radius, and a card still showing the dry range would be lying
+	about the unit the player is looking at. `UnitPlacementController` redraws the card
+	on a weather change.
 ]]
 local function getWeather()
 	local weatherController = Framework:Get("WeatherController", false, false)
 	return weatherController and weatherController:GetCurrent() or nil
 end
 
---- Quem nao esta sob carta nenhuma. Ver `getCards`.
+--- Whoever is under no card. See `getCards`.
 local NO_CARDS = { Damage = 1, AttackSpeed = 1, Range = 1, Income = 1 }
 
 --[=[
-	O que as cartas de round estao fazendo com **esta** unidade.
+	What round cards are doing to **this** unit.
 
-	E o mesmo motivo do clima logo acima, e o mesmo motivo do circulo de alcance no
-	chao: um anel de cajado desenhado em cima da torre muda o dano, a cadencia e o
-	alcance dela, e um card que continuasse mostrando os numeros de tabela estaria
-	mentindo sobre a unidade que o jogador esta olhando. Quem redesenha o card quando
-	uma carta e usada e o `CardModifierController`.
+	The same reason as weather just above, and the same reason as the range circle on
+	the ground: a staff ring drawn over the tower changes its damage, attack speed, and
+	range, and a card still showing the table numbers would be lying about the unit the
+	player is looking at. `CardModifierController` redraws the card when a card is used.
 
-	A conta e a **mesma** do servidor -- o `CardModifier`, que e compartilhado --, e
-	nao uma segunda que possa divergir dela. O `unitId` sai da classe da unidade, e e
-	o que faz uma carta de alvo unico (o Bloxiade numa torre so) aparecer no card
-	daquela torre e em mais nenhum.
+	The math is the **same** as the server's (the shared `CardModifier`), not a second one
+	that could diverge. The `unitId` comes from the unit's class, and it is what makes a
+	single-target card (Bloxiade on one tower) show on that tower's card and no other.
 
-	Sem o controller na mao, ou com a unidade fora do Workspace, tudo vale 1: o card
-	mostra o numero de tabela, que e o que ele sempre mostrou.
+	Without the controller in hand, or with the unit outside the Workspace, everything is
+	1: the card shows the table number, which is what it always showed.
 ]=]
 local function getCards(unitModel : Model?)
 	local controller = Framework:Get("CardModifierController", false, false)
@@ -445,12 +444,12 @@ local function getCards(unitModel : Model?)
 end
 
 --[=[
-	Dano por golpe, ou a renda quando a unidade e uma Farm -- que nao ataca. Mesma
-	conta para o nivel atual e para a previa do proximo.
+	Damage per hit, or income when the unit is a Farm, which does not attack. The same
+	math for the current level and for the next-level preview.
 
-	O texto diz "PER WAVE" e nao "INCOME" porque a frequencia e a parte que o
-	jogador precisa saber para decidir se a farm se paga: a renda cai no fim de
-	cada wave, e nao no fim do round.
+	The text says "PER WAVE" and not "INCOME" because the frequency is the part the player
+	needs to know to decide whether the farm pays for itself: income drops at the end of
+	each wave, not at the end of the round.
 ]=]
 local function formatDamageOrIncome(unitName : string, level : number, weather, cards) : string
 	local upgradeConfig = SharedConfig.UnitUpgradeConfig
@@ -459,18 +458,17 @@ local function formatDamageOrIncome(unitName : string, level : number, weather, 
 	cards = cards or NO_CARDS
 
 	if farm then
-		-- O `GetIncome` devolve o numero cru; a carta entra aqui e o arredondamento e
-		-- um so, o mesmo do `payFarmUnits`. Ver o comentario do getter.
+		-- `GetIncome` returns the raw number; the card comes in here and there is a single
+		-- rounding, the same as `payFarmUnits`. See the getter's comment.
 		local income = math.floor(upgradeConfig:GetIncome(unitName, level) * cards.Income + 0.5)
 
 		return "$" .. UIUtil.formatAbbreviated(income) .. " PER WAVE"
 	end
 
 	--[[
-		Montado a partir do dano base em vez de multiplicar o `GetDamage`, para o
-		arredondamento ser o **mesmo** do servidor: ele arredonda uma vez, no fim
-		(`UnitService:getDamage`), e arredondar duas vezes deixaria o card um ponto
-		acima ou abaixo do que entra no mob.
+		Built from base damage instead of multiplying `GetDamage`, so the rounding is the
+		**same** as the server's: it rounds once, at the end (`UnitService:getDamage`), and
+		rounding twice would leave the card one point above or below what hits the enemy.
 	]]
 	local damage = math.floor((unitStats and unitStats.Damage or 0)
 		* upgradeConfig:GetDamageMultiplier(unitName, level, weather)
@@ -480,19 +478,19 @@ local function formatDamageOrIncome(unitName : string, level : number, weather, 
 end
 
 --[=[
-	Cooldown entre ataques, ou o bonus da aura quando a unidade e uma Farm.
+	Cooldown between attacks, or the aura bonus when the unit is a Farm.
 
-	Mesma ideia do label de cima: farm nao ataca, entao o cooldown dela e um numero
-	que nao quer dizer nada, e a linha e reaproveitada para o que de fato importa
-	naquela unidade. A previa do proximo nivel sai da mesma funcao, com `level + 1`.
+	The same idea as the label above: a farm does not attack, so its cooldown is a
+	meaningless number, and the line is reused for what actually matters on that unit.
+	The next-level preview comes from the same function, with `level + 1`.
 
-	"PER UNIT" esta no texto porque o bonus nao e um valor que a farm paga: e uma
-	porcentagem em cima do que CADA unidade dentro do raio ja ganha por dano e por
-	morte. Farm num canto vazio nao rende bonus nenhum, e sem isso escrito o
-	jogador leria "15%" como algo que sai da propria farm.
+	"PER UNIT" is in the text because the bonus is not a value the farm pays: it is a
+	percentage on top of what EACH unit inside the radius already earns from damage and
+	kills. A farm in an empty corner yields no bonus, and without that written the player
+	would read "15%" as something coming from the farm itself.
 
-	Farm sem aura (uma farm nova que so pague renda) continua caindo no cooldown --
-	nao ha bonus para mostrar.
+	A farm without an aura (a new farm that only pays income) still falls back to
+	cooldown: there is no bonus to show.
 ]=]
 local function formatCooldownOrBonus(unitName : string, level : number, weather, cards) : string
 	local upgradeConfig = SharedConfig.UnitUpgradeConfig
@@ -503,8 +501,8 @@ local function formatCooldownOrBonus(unitName : string, level : number, weather,
 		return formatNumber(bonus * 100, 1) .. "% PER UNIT BONUS"
 	end
 
-	-- Cadencia entra como divisao, igual ao clima: 1.15 e "bate 15% mais rapido",
-	-- ou seja, o mesmo ciclo em 1/1.15 do tempo.
+	-- Attack speed goes in as a division, like weather: 1.15 is "hits 15% faster",
+	-- that is, the same cycle in 1/1.15 of the time.
 	local cooldown = upgradeConfig:GetCooldown(unitName, level, weather)
 	if cards.AttackSpeed > 0 then
 		cooldown /= cards.AttackSpeed
@@ -514,9 +512,9 @@ local function formatCooldownOrBonus(unitName : string, level : number, weather,
 end
 
 --[=[
-	O botao de pulo do Roblox no celular, se estiver na tela. `TouchGui` so existe
-	em aparelho de toque, e nasce de novo a cada respawn -- por isso ele e
-	procurado na hora, e nunca guardado.
+	Roblox's mobile jump button, if it is on screen. `TouchGui` only exists on touch
+	devices and is recreated on every respawn, which is why it is looked up at the
+	moment and never cached.
 ]=]
 local function findJumpButton() : GuiObject?
 	local touchGui = PlayerGui:FindFirstChild("TouchGui")
@@ -536,22 +534,21 @@ function module:create(unitModel, ...)
 	self.currentUnit = unitModel
 
 	--[[
-		As tres acoes do card, cada uma numa funcao propria.
+		The card's three actions, each in its own function.
 
-		O clique e o atalho de teclado chamam a mesma funcao, entao nao existe uma
-		segunda copia das regras para sair de sincronia com a primeira -- o teto de
-		nivel do upgrade vale para os dois pelo mesmo `if`.
+		The click and the keyboard shortcut call the same function, so there is no second
+		copy of the rules to drift from the first: the upgrade's level cap applies to both
+		through the same `if`.
 
-		A trava de arrasto (`isClickSuppressed`) fica de fora delas de proposito: ela
-		existe para engolir o clique que fecha um arrasto, e quem apertou uma tecla
-		nao arrastou card nenhum.
+		The drag lock (`isClickSuppressed`) stays out of them on purpose: it exists to
+		swallow the click that ends a drag, and someone who pressed a key dragged no card.
 	]]
 	local function doSell()
 		if not unitModel then return end
 
-		-- A torre do tutorial nao se vende (ver `inTutorial`), pelo mesmo caminho do
-		-- upgrade: botao trancado, tecla recusada pelo `isButtonActive`, e esta
-		-- conferencia como fecho.
+		-- The tutorial tower cannot be sold (see `inTutorial`), along the same path as
+		-- the upgrade: button locked, key refused by `isButtonActive`, and this
+		-- check as the final lock.
 		if inTutorial() then return end
 
 		local unitId = unitModel:GetAttribute("UnitID")
@@ -562,9 +559,9 @@ function module:create(unitModel, ...)
 	local function doUpgrade()
 		if not unitModel then return end
 
-		-- O tutorial nao vende upgrade (ver `inTutorial`). O botao ja esta trancado e
-		-- a tecla ja e recusada pelo `isButtonActive`; isto aqui e o fecho do caminho,
-		-- para nenhum atalho novo passar por cima da regra sem querer.
+		-- The tutorial does not sell upgrades (see `inTutorial`). The button is already
+		-- locked and the key already refused by `isButtonActive`; this closes the path, so
+		-- no new shortcut bypasses the rule by accident.
 		if inTutorial() then return end
 
 		local level = unitModel:GetAttribute("Upgrades") or 0
@@ -590,10 +587,10 @@ function module:create(unitModel, ...)
 	end
 
 	if sellButton and unitModel then
-		-- `Activated` e nao `MouseButton1Up`: no toque, se o dedo escorrega para fora
-		-- do botao antes de soltar, o MouseButton1Up nao chega e a venda se perde.
+		-- `Activated` and not `MouseButton1Up`: on touch, if the finger slides off the
+		-- button before releasing, MouseButton1Up does not arrive and the sale is lost.
 		self.sellConnection = sellButton.Activated:Connect(function()
-			-- Quem acabou de arrastar o card pelo botao nao quis vender nada.
+			-- Someone who just dragged the card by the button did not mean to sell anything.
 			if isClickSuppressed() then return end
 
 			doSell()
@@ -627,12 +624,12 @@ function module:create(unitModel, ...)
 	end
 
 	--[[
-		Previa do proximo nivel.
+		Next-level preview.
 
-		No PC ela so aparece com o mouse em cima do custo de upgrade: o jogador ve
-		o que o dinheiro compra antes de gastar, e o card fica limpo no resto do
-		tempo. No celular nao existe "pairar por cima" -- o dedo ou esta apertando
-		ou nao esta na tela --, entao la os numeros ficam sempre visiveis.
+		On PC it only appears with the mouse over the upgrade cost: the player sees what
+		the money buys before spending, and the card stays clean the rest of the time. On
+		mobile there is no "hovering" (the finger is either pressing or off the screen), so
+		there the numbers are always visible.
 	]]
 	self.previewHovered = false
 
@@ -655,14 +652,14 @@ function module:create(unitModel, ...)
 
 	if priorityButton and unitModel then
 		--[[
-			Um clique anda uma casa no ciclo do `TargetPriority`. O que vai para o
-			servidor e o modo de destino, nao "o proximo": o botao le o estado do
-			atributo, que e o que o servidor confirmou por ultimo, entao dois cliques
-			seguidos nao se atropelam.
+			A click moves one step in the `TargetPriority` cycle. What goes to the server is
+			the target mode, not "the next one": the button reads the attribute's state,
+			which is what the server last confirmed, so two clicks in a row do not trample
+			each other.
 
-			O texto do botao nao muda aqui -- ele muda quando a confirmacao volta e
-			mexe no atributo. Assim o card nunca mostra uma prioridade que o servidor
-			recusou (unidade de outro jogador, por exemplo).
+			The button text does not change here: it changes when the confirmation comes
+			back and touches the attribute. That way the card never shows a priority the
+			server refused (another player's unit, for example).
 		]]
 		self.priorityConnection = priorityButton.Activated:Connect(function()
 			if isClickSuppressed() then return end
@@ -678,24 +675,23 @@ function module:create(unitModel, ...)
 	end
 
 	--[[
-		Os atalhos. Uma escuta so para os tres, presa ao maid: eles nascem e morrem
-		junto com o card, e uma tecla nao pode sobreviver ao card que a anunciou.
+		The shortcuts. A single listener for all three, bound to the maid: they are born
+		and die with the card, and a key must not outlive the card that announced it.
 
-		A pergunta que libera cada tecla e o `Visible` do proprio botao, e nao uma
-		copia das regras dele: e ali que ja moram "so o dono vende e melhora"
-		(`refreshOwnership`) e "Farm nao tem prioridade" (`refreshPriority`). Assim a
-		tecla nunca faz o que o botao ao lado dela nao faria -- inclusive quando o
-		botao esta fora da tela.
+		What enables each key is the button's own `Visible`, not a copy of its rules:
+		that is where "only the owner sells and upgrades" (`refreshOwnership`) and "Farms
+		have no priority" (`refreshPriority`) already live. That way the key never does
+		what the button next to it would not, including when the button is off screen.
 
-		`gameProcessed` corta o que a interface do Roblox ja consumiu: digitar um "x"
-		no chat nao pode vender a unidade selecionada.
+		`gameProcessed` cuts what Roblox's interface already consumed: typing an "x" in chat
+		must not sell the selected unit.
 	]]
 	local function isButtonActive(button : Instance?) : boolean
 		--[[
-			`Active` entra junto do `Visible` pelo mesmo motivo que o `Visible` estava
-			aqui: a tecla nunca pode fazer o que o botao ao lado dela nao faria. Botao
-			trancado (o upgrade no tutorial, ver `refreshOwnership`) recusa o clique por
-			`Active = false`, e sem esta linha o atalho seria a porta dos fundos dele.
+			`Active` goes in along with `Visible` for the same reason `Visible` was here:
+			the key must never do what the button next to it would not. A locked button (the
+			upgrade in the tutorial; see `refreshOwnership`) refuses the click through
+			`Active = false`, and without this line the shortcut would be its back door.
 		]]
 		return CardUpgrade.Visible
 			and button ~= nil
@@ -718,8 +714,8 @@ function module:create(unitModel, ...)
 	end))
 
 	if unitModel then
-		-- Upgrade muda dano/alcance/cooldown e o custo do proximo nivel; o dano total
-		-- chega em lote do servidor algumas vezes por segundo.
+		-- An upgrade changes damage/range/cooldown and the next level's cost; total damage
+		-- arrives in batches from the server a few times per second.
 		self.maid:GiveTask(unitModel:GetAttributeChangedSignal("Upgrades"):Connect(function()
 			self:refresh()
 		end))
@@ -734,11 +730,11 @@ function module:create(unitModel, ...)
 	self:refresh()
 
 	--[[
-		O card abre no lugar em que o jogador o deixou da ultima vez -- ou onde o
-		layout o colocou, se ele nunca tiver arrastado nada.
+		The card opens where the player left it last time, or where the layout put it if
+		they never dragged anything.
 
-		A posicao so e reescrita quando ninguem esta com o card na mao: trocar de
-		unidade no meio de um arrasto nao pode arrancar o card do dedo.
+		The position is only rewritten when nobody is holding the card: switching units
+		mid-drag must not yank the card from the finger.
 	]]
 	if not dragInput then
 		CardUpgrade.Position = cachedPosition
@@ -751,21 +747,20 @@ function module:create(unitModel, ...)
 end
 
 --[=[
-	Tira o botao de pulo da tela enquanto o card estiver aberto, e devolve depois.
+	Takes the jump button off screen while the card is open, and restores it afterward.
 
-	No celular o card abre exatamente por cima do canto onde o Roblox desenha o
-	botao de pulo: os dois disputam o mesmo dedo, e o jogador que ia apertar
-	VENDER pula. So no toque -- num PC o botao nem existe.
+	On mobile the card opens right over the corner where Roblox draws the jump button:
+	the two compete for the same finger, and a player about to press SELL jumps. Touch
+	only: on PC the button does not even exist.
 
-	Nao e `controls:Disable()`: isso levaria junto o direcional, e o jogador
-	continua podendo andar com o card aberto. O que sai e so o botao.
+	It is not `controls:Disable()`: that would take the thumbstick too, and the player can
+	still walk with the card open. Only the button goes.
 
-	A escondida fica vigiada porque o `TouchGui` nao e nosso: o modulo TouchJump do
-	Roblox reescreve `Visible` sozinho (ao renascer, ao sentar, ao voltar a poder
-	pular) e um respawn troca o botao por um novo. Enquanto o card estiver aberto,
-	qualquer botao de pulo que aparecer volta a ficar escondido -- e o que o
-	TouchJump quis nesse meio tempo e o que se devolve no fim, para nao acender um
-	botao que o Roblox tinha apagado de proposito.
+	Hiding is watched because `TouchGui` is not ours: Roblox's TouchJump module rewrites
+	`Visible` on its own (on respawn, on sitting, on being able to jump again) and a
+	respawn replaces the button with a new one. While the card is open, any jump button
+	that appears is hidden again, and what TouchJump wanted in the meantime is what gets
+	restored at the end, so a button Roblox had hidden on purpose does not light up.
 ]=]
 function module:setJumpButtonHidden(hidden : boolean)
 	if self.jumpMaid then
@@ -804,8 +799,8 @@ function module:setJumpButtonHidden(hidden : boolean)
 		hide(descendant)
 	end))
 
-	-- Primeiro desliga a vigia, depois devolve: assim a restauracao nao cai no
-	-- proprio observador e apaga o botao de novo.
+	-- First turn off the watcher, then restore: that way the restoration does not land
+	-- on the observer itself and hide the button again.
 	maid:GiveTask(function()
 		active = false
 
@@ -817,14 +812,14 @@ function module:setJumpButtonHidden(hidden : boolean)
 end
 
 --[=[
-	O icone de classe do card: `Melee`, `Ranged`, `Magic`, `Fire`, `Ice` ou
-	`Electric`, pela classe que a unidade declara em `UnitStats`.
+	The card's class icon: `Melee`, `Ranged`, `Magic`, `Fire`, `Ice`, or `Electric`, by
+	the class the unit declares in `UnitStats`.
 
-	Unidade sem classe (ou classe que ainda nao tem arte) esconde o label em vez de
-	mostrar um quadrado vazio -- e ele volta sozinho na proxima unidade que tiver.
+	A unit with no class (or a class with no art yet) hides the label instead of showing
+	an empty square, and it comes back on its own on the next unit that has one.
 
-	`FindFirstChild` porque o `ClassIcon` e recente no StarterGui: sem ele o card
-	inteiro continua funcionando, so sem o icone.
+	`FindFirstChild` because `ClassIcon` is recent in StarterGui: without it the whole card
+	still works, just without the icon.
 ]=]
 local function applyClassIcon(unitName : string?)
 	local icon = CardUpgrade:FindFirstChild("ClassIcon")
@@ -837,11 +832,11 @@ local function applyClassIcon(unitName : string?)
 end
 
 --[[
-	A arte que o `Info` trouxe autorada, lida uma vez e antes de qualquer troca.
+	The art `Info` came authored with, read once and before any swap.
 
-	E o padrao para onde a unidade sem retrato proprio volta. Sem guardar isso, o
-	card abriria com o rosto da unidade **anterior** -- que e um erro pior do que
-	uma moldura generica, porque ele parece certo.
+	It is the default a unit without its own portrait returns to. Without storing it, the
+	card would open with the **previous** unit's face, which is a worse mistake than a
+	generic frame, because it looks right.
 ]]
 local INFO_DEFAULT_ICON : string? = (function()
 	local info = CardUpgrade:FindFirstChild("Info")
@@ -850,14 +845,14 @@ local INFO_DEFAULT_ICON : string? = (function()
 end)()
 
 --[=[
-	O retrato da unidade no card: o `Info`, a moldura onde ficam o nome e o nivel.
+	The unit's portrait on the card: `Info`, the frame holding the name and level.
 
-	Ao contrario do `ClassIcon`, ele **nao some** quando a unidade nao tem arte
-	propria: o nome e o nivel moram dentro dele, e esconder a moldura levaria os
-	dois junto. Ele volta para a arte autorada, que e a moldura generica.
+	Unlike `ClassIcon`, it **does not hide** when the unit has no art of its own: the name
+	and level live inside it, and hiding the frame would take both along. It returns to
+	the authored art, the generic frame.
 
-	`FindFirstChild` pelo mesmo motivo do `applyClassIcon`: sem o `Info` no
-	StarterGui o card inteiro continua funcionando, so sem o retrato.
+	`FindFirstChild` for the same reason as `applyClassIcon`: without `Info` in StarterGui
+	the whole card still works, just without the portrait.
 ]=]
 local function applyUnitIcon(unitName : string?)
 	local info = CardUpgrade:FindFirstChild("Info")
@@ -867,31 +862,30 @@ local function applyUnitIcon(unitName : string?)
 end
 
 --[=[
-	A unidade selecionada e deste jogador?
+	Does the selected unit belong to this player?
 
-	Sai do atributo `Owned`, que o `UnitPlacementController` escreve no modelo na
-	hora de replicar a unidade. Ler do modelo e o mesmo caminho do nivel e da
-	prioridade: o card nao precisa perguntar a controller nenhuma quem e o dono.
+	It comes from the `Owned` attribute, which `UnitPlacementController` writes on the
+	model when replicating the unit. Reading from the model is the same path as level and
+	priority: the card does not need to ask any controller who the owner is.
 
-	Sem o atributo a resposta e nao, de proposito -- um card que abre sem saber de
-	quem e a unidade deve mostrar o que qualquer um pode fazer, e nao os botoes de
-	quem manda nela.
+	Without the attribute the answer is no, on purpose: a card that opens without knowing
+	whose unit it is should show what anyone can do, not the owner's buttons.
 ]=]
 local function isOwnedByMe(unitModel : Instance?) : boolean
 	return unitModel ~= nil and unitModel:GetAttribute("Owned") == true
 end
 
 --[=[
-	Os botoes que so o dono da unidade pode apertar.
+	The buttons only the unit's owner can press.
 
-	Vender, melhorar e trocar a prioridade sao recusados no servidor quando vem de
-	quem nao e dono (`UnitService`), entao esconde-los nao e o que protege a
-	partida -- o que eles faziam era prometer uma acao que nunca ia acontecer. O
-	card de uma unidade alheia continua abrindo inteiro: nome, nivel, stats e dano
-	feito sao justamente o que interessa olhar na unidade do outro.
+	Selling, upgrading, and changing priority are refused on the server when they come
+	from a non-owner (`UnitService`), so hiding them is not what protects the match: what
+	they did was promise an action that would never happen. The card of someone else's
+	unit still opens in full: name, level, stats, and damage dealt are exactly what is
+	worth looking at on another player's unit.
 
-	O `Priority` nao entra aqui porque ele ja tem uma regra propria por cima desta
-	(Farm nao mira em ninguem); quem cuida dele e o `refreshPriority`.
+	`Priority` is not included because it already has its own rule on top of this one
+	(Farms target nobody); `refreshPriority` handles it.
 ]=]
 function module:refreshOwnership()
 	local owned = isOwnedByMe(self.currentUnit)
@@ -907,29 +901,29 @@ function module:refreshOwnership()
 end
 
 --[=[
-	Tranca o que a partida de tutorial nao deixa fazer com a torre no chao:
-	**melhorar e vender**.
+	Locks what the tutorial match does not allow with the tower on the ground:
+	**upgrading and selling**.
 
-	Os dois botoes ficam na tela, e nao saem dela: o jogador precisa **ver** que
-	melhorar e vender existem -- o card e onde ele vai procurar as duas coisas na
-	primeira partida de verdade --, so nao pode faze-las aqui (ver `inTutorial`).
+	Both buttons stay on screen, not off it: the player needs to **see** that upgrading
+	and selling exist (the card is where they will look for both in their first real
+	match), they just cannot do them here (see `inTutorial`).
 
-	`Active = false` e o que o resto do jogo usa para recusar clique (ver o
-	`ResultController` e o cadeado das dificuldades), e ele vem junto -- mas quem
-	fecha a porta aqui e o `Interactable`: os botoes do card tem `InputSink` em
-	`Activate`, e mexer no `Active` **nao** mexe no `InputSink`. `AutoButtonColor` e
-	`Selectable` sao para o botao parecer trancado em vez de parecer quebrado.
+	`Active = false` is what the rest of the game uses to refuse clicks (see
+	`ResultController` and the difficulty lock), and it comes along, but what closes the
+	door here is `Interactable`: the card's buttons have `InputSink` on `Activate`, and
+	changing `Active` does **not** change `InputSink`. `AutoButtonColor` and `Selectable`
+	are so the button looks locked instead of broken.
 
-	As teclas caem junto pelo `isButtonActive`, que le o `Active` do proprio botao,
-	e o `doUpgrade`/`doSell` ainda conferem por conta propria: tres portas para a
-	mesma regra, porque nenhuma delas e da nossa UI sozinha.
+	The keys drop along through `isButtonActive`, which reads the button's own `Active`,
+	and `doUpgrade`/`doSell` still check on their own: three doors for the same rule,
+	because none of them belongs to our UI alone.
 
-	O `Priority` fica de fora: trocar o alvo da torre nao gasta nada, nao desfaz
-	passo nenhum e e justamente o tipo de coisa que se aprende brincando.
+	`Priority` stays out: changing the tower's target costs nothing, undoes no step, and
+	is exactly the kind of thing one learns by playing around.
 
-	Fora do tutorial isto devolve os botoes ao normal toda vez, e nao so quando algo
-	muda: o card e um so para o jogo inteiro, e um `Active` esquecido em `false`
-	sobreviveria a partida de tutorial.
+	Outside the tutorial this returns the buttons to normal every time, not only when
+	something changes: the card is a single one for the whole game, and an `Active`
+	forgotten at `false` would outlive the tutorial match.
 ]=]
 function module:refreshTutorialLock()
 	local locked = inTutorial()
@@ -953,8 +947,8 @@ function module:refreshTutorialLock()
 end
 
 --[=[
-	Preenche todo o card com os dados da unidade selecionada. Cada label leva o
-	sufixo que o designer deixou no StarterGui, so o numero e trocado.
+	Fills the whole card with the selected unit's data. Each label keeps the suffix the
+	designer left in StarterGui; only the number is swapped.
 ]=]
 function module:refresh()
 	local unitModel = self.currentUnit
@@ -982,38 +976,37 @@ function module:refresh()
 	applyClassIcon(unitName)
 	applyUnitIcon(unitName)
 
-	-- No nivel maximo o atalho nao entra: a tecla nao faz nada ali, e anunciar uma
-	-- que nao responde e pior do que nao anunciar nenhuma.
+	-- At max level the shortcut is not shown: the key does nothing there, and announcing
+	-- one that does not respond is worse than announcing none.
 	if upgradeLabel then
 		if upgradeConfig:IsMaxed(level) then
 			upgradeLabel.Text = "MAX"
 		else
 			local cost = "$" .. UIUtil.formatAbbreviated(upgradeConfig:GetCost(unitName, level))
 
-			-- Botao trancado nao anuncia atalho, pela mesma razao do nivel maximo: a
-			-- tecla nao faz nada ali, e convidar para uma que nao responde e pior do
-			-- que nao convidar para nenhuma.
+			-- A locked button does not announce a shortcut, for the same reason as max level:
+			-- the key does nothing there, and inviting to one that does not respond is worse
+			-- than inviting to none.
 			upgradeLabel.Text = if self.tutorialLocked then cost else withBind(cost, KEYBINDS.Upgrade)
 		end
 	end
 
-	-- Mesma conta do servidor no `SellUnit`: parte do que foi investido volta.
+	-- The same math as the server's `SellUnit`: part of what was invested comes back.
 	if sellLabel then
 		local invested = upgradeConfig:GetInvested(unitName, level)
 		local refund = math.floor(invested * SharedConfig.SellRefundRatio)
 		local text = "SELL $" .. UIUtil.formatAbbreviated(refund)
 
-		-- Botao trancado nao anuncia atalho, como o upgrade logo acima.
+		-- A locked button does not announce a shortcut, like the upgrade just above.
 		sellLabel.Text = if self.tutorialLocked then text else withBind(text, KEYBINDS.Sell)
 	end
 
 	--[[
-		O label `DamagePerSecond` mostra o dano por golpe, nao o DPS: o numero que
-		interessa na hora de comprar um upgrade e o que entra no mob por batida — o
-		cooldown ja esta logo abaixo, no proprio card, para quem quiser a conta por
-		segundo.
+		The `DamagePerSecond` label shows damage per hit, not DPS: the number that matters
+		when buying an upgrade is what hits the enemy per strike; the cooldown is right
+		below on the card itself, for anyone who wants the per-second math.
 
-		Farm nao ataca: no lugar do dano, a renda por wave.
+		Farms do not attack: in place of damage, income per wave.
 	]]
 	local cards = getCards(self.currentUnit)
 
@@ -1028,12 +1021,12 @@ function module:refresh()
 end
 
 --[=[
-	Escreve nas previas o que a unidade vira depois do proximo upgrade -- os mesmos
-	getters do card, so que com `level + 1`, entao dano, cooldown e alcance da
-	previa saem da mesma conta que o servidor usa em combate (clima incluido).
+	Writes into the previews what the unit becomes after the next upgrade: the same
+	getters as the card, just with `level + 1`, so the preview's damage, cooldown, and
+	range come from the same math the server uses in combat (weather included).
 
-	No nivel maximo as previas somem, mesmo no celular: nao ha proximo valor para
-	mostrar, e o custo ao lado ja esta escrito "MAX".
+	At max level the previews hide, even on mobile: there is no next value to show, and
+	the cost next to it already says "MAX".
 ]=]
 function module:refreshPreview()
 	local unitModel = self.currentUnit
@@ -1046,17 +1039,17 @@ function module:refreshPreview()
 	end
 
 	--[[
-		Unidade alheia nao mostra previa nenhuma. No PC isso ja acontecia sozinho --
-		sem o botao de upgrade na tela nao ha o que pairar --, mas no celular a previa
-		aparece sem hover, e ficariam numeros do proximo nivel ao lado de um upgrade
-		que nao existe mais no card.
+		Someone else's unit shows no preview at all. On PC this already happened on its own
+		(with no upgrade button on screen there is nothing to hover), but on mobile the
+		preview appears without hover, and there would be next-level numbers next to an
+		upgrade that is no longer on the card.
 	]]
 	if not isOwnedByMe(unitModel) then
 		shouldShow = false
 	end
 
-	-- Upgrade trancado nao tem proximo nivel para prometer: no tutorial a previa
-	-- seria a propaganda de um botao que nao responde.
+	-- A locked upgrade has no next level to promise: in the tutorial the preview
+	-- would be an ad for a button that does not respond.
 	if self.tutorialLocked then
 		shouldShow = false
 	end
@@ -1088,8 +1081,8 @@ function module:refreshPreview()
 end
 
 --[=[
-	Escreve no botao a prioridade de alvo que a unidade esta usando. Sai do
-	atributo do modelo, que e o que o servidor mandou -- o botao nunca adivinha.
+	Writes on the button the target priority the unit is using. It comes from the model's
+	attribute, which is what the server sent: the button never guesses.
 ]=]
 function module:refreshPriority()
 	local button = CardUpgrade:FindFirstChild("Priority")
@@ -1100,8 +1093,8 @@ function module:refreshPriority()
 	if not unitModel or not unitModel.Parent then return end
 
 	--[[
-		Duas razoes para o botao sair da tela, e as duas valem ao mesmo tempo: Farm
-		nao mira em ninguem, e prioridade de unidade alheia o servidor recusa (ver
+		Two reasons for the button to leave the screen, and both hold at once: Farms target
+		nobody, and the server refuses priority changes on someone else's unit (see
 		`refreshOwnership`).
 	]]
 	local unitStats = SharedConfig.UnitStats[unitModel.Name]
@@ -1128,9 +1121,9 @@ function module:destroy()
 
 	self.maid = nil
 
-	-- O card so sai da tela quando a animacao termina de encolher. Se uma nova
-	-- unidade for selecionada nesse meio tempo, o `playScale` do `create` cancela
-	-- este tween e este `Visible = false` nunca chega a acontecer.
+	-- The card only leaves the screen when the shrink animation ends. If a new unit
+	-- is selected in the meantime, `create`'s `playScale` cancels this tween and
+	-- this `Visible = false` never happens.
 	playScale(nil, 0, HIDE_TWEEN, function()
 		CardUpgrade.Visible = false
 		self:setJumpButtonHidden(false)

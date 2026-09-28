@@ -1,6 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -13,40 +12,38 @@ local SharedConfig = require(Configs.SharedConfig)
 local LightingUtil = require(Utils.LightingUtil)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("LightingService")
 
 local Config = SharedConfig.LightingConfig
 
--- Log da troca: so no Studio, para nao poluir o console de producao. Existe porque
--- "o preset foi aplicado" nao da para conferir olhando o Lighting depois — se um
--- preset nao declara atributo nenhum, o resultado correto e nada mudar.
-local IS_STUDIO = RunService:IsStudio()
-
-local function lightingPrint(...)
-	if not IS_STUDIO then return end
-	print("[LightingService]", ...)
-end
+-- Each apply is logged (Studio only) because "the preset was applied" cannot be
+-- checked by looking at Lighting afterward: if a preset declares no attributes,
+-- the correct result is that nothing changes.
 
 --[[
-	Troca de preset de Lighting.
+	Switches the Lighting preset.
 
-	Um preset é uma Folder em `ReplicatedStorage.Shared.Assets.Lighting`: os
-	atributos dela viram propriedades do `Lighting`, os filhos viram as instâncias
-	dentro dele (Sky, Atmosphere, ColorCorrection…). `Apply` clona a pasta, limpa o
-	Lighting e joga o conteúdo do clone lá dentro.
+	A preset is a Folder in `ReplicatedStorage.Shared.Assets.Lighting`: its
+	attributes become `Lighting` properties, and its children become the instances
+	inside it (Sky, Atmosphere, ColorCorrection…). `Apply` clones the folder, clears
+	Lighting, and moves the clone's contents in.
 
-	O corte aqui é seco, de propósito — o servidor é a verdade e quem entra no meio
-	da partida tem que receber o estado final direto. Quem suaviza é o
-	`LightingController`, no cliente.
+	The cut here is hard, on purpose: the server is the truth, and a player who joins
+	mid-match must receive the final state directly. `LightingController` smooths it
+	on the client.
 
 		local Lighting = Framework:Get("LightingService")
 
-		Lighting:Apply("Blizzard")        -- transição no tempo padrão
-		Lighting:Apply("Foggy", 4)        -- transição de 4s
-		Lighting:Apply("Foggy", 0)        -- sem transição
+		Lighting:Apply("Blizzard")        -- transition at the default time
+		Lighting:Apply("Foggy", 4)        -- 4s transition
+		Lighting:Apply("Foggy", 0)        -- no transition
 
-	Fica em `common/` porque as duas places usam.
+	It lives in `common/` because both places use it.
+
+	See docs/common/lighting.md.
 ]]
 
 local LightingService = {
@@ -56,17 +53,17 @@ local LightingService = {
 LightingService.Current = nil :: string?
 LightingService.Root = nil :: Folder?
 
--- O preset atual teve o conteúdo trocado por um `Register`: o próximo `Apply`
--- nele tem que valer, em vez de cair no atalho de "já é esse".
+-- The current preset had its contents replaced by a `Register`: the next `Apply`
+-- on it must take effect instead of hitting the "already this one" shortcut.
 LightingService._dirty = false
 
---[[ MONTAGEM ]]
+--[[ SETUP ]]
 
 --[[
-	Folder solta dentro do Lighting é preset autorado na place (é assim que a
-	Main Game guarda `FoggyLightning` e `BlizzardLightning`). Elas precisam sair de
-	lá: o clear do `Apply` levaria as duas junto, e o cliente não conseguiria ler os
-	valores de origem da transição de dentro do `Lighting`.
+	A loose Folder inside Lighting is a preset authored in the place (that is how
+	Main Game keeps `FoggyLightning` and `BlizzardLightning`). They must be moved
+	out: `Apply`'s clear would take both with it, and the client could not read the
+	transition's source values from inside `Lighting`.
 ]]
 function LightingService:_migrateAuthoredPresets(root: Folder)
 	for _, child in Lighting:GetChildren() do
@@ -74,7 +71,7 @@ function LightingService:_migrateAuthoredPresets(root: Folder)
 		if child:GetAttribute(Config.KeepAttribute) == true then continue end
 
 		if root:FindFirstChild(child.Name) then
-			warn(`[LightingService]: já existe o preset "{child.Name}" em Assets.Lighting; a Folder de mesmo nome dentro do Lighting foi ignorada.`)
+			log:StudioWarn(`preset "{child.Name}" already exists in Assets.Lighting; the Folder with the same name inside Lighting was ignored.`)
 			continue
 		end
 
@@ -83,12 +80,12 @@ function LightingService:_migrateAuthoredPresets(root: Folder)
 end
 
 --[[
-	Monta o preset baseline a partir do Lighting que veio autorado na place: as
-	propriedades atuais viram atributos, o que sobrou de filho vira clone dentro
-	dele.
+	Builds the baseline preset from the Lighting authored in the place: current
+	properties become attributes, and remaining children become clones inside it.
 
-	Sem isto a primeira troca não teria de onde tweenar: o cliente lê os valores de
-	origem do preset anterior, e antes da primeira chamada não existiria nenhum.
+	Without this, the first switch would have nothing to tween from: the client
+	reads the source values from the previous preset, and before the first call
+	there would be none.
 ]]
 function LightingService:_captureBaseline(root: Folder): string
 	local name = Config.BaselineName
@@ -104,8 +101,8 @@ function LightingService:_captureBaseline(root: Folder): string
 		folder:SetAttribute(propertyName, value)
 	end
 
-	-- O que é marcado para sobreviver ao clear fica de fora: ele já vai estar lá
-	-- quando o baseline for reaplicado, e entrar no preset também viraria duplicata.
+	-- What is marked to survive the clear is left out: it will already be there when
+	-- the baseline is reapplied, and adding it to the preset would duplicate it.
 	for _, child in Lighting:GetChildren() do
 		if child:GetAttribute(Config.KeepAttribute) == true then continue end
 		child:Clone().Parent = folder
@@ -120,7 +117,7 @@ function LightingService:_setup()
 
 	local root = LightingUtil.GetPresetsRoot(true)
 	if not root then
-		warn("[LightingService]: não consegui criar a pasta de presets; o service fica inerte.")
+		log:Warn("could not create the presets folder; the service stays inert.")
 		return
 	end
 
@@ -151,12 +148,13 @@ function LightingService:GetCurrent(): string?
 end
 
 --[[
-	Registra como preset uma Folder que está fora de `Assets.Lighting` — a pasta
-	`Lighting` de um mapa em `ServerStorage`, por exemplo.
+	Registers as a preset a Folder outside `Assets.Lighting`: a map's `Lighting`
+	folder in `ServerStorage`, for example.
 
-	O clone para a pasta de presets é o que faz a transição existir: `ServerStorage`
-	não replica, então sem isto o cliente não teria de onde ler os valores de
-	destino. Devolve o nome com que o preset ficou registrado, para passar ao `Apply`.
+	The clone into the presets folder is what makes the transition possible:
+	`ServerStorage` does not replicate, so without it the client would have nowhere
+	to read the target values from. Returns the name the preset was registered
+	under, to pass to `Apply`.
 ]]
 function LightingService:Register(folder: Instance, name: string?): string?
 	self:_setup()
@@ -165,7 +163,7 @@ function LightingService:Register(folder: Instance, name: string?): string?
 	if not root then return nil end
 
 	if not folder:IsA("Folder") then
-		warn(`[LightingService]: "{folder:GetFullName()}" não é uma Folder; não dá para registrar como preset.`)
+		log:StudioWarn(`"{folder:GetFullName()}" is not a Folder; it cannot be registered as a preset.`)
 		return nil
 	end
 
@@ -188,18 +186,19 @@ function LightingService:Register(folder: Instance, name: string?): string?
 end
 
 --[[
-	Deixa o Lighting igual ao preset e avisa os clientes.
+	Makes Lighting match the preset and notifies clients.
 
-	`transitionTime` só viaja para o cliente — aqui a troca é sempre imediata.
-	`0` pede corte seco também no cliente.
+	`transitionTime` only travels to the client: here the switch is always immediate.
+	`0` asks for a hard cut on the client too.
 
-	`force` reaplica mesmo que o preset já seja o atual, para quem acabou de mexer
-	no conteúdo da pasta e quer ver o resultado (é o que o comando `lighting` faz).
+	`force` reapplies even if the preset is already current, for someone who just
+	edited the folder's contents and wants to see the result (that is what the
+	`lighting` command does).
 ]]
 function LightingService:Apply(name: string, transitionTime: number?, force: boolean?): boolean
 	local preset = self:GetPreset(name)
 	if not preset then
-		warn(`[LightingService]: preset "{name}" não existe em Assets.Lighting.`)
+		log:StudioWarn(`preset "{name}" does not exist in Assets.Lighting.`)
 		return false
 	end
 
@@ -210,8 +209,8 @@ function LightingService:Apply(name: string, transitionTime: number?, force: boo
 
 	local clone = preset:Clone()
 	if not clone then
-		-- `Archivable = false` na pasta faz o Clone devolver nil.
-		warn(`[LightingService]: preset "{name}" não é clonável (Archivable = false?); nada foi aplicado.`)
+		-- `Archivable = false` on the folder makes Clone return nil.
+		log:StudioWarn(`preset "{name}" cannot be cloned (Archivable = false?); nothing was applied.`)
 		return false
 	end
 
@@ -230,8 +229,8 @@ function LightingService:Apply(name: string, transitionTime: number?, force: boo
 	end
 	clone:Destroy()
 
-	-- Propriedade que o preset não declara fica como estava: um preset pode mexer
-	-- só na neblina sem ter que repetir a iluminação inteira.
+	-- A property the preset does not declare stays as it was: a preset can change
+	-- only the fog without repeating the whole lighting setup.
 	local written = {}
 	for propertyName, value in LightingUtil.ReadPresetAttributes(preset) do
 		local ok, err = pcall(function()
@@ -241,23 +240,23 @@ function LightingService:Apply(name: string, transitionTime: number?, force: boo
 		if ok then
 			table.insert(written, propertyName)
 		else
-			warn(`[LightingService]: preset "{name}" não conseguiu escrever Lighting.{propertyName}: {err}`)
+			log:StudioWarn(`preset "{name}" could not write Lighting.{propertyName}: {err}`)
 		end
 	end
 
 	--[[
-		Vale logar mesmo quando deu tudo certo: sem isto, "aplicou e não mudou nada"
-		e "não aplicou" ficam idênticos no console — e um preset sem atributo nenhum
-		produz o primeiro caso de forma totalmente legítima.
+		Worth logging even when everything went right: without it, "applied and
+		changed nothing" and "did not apply" look identical in the console, and a
+		preset with no attributes produces the first case quite legitimately.
 	]]
-	lightingPrint(string.format('preset "%s" aplicado | %d propriedade(s) do Lighting: %s | %d instância(s) dentro: %s | %d removida(s)',
+	log:Debug(string.format('preset "%s" applied | %d Lighting propert(ies): %s | %d instance(s) inside: %s | %d removed',
 		name,
-		#written, #written > 0 and table.concat(written, ", ") or "nenhuma (a pasta não declara atributos)",
-		#added, #added > 0 and table.concat(added, ", ") or "nenhuma",
+		#written, #written > 0 and table.concat(written, ", ") or "none (the folder declares no attributes)",
+		#added, #added > 0 and table.concat(added, ", ") or "none",
 		removed))
 
 	if #written == 0 and #added == 0 then
-		warn(`[LightingService]: preset "{name}" está vazio — sem atributos e sem filhos, aplicar não muda nada.`)
+		log:StudioWarn(`preset "{name}" is empty: no attributes and no children, so applying it changes nothing.`)
 	end
 
 	local previous = self.Current
@@ -271,11 +270,11 @@ function LightingService:Apply(name: string, transitionTime: number?, force: boo
 	return true
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function LightingService:construct()
-	-- Cliente perguntando com que preset ele deve começar: responde sem transição,
-	-- porque o Lighting dele já chegou replicado no estado final.
+	-- A client asking which preset it should start with: answer without a transition,
+	-- because its Lighting already arrived replicated in the final state.
 	Framework:Listen("RequestLighting", function(player)
 		local current = self:GetCurrent()
 		if not current then return end

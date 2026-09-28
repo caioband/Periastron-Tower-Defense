@@ -1,63 +1,59 @@
 --[[
-	A votação de pular a wave: `StarterGui.Interface.SkipPrompt`.
+	The skip-wave vote: `StarterGui.Interface.SkipPrompt`.
 
-	O prompt aparece sozinho `OfferDelay` segundos depois de a wave começar e fica
-	até ela acabar. Dano de unidade não esconde: a votação é da wave, e não de um
-	momento em que a partida parecia travada. Quem decide isso é o `SkipService`;
-	quem desenha é o `SkipPromptController`.
+	The prompt appears by itself `OfferDelay` seconds after the wave starts and
+	stays until it ends. Unit damage does not hide it: the vote belongs to the
+	wave. `SkipService` decides; `SkipPromptController` draws.
 
-	`OfferDelay` é medido em **tempo real**, e não no `GameClock`: ele existe para
-	medir a paciência de quem está olhando a tela, e não o ritmo da partida. No 2x
-	o jogo anda mais rápido, mas cinco segundos continuam sendo cinco segundos.
+	`OfferDelay` is measured in **real time**, not `GameClock`: it measures the
+	patience of whoever is watching, not the match pace.
 
-	A animação é a mesma do `WeatherWarning` (ver `WarningConfig`): o prompt desce
-	de `SlideOffset` acima do lugar autorado enquanto a transparência de **todos**
-	os descendentes cai de 1 até o valor que o designer deixou. Descer até o valor
-	autorado, e não até zero, é o que preserva um fundo transparente ou uma sombra
-	a 20% — quem for pintado no Studio continua igual na tela.
+	The animation is the same as `WeatherWarning` (see `WarningConfig`): the prompt
+	slides down from `SlideOffset` above its authored place while **every**
+	descendant fades from 1 to the transparency the designer left. Fading to the
+	authored value, not to zero, keeps a transparent background or a 20% shadow.
 
-	Só a Game usa (o Lobby não tem wave), mas o config mora aqui porque o cliente
-	precisa dos tempos da animação e dos textos.
+	Only the Game uses it (the Lobby has no waves), but the config lives here
+	because the client needs the timings and texts. See docs/game/skip-wave.md.
 ]]
 
 local SkipConfig = {}
 
--- O ImageLabel dentro de `PlayerGui.Interface`.
+-- The ImageLabel inside `PlayerGui.Interface`.
 SkipConfig.Name = "SkipPrompt"
 
--- Nomes dentro do prompt.
+-- Names inside the prompt.
 SkipConfig.ConfirmName = "Confirm"
 SkipConfig.CancelName = "Cancel"
 SkipConfig.CountName = "PlayerCount"
 
 --[[
-	Segundos entre a wave começar (o instante em que os mobs dela começam a nascer)
-	e o prompt entrar. Se a wave ainda estiver nascendo nessa hora, ele espera o
-	último mob -- ver `WaveService:CanSkipWave`.
+	Seconds between the wave starting (when its enemies begin to spawn) and the
+	prompt appearing. If the wave is still spawning then, it waits for the last
+	enemy; see `WaveService:CanSkipWave`.
 ]]
 SkipConfig.OfferDelay = 5
 
--- De quanto em quanto o servidor confere se já é hora de abrir ou de fechar. Não
--- precisa ser fino: o que ele mede é uma janela de cinco segundos.
+-- How often the server checks whether to open or close. It need not be fine:
+-- what it measures is a five-second window.
 SkipConfig.PollInterval = 0.25
 
 --[[
-	Animação, igual à do aviso do meio da tela. `SlideOffset` é em escala do eixo Y
-	da tela, contado para cima do lugar autorado.
+	Animation, the same as the center-screen warning. `SlideOffset` is in screen
+	Y scale, counted upward from the authored position.
 ]]
 SkipConfig.SlideOffset = 0.06
 SkipConfig.FadeIn = 0.35
 SkipConfig.FadeOut = 0.25
 
--- O contador do prompt: votos que já entraram sobre votos que faltam.
+-- The prompt's counter: votes cast over votes required.
 SkipConfig.CountText = "%d/%d"
 
 --[=[
-	Quantos votos fecham a votação, dado quem está no servidor.
+	How many votes close the vote, given who is on the server.
 
-	Maioria estrita: um jogador sozinho decide sozinho, dois precisam concordar,
-	quatro precisam de três. Um voto a menos que isso deixaria metade da sala
-	pulando a wave da outra metade.
+	Strict majority: a lone player decides alone, two must agree, four need three.
+	One vote fewer would let half the room skip the other half's wave.
 ]=]
 function SkipConfig.RequiredVotes(total : number) : number
 	if total <= 0 then

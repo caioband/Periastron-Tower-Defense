@@ -1,24 +1,24 @@
 --[[
-	As velocidades do botao `Interface.Speed` da partida.
+	The match speeds offered by the `Interface.Speed` button.
 
-	Uma escala por degrau, e a arte do botao que anuncia **a velocidade em que a
-	partida esta agora**. Clicar no botao abre um clone por degrau restante, cada um
-	com a arte do seu; escolher um pede aquele degrau (ver `SpeedController`).
+	One scale per step, plus the button art that shows **the speed the match is at
+	now**. Clicking the button opens one clone per remaining step, each with its
+	own art; picking one requests that step (see `SpeedController`).
 
-	Quem manda no valor em uso e o `SpeedService` (servidor); o `SpeedController`
-	so desenha o degrau que o servidor mandou. As duas pontas leem esta tabela,
-	entao velocidade nova e uma linha aqui -- o cliente ganha a arte e o servidor
-	ganha a escala pelo mesmo `Steps`.
+	`SpeedService` (server) owns the value in use; `SpeedController` only draws the
+	step the server sent. Both sides read this table, so a new speed is one line
+	here: the client gets the art and the server gets the scale from `Steps`.
 
-	`Gamepass` e opcional e vale a **chave** de `GamepassConfig.PASSES`, nao o id:
-	degrau com pass aparece trancado para quem nao a tem, e o clique vira o prompt
-	de compra em vez do pedido de velocidade. O id fica so no `GamepassConfig`, que
-	e onde ele ja morava.
+	`Gamepass` is optional and holds a **key** of `GamepassConfig.PASSES`, not the
+	id: a step with a pass shows locked for players without it, and clicking opens
+	the purchase prompt instead. The id stays in `GamepassConfig`.
+
+	See docs/game/match-speed.md.
 ]]
 
 local SpeedConfig = {}
 
---- Os degraus, na ordem do ciclo.
+--- The steps, in cycle order.
 SpeedConfig.Steps = {
 	{ Scale = 1, Image = "rbxassetid://132899761008925" },
 	{ Scale = 1.5, Image = "rbxassetid://106089741438137" },
@@ -29,7 +29,7 @@ SpeedConfig.DEFAULT_INDEX = 1
 
 --[[ API ]]
 
---- O degrau do indice, ou o padrao quando o indice nao existe.
+--- The step at the index, or the default when the index does not exist.
 function SpeedConfig.Get(index : number?)
 	return SpeedConfig.Steps[index or 0] or SpeedConfig.Steps[SpeedConfig.DEFAULT_INDEX]
 end
@@ -43,7 +43,7 @@ function SpeedConfig.GetImage(index : number?) : string
 end
 
 --[=[
-	A chave da gamepass que o degrau exige, ou nil quando ele e de todo mundo.
+	The game pass key the step requires, or nil when it is open to everyone.
 ]=]
 function SpeedConfig.GetGamepass(index : number?) : string?
 	local step = SpeedConfig.Steps[index or 0]
@@ -52,8 +52,8 @@ function SpeedConfig.GetGamepass(index : number?) : string?
 end
 
 --[=[
-	Se o indice e um degrau de verdade. O servidor pergunta isto antes de aceitar
-	o que o cliente pediu: o pedido vem pela rede, entao pode vir qualquer coisa.
+	Whether the index is a real step. The server asks this before accepting what
+	the client requested: the request comes over the network, so it can be anything.
 ]=]
 function SpeedConfig.IsValid(index : any) : boolean
 	return typeof(index) == "number" and SpeedConfig.Steps[index] ~= nil

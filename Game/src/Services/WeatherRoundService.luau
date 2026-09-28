@@ -1,6 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -11,61 +10,60 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 local Signal = require(Packages.Signal)
 
 local Framework = Me.new()
+local log = Log.new("WeatherRoundService")
 
 local WeatherConfig = SharedConfig.WeatherConfig
 local RoundConfig = WeatherConfig.Round
 
-local IS_STUDIO = RunService:IsStudio()
-
-local function roundPrint(...)
-	if not IS_STUDIO then return end
-	print("[WeatherRoundService]", ...)
-end
 
 --[[
-	O clima como evento de partida.
+	Weather as a match event.
 
-	O `WeatherService` (em `common/`) sabe ligar e desligar um clima; ele não sabe
-	nada de waves. Este service é a outra metade: ele decide **se**, **qual** e
-	**quando**, dentro do round.
+	`WeatherService` (in `common/`) knows how to turn a weather on and off; it knows
+	nothing about waves. This service is the other half: it decides **whether**,
+	**which**, and **when**, within the round.
 
-	O ciclo de uma wave que começa:
+	The cycle when a wave starts:
 
-		1. o clima que a carta Weather Report apagou na wave passada volta, se ainda
-		   tiver prazo (ver `SkipCurrentWave`);
-		2. o clima que já estava no ar sai, se a duração dele acabou;
-		3. o clima que estava agendado para esta wave entra;
-		4. não havendo nada agendado nem no ar, joga-se um dado — e passando, um
-		   clima do pool do mapa é escolhido e **avisado** para `LeadWaves` waves
-		   à frente.
+		1. the weather the Weather Report card cleared last wave returns, if it still
+		   has time left (see `SkipCurrentWave`);
+		2. the weather already active leaves, if its duration is over;
+		3. the weather scheduled for this wave comes in;
+		4. with nothing scheduled or active, a die is rolled, and if it passes, a
+		   weather from the map's pool is chosen and **announced** `LeadWaves` waves
+		   ahead.
 
-	O passo 1 vem antes do 2 porque os dois se encontram no mesmo caso: a carta
-	usada na última wave de um clima não tem o que repor, e é o passo 2 que fecha a
-	conta — o mesmo fim que qualquer clima tem.
+	Step 1 comes before 2 because both meet in the same case: a card used on a
+	weather's last wave has nothing to restore, and step 2 settles it, the same end
+	any weather has.
 
-	O aviso é o ponto do sistema. O clima nunca cai de surpresa: o jogador vê três
-	waves antes qual clima vem, e é isso que transforma o clima de azar em decisão
-	— dá tempo de vender o que vai ficar inútil e posicionar o que vai brilhar.
+	The warning is the point of the system. Weather never falls by surprise: the
+	player sees three waves ahead which weather is coming, and that is what turns
+	weather from bad luck into a decision: there is time to sell what will become
+	useless and place what will shine.
 
-	Um clima só é agendado se couber dentro da partida: `wave + LeadWaves` acima do
-	total de waves do preset não vira aviso nenhum, porque seria um aviso de algo
-	que não vai acontecer.
+	A weather is only scheduled if it fits in the match: `wave + LeadWaves` beyond the
+	preset's wave count produces no warning, because it would warn about something
+	that will not happen.
 
-	Só um clima por vez, e o dado nem é jogado enquanto houver um agendado ou no
-	ar. Dois avisos sobrepostos na tela e dois conjuntos de multiplicadores
-	compondo seriam ilegíveis dos dois lados.
+	One weather at a time, and the die is not even rolled while one is scheduled or
+	active. Two overlapping warnings on screen and two sets of multipliers composing
+	would be unreadable on both sides.
+
+	See docs/game/weather-in-match.md.
 ]]
 
 --[[
-	Nada aqui empurra o clima para o combate.
+	Nothing here pushes weather into combat.
 
-	O `UnitService` le o clima do `WeatherService` a cada quadro e o `MobService`
-	confere se ele mudou no mesmo lugar, entao ligar o clima e o unico passo: os
-	efeitos entram sozinhos. E o que faz o comando `weather` produzir exatamente a
-	mesma partida que este service produz.
+	`UnitService` reads the weather from `WeatherService` every frame and `MobService`
+	checks whether it changed in the same place, so turning the weather on is the only
+	step: the effects come in on their own. That is what makes the `weather` command
+	produce exactly the same match this service produces.
 ]]
 
 local WeatherRoundService = {
@@ -78,33 +76,33 @@ local WeatherRoundService = {
 
 	Signals = {
 		--[[
-			(weatherName) -- um clima do round entrou no ar. So o que entra de verdade:
-			o aviso nao conta, e o clima que a carta Weather Report apagou e volta na wave
-			seguinte tambem nao (e o mesmo clima). Quem escuta e o
-			`ContractTrackerService` ("Experience Weathers 60 times").
+			(weatherName): a round weather went live. Only what actually goes live: the
+			warning does not count, and a weather the Weather Report card cleared that
+			returns next wave does not either (it is the same weather).
+			`ContractTrackerService` listens ("Experience Weathers 60 times").
 		]]
 		WeatherStarted = Signal.new(),
 	},
 }
 
--- Clima no ar por decisão deste service, e a última wave em que ele vale.
+-- The weather live by this service's decision, and the last wave it lasts.
 WeatherRoundService.Active = nil :: string?
 WeatherRoundService.ActiveUntilWave = nil :: number?
 
--- Clima avisado e ainda não aplicado, e a wave em que ele entra.
+-- The announced weather not yet applied, and the wave it comes in.
 WeatherRoundService.Scheduled = nil :: string?
 WeatherRoundService.ScheduledWave = nil :: number?
 
--- A wave cujo clima a carta Weather Report apagou. Ver `SkipCurrentWave`.
+-- The wave whose weather the Weather Report card cleared. See `SkipCurrentWave`.
 WeatherRoundService.SkippedWave = nil :: number?
 
---[[ ESCOLHA ]]
+--[[ CHOICE ]]
 
 --[=[
-	O nome do mapa carregado.
+	The loaded map's name.
 
-	Vem do `MapService`, que é quem clonou a pasta — não dá para descobrir isso
-	olhando o `workspace.Map`, porque o Model clonado se chama "Map" em todos eles.
+	It comes from `MapService`, which cloned the folder: it cannot be found by looking
+	at `workspace.Map`, because the cloned Model is called "Map" in all of them.
 ]=]
 function WeatherRoundService:GetMapName() : string?
 	local mapService = self.Services.MapService
@@ -112,11 +110,11 @@ function WeatherRoundService:GetMapName() : string?
 end
 
 --[=[
-	Um clima do pool do mapa atual, ou nil quando o mapa não tem pool.
+	A weather from the current map's pool, or nil when the map has no pool.
 
-	O sorteio é uniforme dentro do pool. Um clima que não existir em
-	`Assets.Weathers` é descartado aqui em vez de falhar lá na frente: o pool é
-	config escrito à mão e um nome trocado é o erro mais provável dele.
+	The draw is uniform within the pool. A weather that does not exist in
+	`Assets.Weathers` is dropped here instead of failing further on: the pool is
+	hand-written config, and a mistyped name is its most likely error.
 ]=]
 function WeatherRoundService:PickWeather() : string?
 	local mapName = self:GetMapName()
@@ -132,7 +130,7 @@ function WeatherRoundService:PickWeather() : string?
 		if not weatherService or weatherService:GetWeather(name) then
 			table.insert(candidates, name)
 		else
-			warn(string.format("[WeatherRoundService]: o pool de '%s' pede o clima '%s', que nao existe em Assets.Weathers.",
+			log:StudioWarn(string.format("the pool for '%s' asks for weather '%s', which does not exist in Assets.Weathers.",
 				tostring(mapName), name))
 		end
 	end
@@ -145,33 +143,33 @@ function WeatherRoundService:PickWeather() : string?
 end
 
 --[=[
-	A chance de aviso por wave. Vem do preset de dificuldade; `WeatherConfig.Round`
-	cobre preset sem o campo.
+	The warning chance per wave. It comes from the difficulty preset;
+	`WeatherConfig.Round` covers presets without the field.
 ]=]
 function WeatherRoundService:GetChance() : number
 	local preset = self.Services.DifficultyService and self.Services.DifficultyService:GetSelected()
 	return (preset and preset.WeatherChance) or RoundConfig.Chance or 0
 end
 
---[[ AVISO ]]
+--[[ WARNING ]]
 
 --[=[
-	Manda o aviso para todo mundo.
+	Sends the warning to everyone.
 
-	`wavesAhead` vai calculado do servidor de propósito: é o que o texto mostra, e
-	deixar o cliente subtrair sozinho abriria espaço para ele mostrar um número
-	diferente do que o servidor vai cumprir.
+	`wavesAhead` is computed on the server on purpose: it is what the text shows, and
+	letting the client subtract on its own would open room for it to show a different
+	number from the one the server will keep.
 ]=]
 function WeatherRoundService:broadcastWarning(weatherName : string, wavesAhead : number)
 	--[[
-		A wave-alvo vai junto do "faltam quantas".
+		The target wave goes along with the "how many left".
 
-		O aviso na tela usa o número pronto, e é por isso que ele existe; o indicador
-		do HUD, que responde a um clique **depois** — uma, duas waves depois —, precisa
-		refazer a conta com a wave de agora, e para isso ele precisa do alvo. Contar
-		sozinho a partir do `wavesAhead` daria errado justamente quando importa: este
-		aviso e o `SetWave` da mesma wave saem em eventos diferentes, e a ordem em que
-		eles chegam ao cliente não é garantida.
+		The on-screen warning uses the ready number, which is why it exists; the HUD
+		indicator, which answers a click **later** (one or two waves later), must redo
+		the math with the current wave, and for that it needs the target. Counting on
+		its own from `wavesAhead` would go wrong exactly when it matters: this warning
+		and the same wave's `SetWave` go out in different events, and the order they
+		reach the client is not guaranteed.
 	]]
 	for _, player in Players:GetPlayers() do
 		Framework:Fire("WeatherWarning", player, weatherName, wavesAhead, self.ScheduledWave)
@@ -179,22 +177,22 @@ function WeatherRoundService:broadcastWarning(weatherName : string, wavesAhead :
 end
 
 --[=[
-	Diz aos clientes ate que wave o clima de agora vale.
+	Tells clients until which wave the current weather lasts.
 
-	`ActiveUntilWave` e uma wave-alvo, e e ela que viaja — nao o "faltam quantas". O
-	painel do indicador e aberto **depois**, uma ou duas waves depois, e refaz a conta
-	com a wave de agora; mandar o numero pronto daria um painel dizendo "ENDS IN 4
-	WAVES" na ultima wave do clima.
+	`ActiveUntilWave` is a target wave, and that is what travels, not the "how many
+	left". The indicator panel is opened **later**, one or two waves later, and redoes
+	the math with the current wave; sending the ready number would give a panel saying
+	"ENDS IN 4 WAVES" on the weather's last wave.
 
-	O **nome vai junto** porque este aviso e o `WeatherChanged` sao eventos diferentes
-	e a ordem entre eles nao e garantida: e o nome que diz ao cliente se o prazo que
-	chegou e do clima que ele esta vendo.
+	The **name goes along** because this notification and `WeatherChanged` are
+	different events and their order is not guaranteed: the name tells the client
+	whether the deadline that arrived belongs to the weather it is seeing.
 
-	Ceu limpo manda os dois `nil`, para o cliente nao ficar com o prazo do clima que
-	acabou de sair.
+	A clear sky sends both as `nil`, so the client does not keep the deadline of the
+	weather that just left.
 
-	`player` restringe a um jogador so — e o que o pedido de quem entra no meio da
-	partida precisa.
+	`player` restricts to a single player: that is what the request of someone joining
+	mid-match needs.
 ]=]
 function WeatherRoundService:broadcastDuration(player : Player?)
 	local weatherName = self.Active
@@ -210,13 +208,13 @@ function WeatherRoundService:broadcastDuration(player : Player?)
 	end
 end
 
---[[ CICLO ]]
+--[[ CYCLE ]]
 
 --[=[
-	Tira o clima que este service ligou.
+	Removes the weather this service turned on.
 
-	Só mexe no que é dele: um clima ligado na mão pelo comando `weather` não é
-	desligado aqui, porque o `Active` dele está vazio.
+	It only touches its own: a weather turned on by hand with the `weather` command is
+	not turned off here, because its `Active` is empty.
 ]=]
 function WeatherRoundService:ClearActive()
 	if not self.Active then return end
@@ -232,7 +230,7 @@ function WeatherRoundService:ClearActive()
 
 	self:broadcastDuration()
 
-	roundPrint(string.format("'%s' saiu.", previous))
+	log:Debug(string.format("'%s' ended.", previous))
 end
 
 function WeatherRoundService:applyScheduled(waveNumber : number)
@@ -247,7 +245,7 @@ function WeatherRoundService:applyScheduled(waveNumber : number)
 
 	local ok, message = weatherService:Apply(weatherName, RoundConfig.TransitionTime)
 	if not ok then
-		warn(string.format("[WeatherRoundService]: nao consegui aplicar '%s' (%s).", weatherName, tostring(message)))
+		log:Warn(string.format("could not apply '%s' (%s).", weatherName, tostring(message)))
 		return
 	end
 
@@ -256,18 +254,17 @@ function WeatherRoundService:applyScheduled(waveNumber : number)
 
 	self:broadcastDuration()
 
-	roundPrint(string.format("'%s' entrou na wave %d, ate a %d.", weatherName, waveNumber, self.ActiveUntilWave))
+	log:Debug(string.format("'%s' started on wave %d, until wave %d.", weatherName, waveNumber, self.ActiveUntilWave))
 
 	self.Signals.WeatherStarted:Fire(weatherName)
 end
 
 --[=[
-	Poe de volta no céu o clima que a carta apagou, quando ele ainda tinha wave pela
-	frente.
+	Puts back in the sky the weather the card cleared, when it still had waves ahead.
 
-	Falhar aqui derruba o `Active`: o clima não está no céu e continuar contando as
-	waves dele faria o service prometer um fim para uma coisa que não começou -- e,
-	pior, segurar o sorteio do próximo até essa data.
+	Failing here clears `Active`: the weather is not in the sky, and continuing to
+	count its waves would have the service promise an end for something that did not
+	start, and worse, hold back the next roll until that date.
 ]=]
 function WeatherRoundService:resumeActive(waveNumber : number)
 	local weatherName = self.Active
@@ -278,7 +275,7 @@ function WeatherRoundService:resumeActive(waveNumber : number)
 
 	local ok, message = weatherService:Apply(weatherName, RoundConfig.TransitionTime)
 	if not ok then
-		warn(string.format("[WeatherRoundService]: nao consegui repor '%s' (%s).", weatherName, tostring(message)))
+		log:Warn(string.format("could not restore '%s' (%s).", weatherName, tostring(message)))
 
 		self.Active = nil
 		self.ActiveUntilWave = nil
@@ -288,33 +285,32 @@ function WeatherRoundService:resumeActive(waveNumber : number)
 
 	self:broadcastDuration()
 
-	roundPrint(string.format("'%s' voltou na wave %d, ate a %d.", weatherName, waveNumber, self.ActiveUntilWave or waveNumber))
+	log:Debug(string.format("'%s' came back on wave %d, until wave %d.", weatherName, waveNumber, self.ActiveUntilWave or waveNumber))
 end
 
 --[=[
-	Tira o clima do céu **nesta wave, e só nesta**. Quem chama é o `CardShopService`
-	(carta Weather Report).
+	Removes the weather from the sky **for this wave, and only this one**.
+	`CardShopService` calls it (the Weather Report card).
 
-	A carta é um guarda-chuva para uma wave, e não um cancelamento do clima: uma
-	tempestade de três waves comprada na primeira continua nas outras duas, e o
-	jogador que quiser as três limpas compra três cartas. Comprada na última wave
-	dela, o clima simplesmente acaba ali -- não há o que voltar.
+	The card is an umbrella for one wave, not a cancellation of the weather: a
+	three-wave storm bought on the first wave continues in the other two, and a player
+	who wants all three clear buys three cards. Bought on its last wave, the weather
+	simply ends there: there is nothing to bring back.
 
-	Por isso o `Active` e o `ActiveUntilWave` **não** são zerados, e o `ClearActive`
-	não é chamado: o `Clear` do `WeatherService` tira o clima do céu agora, e o
-	`OnWaveStarted` da wave seguinte o repõe pelo `resumeActive` se ainda houver
-	prazo. Zerar o estado aqui seria apagar justamente a memória de que ele tem que
-	voltar.
+	That is why `Active` and `ActiveUntilWave` are **not** reset, and `ClearActive` is
+	not called: `WeatherService`'s `Clear` removes the weather from the sky now, and the
+	next wave's `OnWaveStarted` restores it through `resumeActive` if there is time
+	left. Resetting the state here would erase exactly the memory that it must return.
 
-	Céu limpo devolve `false` e nada acontece: não há wave de clima para pular.
+	A clear sky returns `false` and nothing happens: there is no weather wave to skip.
 
-	O aviso de um clima agendado também não é tocado -- ele entra na wave dele, como
-	entraria. A carta fala sobre a wave que está no ar, e não sobre o futuro.
+	A scheduled weather's warning is not touched either: it comes in on its wave, as
+	it would. The card is about the wave in progress, not the future.
 ]=]
 function WeatherRoundService:SkipCurrentWave() : boolean
 	local weatherService = self.Services.WeatherService
 	if not weatherService or not weatherService:GetCurrent() then
-		roundPrint("Weather Report usado com o ceu ja limpo: nada a pular.")
+		log:Debug("Weather Report used with the sky already clear: nothing to skip.")
 		return false
 	end
 
@@ -326,29 +322,29 @@ function WeatherRoundService:SkipCurrentWave() : boolean
 	weatherService:Clear(RoundConfig.TransitionTime)
 
 	if self.Active and self.ActiveUntilWave and current < self.ActiveUntilWave then
-		roundPrint(string.format("'%s' pulou a wave %d; volta na %d, ate a %d.",
+		log:Debug(string.format("'%s' skipped wave %d; back on %d, until %d.",
 			self.Active, current, current + 1, self.ActiveUntilWave))
 	else
-		roundPrint(string.format("ceu limpo na wave %d.", current))
+		log:Debug(string.format("clear sky on wave %d.", current))
 	end
 
 	return true
 end
 
 --[=[
-	O passo de uma wave. Chamado pelo sinal `WaveStarted` do `WaveService`.
+	A wave's step. Called by `WaveService`'s `WaveStarted` signal.
 
-	A ordem importa: o clima velho sai e o novo entra **antes** do dado, para o
-	dado enxergar o estado desta wave e não o da anterior.
+	Order matters: the old weather leaves and the new one enters **before** the die, so
+	the die sees this wave's state and not the previous one's.
 ]=]
 function WeatherRoundService:OnWaveStarted(waveNumber : number, _preset, maxWaves : number)
 	--[[
-		A wave que o Weather Report apagou ficou para trás.
+		The wave Weather Report cleared is behind us.
 
-		O clima volta **antes** do teste de prazo logo abaixo, e não depois: se a wave
-		pulada era a última dele, `waveNumber` já passou do `ActiveUntilWave`, o
-		`resumeActive` não roda e é o `ClearActive` que fecha a conta -- que é o fim
-		normal de qualquer clima, e não um caso à parte da carta.
+		The weather returns **before** the deadline test just below, not after: if the
+		skipped wave was its last, `waveNumber` is already past `ActiveUntilWave`,
+		`resumeActive` does not run, and `ClearActive` settles it, which is the normal
+		end of any weather, not a special case for the card.
 	]]
 	if self.SkippedWave and waveNumber > self.SkippedWave then
 		self.SkippedWave = nil
@@ -366,13 +362,13 @@ function WeatherRoundService:OnWaveStarted(waveNumber : number, _preset, maxWave
 		self:applyScheduled(waveNumber)
 	end
 
-	-- Um clima de cada vez: nem no ar, nem agendado.
+	-- One weather at a time: neither active nor scheduled.
 	if self.Active or self.Scheduled then return end
 
 	local lead = math.max(1, RoundConfig.LeadWaves or 1)
 	local targetWave = waveNumber + lead
 
-	-- Aviso de algo que não caberia na partida não é aviso, é ruído.
+	-- A warning about something that would not fit in the match is not a warning, it is noise.
 	if maxWaves and targetWave > maxWaves then return end
 
 	if math.random() >= self:GetChance() then return end
@@ -384,12 +380,12 @@ function WeatherRoundService:OnWaveStarted(waveNumber : number, _preset, maxWave
 	self.ScheduledWave = targetWave
 
 	self:broadcastWarning(weatherName, lead)
-	roundPrint(string.format("wave %d: '%s' avisado para a wave %d.", waveNumber, weatherName, targetWave))
+	log:Debug(string.format("wave %d: '%s' announced for wave %d.", waveNumber, weatherName, targetWave))
 end
 
 --[=[
-	Zera junto com o round: nada de um clima do round anterior continuar no ar, e
-	nada de um agendamento cair numa partida que nem começou.
+	Resets with the round: no previous round's weather stays active, and no schedule
+	lands in a match that has not started.
 ]=]
 function WeatherRoundService:ResetRound()
 	self.Scheduled = nil
@@ -400,7 +396,7 @@ end
 
 --[[ API ]]
 
--- O clima que este service colocou no ar, ou nil. É o que o combate consulta.
+-- The weather this service put live, or nil. It is what combat queries.
 function WeatherRoundService:GetActive() : string?
 	return self.Active
 end
@@ -409,12 +405,12 @@ function WeatherRoundService:GetScheduled() : (string?, number?)
 	return self.Scheduled, self.ScheduledWave
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function WeatherRoundService:construct()
 	local waveService = self.Services.WaveService
 	if not waveService or not waveService.Signals or not waveService.Signals.WaveStarted then
-		warn("[WeatherRoundService]: WaveService sem o sinal WaveStarted; o clima nao vai entrar sozinho.")
+		log:Warn("WaveService has no WaveStarted signal; weather will not start on its own.")
 		return
 	end
 
@@ -422,7 +418,7 @@ function WeatherRoundService:construct()
 		self:OnWaveStarted(waveNumber, preset, maxWaves)
 	end)
 
-	-- Quem entra no meio da partida precisa saber o que vem, se ainda vier.
+	-- A player joining mid-match needs to know what is coming, if anything still is.
 	Framework:Listen("RequestWeatherWarning", function(player : Player)
 		if not self.Scheduled or not self.ScheduledWave then return end
 
@@ -434,8 +430,8 @@ function WeatherRoundService:construct()
 		Framework:Fire("WeatherWarning", player, self.Scheduled, wavesAhead, self.ScheduledWave)
 	end)
 
-	-- Quem entra no meio de uma tempestade precisa do prazo dela. Ceu limpo responde
-	-- com `nil`, que e a resposta certa e nao um silencio.
+	-- A player joining in the middle of a storm needs its deadline. A clear sky answers
+	-- with `nil`, which is the right answer and not silence.
 	Framework:Listen("RequestWeatherDuration", function(player : Player)
 		self:broadcastDuration(player)
 	end)

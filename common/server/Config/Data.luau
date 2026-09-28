@@ -1,6 +1,6 @@
--- Este modulo vive em ServerScriptService.Config, entao o caminho ate o config
--- compartilhado precisa ser absoluto (antes era `script.Parent.Parent`, quando
--- ele ficava dentro de ReplicatedStorage.Shared.Config).
+-- This module lives in ServerScriptService.Config, so the path to the shared
+-- config must be absolute: `script.Parent` does not lead to
+-- ReplicatedStorage.Shared.Config from here.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local SharedConfig = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("SharedConfig")
@@ -12,13 +12,13 @@ local RoundCardShopConfig = require(SharedConfig:WaitForChild("RoundCardShopConf
 
 return {
 	--[[
-		O nome do ProfileStore. **Trocar isto zera todo mundo**: os perfis antigos
-		continuam no DataStore com a chave velha, e ninguem mais os le -- todo jogador
-		entra com o `Template` daqui de baixo.
+		The ProfileStore name. **Changing this resets everyone**: old profiles stay
+		in the DataStore under the old key, and nobody reads them anymore; every
+		player starts with the `Template` below.
 
-		As duas places leem esta mesma linha (o `DataService` do Lobby e o da Game),
-		entao elas nunca podem apontar para stores diferentes: seria o mesmo jogador
-		com dois perfis, um em cada place.
+		Both places read this same line (the Lobby's `DataService` and Game's), so
+		they can never point at different stores: that would be the same player with
+		two profiles, one in each place.
 	]]
 	PROFILE_KEY = "PROD_KEY_2",
 	Template = {
@@ -26,55 +26,56 @@ return {
 			Wins = 0,
 
 			--[[
-				As vitorias **por dificuldade**, `{ [dificuldade] = quantas }` -- o que
-				destrava as dificuldades de cima (ver `SharedConfig.DifficultyUnlockConfig`).
+				Wins **per difficulty**, `{ [difficulty] = count }`: what unlocks the
+				higher difficulties (see `SharedConfig.DifficultyUnlockConfig`).
 
-				Separado do `Wins` acima, que continua sendo o total e e o que os mapas e o
-				leaderstats leem. Um total nao serve para o cadeado: quem tem 20 vitorias no
-				Easy nao mostrou nada sobre o Hard.
+				Separate from `Wins` above, which is still the total and is what maps and
+				leaderstats read. A total does not work for the lock: someone with 20 wins
+				on Easy has shown nothing about Hard.
 
-				Nasce **vazia**, e nao com uma chave por preset: a lista de dificuldades vive
-				no config do servidor (`Config.Difficulty.Order`) e repeti-la aqui seria a
-				mesma lista em dois lugares, esperando para se desencontrar. Quem escreve e o
-				`WaveService`, que cria a chave da dificuldade vencida na hora; quem le trata
-				chave ausente como zero. Perfil antigo ganha a tabela pelo reconcile do
-				DataService, entao nao precisa migracao -- e ganha vazia: as vitorias de antes
-				desta chave nao tem dificuldade registrada e nao ha de onde tira-la.
+				It starts **empty**, not with one key per preset: the difficulty list lives
+				in the server config (`Config.Difficulty.Order`), and repeating it here
+				would be the same list in two places, waiting to drift apart.
+				`WaveService` writes it, creating the won difficulty's key on the spot;
+				readers treat a missing key as zero. Older profiles get the table through
+				DataService's reconcile, so no migration is needed, and they get it empty:
+				wins from before this key have no recorded difficulty, and there is
+				nowhere to get it from.
 			]]
 			DifficultyWins = {},
 
 			Cash = 0,
 
-			-- Moeda premium. Perfis antigos ganham a chave pelo reconcile do
-			-- DataService, entao nao precisa migracao.
+			-- Premium currency. Older profiles get the key through DataService's
+			-- reconcile, so no migration is needed.
 			Shards = 0,
 			XP = 0,
 
 			--[[
-				Contadores que existem para as leaderboards do lobby
-				(`Config.Leaderboard`). Nenhum deles muda o jogo: so contam.
+				Counters that exist for the Lobby leaderboards (`Config.Leaderboard`).
+				None of them changes the game: they only count.
 
-				  - `BoxesOpened`   -- caixas abertas de verdade (`CrateService:OpenCrate`);
-				                       o `unbox` do Cmdr so mostra a animacao e nao conta.
-				  - `MatchesPlayed` -- partidas em que o jogador ficou pelo menos
-				                       `MIN_MATCH_SECONDS` (`MatchStatsService`, Game).
-				  - `TimeInMatches` -- segundos dentro de um round rodando (idem).
-				  - `TimePlayed`    -- segundos com o perfil aberto, nas duas places
-				                       (`PlaytimeService`).
+				  - `BoxesOpened`:   crates actually opened (`CrateService:OpenCrate`);
+				                     Cmdr's `unbox` only shows the animation and does not count.
+				  - `MatchesPlayed`: matches where the player stayed at least
+				                     `MIN_MATCH_SECONDS` (`MatchStatsService`, Game).
+				  - `TimeInMatches`: seconds inside a running round (same).
+				  - `TimePlayed`:    seconds with the profile open, in both places
+				                     (`PlaytimeService`).
 
-				Os tempos sao em **segundos** inteiros; o `DD:HH:MM` e so da tela.
+				Times are in whole **seconds**; `DD:HH:MM` is only for the screen.
 
-				Nascem em zero para todo mundo, inclusive para quem ja jogava: o perfil
-				nunca guardou nada disso, entao nao ha de onde tirar o passado. Perfil
-				antigo ganha as chaves pelo reconcile do DataService.
+				They start at zero for everyone, including existing players: the profile
+				never stored any of this, so there is no past to recover. Older profiles
+				get the keys through DataService's reconcile.
 
-				**`CoinsEarned` (o total de coins ganhos, a MOST COINS) nao esta aqui de
-				proposito.** Para ele existe um passado aproximado: o saldo de hoje e o
-				minimo que o jogador ja ganhou. Se o template trouxesse a chave, o
-				reconcile a poria em zero e ninguem saberia mais quem era perfil antigo.
-				Sem ela, o `CurrencyService` ve a chave faltando quando o perfil carrega
-				e a cria com o `Cash` atual -- em perfil novo, isso e zero. Quem soma e
-				o `WaveService:grantReward`; estorno de loja e o Cmdr nao contam.
+				**`CoinsEarned` (total coins earned, MOST COINS) is not here on
+				purpose.** It has an approximate past: today's balance is the minimum the
+				player has earned. If the template carried the key, reconcile would set
+				it to zero and nobody could tell an older profile anymore. Without it,
+				`CurrencyService` sees the key missing when the profile loads and creates
+				it with the current `Cash`, which is zero on a new profile.
+				`WaveService:grantReward` adds to it; shop refunds and Cmdr do not count.
 			]]
 			BoxesOpened = 0,
 			MatchesPlayed = 0,
@@ -88,40 +89,40 @@ return {
 		},
 
 		--[[
-			A garantia das raridades altas no unboxing: `{ [caixa] = { [raridade] =
-			aberturas seguidas sem ela } }`. Nasce vazio e cada caixa ganha a conta dela
-			na primeira abertura. Ver `ServerScriptService.Config.Crate.PITY_RARITIES`.
+			The high-rarity unboxing guarantee: `{ [crate] = { [rarity] = openings in
+			a row without it } }`. It starts empty and each crate gets its count on its
+			first opening. See `ServerScriptService.Config.Crate.PITY_RARITIES`.
 		]]
 		Pity = {},
 
 		PurchaseHistory = {},
 
 		--[[
-			As gamepasses que o jogador tem, `{ [chave] = true }` -- a chave do
-			`SharedConfig.GamepassConfig`, e nao o id numerico da Roblox.
+			The gamepasses the player owns, `{ [key] = true }`: the
+			`SharedConfig.GamepassConfig` key, not Roblox's numeric id.
 
-			**Nao e credito, e uma copia.** O `MonetizationService` reescreve a tabela
-			inteira a cada entrada, a partir do que a Roblox responde: uma pass
-			reembolsada some daqui no proximo login, e nenhum beneficio fica preso no
-			perfil. Ela existe so para o resto do jogo nao ter de perguntar a Roblox a
-			cada caixa aberta e a cada fim de round.
+			**It is not a credit, it is a copy.** `MonetizationService` rewrites the
+			whole table on every join from what Roblox answers: a refunded pass
+			disappears from here at the next login, and no benefit gets stuck on the
+			profile. It exists only so the rest of the game does not have to ask
+			Roblox on every crate opened and every round end.
 
-			Perfil antigo ganha a chave pelo reconcile, entao nao precisa migracao.
+			Older profiles get the key through reconcile, so no migration is needed.
 		]]
 		Gamepasses = {},
 
 		--[[
-			O que o jogador ja descobriu, por categoria (`{ [chave] = true }`).
+			What the player has already discovered, per category (`{ [key] = true }`).
 
-			Estrutura e regras em `SharedConfig.IndexConfig`; quem escreve e o
-			`IndexService`. Categoria nova la entra nos perfis antigos pelo reconcile,
-			entao nao precisa migracao -- foi por isso que a chave ja nasceu aqui.
+			Structure and rules in `SharedConfig.IndexConfig`; `IndexService` writes
+			it. A new category there reaches older profiles through reconcile, so no
+			migration is needed.
 		]]
 		Index = IndexConfig.createEmpty(),
 		--[[
-			O que o jogador novo ja tem. So Common e Rare: antes ele comecava com
-			duas Rocket e duas Subspace Tripminer, ou seja, com o topo da tabela na
-			mao e nada a conquistar na primeira hora.
+			What a new player already owns. Only Common and Rare: starting with two
+			Rockets and two Subspace Tripminers put the top of the table in their
+			hands, with nothing to earn in the first hour.
 		]]
 		Units = {
 			["Slasher"] = 3,
@@ -130,82 +131,82 @@ return {
 		},
 
 		--[[
-			As cartas do deck, um nome por carta e com repetição: duas Slasher
-			equipadas são dois "Slasher" aqui. Ver `SharedConfig.DeckConfig`.
+			The deck's cards, one name per card and with repeats: two equipped
+			Slashers are two "Slasher" entries here. See `SharedConfig.DeckConfig`.
 		]]
 		EquippedUnits = {},
 
 		--[[
-			As cartas de round que o jogador destravou, `{ [Id] = true }` — o `Id` do
+			The round cards the player has unlocked, `{ [Id] = true }`: the `Id` from
 			`SharedConfig.RoundCardConfig`.
 
-			**Não é inventário, é a pool dele.** Destravar não dá carta nenhuma na mão:
-			ele diz que aquela carta pode sair no sorteio da oferta de round, e cada uso
-			dentro da partida continua sendo comprado com o caixa da partida. Quem
-			escreve é o `RoundCardShopService` (Lobby), na compra na loja de cartas; quem
-			lê é o `_pool` do `CardShopService` (Game).
+			**It is not an inventory, it is their pool.** Unlocking puts no card in
+			hand: it says that card can come up in the round offer draw, and each use in
+			the match is still bought with match cash. `RoundCardShopService` (Lobby)
+			writes it on a purchase in the card shop; `CardShopService`'s `_pool`
+			(Game) reads it.
 
-			Nasce com o kit inicial (`RoundCardShopConfig.STARTER_CARDS`), senão a oferta
-			de round nunca abriria para quem acabou de chegar. Perfil antigo ganha a chave
-			pelo reconcile do DataService — e a ganha **vazia**, porque o reconcile copia o
-			template só onde ele falta; quem preenche o que falta nele é o
-			`RoundCardStarterService`, que roda em toda abertura de perfil nas duas places.
+			It starts with the starter kit (`RoundCardShopConfig.STARTER_CARDS`), or the
+			round offer would never open for newcomers. Older profiles get the key
+			through DataService's reconcile, and get it **empty**, because reconcile
+			copies the template only where it is missing; `RoundCardStarterService`,
+			which runs on every profile open in both places, fills in what is missing.
 		]]
 		RoundCards = RoundCardShopConfig.createEmpty(),
 
 		--[[
-			O reroll pago da loja de cartas: `{ Index, Rolls, Cards }` — o bloco de quatro
-			horas, quantos rerolls foram comprados nele e **as cartas sorteadas**.
+			The card shop's paid reroll: `{ Index, Rolls, Cards }`: the four-hour block,
+			how many rerolls were bought in it, and **the drawn cards**.
 
-			As cartas são gravadas, e não recalculadas: o sorteio do reroll varre só o
-			que falta ao jogador destravar, e essa lista encolhe quando ele compra. Uma
-			prateleira derivada dela se remontaria a cada compra — a vaga vendida se
-			encheria com uma carta nova em vez de ficar `SOLD`. Ver o comentário do
-			`RoundCardShopConfig.createEmptyRoll`.
+			The cards are stored, not recomputed: the reroll draw only sweeps what the
+			player has yet to unlock, and that list shrinks when they buy. A shelf
+			derived from it would rebuild on every purchase, and the sold slot would
+			fill with a new card instead of staying `SOLD`. See the
+			`RoundCardShopConfig.createEmptyRoll` comment.
 
-			Vale até a rotação virar. Nada apaga o registro velho — ele deixa de valer
-			sozinho quando o número do bloco muda.
+			It holds until the rotation rolls over. Nothing deletes the old record: it
+			stops applying on its own when the block number changes.
 		]]
 		RoundCardRoll = RoundCardShopConfig.createEmptyRoll(),
 
 		--[[
-			Os contratos do quadro do lobby, por periodo:
+			The Lobby board's contracts, per period:
 			`{ Hourly|Daily|Weekly = { Period, Slots = { { Id, Params, Progress, Claimed, Seen? } } } }`.
 
-			`Period` e o numero do periodo em que os slots foram sorteados
-			(`ContractConfig.periodOf`); quando o de agora e outro, o `ContractService`
-			sorteia de novo. `Params` e o que o `Random` do contrato tirou (mapa,
-			dificuldade, classe), e `Seen` so existe nos de `Mode = "Distinct"` (os dias do
-			login). Estrutura e regras em `SharedConfig.ContractConfig`.
+			`Period` is the number of the period in which the slots were drawn
+			(`ContractConfig.periodOf`); when the current one differs,
+			`ContractService` draws again. `Params` is what the contract's `Random`
+			drew (map, difficulty, class), and `Seen` only exists on `Mode = "Distinct"`
+			contracts (login days). Structure and rules in `SharedConfig.ContractConfig`.
 
-			Nasce com `Period = -1`, que nao e periodo nenhum: o primeiro carregamento ja
-			sorteia os tres. Perfil antigo ganha a chave pelo reconcile.
+			It starts with `Period = -1`, which is no period at all: the first load
+			draws all three. Older profiles get the key through reconcile.
 		]]
 		Contracts = ContractConfig.createEmpty(),
 
-		-- Quantas cartas cabem no deck. Fica no perfil porque é para crescer com o
-		-- jogador; o `DeckConfig.DEFAULT_CARD_LIMIT` é só o valor de partida, e o
-		-- reconcile do DataService dá a chave para quem é de antes dela.
+		-- How many cards fit in the deck. It lives on the profile because it is meant to
+		-- grow with the player; `DeckConfig.DEFAULT_CARD_LIMIT` is only the starting value,
+		-- and DataService's reconcile gives the key to profiles older than it.
 		CardLimit = DeckConfig.DEFAULT_CARD_LIMIT,
 
 		--[[
-			O assunto "tutorial" está encerrado para este jogador?
+			Is the "tutorial" matter settled for this player?
 
-			`false` é a única coisa que faz a oferta aparecer no lobby, e ela some por
-			**dois** caminhos: vencendo as 5 waves do mapa Tutorial, ou **recusando** a
-			oferta. Recusar é uma resposta, não um adiamento — quem disse "não" não é
-			perguntado de novo a cada entrada.
+			`false` is the only thing that makes the offer appear in the Lobby, and it
+			goes away along **two** paths: winning the 5 waves of the Tutorial map, or
+			**declining** the offer. Declining is an answer, not a postponement:
+			someone who said "no" is not asked again on every join.
 
-			Por consequência, **abandonar a partida no meio deixa a chave em `false`**:
-			quem aceitou e saiu antes do fim é perguntado de novo e recomeça da wave 1.
-			É de propósito: o estado de meia partida (unidades no mapa, carta comprada,
-			clima ativo) não existe em lugar nenhum, e voltar para a wave 3 com o mapa
-			vazio seria pior que recomeçar.
+			As a consequence, **abandoning the match midway leaves the key at
+			`false`**: a player who accepted and left before the end is asked again and
+			restarts from wave 1. That is deliberate: a half-played match state (units
+			on the map, card bought, weather active) exists nowhere, and returning to
+			wave 3 with an empty map would be worse than restarting.
 
-			Perfil antigo ganha a chave pelo reconcile do DataService — e ganha
-			`false`, porque não há como saber quem já passou por um tutorial que não
-			existia. Quem já joga há meses recebe a oferta uma vez, e a primeira
-			resposta encerra.
+			Older profiles get the key through DataService's reconcile, and get
+			`false`, because there is no way to know who went through a tutorial that
+			did not exist. Long-time players get the offer once, and the first answer
+			settles it.
 		]]
 		Tutorial = false,
 	},
@@ -213,67 +214,65 @@ return {
 	STARTING_CASH = 500,
 
 	--[[
-		XP de uma run cheia, escalado pela fracao de waves sobrevividas e pelo
-		`WinXpMultiplier` da dificuldade.
+		XP for a full run, scaled by the fraction of waves survived and the
+		difficulty's `WinXpMultiplier`.
 
-		**Coins e shards nao passam mais por aqui.** Eles eram uma base vezes um
-		multiplicador por dificuldade, e o valor que interessa -- quanto o Nightmare
-		paga -- so aparecia depois da conta. Hoje cada preset traz o numero cheio em
-		`Difficulty.Presets[...].WinCash` e `.WinShards`, e mudar quanto uma
-		dificuldade paga e trocar esse numero.
+		**Coins and shards do not go through here.** Each preset carries the full
+		number in `Difficulty.Presets[...].WinCash` and `.WinShards`, so what
+		Nightmare pays reads directly, and changing how much a difficulty pays means
+		changing that number.
 	]]
 	BASE_WINNING_XP = 200,
 
-	-- Shards so comecam a cair depois desta fracao da run, e dai crescem por uma
-	-- curva em vez de linearmente: e a moeda cara, entao quase todo o ganho vem de
-	-- chegar perto do fim. Com 0.5 e curva 2, largar na metade rende zero e chegar
-	-- a 80% da run rende ~36% do total.
+	-- Shards only start dropping after this fraction of the run, and then grow along a
+	-- curve instead of linearly: it is the expensive currency, so almost all the gain
+	-- comes from getting close to the end. With 0.5 and curve 2, leaving at halfway
+	-- yields zero and reaching 80% of the run yields ~36% of the total.
 	SHARD_WAVE_THRESHOLD = 0.5,
 	SHARD_CURVE = 2,
 
 	--[[
-		Quanto dos coins uma **derrota** paga: um quinto do que as mesmas waves
-		pagariam numa vitoria.
+		How much of the coins a **defeat** pays: a fifth of what the same waves would
+		pay in a victory.
 
-		Perder nao rende shard nenhum, por mais longe que o jogador tenha chegado --
-		isso nao e um numero, e uma regra, e mora no `computeReward`. Os coins ficam
-		porque a partida perdida ainda foi tempo jogado; so nao pode competir com
-		terminar a run.
+		Losing yields no shards at all, however far the player got: that is not a
+		number, it is a rule, and it lives in `computeReward`. Coins stay because the
+		lost match was still time played; it just must not compete with finishing the
+		run.
 	]]
 	LOSS_CASH_MULTIPLIER = 0.2,
 
-	-- Fallback: o numero de waves de verdade vem do `MaxWaves` da dificuldade
-	-- (Config/Difficulty.luau). Isto so vale se um preset nao definir o campo, e
-	-- e multiplo de 9 como os presets, para cair na wave do chefe.
+	-- Fallback: the real wave count comes from the difficulty's `MaxWaves`
+	-- (Config/Difficulty.luau). This only applies if a preset does not set the
+	-- field; the boss always lands on the last wave, whatever the count.
 	MAX_WAVES = 18,
 	--[[
-		Caixa por ponto de dano, e so pelo dano que de fato entrou (ver
-		`MobService:DamageMob`). Antes era 1 por ponto do valor cheio do golpe, o
-		que pagava o excedente: um tiro de 70 num inimigo de 5 de vida rendia 70.
-		Isso fazia o dano ser dois tercos da economia da partida e crescer junto
-		com a vida dos inimigos, entao quanto mais dificil o preset, mais rico o
-		jogador ficava. O que sobrou dessa renda foi para as recompensas de morte,
-		em `Config.Wave`.
+		Cash per point of damage, and only for damage that actually landed (see
+		`MobService:DamageMob`). Paying the hit's full value paid for overkill: a
+		70-damage shot on an enemy with 5 health yielded 70. That made damage two
+		thirds of the match economy and grow with enemy health, so the harder the
+		preset, the richer the player got. The rest of that income moved to kill
+		rewards, in `Config.Wave`.
 
-		A taxa caiu de 0,3 para 0,15 junto com a planilha de waves: sao muito mais
-		inimigos por wave do que antes, entao o mesmo 0,3 por ponto dobraria a
-		renda de dano.
+		The rate is 0.15 rather than 0.3 because the wave spreadsheet has far more
+		enemies per wave, so 0.3 per point would double damage income.
 	]]
 	CASH_PER_DAMAGE = 0.15,
 
-	-- So valem quando o inimigo nao traz `Reward` — as waves sempre trazem.
+	-- Only apply when the enemy carries no `Reward`; the waves always do.
 	CASH_PER_KILL_MIN = 6,
 	CASH_PER_KILL_MAX = 12,
 	MAX_DATA_TIME_OUT = 20,
 
 	--[[
-		Quanto tempo dentro de um round para ele contar em `Stats.MatchesPlayed` --
-		o "(3min+)" da leaderboard. Sem o piso, entrar e sair da partida seria o
-		jeito mais rapido de subir nela.
+		How long inside a round before it counts toward `Stats.MatchesPlayed`: the
+		leaderboard's "(3min+)". Without the floor, joining and leaving a match would
+		be the fastest way to climb it.
 
-		E o tempo **do jogador** no round, e nao a duracao do round: quem entra no
-		meio conta a partir de quando entrou. Vale para vitoria, derrota e saida no
-		meio. O `TimeInMatches` soma o tempo inteiro, ate das partidas curtas.
+		It is the **player's** time in the round, not the round's duration: someone
+		who joins midway counts from when they joined. It applies to victory, defeat,
+		and leaving midway. `TimeInMatches` adds all the time, even from short
+		matches.
 	]]
 	MIN_MATCH_SECONDS = 180,
 }

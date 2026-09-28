@@ -12,11 +12,13 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("ButtonGateController")
 
 --[[
-	A trava de botões: quais `GuiButton` da tela aceitam clique agora.
+	The button lock: which `GuiButton`s on screen accept clicks right now.
 
 		local Gate = Framework:Get("ButtonGateController")
 
@@ -28,52 +30,53 @@ local Framework = Me.new()
 
 		Gate:Unlock()
 
-	**A whitelist é fechada e manda nos dois sentidos.** O que não estiver em `Allow`
-	(nem for filho ou pai de algo que esteja) para de aceitar clique, hover e navegação
-	por controle; o que estiver **passa a aceitar**, mesmo que chegue desligado. Os
-	dois são `Active`/`Selectable`, e os dois voltam ao que eram no `Unlock`. Ligar
-	também é o que salva a peça clonada de um molde que a trava desligou — ver
-	`enforce`. `Block` é a subtração: ele ganha do `Allow`, e é como se tira um botão
-	de dentro de um painel inteiro liberado.
+	**The whitelist is closed and rules both ways.** Whatever is not in `Allow` (nor a
+	child or parent of something that is) stops accepting clicks, hover, and gamepad
+	navigation; whatever is **starts accepting**, even if it arrives disabled. Both are
+	`Active`/`Selectable`, and both return to what they were on `Unlock`. Turning on is
+	also what saves a piece cloned from a template the lock disabled; see `enforce`.
+	`Block` is the subtraction: it beats `Allow`, and it is how you remove one button
+	from inside a fully allowed panel.
 
-	**Filho e pai do alvo entram junto.** Clicar num botão dentro do alvo é clicar no
-	alvo, e um wrapper clicável que embala o alvo não pode ficar mudo enquanto o que
-	está dentro dele funciona.
+	**The target's children and parents come along.** Clicking a button inside the
+	target is clicking the target, and a clickable wrapper around the target must not
+	go dead while what is inside it works.
 
-	**Por que não o `BlockInput` do destaque.** Ele cobre a tela com quatro frames
-	`Active`, e frame `Active` engole *qualquer* input que passe por cima — inclusive
-	o arrastar que gira a câmera. O jogador ficava preso olhando para um lado só.
-	Aqui a câmera continua livre: o que muda é só o que os botões aceitam.
+	**Why not the highlight's `BlockInput`.** It covers the screen with four `Active`
+	frames, and an `Active` frame swallows *any* input passing over it, including the
+	drag that turns the camera: the player would be stuck looking one way. Here the
+	camera stays free: only what the buttons accept changes.
 
-	**Botão que já estava desligado não é tocado.** `Active = false` de antes quer
-	dizer que ele tem outro dono (o `ToggleTower` tranca o upgrade e a venda a partida
-	de tutorial inteira), e devolvê-lo ligado no `Unlock` desfaria a trava de outra
-	pessoa.
+	**A button that was already disabled is not touched.** A prior `Active = false`
+	means it has another owner (`ToggleTower` locks upgrade and sell for the whole
+	tutorial match), and turning it back on at `Unlock` would undo someone else's lock.
 
-	**Botão fora da tela fica de fora.** Não dá para clicar no que não se vê, e mexer
-	no `Active` de uma peça escondida quebra quem a clona — o clone nasce com o estado
-	que a trava escreveu no molde. A trava escuta quem está escondendo e refaz a conta
-	quando o painel aparece — ver `onScreen` e `watch`.
+	**Buttons off screen are left out.** You cannot click what you cannot see, and
+	changing a hidden piece's `Active` breaks whoever clones it: the clone is born with
+	the state the lock wrote on the template. The lock listens to whatever is hiding
+	and redoes the math when the panel appears; see `onScreen` and `watch`.
 
-	**Botão que outro dono religa volta a ser desligado.** Um botão tem mais de um
-	dono, e nenhum deles sabe que o tutorial está no ar: o `DifficultyController`
-	devolve o `Active` dos degraus quando a votação fecha, o `ReadyController` religa o
-	dele a cada intervalo. A trava escuta o `Active` de cada botão que desligou e
-	desfaz isso — ver `disable`.
+	**A button another owner turns back on gets turned off again.** A button has more
+	than one owner, and none of them knows the tutorial is running:
+	`DifficultyController` restores the steps' `Active` when the vote closes,
+	`ReadyController` turns its own back on every intermission. The lock listens to
+	the `Active` of each button it disabled and undoes that; see `disable`.
 
-	**Botão que nasce depois entra na conta.** A mesa da loja, a carta que vai para a
-	mão, a lista de caixas da mochila: todas nascem com a trava já de pé. O gate
-	escuta a `PlayerGui` e reaplica sozinho — quem chamou o `Lock` não precisa saber
-	quando a tela terminou de montar.
+	**Buttons born later enter the math.** The shop table, the card going to the hand,
+	the backpack's crate list: all are born with the lock already up. The gate listens
+	to `PlayerGui` and reapplies on its own: whoever called `Lock` does not need to
+	know when the screen finished building.
 
-	**A válvula (`Release`).** Trava existe para o jogador não sair do roteiro, não
-	para prendê-lo: se a whitelist do passo estiver errada, o botão certo fica
-	desligado e não há ninguém para religá-lo. Passados `Release` segundos a trava cai
-	sozinha e o output diz por quê. Quem sabe que a espera é legítima — o passo já foi
-	cumprido e o jogador só está vendo a wave correr — chama `:HoldRelease()` e a
-	trava fica sem prazo.
+	**The valve (`Release`).** The lock exists to keep the player on the script, not to
+	trap them: if a step's whitelist is wrong, the right button stays disabled and
+	nobody is around to turn it back on. After `Release` seconds the lock drops on its
+	own and the output says why. Code that knows the wait is legitimate (the step is
+	already done and the player is just watching the wave run) calls `:HoldRelease()`
+	and the lock stays without a deadline.
 
-	Fica em `common/` porque as duas places têm roteiro que aponta botão.
+	It lives in `common/` because both places have scripts that point at buttons.
+
+	See docs/common/tutorial.md.
 ]]
 
 local ButtonGateController = {
@@ -82,76 +85,76 @@ local ButtonGateController = {
 	}
 }
 
--- A trava de pé, como veio no `Lock`. `nil` é tela solta.
+-- The active lock, as it came in `Lock`. `nil` means the screen is free.
 ButtonGateController.Spec = nil :: any
 
 --[[
-	`[GuiButton] = { Active, Selectable, Connection }` — o que cada botão era antes de
-	a trava desligá-lo, e a escuta que o mantém desligado. É esta tabela que o
-	`Unlock` desfaz.
+	`[GuiButton] = { Active, Selectable, Connection }`: what each button was before the
+	lock disabled it, and the listener that keeps it disabled. This table is what
+	`Unlock` undoes.
 ]]
 ButtonGateController.Saved = {}
 
--- Sobe a cada `Lock`. A válvula e a varredura atrasada conferem o número antes de
--- mexer na tela: trava nova durante a espera da anterior não pode ser desfeita pela
--- válvula de uma trava que já saiu.
+-- Goes up on every `Lock`. The valve and the deferred sweep check the number before
+-- touching the screen: a new lock during the previous one's wait must not be undone
+-- by the valve of a lock that is already gone.
 ButtonGateController.Token = 0
 
 --[[
-	Sobe a cada `Lock`, a cada `Unlock` e no `HoldRelease`. É o número que a válvula
-	confere ao acordar, e é separado do `Token` de propósito: tirar o prazo não pode
-	cancelar a varredura atrasada que estiver marcada.
+	Goes up on every `Lock`, every `Unlock`, and on `HoldRelease`. It is the number the
+	valve checks when it wakes, and it is separate from `Token` on purpose: removing
+	the deadline must not cancel a deferred sweep that is scheduled.
 ]]
 ButtonGateController.ReleaseToken = 0
 
--- A escuta da `PlayerGui`, ligada só enquanto há trava de pé.
+-- The `PlayerGui` listener, connected only while a lock is up.
 ButtonGateController.Connection = nil :: RBXScriptConnection?
 
 --[[
-	`[Instance] = conexão` — o que está **escondendo** botões agora, e a escuta que
-	avisa quando ele aparecer.
+	`[Instance] = connection`: what is **hiding** buttons right now, and the listener
+	that says when it appears.
 
-	O painel fechado não cria filho nenhum ao abrir (ele só vira `Visible`), então sem
-	isto a trava não teria como saber que os botões de dentro dele acabaram de entrar
-	na tela. Ver `onScreen` e `watch`.
+	A closed panel creates no children when it opens (it only becomes `Visible`), so
+	without this the lock could not know the buttons inside it just came on screen.
+	See `onScreen` and `watch`.
 ]]
 ButtonGateController.Watched = {}
 
--- Já há uma varredura marcada para o fim deste quadro? Ver `schedule`.
+-- Is a sweep already scheduled for the end of this frame? See `schedule`.
 ButtonGateController.Pending = false
 
 --[[ INTERNAL ]]
 
 --[=[
-	Um alvo da whitelist virando instância. Ele vem de três formas:
+	A whitelist target becoming an instance. It comes in three forms:
 
-	  - **caminho de tela** (`"Interface.ReadyWave"`), resolvido pelo
-	    `HighlightController:Find` — a mesma busca em profundidade que o `Highlight`
-	    do passo usa;
-	  - **instância**, para quem já tem a referência na mão e não precisa dar a volta
-	    por um caminho;
-	  - **função**, para a peça que não tem caminho fixo porque nasce clonada em
-	    runtime: a carta na mesa da loja, a caixa na mochila, o que o destaque estiver
-	    abraçando agora. Ela pode devolver **uma** instância ou uma lista delas — o
-	    menu de velocidade abre um clone por degrau, e os degraus são vários.
+	  - **screen path** (`"Interface.ReadyWave"`), resolved by
+	    `HighlightController:Find`: the same depth-first lookup the step's `Highlight`
+	    uses;
+	  - **instance**, for callers that already hold the reference and do not need to
+	    go through a path;
+	  - **function**, for a piece with no fixed path because it is cloned at runtime:
+	    the card on the shop table, the crate in the backpack, whatever the highlight is
+	    hugging now. It can return **one** instance or a list of them: the speed menu
+	    opens one clone per step, and there are several steps.
 
-	**Tudo é resolvido a cada varredura**, e não uma vez no `Lock`. É o que importa:
-	o botão de comprar nasce quando a loja abre, e um alvo resolvido cedo demais
-	viraria `nil` para sempre — a whitelist ficaria sem justamente o botão que o passo
-	pede. A função existe pelo mesmo motivo e vai mais longe: ela reencontra o alvo
-	toda vez, mesmo que ele tenha sido destruído e clonado de novo no meio do passo.
+	**Everything is resolved on every sweep**, not once in `Lock`. That is what
+	matters: the buy button is born when the shop opens, and a target resolved too
+	early would be `nil` forever, leaving the whitelist without exactly the button the
+	step asks for. The function exists for the same reason and goes further: it finds
+	the target again every time, even if it was destroyed and recloned mid-step.
 ]=]
 function ButtonGateController:resolve(entries : { any }?) : { Instance }
 	local out = {}
 
 	for _, entry in (entries or {}) do
 		if type(entry) == "function" then
-			-- Alvo de quem chamou: um erro dentro dele não pode derrubar a varredura e
-			-- deixar meia tela trancada.
+			-- A caller's target: an error inside it must not take down the sweep and leave
+			-- half the screen locked.
 			local success, found = pcall(entry)
 
 			if not success then
-				warn(`[ButtonGateController]: um alvo da whitelist estourou: {found}`)
+				log:StudioWarn(`a whitelist target errored: {found}`)
 			elseif typeof(found) == "Instance" then
 				if found.Parent then
 					table.insert(out, found)
@@ -191,11 +194,11 @@ function ButtonGateController:resolve(entries : { any }?) : { Instance }
 end
 
 --[=[
-	As telas que a trava não pisa, por nome.
+	The screens the lock does not touch, by name.
 
-	O destaque é uma delas sempre: a tela dele não tem botão, mas varrê-la é trabalho
-	à toa a cada vez. O resto vem de quem chamou — o Cmdr é o caso de sempre, porque
-	trancar o console é trancar a própria ferramenta de destravar.
+	The highlight is always one of them: its screen has no buttons, but sweeping it is
+	wasted work every time. The rest comes from the caller: Cmdr is the usual case,
+	because locking the console locks the very tool for unlocking.
 ]=]
 function ButtonGateController:ignored(spec : any) : { [string] : boolean }
 	local out = { [SharedConfig.HighlightConfig.Gui.Name] = true }
@@ -208,7 +211,7 @@ function ButtonGateController:ignored(spec : any) : { [string] : boolean }
 end
 
 --[=[
-	A tela (`LayerCollector`) em que um botão vive, ou `nil`.
+	The screen (`LayerCollector`) a button lives in, or `nil`.
 ]=]
 local function screenOf(instance : Instance) : Instance?
 	local current : Instance? = instance
@@ -225,18 +228,19 @@ local function screenOf(instance : Instance) : Instance?
 end
 
 --[=[
-	O botão está **de fato** na tela? Devolve junto **tudo** o que o está escondendo.
+	Is the button **actually** on screen? Also returns **everything** hiding it.
 
-	`Visible` é propriedade de cada objeto, e não do que se vê: um botão dentro de um
-	painel fechado continua com `Visible = true`. Estar na tela é ele visível **e**
-	toda a linhagem visível, até uma `ScreenGui` que por sua vez esteja ligada.
+	`Visible` is a property of each object, not of what is seen: a button inside a
+	closed panel still has `Visible = true`. Being on screen means it is visible
+	**and** its whole ancestry is visible, up to a `ScreenGui` that is enabled.
 
-	A lista é de **todos** os que escondem, e não só do mais próximo, e isso não é
-	zelo: a hotbar esconde em dois níveis (a carta e o container), e devolvê-los um de
-	cada vez perde a corrida. Escutando só a carta, o quadro em que ela reaparece com
-	o container ainda fechado gastava o único aviso que havia — o container abria
-	depois, sem nada escutando, e a carta ficava clicável fora da whitelist. Com a
-	linhagem inteira escutada, qualquer um dos dois refaz a conta.
+	The list includes **all** that hide it, not only the nearest, and that is not
+	overcaution: the hotbar hides at two levels (the card and the container), and
+	returning them one at a time loses the race. Listening only to the card, the frame
+	where it reappears with the container still closed would spend the only
+	notification there was; the container would open later, with nothing listening,
+	and the card would be clickable outside the whitelist. With the whole ancestry
+	listened to, either one redoes the math.
 ]=]
 local function onScreen(instance : GuiObject) : (boolean, { Instance })
 	local hiders = {}
@@ -263,33 +267,33 @@ local function onScreen(instance : GuiObject) : (boolean, { Instance })
 		current = current.Parent
 	end
 
-	-- Fora de qualquer tela: não está em lugar nenhum que o jogador veja.
+	-- Outside any screen: it is nowhere the player can see.
 	return false, hiders
 end
 
 --[=[
-	O botão está **dentro** do alvo (ou é ele)? É a conta do `Block`.
+	Is the button **inside** the target (or the target itself)? It is the `Block` check.
 ]=]
 local function contains(target : Instance, button : Instance) : boolean
 	return button == target or button:IsDescendantOf(target)
 end
 
 --[=[
-	O botão faz parte do alvo, em qualquer direção? É a conta do `Allow`.
+	Is the button part of the target, in either direction? It is the `Allow` check.
 
-	Pai conta junto com filho: um `CardWrapper` clicável que embala a carta apontada
-	não pode ficar mudo enquanto a carta dentro dele funciona.
+	A parent counts along with a child: a clickable `CardWrapper` around the pointed
+	card must not go dead while the card inside it works.
 ]=]
 local function touches(target : Instance, button : Instance) : boolean
 	return button == target or button:IsDescendantOf(target) or target:IsDescendantOf(button)
 end
 
 --[=[
-	Devolve um botão ao que ele era e larga a escuta dele.
+	Restores a button to what it was and drops its listener.
 
-	**A escuta sai antes** do `Active` voltar, e não depois: ela existe justamente
-	para segurar o botão no estado que a trava quer, e devolvê-lo com ela ligada faria
-	a trava se reapertar em cima da própria devolução.
+	**The listener goes first**, before `Active` returns, not after: it exists exactly
+	to hold the button in the state the lock wants, and restoring it with the listener
+	connected would make the lock clamp down on its own restoration.
 ]=]
 function ButtonGateController:restore(button : GuiButton)
 	local state = self.Saved[button]
@@ -308,46 +312,46 @@ function ButtonGateController:restore(button : GuiButton)
 end
 
 --[=[
-	Põe um botão no estado que a trava quer e o segura lá.
+	Puts a button in the state the lock wants and holds it there.
 
-	`want` é `false` para o que a whitelist não cobre e `true` para o que ela cobre —
-	**a whitelist manda nos dois sentidos**, e não só em desligar. Ligar parece
-	exagero até se ver o que acontece sem isso: o `RoundCardShopController` tira o
-	molde de carta da própria tela (`_template` clona o `CardWrapper` autorado e
-	destrói o original), e se a trava tiver desligado o molde antes disso o
-	`Active = false` viaja no clone. Toda carta da oferta nasce morta, **inclusive a
-	que o passo manda comprar** — foi assim que a Weather Report ficou sem clique.
-	Trava que só desliga não tem como desfazer isso, porque o estado que ela guardou é
-	o do molde, não o do clone que nem existia.
+	`want` is `false` for what the whitelist does not cover and `true` for what it
+	covers: **the whitelist rules both ways**, not only for turning off. Turning on
+	seems excessive until you see what happens without it: `RoundCardShopController`
+	takes the card template off its own screen (`_template` clones the authored
+	`CardWrapper` and destroys the original), and if the lock disabled the template
+	first, `Active = false` travels in the clone. Every card in the offer is born dead,
+	**including the one the step asks to buy**: the Weather Report card would have no
+	click. A lock that only turns off cannot undo that, because the state it saved is
+	the template's, not the clone's, which did not even exist.
 
-	Quem está na whitelist, então, a trava liga. Se outro dono o tinha desligado de
-	propósito, a whitelist ganha: passo que aponta um botão e não deixa clicar nele é
-	um passo que não fecha. O estado original fica guardado e volta no `Unlock`, como
-	em qualquer outro botão.
+	So the lock turns on whatever is in the whitelist. If another owner had disabled it
+	on purpose, the whitelist wins: a step that points at a button and does not let it
+	be clicked is a step that never closes. The original state is saved and returns on
+	`Unlock`, as with any other button.
 
-	A escuta é o que separa isto de um `Active = false` solto. Um botão tem mais de um
-	dono — o `DifficultyController` devolve o `Active` dos degraus quando a votação
-	fecha, o `ReadyController` religa o dele a cada intervalo — e nenhum deles sabe que
-	o tutorial está no ar. Sem ela, o primeiro que passar abre um buraco na whitelist
-	que só uma varredura por acaso fecharia.
+	The listener is what separates this from a loose `Active = false`. A button has
+	more than one owner (`DifficultyController` restores the steps' `Active` when the
+	vote closes, `ReadyController` turns its own back on every intermission) and none
+	of them knows the tutorial is running. Without it, the first one to pass opens a
+	hole in the whitelist that only a lucky sweep would close.
 
-	Não há laço: a escuta só age quando o valor está **diferente** do que a trava quer,
-	e escrever o valor certo não dispara nada que ela atenda.
+	There is no loop: the listener only acts when the value **differs** from what the
+	lock wants, and writing the right value triggers nothing it responds to.
 ]=]
 function ButtonGateController:enforce(button : GuiButton, want : boolean)
 	local state = self.Saved[button]
 
 	if state then
 		if state.Want == want then
-			-- Já é nosso e já quer a mesma coisa; a escuta cuida do resto.
+			-- Already ours and already wants the same thing; the listener handles the rest.
 			return
 		end
 
 		--[[
-			A whitelist mudou de opinião sobre este botão de um passo para o outro. O
-			estado original é o da primeira vez que o vimos, e é esse que tem de voltar no
-			fim — por isso ele é reaproveitado em vez de relido da tela, que agora mostra
-			o que **nós** escrevemos.
+			The whitelist changed its mind about this button from one step to the next.
+			The original state is the one from the first time we saw it, and that is
+			what must return at the end, so it is reused instead of reread from the
+			screen, which now shows what **we** wrote.
 		]]
 		if state.Connection then
 			state.Connection:Disconnect()
@@ -371,15 +375,15 @@ function ButtonGateController:enforce(button : GuiButton, want : boolean)
 end
 
 --[=[
-	Fica de olho num ancestral que está escondendo botões.
+	Keeps an eye on an ancestor that is hiding buttons.
 
-	É o par do `onScreen`. Um painel que abre não cria filho nenhum — ele só vira
-	`Visible` —, e o `DescendantAdded` não tem o que avisar: sem esta escuta, os
-	botões que acabaram de entrar na tela ficariam clicáveis até alguém criar um botão
-	em algum lugar.
+	It is `onScreen`'s pair. A panel that opens creates no children (it only becomes
+	`Visible`), and `DescendantAdded` has nothing to report: without this listener, the
+	buttons that just came on screen would stay clickable until someone created a
+	button somewhere.
 
-	Uma escuta por ancestral, e não por botão: é um punhado de painéis contra dezenas
-	de botões, e o que interessa é o momento em que o painel aparece.
+	One listener per ancestor, not per button: it is a handful of panels against
+	dozens of buttons, and what matters is the moment the panel appears.
 ]=]
 function ButtonGateController:watch(hiders : { Instance })
 	for _, hider in hiders do
@@ -396,7 +400,7 @@ function ButtonGateController:watch(hiders : { Instance })
 end
 
 --[=[
-	Larga todas as escutas de visibilidade.
+	Drops every visibility listener.
 ]=]
 function ButtonGateController:unwatch()
 	for _, connection in self.Watched do
@@ -407,12 +411,12 @@ function ButtonGateController:unwatch()
 end
 
 --[=[
-	Aplica a trava que está de pé: desliga o que sobra, devolve o que voltou a ser
-	permitido e deixa o resto como está.
+	Applies the active lock: turns off what is left over, restores what is allowed
+	again, and leaves the rest as it is.
 
-	A diferença é calculada em vez de a tela ser destravada e travada de novo: o
-	segundo jeito passa por um instante com tudo ligado, e uma varredura que acontece
-	no meio de um clique deixaria o clique passar.
+	The difference is computed instead of unlocking and relocking the screen: the
+	second way goes through an instant with everything on, and a sweep that happens in
+	the middle of a click would let the click through.
 ]=]
 function ButtonGateController:apply()
 	local spec = self.Spec
@@ -422,7 +426,7 @@ function ButtonGateController:apply()
 	local block = self:resolve(spec.Block)
 	local ignored = self:ignored(spec)
 
-	-- `[GuiButton] = Active que a trava quer`. `nil` é "não é assunto meu".
+	-- `[GuiButton] = the Active the lock wants`. `nil` means "not my business".
 	local wanted = {}
 
 	for _, instance in PlayerGui:GetDescendants() do
@@ -436,17 +440,17 @@ function ButtonGateController:apply()
 		end
 
 		--[=[
-			Botão fora da tela fica de fora da conta, nos dois sentidos.
+			A button off screen is left out of the math, both ways.
 
-			Não dá para clicar no que não se vê, então trancá-lo não compra nada — e mexer
-			nele **custa**: a tela que clona uma peça escondida leva no clone o `Active`
-			que a trava escreveu no molde, e o dono do molde não tem como saber disso.
-			Ligar também sairia errado, e por um motivo mais imediato: a carta da hotbar
-			fica desligada enquanto a fala do passo está na tela, e acendê-la ali seria
-			deixar arrastar antes de o jogador terminar de ler.
+			You cannot click what you cannot see, so locking it buys nothing, and
+			touching it **costs**: a screen that clones a hidden piece carries the
+			`Active` the lock wrote on the template, and the template's owner cannot
+			know that. Turning on would also go wrong, for a more immediate reason: the
+			hotbar card stays disabled while the step's dialog is on screen, and lighting
+			it there would allow dragging before the player finishes reading.
 
-			Quem está escondendo o botão passa a ser escutado, porque painel que abre não
-			cria filho nenhum: a conta é refeita quando ele aparecer.
+			Whatever is hiding the button starts being listened to, because a panel
+			that opens creates no children: the math is redone when it appears.
 		]=]
 		local visible, hiders = onScreen(instance)
 		if not visible then
@@ -463,8 +467,8 @@ function ButtonGateController:apply()
 			end
 		end
 
-		-- O `Block` ganha do `Allow`: é assim que se libera um painel inteiro e se tira
-		-- um botão de dentro dele.
+		-- `Block` beats `Allow`: that is how you allow a whole panel and remove one button
+		-- from inside it.
 		if permitted then
 			for _, target in block do
 				if contains(target, instance) then
@@ -475,20 +479,21 @@ function ButtonGateController:apply()
 		end
 
 		--[[
-			Botão que a whitelist não cobre e que **já** estava desligado tem outro dono — o
-			`ToggleTower` tranca o upgrade e a venda a partida de tutorial inteira. Tomá-lo
-			aqui faria o `Unlock` religá-lo, e a trava do outro sairia sem ele saber.
+			A button the whitelist does not cover that was **already** disabled has
+			another owner: `ToggleTower` locks upgrade and sell for the whole tutorial
+			match. Taking it here would make `Unlock` turn it back on, and the other
+			owner's lock would go away without it knowing.
 
-			O que a whitelist cobre é tomado de qualquer jeito, ligado ou desligado: ali a
-			trava manda nos dois sentidos (ver `enforce`).
+			What the whitelist covers is taken either way, on or off: there the lock
+			rules both ways (see `enforce`).
 		]]
 		if permitted or instance.Active then
 			wanted[instance] = permitted
 		end
 	end
 
-	-- O que saiu da conta (o botão sumiu da tela, ou deixou de ser assunto) volta ao
-	-- que era.
+	-- Whatever left the math (the button went off screen, or stopped being our
+	-- business) returns to what it was.
 	for button in self.Saved do
 		if wanted[button] ~= nil and button.Parent then
 			continue
@@ -503,11 +508,11 @@ function ButtonGateController:apply()
 end
 
 --[=[
-	Marca uma varredura para o fim do quadro.
+	Schedules a sweep for the end of the frame.
 
-	Uma loja que abre põe três cartas na tela em três `DescendantAdded` seguidos, e
-	varrer a `PlayerGui` inteira três vezes seria pagar o mesmo preço três vezes pelo
-	mesmo resultado. O `defer` junta o lote.
+	A shop that opens puts three cards on screen in three consecutive
+	`DescendantAdded`s, and sweeping the whole `PlayerGui` three times would pay the
+	same price three times for the same result. `defer` batches them.
 ]=]
 function ButtonGateController:schedule()
 	if self.Pending then return end
@@ -526,7 +531,7 @@ function ButtonGateController:schedule()
 end
 
 --[=[
-	Liga a válvula: passado o prazo, a trava cai e o output explica.
+	Arms the valve: once the deadline passes, the lock drops and the output explains.
 ]=]
 function ButtonGateController:armRelease(seconds : number?)
 	if type(seconds) ~= "number" or seconds <= 0 then
@@ -538,9 +543,9 @@ function ButtonGateController:armRelease(seconds : number?)
 	task.delay(seconds, function()
 		if self.ReleaseToken ~= token or not self.Spec then return end
 
-		warn(string.format(
-			"[ButtonGateController]: a trava de botoes esta de pe ha %.0fs sem ninguem soltar; devolvendo a tela. "
-				.. "Se o passo nao acabou, a whitelist dele nao cobre o botao que ele pede.",
+		log:StudioWarn(string.format(
+			"the button lock has been up for %.0fs without being released; giving the screen back. "
+				.. "If the step did not finish, its whitelist does not cover the button it asks for.",
 			seconds
 		))
 
@@ -551,7 +556,7 @@ end
 --[[ API ]]
 
 --[=[
-	Tranca a tela, deixando clicável só o que `Allow` disser.
+	Locks the screen, leaving clickable only what `Allow` says.
 
 		Gate:Lock({
 			Allow = { "Interface.ReadyWave", "SharedUIs.DialogGUI.Container" },
@@ -560,14 +565,14 @@ end
 			Release = 90,
 		})
 
-	`Allow` e `Block` aceitam caminho de tela (a partir da `PlayerGui`, como o
-	`Highlight` do passo), a instância direto, ou uma função que devolve a instância —
-	esta última para a peça clonada em runtime, que é reencontrada a cada varredura.
-	Ver `resolve`.
+	`Allow` and `Block` accept a screen path (from `PlayerGui`, like the step's
+	`Highlight`), the instance directly, or a function that returns the instance, the
+	last one for a piece cloned at runtime, which is found again on every sweep. See
+	`resolve`.
 
-	Chamar com a trava de pé **troca** a whitelist sem devolver a tela no meio: o que
-	continua proibido continua desligado, e só a diferença se mexe. É o que impede a
-	tela de piscar toda clicável entre um passo e o seguinte.
+	Calling with a lock up **replaces** the whitelist without freeing the screen in
+	between: what stays forbidden stays off, and only the difference moves. That keeps
+	the screen from flashing fully clickable between one step and the next.
 ]=]
 function ButtonGateController:Lock(spec : any)
 	if type(spec) ~= "table" then return end
@@ -576,16 +581,17 @@ function ButtonGateController:Lock(spec : any)
 	self.ReleaseToken += 1
 	self.Spec = spec
 
-	-- As escutas são refeitas pela varredura: o que esconde um botão muda de uma
-	-- whitelist para a seguinte.
+	-- The listeners are rebuilt by the sweep: what hides a button changes from one
+	-- whitelist to the next.
 	self:unwatch()
 
 	if not self.Connection then
 		--[[
-			A mesa da loja, a carta que vai para a mão, a lista de caixas: todas nascem
-			com a trava já de pé, e sem esta escuta nasceriam clicáveis. É filtrado por
-			`GuiButton` antes de marcar a varredura porque `DescendantAdded` na
-			`PlayerGui` dispara para cada `UIStroke` e cada `TextLabel` de cada tela.
+			The shop table, the card going to the hand, the crate list: all are born with
+			the lock already up, and without this listener they would be born clickable.
+			It filters by `GuiButton` before scheduling the sweep because
+			`DescendantAdded` on `PlayerGui` fires for every `UIStroke` and `TextLabel`
+			on every screen.
 		]]
 		self.Connection = PlayerGui.DescendantAdded:Connect(function(instance)
 			if instance:IsA("GuiButton") then
@@ -599,7 +605,7 @@ function ButtonGateController:Lock(spec : any)
 end
 
 --[=[
-	Devolve a tela: cada botão volta ao `Active` e ao `Selectable` que tinha.
+	Frees the screen: each button returns to the `Active` and `Selectable` it had.
 ]=]
 function ButtonGateController:Unlock()
 	self.Token += 1
@@ -621,23 +627,23 @@ function ButtonGateController:Unlock()
 end
 
 --[=[
-	Tira o prazo da válvula sem soltar a trava.
+	Removes the valve's deadline without releasing the lock.
 
-	É o que o passo cumprido chama. A válvula existe para o passo que **não
-	reconheceu** o que o jogador fez; passo que já foi cumprido não pode ser
-	destravado por ela — a wave está correndo, não há o que clicar, e devolver a tela
-	ali seria soltar o jogador no meio do roteiro por ele ter esperado.
+	It is what a completed step calls. The valve exists for a step that **did not
+	recognize** what the player did; a step already completed must not be unlocked by
+	it: the wave is running, there is nothing to click, and freeing the screen there
+	would release the player mid-script for having waited.
 ]=]
 function ButtonGateController:HoldRelease()
 	if not self.Spec then return end
 
-	-- O número novo é o que faz a válvula marcada no `Lock` desistir quando acordar.
+	-- The new number is what makes the valve scheduled in `Lock` give up when it wakes.
 	self.ReleaseToken += 1
 end
 
 --[=[
-	Reaplica a trava que está de pé. Serve para quem mexeu na tela por fora e quer a
-	conta refeita agora, em vez de no próximo botão que nascer.
+	Reapplies the active lock. It is for code that changed the screen from outside and
+	wants the math redone now, instead of at the next button that is born.
 ]=]
 function ButtonGateController:Refresh()
 	if not self.Spec then return end
@@ -649,7 +655,7 @@ function ButtonGateController:IsLocked() : boolean
 	return self.Spec ~= nil
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function ButtonGateController:start()
 end

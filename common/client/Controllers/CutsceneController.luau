@@ -9,39 +9,41 @@ local Vendor = Shared:WaitForChild("Vendor")
 local Util = Shared:WaitForChild("Util")
 
 local CutsceneFormat = require(Util.CutsceneFormat)
+local Log = require(Util:WaitForChild("Log"))
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
 local Signal = require(Packages.Signal)
 
 local Framework = Me.new()
+local log = Log.new("CutsceneController")
 
 --[[
-	Player das cutscenes do Moon Animator.
+	Player for Moon Animator cutscenes.
 
-	A leitura do arquivo mora em Shared.Util.CutsceneFormat, que entende tanto a
-	árvore de Folders exportada quanto o blob comprimido. Aqui fica só o que
-	precisa de instância viva e de frame a frame.
+	Reading the file lives in Shared.Util.CutsceneFormat, which understands both the
+	exported Folder tree and the compressed blob. Only what needs live instances and
+	frame-by-frame work stays here.
 
-		<NomeDaCena>              Model
-		├── SceneReferenceCFrame  Part — o centro de coordenadas da cena. Tudo é
-		│                         medido a partir dela, e é ela que vai parar na
-		│                         origem passada pra playCutscene
-		├── <rig da câmera>       uma Part raiz ligada à CamPart por Motor6D
-		├── <rigs dos atores>     os Models que o Moon Animator anima
-		├── SceneData             StringValue com o blob, depois do bake
-		└── 1, 2, 3, ...          os Folders do save, se ainda não passou no bake
+		<SceneName>               Model
+		├── SceneReferenceCFrame  Part: the scene's coordinate center. Everything is
+		│                         measured from it, and it is what lands at the
+		│                         origin passed to playCutscene
+		├── <camera rig>          a root Part linked to CamPart by a Motor6D
+		├── <actor rigs>          the Models Moon Animator animates
+		├── SceneData             StringValue with the blob, after baking
+		└── 1, 2, 3, ...          the save's Folders, if not baked yet
 
-		O centro de coordenadas pode ser o World Pivot do Model em vez da Part: basta
-		marcar o atributo UseWorldPivot na cena (ou não ter a Part). Ver
+		The coordinate center can be the Model's World Pivot instead of the Part: set
+		the UseWorldPivot attribute on the scene (or have no Part). See
 		readSceneReference.
 
-	A câmera sai do rig, não da faixa `CFrame` do item de câmera. Aquela faixa
-	guarda CFrames de mundo já bakeados na hora da exportação: se a cena for
-	arrastada no Studio, as Parts andam e os valores bakeados ficam pra trás. O
-	rig é C1 relativo à Part raiz, então acompanha a cena pra onde ela for.
+	The camera comes from the rig, not from the camera item's `CFrame` track. That
+	track stores world CFrames baked at export time: if the scene is dragged in
+	Studio, the Parts move and the baked values stay behind. The rig is C1 relative
+	to the root Part, so it follows the scene wherever it goes.
 
-	Não há AnimationId em lugar nenhum: as juntas são animadas escrevendo C1, do
-	mesmo jeito que o Moon Animator faz no editor.
+	There is no AnimationId anywhere: joints are animated by writing C1, the same way
+	Moon Animator does in the editor.
 --]]
 
 local DEFAULT_CUTSCENE = "EnterCutscene"
@@ -49,11 +51,11 @@ local DEFAULT_CUTSCENE = "EnterCutscene"
 local SCENE_REFERENCE = "SceneReferenceCFrame"
 local CAMERA_PART = "CamPart"
 
--- Nome do pedido ao InterfaceController: enquanto a cena roda, tela limpa.
+-- Name of the InterfaceController request: while the scene plays, the screen is clean.
 local HIDE_REASON = "Cutscene"
 
--- Atributo na cena: liga pra usar o World Pivot do Model como centro, no lugar da
--- Part de referência.
+-- Scene attribute: turn it on to use the Model's World Pivot as the center instead
+-- of the reference Part.
 local PIVOT_ATTRIBUTE = "UseWorldPivot"
 
 local SCENE_FPS = 60
@@ -61,7 +63,7 @@ local SCENE_FPS = 60
 local RIG_R6 = "R6"
 local RIG_R15 = "R15"
 
--- O que é vestido de um personagem em outro sem trocar Part nenhuma.
+-- What is dressed from one character onto another without swapping any Part.
 local APPEARANCE_CLASSES = {
 	Shirt = true,
 	Pants = true,
@@ -69,11 +71,11 @@ local APPEARANCE_CLASSES = {
 	BodyColors = true,
 }
 
--- Attachment que a gente teve que criar no rig leva essa marca, pra sair na volta.
+-- An Attachment we had to create on the rig carries this mark, so it is removed afterward.
 local CREATED_ATTACHMENT = "CutsceneAttachment"
 
--- Onde procurar o ponto de encaixe quando o rig não tem a Part do personagem de
--- origem: um acessório de R15 preso no LeftUpperArm vai no "Left Arm" de um R6.
+-- Where to look for the attachment point when the rig lacks the source character's
+-- Part: an R15 accessory attached to LeftUpperArm goes on an R6's "Left Arm".
 local PART_FALLBACKS = {
 	UpperTorso = "Torso",
 	LowerTorso = "Torso",
@@ -97,8 +99,8 @@ local PART_FALLBACKS = {
 	["Right Leg"] = "RightUpperLeg",
 }
 
--- O Moon Animator usa nomes próprios pra dois estilos, e "Constant" não é um
--- estilo de tween: é degrau, o valor segura até a próxima key.
+-- Moon Animator uses its own names for two styles, and "Constant" is not a tween
+-- style: it is a step, the value holds until the next key.
 local CONSTANT_EASE = "Constant"
 local EASE_ALIASES = {
 	Expo = "Exponential",
@@ -124,8 +126,8 @@ local CutsceneController = {
 
 	Signals = {
 		-- (frame : number, lastFrame : number, asset : Instance)
-		-- Uma vez por frame da cena, com o frame já em número inteiro. Quem quiser
-		-- disparar algo perto do fim compara com lastFrame.
+		-- Once per scene frame, with the frame already as an integer. Anything that wants
+		-- to fire near the end compares with lastFrame.
 		FrameReached = Signal.new(),
 	},
 }
@@ -138,7 +140,7 @@ local function lerpValue(from, to, alpha: number)
 	return from + (to - from) * alpha
 end
 
---[[ CENA ]]
+--[[ SCENE ]]
 
 function CutsceneController:findMotor(root: Instance, partName: string)
 	for _, descendant in root:GetDescendants() do
@@ -151,8 +153,8 @@ function CutsceneController:findMotor(root: Instance, partName: string)
 end
 
 --[[
-	Lê a cena uma vez e guarda o resultado: o dado vem do CutsceneFormat, e aqui
-	resolvemos as instâncias vivas que ele não pode carregar.
+	Reads the scene once and caches the result: the data comes from CutsceneFormat,
+	and here we resolve the live instances it cannot carry.
 --]]
 function CutsceneController:parseScene(asset: Instance)
 	local cached = self.scenes[asset]
@@ -170,7 +172,7 @@ function CutsceneController:parseScene(asset: Instance)
 		if rig and rig:IsA("Model") then
 			table.insert(rigs, { rig = rig, joints = entry.joints })
 		else
-			warn(string.format("[CutsceneController]: Cutscene %q has no rig named %q.", asset.Name, entry.target))
+			log:StudioWarn(string.format("cutscene %q has no rig named %q.", asset.Name, entry.target))
 		end
 	end
 
@@ -188,7 +190,7 @@ function CutsceneController:parseScene(asset: Instance)
 	return scene
 end
 
---[[ AMOSTRAGEM ]]
+--[[ SAMPLING ]]
 
 function CutsceneController:easeAlpha(alpha: number, ease: string?)
 	if not ease then return alpha end
@@ -203,7 +205,7 @@ function CutsceneController:easeAlpha(alpha: number, ease: string?)
 	if not style then
 		if not warnedEases[name] then
 			warnedEases[name] = true
-			warn(string.format("[CutsceneController]: Unknown Moon Animator ease %q, falling back to Linear.", name))
+			log:StudioWarn(string.format("unknown Moon Animator ease %q, falling back to Linear.", name))
 		end
 		return alpha
 	end
@@ -212,8 +214,8 @@ function CutsceneController:easeAlpha(alpha: number, ease: string?)
 end
 
 --[[
-	Amostra uma faixa. O cursor só anda pra frente, então o custo por frame é
-	constante em vez de varrer a lista inteira.
+	Samples a track. The cursor only moves forward, so the per-frame cost is constant
+	instead of scanning the whole list.
 --]]
 function CutsceneController:sampleTrack(track, frame: number)
 	local keys = track.keys
@@ -233,13 +235,14 @@ function CutsceneController:sampleTrack(track, frame: number)
 	return lerpValue(from.value, to.value, self:easeAlpha(alpha, to.ease))
 end
 
---[[ ATORES ]]
+--[[ ACTORS ]]
 
 --[[
-	Coloca um rig em cena e devolve as juntas prontas pra receber C1 por frame.
+	Puts a rig in the scene and returns the joints ready to receive C1 per frame.
 
-	Rig guardado junto da cena é template: entra clonado e sai destruído. Rig que
-	já vive no mundo é usado no lugar, com posição e C1 devolvidos no fim.
+	A rig stored with the scene is a template: it goes in cloned and comes out
+	destroyed. A rig that already lives in the world is used in place, with its
+	position and C1 restored at the end.
 --]]
 function CutsceneController:prepareRig(parsed, sessionMaid, origin: CFrame, reference: CFrame)
 	local rig = parsed.rig
@@ -284,11 +287,11 @@ function CutsceneController:prepareRig(parsed, sessionMaid, origin: CFrame, refe
 	return tracks
 end
 
---[[ APARÊNCIA ]]
+--[[ APPEARANCE ]]
 
 --[[
-	R6 ou R15, lido das Parts e não do Humanoid — rig de cutscene nem sempre traz um.
-	Devolve nil pra Model que não é personagem.
+	R6 or R15, read from the Parts and not the Humanoid: a cutscene rig does not
+	always have one. Returns nil for a Model that is not a character.
 --]]
 function CutsceneController:readRigType(rig: Instance): string?
 	if rig:FindFirstChild("UpperTorso") or rig:FindFirstChild("LowerTorso") then
@@ -308,10 +311,10 @@ function CutsceneController:readRigType(rig: Instance): string?
 end
 
 --[[
-	Os rigs de personagem de uma cena. `rigName` filtra por nome, pra cena com mais de
-	um ator onde só um é o jogador.
+	A scene's character rigs. `rigName` filters by name, for a scene with more than one
+	actor where only one is the player.
 
-		for _, entry in CutsceneController:getSceneRigs(cena) do
+		for _, entry in CutsceneController:getSceneRigs(scene) do
 			print(entry.rig.Name, entry.rigType)   --> playerportal R6
 		end
 --]]
@@ -336,8 +339,8 @@ function CutsceneController:getSceneRigs(asset: Instance, rigName: string?)
 end
 
 --[[
-	A face de um personagem. `GetCharacterAppearanceAsync` devolve a Decal solta no
-	modelo, o personagem vivo traz ela dentro da Head.
+	A character's face. `GetCharacterAppearanceAsync` returns the Decal loose in the
+	model; the live character carries it inside the Head.
 --]]
 function CutsceneController:findFace(character: Instance): Decal?
 	local head = character:FindFirstChild("Head")
@@ -347,23 +350,24 @@ function CutsceneController:findFace(character: Instance): Decal?
 end
 
 --[[
-	Copia o rosto: o id da Decal na Head do personagem vai pra Decal na Head do rig.
+	Copies the face: the Decal id on the character's Head goes to the Decal on the
+	rig's Head.
 
-	É só isso, e serve pros dois tipos — R6 e R15 guardam o rosto do mesmo jeito, numa
-	Decal na Head. Devolve a função que põe o id antigo de volta, ou nil quando um dos
-	dois lados não tem Decal nenhuma.
+	That is all, and it works for both types: R6 and R15 store the face the same way,
+	in a Decal on the Head. Returns the function that puts the old id back, or nil
+	when one of the two sides has no Decal at all.
 --]]
 function CutsceneController:copyFace(rig: Model, character: Instance): (() -> ())?
 	local sourceFace = self:findFace(character)
 	local rigFace = self:findFace(rig)
 
 	if not sourceFace then
-		warn(string.format("[CutsceneController]: %q has no face Decal in its Head to copy.", character.Name))
+		log:StudioWarn(string.format("%q has no face Decal in its Head to copy.", character.Name))
 		return nil
 	end
 
 	if not rigFace then
-		warn(string.format("[CutsceneController]: Rig %q has no face Decal in its Head.", rig.Name))
+		log:StudioWarn(string.format("rig %q has no face Decal in its Head.", rig.Name))
 		return nil
 	end
 
@@ -376,12 +380,12 @@ function CutsceneController:copyFace(rig: Model, character: Instance): (() -> ()
 end
 
 --[[
-	O ponto do rig onde um acessório se encaixa.
+	The rig point where an accessory attaches.
 
-	Se o rig não tiver esse Attachment — um R6 não tem os pontos todos de um R15 — ele
-	é criado a partir do mesmo ponto no personagem de origem, na mesma posição
-	relativa, corrigida pela diferença de tamanho entre as duas Parts. Fica marcado
-	pra sair depois.
+	If the rig lacks that Attachment (an R6 does not have all of an R15's points), it
+	is created from the same point on the source character, at the same relative
+	position, corrected by the size difference between the two Parts. It is marked
+	for removal afterward.
 --]]
 function CutsceneController:findRigAttachment(rig: Model, name: string, source: Instance?): Attachment?
 	for _, descendant in rig:GetDescendants() do
@@ -418,14 +422,13 @@ function CutsceneController:findRigAttachment(rig: Model, name: string, source: 
 end
 
 --[[
-	Pendura um acessório num rig. É o que o `AddAccessory` faz, na mão — e na mão
-	porque o clone chega com a solda do personagem de origem dentro do Handle, e ela
-	aponta pra fora do clone: pro Head do jogador de verdade. Era por isso que o
-	acessório "não vinha", ele ia parar na cabeça do personagem, que a cutscene
-	esconde.
+	Hangs an accessory on a rig. It is what `AddAccessory` does, by hand, and by hand
+	because the clone arrives with the source character's weld inside the Handle,
+	pointing outside the clone: at the real player's Head. With `AddAccessory` the
+	accessory would end up on the character's head, which the cutscene hides.
 
-	`source` é o personagem de onde o acessório saiu, usado só pra achar um ponto de
-	encaixe que o rig não tenha.
+	`source` is the character the accessory came from, used only to find an
+	attachment point the rig does not have.
 --]]
 function CutsceneController:weldAccessory(rig: Model, accessory: Instance, source: Instance?): boolean
 	local handle = accessory:FindFirstChild("Handle")
@@ -453,7 +456,7 @@ function CutsceneController:weldAccessory(rig: Model, accessory: Instance, sourc
 		weld.C0 = attachment.CFrame
 		weld.C1 = target.CFrame
 	else
-		-- Acessório antigo, sem Attachment: o encaixe vem das propriedades dele.
+		-- An old accessory, without an Attachment: the fit comes from its properties.
 		local head = rig:FindFirstChild("Head")
 		if not head or not head:IsA("BasePart") or not accessory:IsA("Accoutrement") then
 			weld:Destroy()
@@ -477,18 +480,19 @@ function CutsceneController:weldAccessory(rig: Model, accessory: Instance, sourc
 end
 
 --[[
-	Veste um rig da cena com a aparência de um personagem: roupa, cores de corpo,
-	face e acessórios. `source` é o Player (usa o Character dele, ou baixa a aparência
-	se ele não tiver um na hora) ou um Model de personagem já pronto.
+	Dresses a scene rig with a character's appearance: clothing, body colors, face,
+	and accessories. `source` is the Player (uses their Character, or downloads the
+	appearance if they do not have one at the moment) or a ready character Model.
 
-	Nada de Part é trocado — os MeshParts de pacote de um R15 ficam como estão. Trocar
-	Part significaria destruir os Motor6D que a cena anima, e é a junta que carrega a
-	animação inteira. Por isso um R15 vestido num rig R6 (ou o contrário) funciona:
-	o que viaja é roupa, cor, face e acessório, que valem pros dois.
+	No Part is swapped: an R15's package MeshParts stay as they are. Swapping Parts
+	would mean destroying the Motor6Ds the scene animates, and the joint carries the
+	whole animation. That is why an R15 dressed onto an R6 rig (or the reverse) works:
+	what travels is clothing, color, face, and accessories, which apply to both.
 
-	Devolve uma função que desfaz tudo — o rig da cena é a instância original, então
-	sem desfazer o próximo jogador entra no portal com a roupa do anterior. Chame
-	antes do `playCutscene`: depois dele as juntas já foram lidas.
+	Returns a function that undoes everything: the scene rig is the original instance,
+	so without undoing, the next player enters the portal wearing the previous one's
+	clothes. Call it before `playCutscene`: after that the joints have already been
+	read.
 --]]
 function CutsceneController:applyCharacter(rig: Model, source: Player | Model): (() -> ())?
 	local appearance: Instance? = source :: any
@@ -503,7 +507,7 @@ function CutsceneController:applyCharacter(rig: Model, source: Player | Model): 
 			end)
 
 			if not success or not result then
-				warn(string.format("[CutsceneController]: Could not read the appearance of %s.", source.Name))
+				log:StudioWarn(string.format("could not read the appearance of %s.", source.Name))
 				return nil
 			end
 
@@ -532,16 +536,16 @@ function CutsceneController:applyCharacter(rig: Model, source: Player | Model): 
 		end)
 	end
 
-	-- O que o rig já vestia sai de cena (sem ser destruído) e volta no fim.
+	-- What the rig was already wearing leaves the scene (without being destroyed) and returns at the end.
 	for _, child in rig:GetChildren() do
 		if APPEARANCE_CLASSES[child.ClassName] or child:IsA("Accessory") then
 			detach(child)
 		end
 	end
 
-	-- BodyColors escreve a cor dentro das Parts: tirar o objeto depois não devolve o
-	-- rig ao que era, então a cor de cada Part vai guardada na mão — e guardada aqui,
-	-- antes das novas peças entrarem, pra na volta ser aplicada depois delas saírem.
+	-- BodyColors writes the color into the Parts: removing the object afterward does not
+	-- restore the rig, so each Part's color is saved by hand, and saved here, before the
+	-- new pieces go in, so on the way back it is applied after they leave.
 	if appearance:FindFirstChildOfClass("BodyColors") then
 		for _, descendant in rig:GetDescendants() do
 			if not descendant:IsA("BasePart") then continue end
@@ -564,7 +568,7 @@ function CutsceneController:applyCharacter(rig: Model, source: Player | Model): 
 					accessory:Destroy()
 				end)
 			else
-				warn(string.format("[CutsceneController]: Could not attach %q to rig %q.", child.Name, rig.Name))
+				log:StudioWarn(string.format("could not attach %q to rig %q.", child.Name, rig.Name))
 				accessory:Destroy()
 			end
 		end
@@ -575,7 +579,7 @@ function CutsceneController:applyCharacter(rig: Model, source: Player | Model): 
 		table.insert(restores, restoreFace)
 	end
 
-	-- Ponto de encaixe que o rig não tinha e teve que ser criado sai junto.
+	-- An attachment point the rig lacked and had to be created leaves too.
 	table.insert(restores, function()
 		for _, descendant in rig:GetDescendants() do
 			if descendant:IsA("Attachment") and descendant:GetAttribute(CREATED_ATTACHMENT) then
@@ -589,7 +593,7 @@ function CutsceneController:applyCharacter(rig: Model, source: Player | Model): 
 	end
 
 	return function()
-		-- Ao contrário: os clones saem antes das cores e das peças originais voltarem.
+		-- In reverse: the clones leave before the colors and original pieces return.
 		for index = #restores, 1, -1 do
 			restores[index]()
 		end
@@ -597,8 +601,8 @@ function CutsceneController:applyCharacter(rig: Model, source: Player | Model): 
 end
 
 --[[
-	Veste de uma vez todos os rigs de uma cena (ou só o de nome `rigName`) e devolve
-	uma função que desfaz tudo.
+	Dresses every rig of a scene at once (or only the one named `rigName`) and returns
+	a function that undoes everything.
 --]]
 function CutsceneController:dressScene(asset: Instance, source: Player | Model, rigName: string?): () -> ()
 	local restores = {}
@@ -617,13 +621,13 @@ function CutsceneController:dressScene(asset: Instance, source: Player | Model, 
 	end
 end
 
---[[ CONTROLE ]]
+--[[ CONTROL ]]
 
 --[[
-	Tira o mundo da frente enquanto a cena toca: billboard e highlight desligados,
-	personagem invisível. Nada disso sai do cliente — `Enabled` e
-	`LocalTransparencyModifier` escritos aqui não replicam — e tudo volta ao que era
-	no cleanup do sessionMaid.
+	Clears the world out of the way while the scene plays: billboards and highlights
+	off, character invisible. None of this leaves the client (`Enabled` and
+	`LocalTransparencyModifier` written here do not replicate), and everything returns
+	to what it was in the sessionMaid cleanup.
 --]]
 function CutsceneController:hideWorld(sessionMaid)
 	local function hideGui(instance: Instance)
@@ -647,7 +651,7 @@ function CutsceneController:hideWorld(sessionMaid)
 		if not character then continue end
 
 		for _, descendant in character:GetDescendants() do
-			-- A face é Decal: esconder só as Parts deixaria ela flutuando.
+			-- The face is a Decal: hiding only the Parts would leave it floating.
 			if descendant:IsA("BasePart") or descendant:IsA("Decal") then
 				local previous = descendant.LocalTransparencyModifier
 				descendant.LocalTransparencyModifier = 1
@@ -663,20 +667,20 @@ function CutsceneController:hideWorld(sessionMaid)
 end
 
 --[[
-	Tira a interface da frente enquanto a cena toca — as GUIs do jogo e as da própria
-	Roblox, chat e topbar incluídos.
+	Clears the interface out of the way while the scene plays: the game's GUIs and
+	Roblox's own, chat and top bar included.
 
-	A interface volta com a **cena**, e não com a câmera: quem recebe é sempre o
-	sessionMaid, mesmo no `holdCamera`, onde o controle do personagem fica preso mais
-	tempo. Acabou a cena, acabou o motivo de a tela estar limpa. No portal isso cai
-	atrás do flash branco, que a essa altura já está cobrindo tudo.
+	The interface returns with the **scene**, not with the camera: it always goes to
+	the sessionMaid, even with `holdCamera`, where character control stays locked
+	longer. The scene is over, so is the reason for a clean screen. At the portal this
+	happens behind the white flash, which by then already covers everything.
 
-	Não é `Enabled = false` na mão em cada uma: quem faz isso é o InterfaceController,
-	que é o mesmo que o painel de mapas usa. Sem esse meio de campo os dois se
-	desfariam — fechar o painel devolveria a interface no meio da cutscene.
+	It is not `Enabled = false` by hand on each one: InterfaceController does that,
+	the same one the maps panel uses. Without that middleman the two would undo each
+	other: closing the panel would bring the interface back mid-cutscene.
 
-	ScreenGui marcada com `IgnoreInterfaceHide` fica: é o caso do flash branco do
-	portal, que nasce no fim da cena justamente para cobrir a tela.
+	A ScreenGui marked `IgnoreInterfaceHide` stays: that is the case of the portal's
+	white flash, which is born at the end of the scene precisely to cover the screen.
 --]]
 function CutsceneController:hideInterface(sessionMaid)
 	local InterfaceController = self.Controllers.InterfaceController
@@ -706,20 +710,20 @@ function CutsceneController:lockControls(sessionMaid)
 end
 
 --[[
-	O centro de coordenadas da cena, lido ao vivo: arrastar a cena no Studio move a
-	referência junto com o resto, e a cutscene vai junto.
+	The scene's coordinate center, read live: dragging the scene in Studio moves the
+	reference along with the rest, and the cutscene follows.
 
-	São dois modos:
+	There are two modes:
 
-	- **Part** (padrão): a `SceneReferenceCFrame`.
-	- **World Pivot**: o pivô do próprio Model, o que a ferramenta Editar Pivô do
-	  Studio move. Liga marcando o atributo `UseWorldPivot` na cena — ou simplesmente
-	  não tendo a Part.
+	- **Part** (default): the `SceneReferenceCFrame`.
+	- **World Pivot**: the Model's own pivot, which Studio's Edit Pivot tool moves.
+	  Turn it on by setting the `UseWorldPivot` attribute on the scene, or simply by
+	  not having the Part.
 
-	O pivô só é confiável quando é de verdade: `GetPivot()` cai no centro da bounding
-	box quando o Model não tem `WorldPivot` definido nem `PrimaryPart`, e esse centro
-	anda junto com os rigs, ou seja, muda de uma tocada pra outra. Numa cena que vai
-	de pivô, defina o pivô na mão no Studio ou deixe uma PrimaryPart.
+	The pivot is only reliable when it is real: `GetPivot()` falls back to the
+	bounding box center when the Model has no `WorldPivot` set and no `PrimaryPart`,
+	and that center moves with the rigs, that is, it changes from one play to the next.
+	For a pivot-based scene, set the pivot by hand in Studio or leave a PrimaryPart.
 --]]
 function CutsceneController:readSceneReference(asset: Instance)
 	if asset:GetAttribute(PIVOT_ATTRIBUTE) ~= true then
@@ -739,9 +743,9 @@ function CutsceneController:readSceneReference(asset: Instance)
 end
 
 --[[
-	Leva a cena inteira pra `origin`: quem vai parar lá é a referência da cena (a Part
-	ou o World Pivot), o resto acompanha. Devolve o pivô de onde a cena saiu, pra quem
-	chamou poder colocá-la de volta, ou nil se a cena não tem referência nenhuma.
+	Moves the whole scene to `origin`: the scene's reference (the Part or the World
+	Pivot) lands there, and the rest follows. Returns the pivot the scene came from, so
+	the caller can put it back, or nil if the scene has no reference at all.
 --]]
 function CutsceneController:placeScene(asset: PVInstance, origin: CFrame): CFrame?
 	local reference = self:readSceneReference(asset)
@@ -762,7 +766,7 @@ function CutsceneController:construct()
 
 	self.cutscenes = Shared:WaitForChild("Assets"):WaitForChild("Cutscenes")
 
-	-- Adianta a leitura pra primeira cutscene não pagar o parse.
+	-- Reads ahead so the first cutscene does not pay for parsing.
 	task.spawn(function()
 		for _, asset in self.cutscenes:GetChildren() do
 			self:parseScene(asset)
@@ -779,8 +783,8 @@ function CutsceneController:stopCutscene()
 end
 
 --[[
-	Devolve a câmera e o controle que o `holdCamera` segurou. Sem hold em andamento
-	não faz nada, então pode ser chamado por garantia.
+	Returns the camera and control that `holdCamera` held. With no hold in progress it
+	does nothing, so it can be called just in case.
 --]]
 function CutsceneController:releaseCamera()
 	local hold = self.cameraHold
@@ -791,25 +795,25 @@ function CutsceneController:releaseCamera()
 end
 
 --[[
-	Se a câmera está parada no fim de uma cena esperando alguém devolvê-la.
+	Whether the camera is parked at the end of a scene waiting for someone to release it.
 --]]
 function CutsceneController:isCameraHeld(): boolean
 	return self.cameraHold ~= nil
 end
 
 --[[
-	Toca uma cutscene e devolve a duração dela, ou nil se não deu pra tocar.
+	Plays a cutscene and returns its duration, or nil if it could not play.
 
-	`cutscene` é o nome da cena dentro de Assets.Cutscenes ou a própria instância —
-	quem já tirou a cena da ReplicatedStorage (o portal leva a original pro mundo)
-	passa ela direto. `origin` é onde a referência da cena vai parar; sem ela, a cena
-	toca onde estiver montada.
+	`cutscene` is the scene's name inside Assets.Cutscenes or the instance itself:
+	code that already took the scene out of ReplicatedStorage (the portal moves the
+	original into the world) passes it directly. `origin` is where the scene's
+	reference lands; without it, the scene plays where it is built.
 
-	`holdCamera` deixa a câmera onde a cena terminou, em Scriptable e no CFrame do
-	último frame, com o controle do personagem ainda preso. É pra quem vai tirar o
-	jogador do lugar logo depois (o portal, atrás do flash) e não quer a câmera
-	voltando pro ombro dele no meio. Chame `releaseCamera` pra desfazer — no portal
-	isso só acontece se o teleporte falhar.
+	`holdCamera` leaves the camera where the scene ended, Scriptable and at the last
+	frame's CFrame, with character control still locked. It is for code that will
+	move the player away right after (the portal, behind the flash) and does not want
+	the camera returning to their shoulder midway. Call `releaseCamera` to undo it; at
+	the portal that only happens if the teleport fails.
 --]]
 function CutsceneController:playCutscene(cutscene: (string | Instance)?, origin: CFrame?, holdCamera: boolean?)
 	if self.cutsceneActive then return nil end
@@ -818,7 +822,7 @@ function CutsceneController:playCutscene(cutscene: (string | Instance)?, origin:
 	if typeof(cutscene) == "Instance" then
 		asset, name = cutscene, cutscene.Name
 	else
-		-- construct() pode ainda estar esperando os Assets replicarem.
+		-- construct() may still be waiting for Assets to replicate.
 		if not self.cutscenes then return nil end
 
 		name = cutscene or DEFAULT_CUTSCENE
@@ -826,19 +830,19 @@ function CutsceneController:playCutscene(cutscene: (string | Instance)?, origin:
 	end
 
 	if not asset then
-		warn(string.format("[CutsceneController]: No cutscene named %q in Assets.Cutscenes.", name))
+		log:StudioWarn(string.format("no cutscene named %q in Assets.Cutscenes.", name))
 		return nil
 	end
 
 	local scene = self:parseScene(asset)
 	if not scene then
-		warn(string.format("[CutsceneController]: Cutscene %q has no data or no rig driving a %q part.", name, CAMERA_PART))
+		log:StudioWarn(string.format("cutscene %q has no data or no rig driving a %q part.", name, CAMERA_PART))
 		return nil
 	end
 
 	local reference = self:readSceneReference(asset)
 	if not reference then
-		warn(string.format("[CutsceneController]: Cutscene %q has neither a %s part nor a pivot to measure from.", name, SCENE_REFERENCE))
+		log:StudioWarn(string.format("cutscene %q has neither a %s part nor a pivot to measure from.", name, SCENE_REFERENCE))
 		return nil
 	end
 
@@ -847,9 +851,9 @@ function CutsceneController:playCutscene(cutscene: (string | Instance)?, origin:
 	local sessionMaid = Maid.new()
 	self.maid.CurrentCutscene = sessionMaid
 
-	-- Segurar a câmera significa que ela não é devolvida no fim da cena: o controle
-	-- do mundo e o que a câmera está olhando ficam de posse do holdMaid, que só é
-	-- aberto por releaseCamera.
+	-- Holding the camera means it is not returned at the end of the scene: world
+	-- control and what the camera is looking at stay owned by holdMaid, which is only
+	-- released by releaseCamera.
 	local holdMaid = holdCamera and Maid.new() or nil
 	if holdMaid then
 		self:releaseCamera()
@@ -869,8 +873,8 @@ function CutsceneController:playCutscene(cutscene: (string | Instance)?, origin:
 
 	local sceneOrigin = origin or reference
 
-	-- A câmera é a Part1 do Motor6D: Part0 * C0 * Transform * C1:Inverse(), com
-	-- Transform parado. Tudo antes do C1 é constante, então resolve uma vez só.
+	-- The camera is the Motor6D's Part1: Part0 * C0 * Transform * C1:Inverse(), with
+	-- Transform at rest. Everything before C1 is constant, so it is resolved once.
 	local motor = scene.cameraMotor
 	local cameraBase = sceneOrigin * reference:ToObjectSpace(motor.Part0.CFrame * motor.C0)
 
@@ -903,7 +907,7 @@ function CutsceneController:playCutscene(cutscene: (string | Instance)?, origin:
 			track.motor.C1 = self:sampleTrack(track, frame)
 		end
 
-		-- Um aviso por frame da cena, não por frame de render.
+		-- One notification per scene frame, not per render frame.
 		local reached = math.floor(frame)
 		if reached > firedFrame then
 			firedFrame = reached
@@ -915,8 +919,8 @@ function CutsceneController:playCutscene(cutscene: (string | Instance)?, origin:
 		self.cutsceneActive = false
 
 		if holdMaid then
-			-- A cena acabou mas a câmera fica: parada no último frame, que é o que o
-			-- portal quer atrás do flash. Quem devolve é releaseCamera.
+			-- The scene ended but the camera stays: parked on the last frame, which is what the
+			-- portal wants behind the flash. releaseCamera gives it back.
 			camera.CFrame = cameraBase * self:sampleTrack(cameraTrack, lastFrame):Inverse()
 
 			holdMaid:GiveTask(function()

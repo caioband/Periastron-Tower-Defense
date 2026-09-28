@@ -12,50 +12,56 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("TutorialStepController")
 
 local Config = SharedConfig.TutorialConfig
 
 --[[
-	O roteiro do tutorial na tela do jogador.
+	The tutorial script on the player's screen.
 
-	O servidor manda `TutorialStep` quando um passo abre e `TutorialStepDone` quando
-	ele é cumprido; daqui saem as três coisas que o jogador vê:
+	The server sends `TutorialStep` when a step opens and `TutorialStepDone` when it is
+	completed; the four things the player sees come from here:
 
-	  1. a **instrução**, pela caixa de fala de sempre — sem borrão e sem esconder a
-	     UI, ao contrário de toda outra fala do jogo: o passo pede para o jogador
-	     usar o HUD, e escondê-lo enquanto se pede isso seria uma piada de mau gosto;
-	  2. o **destaque** na carta que ele tem de usar, pelo `HighlightController`;
-	  3. a **seta** no ponto do mapa onde a unidade tem de entrar, pelo
+	  1. the **instruction**, through the usual dialog box, with no blur and without
+	     hiding the UI, unlike every other dialog in the game: the step asks the player to
+	     use the HUD, and hiding it while asking would be a bad joke;
+	  2. the **highlight** on the card they must use, through `HighlightController`;
+	  3. the **arrow** at the map point where the unit must go, through
 	     `ArrowController`;
-	  4. a **trava de botões**, pelo `ButtonGateController`: o que o passo não pede
-	     para de aceitar clique. Quem escreve a whitelist é o config (`Buttons` do
-	     passo), e ela **sobrevive ao passo** — a trava é da partida, como a do deck.
+	  4. the **button lock**, through `ButtonGateController`: what the step does not ask
+	     for stops accepting clicks. The config writes the whitelist (the step's
+	     `Buttons`), and it **outlives the step**: the lock belongs to the match, like the
+	     deck's.
 
-	**O bloqueio das outras cartas mora aqui**, e o `CardController` pergunta:
-	`:AllowsCard(nome)` é o que ele consulta antes de pôr uma carta na mão. É
-	educação de interface — quem recusa de verdade é o `TutorialMatchService`, no
-	servidor, porque cliente não se fiscaliza.
+	**Blocking the other cards lives here**, and `CardController` asks:
+	`:AllowsCard(name)` is what it checks before putting a card in hand. It is interface
+	courtesy: `TutorialMatchService`, on the server, does the real refusing, because the
+	client does not police itself.
 
-	Fica na Game: o roteiro é da partida, e partida só existe aqui.
+	It lives in Game: the script belongs to the match, and matches only exist here.
+
+	See docs/game/tutorial-match.md.
 ]]
 
--- Quanto esperar uma peça de tela do passo aparecer, em décimos de segundo: a
--- carta (`awaitCard`) e o botão que o passo aponta (`awaitHighlight`). O passo pode
--- pedir mais com `HighlightWait`, em segundos — ver o passo da tela de resultado.
+-- How long to wait for one of the step's screen pieces to appear, in tenths of a second:
+-- the card (`awaitCard`) and the button the step points at (`awaitHighlight`). The step can
+-- ask for more with `HighlightWait`, in seconds; see the results screen step.
 local UI_WAIT_FRAMES = 50
 
 --[=[
-	Quanto uma fala de passo pode ficar na tela antes de o passo seguir sem ela.
+	How long a step's dialog can stay on screen before the step moves on without it.
 
-	O destaque e as setas entram no `OnClosed` da fala, e só ali. Fala que não fecha
-	é um passo que nunca aponta nada: a instrução fica na tela, o jogador a lê, e
-	depois dela não há holofote em botão nenhum.
+	The highlight and the arrows come in on the dialog's `OnClosed`, and only there. A
+	dialog that does not close is a step that never points at anything: the instruction
+	stays on screen, the player reads it, and after it there is no spotlight on any
+	button.
 
-	Vinte segundos é muito mais que a fala mais longa do roteiro (duas linhas em modo
-	automático), então isto não dispara em partida normal. Disparando, o output diz — e
-	é essa linha que transforma "o passo não apontou nada" num defeito com endereço.
+	Twenty seconds is far more than the script's longest dialog (two lines in auto mode),
+	so this does not fire in a normal match. When it fires, the output says so, and that
+	line turns "the step pointed at nothing" into a bug with an address.
 ]=]
 local SPEECH_TIMEOUT = 20
 
@@ -74,94 +80,91 @@ local TutorialStepController = {
 TutorialStepController.Step = nil :: any
 
 --[[
-	Esta partida é o tutorial?
+	Is this match the tutorial?
 
-	Vira `true` no primeiro passo que chegar e nunca mais volta: o roteiro abre o
-	passo do Ready antes de qualquer outra coisa, então quando a loja de cartas
-	aparece (wave 2) a resposta já está aqui. É o que permite ao tutorial valer
-	**entre** os passos — o clique fora da loja, por exemplo, não fecha a loja em
-	nenhum momento da partida, e não só enquanto um passo de compra está aberto.
+	It becomes `true` on the first step that arrives and never goes back: the script
+	opens the Ready step before anything else, so when the card shop appears (wave 2) the
+	answer is already here. It is what lets the tutorial apply **between** steps: a click
+	outside the shop, for example, never closes the shop at any point in the match, not
+	only while a purchase step is open.
 ]]
 TutorialStepController.InTutorial = false
 
 --[[
-	O componente `Card`, quando ele já resolveu. Ver `resolveCardComponent` — ele é
-	guardado justamente para o caminho do passo nunca ter de esperar por um `require`
-	que dorme.
+	The `Card` component, once it has resolved. See `resolveCardComponent`: it is cached
+	precisely so the step path never has to wait on a `require` that yields.
 ]]
 TutorialStepController.CardComponent = nil :: any
 
--- As cartas que o roteiro tranca até o passo delas: `{ [Id] = true }`. O servidor
--- manda a lista junto do passo de compra, e é ela que a mão consulta.
+-- The cards the script locks until their step: `{ [Id] = true }`. The server
+-- sends the list with the purchase step, and it is what the hand checks.
 TutorialStepController.LockedCards = {}
 
 --[[
-	A hotbar está fora da tela porque há uma fala no ar? Ver `setCardsHidden`.
+	Is the hotbar off screen because a dialog is up? See `setCardsHidden`.
 
-	Guardado aqui, e não lido do `DialogController`, porque ele é reaplicado quando o
-	componente `Card` resolve — e ele pode resolver depois de a fala já ter começado.
+	Stored here, not read from `DialogController`, because it is reapplied when the
+	`Card` component resolves, and that may happen after the dialog has already started.
 ]]
 TutorialStepController.DeckHidden = false
 
--- As unidades que a mão aceita agora: `{ [nome] = true }`, ou `nil` com o deck
--- solto. É o último pedido do roteiro (ver `setAllowedCards`), e vale **entre** os
--- passos — quem pergunta é o `AllowsCard`.
+-- The units the hand accepts now: `{ [name] = true }`, or `nil` with the deck
+-- unlocked. It is the script's last request (see `setAllowedCards`), and it applies
+-- **between** steps; `AllowsCard` is what asks.
 TutorialStepController.AllowedUnits = nil :: { [string] : boolean }?
 
--- As setas do passo. São várias no fecho, que aponta os dois pontos livres.
+-- The step's arrows. There are several in the wrap-up, which points at both free points.
 TutorialStepController.Arrows = {}
 
 --[[
-	As escutas que valem só enquanto o passo está aberto — hoje as do menu de
-	velocidade (ver `watchSpeedOptions`). O `clear` as desfaz, como faz com as setas:
-	escuta de passo que sobrevive ao passo aponta o destaque para o lugar errado no
-	passo seguinte.
+	The listeners that only apply while the step is open: today the speed menu's (see
+	`watchSpeedOptions`). `clear` undoes them, as it does with the arrows: a step listener
+	that outlives the step points the highlight at the wrong place on the next step.
 ]]
 TutorialStepController.StepConnections = {}
 
 --[[ INTERNAL ]]
 
 --[=[
-	O componente `Card` do `UILibraryController`, ou `nil` enquanto ele não resolveu.
+	`UILibraryController`'s `Card` component, or `nil` while it has not resolved.
 
-	**Esta função não dorme, e é o ponto inteiro dela.** O `Card` faz
-	`Interface:WaitForChild("TowerContainer")` no escopo do módulo, então o primeiro
-	`require` dele cede a thread até a tela replicar — no primeiro segundo da sessão
-	isso é uma espera de verdade. Chamando-o de dentro do `show`, o passo ficava
-	suspenso entre o `self.Step = step` e o registro do `OnClosed` da fala, e é nessa
-	fresta que dois avisos do servidor (que já não têm ordem garantida — ver o
-	`TutorialStepDone`) se atropelavam.
+	**This function does not yield, and that is its whole point.** `Card` does
+	`Interface:WaitForChild("TowerContainer")` at module scope, so its first `require`
+	yields the thread until the screen replicates, a real wait in the session's first
+	second. Called from inside `show`, the step would be suspended between
+	`self.Step = step` and registering the dialog's `OnClosed`, and in that gap two server
+	notifications (which already have no guaranteed order; see `TutorialStepDone`) would
+	trample each other.
 
-	Quem paga a espera é o `resolveCardComponent`, uma vez, em thread própria. Até ele
-	voltar, quem pergunta recebe `nil` e segue — o que ficou por dizer à hotbar está
-	guardado em `DeckHidden` e `AllowedUnits`, e é reaplicado assim que o componente
-	chega.
+	`resolveCardComponent` pays the wait, once, on its own thread. Until it returns,
+	callers get `nil` and move on: what was left to tell the hotbar is stored in
+	`DeckHidden` and `AllowedUnits`, and reapplied as soon as the component arrives.
 ]=]
 function TutorialStepController:cardComponent() : any
 	return self.CardComponent
 end
 
 --[=[
-	Resolve o componente `Card`, uma vez, e põe nele o que o roteiro já tinha pedido.
+	Resolves the `Card` component, once, and applies what the script had already asked.
 
-	A reaplicação no fim não é zelo: a hotbar pode ter sido escondida por uma fala, ou
-	trancada por um passo, **antes** de o componente existir — e sem isto esse pedido
-	se perderia em silêncio: a mão apareceria por cima da fala, ou a carta que o
-	roteiro tranca continuaria equipável.
+	The reapplication at the end is not overcaution: the hotbar may have been hidden by a
+	dialog, or locked by a step, **before** the component existed, and without this that
+	request would be silently lost: the hand would appear over the dialog, or the card
+	the script locks would stay equippable.
 ]=]
 function TutorialStepController:resolveCardComponent()
 	local library = script.Parent:FindFirstChild("UILibraryController")
 	local components = library and library:FindFirstChild("Components")
 	local card = components and components:FindFirstChild("Card")
 	if not card then
-		warn("[TutorialStepController]: nao achei o componente Card; a hotbar nao responde ao roteiro.")
+		log:StudioWarn("could not find the Card component; the hotbar does not follow the script.")
 
 		return
 	end
 
 	local success, component = pcall(require, card)
 	if not success or type(component) ~= "table" then
-		warn(`[TutorialStepController]: o componente Card nao carregou: {component}`)
+		log:StudioWarn(`the Card component did not load: {component}`)
 
 		return
 	end
@@ -189,15 +192,15 @@ function TutorialStepController:cardOf(unitName : string?) : GuiObject?
 end
 
 --[=[
-	Tira (ou devolve) a hotbar enquanto a fala do passo está na tela.
+	Removes (or restores) the hotbar while the step's dialog is on screen.
 
-	A regra é da **fala**, e não do passo: caixa no ar, mão fora; caixa fechada, mão
-	de volta. A fala vem primeiro justamente para ser lida, e carta acesa embaixo dela
-	é convite a clicar antes de terminar de ler — ainda mais numa tela em que a caixa
-	pode cair bem em cima da hotbar.
+	The rule belongs to the **dialog**, not the step: box up, hand out; box closed, hand
+	back. The dialog comes first precisely to be read, and a lit card under it invites a
+	click before finishing reading, all the more on a screen where the box may land right
+	on top of the hotbar.
 
-	Quem devolve é o próprio componente, e ele devolve **cada carta ao estado que ela
-	tinha**: carta sem unidade sobrando continua apagada, em vez de acender junto.
+	The component itself restores it, and it restores **each card to the state it had**:
+	a card with no units left stays dimmed instead of lighting up with the rest.
 ]=]
 function TutorialStepController:setCardsHidden(hidden : boolean)
 	self.DeckHidden = hidden == true
@@ -211,16 +214,16 @@ function TutorialStepController:setCardsHidden(hidden : boolean)
 end
 
 --[=[
-	Tranca a hotbar nas cartas que o passo permite.
+	Locks the hotbar to the cards the step allows.
 
-	`nil` destranca tudo. A tranca fica guardada no componente, então ela sobrevive à
-	remontagem da hotbar — troca de deck, respawn, e o recomeço de partida de quem
-	venceu e foi jogar de novo.
+	`nil` unlocks everything. The lock is stored in the component, so it survives the
+	hotbar being rebuilt: a deck change, a respawn, and the match restart of a player who
+	won and played again.
 ]=]
 function TutorialStepController:setAllowedCards(allowed : { [string] : boolean }?)
-	-- Guardado aqui também: a hotbar recusa o clique sozinha (`Active = false`), mas
-	-- quem responde ao `CardController` é o `AllowsCard`, e as duas respostas têm de
-	-- sair da mesma lista para não discordarem uma da outra.
+	-- Stored here too: the hotbar refuses the click on its own (`Active = false`), but
+	-- `AllowsCard` answers `CardController`, and both answers must come from the same list
+	-- so they do not disagree.
 	self.AllowedUnits = allowed
 
 	local component = self:cardComponent()
@@ -232,19 +235,19 @@ function TutorialStepController:setAllowedCards(allowed : { [string] : boolean }
 end
 
 --[=[
-	As cartas que este passo deixa usar, ou `nil` quando ele não regula a hotbar.
+	The cards this step allows, or `nil` when it does not regulate the hotbar.
 
-	Passo de colocação com unidade pedida deixa só ela; o do fecho (`PlaceRest`)
-	quer o deck inteiro no chão e não tranca nada.
+	A placement step with a requested unit allows only it; the wrap-up (`PlaceRest`)
+	wants the whole deck on the ground and locks nothing.
 ]=]
 function TutorialStepController:allowedOf(step : any) : { [string] : boolean }?
 	--[[
-		Quem manda é a lista que o servidor mandou com o passo: ela é a trava do deck,
-		e vale **entre** os passos também. `nil` dela quer dizer deck solto — é o que
-		chega no passo do fecho, na última wave.
+		The list the server sent with the step rules: it is the deck lock, and it applies
+		**between** steps too. A `nil` there means an unlocked deck: that is what arrives
+		on the wrap-up step, on the last wave.
 
-		O passo de colocação pode apertar ainda mais (só a carta que ele pede), mas
-		nunca afrouxar.
+		The placement step can tighten it further (only the card it asks for), but never
+		loosen it.
 	]]
 	local allowed = step and step.AllowedUnits
 
@@ -256,51 +259,50 @@ function TutorialStepController:allowedOf(step : any) : { [string] : boolean }?
 end
 
 --[=[
-	Mostra o passo: fala, destaque e seta.
+	Shows the step: dialog, highlight, and arrow.
 ]=]
 function TutorialStepController:show(step : any)
 	self.Step = step
 
-	-- A hotbar inteira fora da tela enquanto o passo pedir (`HideDeck`). Quem a
-	-- devolve é o `clear`, quando o passo acaba ou outro abre por cima.
+	-- The whole hotbar off screen while the step asks for it (`HideDeck`). `clear`
+	-- restores it, when the step ends or another opens on top.
 	self:setDeckHeld(step.HideDeck == true)
 
 	--[[
-		A trava vem **antes** da fala, e não com o destaque.
+		The lock comes **before** the dialog, not with the highlight.
 
-		A fala do passo é justamente o momento em que o jogador ainda não sabe onde
-		clicar: deixá-lo solto enquanto lê a instrução é convidá-lo a descobrir por
-		conta própria, que é o contrário do que o passo está fazendo. E a trava não
-		atrapalha a leitura — a fala se passa por clique em qualquer lugar, não por um
-		botão.
+		The step's dialog is exactly the moment the player does not yet know where to
+		click: leaving them free while reading the instruction invites them to find out on
+		their own, which is the opposite of what the step is doing. And the lock does not
+		get in the way of reading: the dialog advances with a click anywhere, not a button.
 	]]
 	self:gateFor(step)
 
 	local dialog = self.Controllers.DialogController
 
 	--[[
-		A fala vem primeiro e sozinha; o destaque e a seta entram quando ela fecha.
+		The dialog comes first and alone; the highlight and arrow come in when it closes.
 
-		Os dois ao mesmo tempo disputam o olho do jogador: ele lê metade da
-		instrução, vê a luz piscar na carta e vai clicar antes de saber o porquê. E
-		há o caso pior — a fala fica **em cima** do que está sendo apontado.
+		Both at once compete for the player's eye: they read half the instruction, see the
+		light blink on the card, and click before knowing why. And there is the worse case:
+		the dialog sits **on top** of what is being pointed at.
 	]]
 	if dialog and step.Lines then
-		print(`[DEBUG/Tutorial] passo "{step.Id}": mostrando a fala; o visual entra quando ela fechar.`)
+		log:Debug(`step "{step.Id}": showing the dialog; the visuals come in when it closes.`)
 
-		-- A mão sai enquanto a caixa está no ar, e volta no `showVisuals`.
+		-- The hand leaves while the box is up, and returns in `showVisuals`.
 		self:setCardsHidden(true)
 
 		local shown = false
 
 		local function reveal(reason : string)
-			-- Outro passo pode ter aberto enquanto a fala corria, e aí o visual é o dele:
-			-- acender o holofote deste aqui seria apontar o botão do passo anterior.
+			-- Another step may have opened while the dialog ran, and then the visual is its own:
+			-- lighting this one's spotlight would point at the previous step's button.
 			if shown or self.Step ~= step then return end
 
 			shown = true
 
-			print(`[DEBUG/Tutorial] passo "{step.Id}": {reason}, mostrando destaque e seta.`)
+			log:Debug(`step "{step.Id}": {reason}, showing highlight and arrow.`)
 			self:showVisuals(step)
 		end
 
@@ -314,13 +316,13 @@ function TutorialStepController:show(step : any)
 		end)
 
 		--[[
-			A rede: fala que não fecha não pode custar o destaque (ver `SPEECH_TIMEOUT`).
-			O `reveal` é idempotente, então ela e o `OnClosed` podem correr os dois.
+			The safety net: a dialog that does not close must not cost the highlight (see
+			`SPEECH_TIMEOUT`). `reveal` is idempotent, so both it and `OnClosed` may run.
 		]]
 		task.delay(SPEECH_TIMEOUT, function()
 			if shown or self.Step ~= step then return end
 
-			warn(`[TutorialStepController]: a fala do passo "{step.Id}" nao fechou em {SPEECH_TIMEOUT}s; seguindo sem ela.`)
+			log:StudioWarn(`the dialog of step "{step.Id}" did not close within {SPEECH_TIMEOUT}s; continuing without it.`)
 
 			if disconnect then
 				disconnect()
@@ -329,10 +331,10 @@ function TutorialStepController:show(step : any)
 			reveal("a fala estourou o prazo")
 		end)
 
-		-- A fonte e o tamanho saem do `Speech`: a fala do passo é a mesma voz da
-		-- oferta que trouxe o jogador até aqui.
+		-- Font and size come from `Speech`: the step's dialog is the same voice as the
+		-- offer that brought the player here.
 		dialog:Play(step.Lines, Config.Speech({
-			-- A UI fica: o passo pede para usar o HUD.
+			-- The UI stays: the step asks the player to use the HUD.
 			HideUI = false,
 			Blur = false,
 			Duck = false,
@@ -346,20 +348,20 @@ function TutorialStepController:show(step : any)
 end
 
 --[=[
-	O destaque e a seta do passo. Separado do `show` porque eles entram **depois**
-	da fala, e não junto dela.
+	The step's highlight and arrow. Separate from `show` because they come in **after**
+	the dialog, not with it.
 ]=]
 function TutorialStepController:showVisuals(step : any)
-	-- A fala saiu (ou o passo não tinha nenhuma): a mão volta. É aqui, e não no fim
-	-- da fala, porque passo sem fala chega direto neste ponto.
+	-- The dialog left (or the step had none): the hand returns. It is here, not at the
+	-- end of the dialog, because a step with no dialog comes straight to this point.
 	self:setCardsHidden(false)
 
 	self:setAllowedCards(self:allowedOf(step))
 
 	--[[
-		O que o destaque abraça: a carta da hotbar, quando o passo pede uma unidade,
-		ou o caminho de tela que o passo declarar (o botão de 2x, por exemplo). O
-		caminho vem do config para um passo novo não exigir código novo.
+		What the highlight hugs: the hotbar card, when the step asks for a unit, or the
+		screen path the step declares (the 2x button, for example). The path comes from
+		config so a new step does not require new code.
 	]]
 	local highlight = self.Controllers.HighlightController
 	if highlight then
@@ -370,11 +372,11 @@ function TutorialStepController:showVisuals(step : any)
 		end
 
 		--[[
-			O alvo pode ainda não estar de pé quando o passo abre: o botão de Ready só
-			fica visível quando a contagem do intervalo começa, e o passo dele abre um
-			instante antes disso. `Show` recusa alvo invisível — e recusar calado
-			deixaria o passo sem destaque nenhum —, então o caminho é **esperado** em vez
-			de procurado uma vez só.
+			The target may not be up yet when the step opens: the Ready button only becomes
+			visible when the intermission countdown starts, and its step opens an instant
+			before that. `Show` refuses an invisible target (and refusing quietly would
+			leave the step with no highlight at all), so the path is **awaited** instead of
+			looked up once.
 		]]
 		if not (target and highlight:Show(target)) and step.Highlight then
 			self:awaitHighlight(step)
@@ -383,20 +385,20 @@ function TutorialStepController:showVisuals(step : any)
 		self:refreshGate()
 	end
 
-	-- A carta da loja e a carta da mão só existem depois que a loja abre e depois
-	-- que a compra acontece — as duas chegam **depois** do passo. Por isso elas são
-	-- esperadas, em vez de procuradas uma vez só.
+	-- The shop card and the hand card only exist after the shop opens and after
+	-- the purchase happens: both arrive **after** the step. That is why they are
+	-- awaited instead of looked up once.
 	if step.Kind == "Buy" or step.Kind == "Use" then
 		self:awaitCard(step)
 	end
 
-	-- O menu de velocidade também nasce depois — e, ao contrário das cartas, some e
-	-- volta quantas vezes o jogador quiser.
+	-- The speed menu is also born later, and unlike the cards, it disappears and
+	-- comes back as many times as the player wants.
 	if step.Kind == "Speed" then
 		self:watchSpeedOptions(step)
 	end
 
-	-- Uma seta por lugar: o passo do fecho aponta os dois pontos livres de uma vez.
+	-- One arrow per spot: the wrap-up step points at both free points at once.
 	local arrow = self.Controllers.ArrowController
 	if arrow then
 		if typeof(step.Position) == "Vector3" then
@@ -412,19 +414,19 @@ function TutorialStepController:showVisuals(step : any)
 end
 
 --[=[
-	A whitelist do passo virando alvos que o `ButtonGateController` entende.
+	The step's whitelist becoming targets `ButtonGateController` understands.
 
-	Caminho de tela passa reto — quem resolve é o gate, e resolver lá é o que permite
-	um caminho que só existe depois (a carta na mesa da loja) ser encontrado quando
-	ela chegar. O que é traduzido aqui são os **apelidos**, porque a peça deles não
-	tem caminho fixo: ela é clonada em runtime e o nome depende do passo.
+	A screen path passes through as is: the gate resolves it, and resolving there is what
+	lets a path that only exists later (the card on the shop table) be found when it
+	arrives. What is translated here are the **aliases**, because their piece has no fixed
+	path: it is cloned at runtime and its name depends on the step.
 
-	O apelido não vira instância aqui: vira **função**, que o gate chama a cada
-	varredura. É o que faz o passo da compra funcionar — a carta na mesa não existe
-	quando o passo abre, e um alvo resolvido agora seria `nil` para sempre, deixando a
-	whitelist sem justamente o botão que o passo pede. Pelo mesmo caminho, o
-	`@Highlight` acompanha o destaque quando ele escorrega do botão da loja para a
-	carta (ver `awaitCard`), sem ninguém ter de reavisar o gate.
+	An alias does not become an instance here: it becomes a **function**, which the gate
+	calls on every sweep. That is what makes the purchase step work: the card on the table
+	does not exist when the step opens, and a target resolved now would be `nil` forever,
+	leaving the whitelist without exactly the button the step asks for. Along the same
+	path, `@Highlight` follows the highlight when it slides from the shop button to the
+	card (see `awaitCard`), without anyone having to notify the gate again.
 ]=]
 function TutorialStepController:gateTargets(step : any, list : { any }?) : { any }
 	local out = {}
@@ -455,18 +457,18 @@ function TutorialStepController:gateTargets(step : any, list : { any }?) : { any
 		end,
 
 		--[=[
-			As opções do menu de velocidade — **todas**, e não só a que o passo pede.
+			The speed menu options: **all** of them, not only the one the step asks for.
 
-			O botão `Interface.Speed` não abre um painel: ele clona a si mesmo uma vez por
-			degrau e pendura os clones **ao lado dele**, no mesmo pai (ver
-			`SpeedController:createOption`). Eles não são filhos do botão, então liberar o
-			botão não os libera — foi assim que o passo do 1,5x ficou com o menu abrindo e
-			nenhuma opção clicável.
+			The `Interface.Speed` button does not open a panel: it clones itself once per
+			step and hangs the clones **next to it**, on the same parent (see
+			`SpeedController:createOption`). They are not the button's children, so
+			allowing the button does not allow them: the 1.5x step would open the menu with
+			no clickable option.
 
-			Todas, porque escolher é comparar: o menu com uma opção viva e as outras mortas
-			não ensina o que o botão faz. Qual delas o servidor aceita continua sendo conta
-			dele; o que o passo espera é o degrau de `Index`, e é nele que o destaque
-			pousa quando o menu abre (ver `watchSpeedOptions`).
+			All of them, because choosing is comparing: a menu with one live option and the
+			others dead does not teach what the button does. Which one the server accepts is
+			still its call; what the step expects is the `Index` step, and that is where the
+			highlight lands when the menu opens (see `watchSpeedOptions`).
 		]=]
 		["@SpeedOptions"] = function()
 			local speed = self.Controllers.SpeedController
@@ -491,7 +493,7 @@ function TutorialStepController:gateTargets(step : any, list : { any }?) : { any
 		if alias then
 			table.insert(out, alias)
 		else
-			warn(`[TutorialStepController]: o passo "{step.Id}" pede o apelido "{entry}", que nao existe.`)
+			log:StudioWarn(`step "{step.Id}" asks for alias "{entry}", which does not exist.`)
 		end
 	end
 
@@ -499,13 +501,13 @@ function TutorialStepController:gateTargets(step : any, list : { any }?) : { any
 end
 
 --[=[
-	Tranca a tela no que este passo libera.
+	Locks the screen to what this step allows.
 
-	Passo sem `Buttons` **não mexe na trava**: nem tranca, nem destrava. É o que faz
-	um roteiro antigo continuar funcionando e o que mantém de pé a whitelist do passo
-	anterior enquanto o passo novo não tem opinião sobre o assunto.
+	A step without `Buttons` **does not touch the lock**: it neither locks nor unlocks.
+	That keeps an older script working and keeps the previous step's whitelist up while
+	the new step has no opinion on the matter.
 
-	A válvula só corre enquanto o passo está aberto — ver `onStepDone`.
+	The valve only runs while the step is open; see `onStepDone`.
 ]=]
 function TutorialStepController:gateFor(step : any)
 	local gate = self.Controllers.ButtonGateController
@@ -513,8 +515,8 @@ function TutorialStepController:gateFor(step : any)
 
 	local allow = self:gateTargets(step, step.Buttons)
 
-	-- A caixa de fala entra em todo passo: botão de escolha que não aceita clique é
-	-- uma conversa sem saída.
+	-- The dialog box enters every step: a choice button that does not accept clicks is
+	-- a conversation with no way out.
 	for _, entry in (Config.ButtonGate.Always or {}) do
 		table.insert(allow, entry)
 	end
@@ -528,21 +530,21 @@ function TutorialStepController:gateFor(step : any)
 end
 
 --[=[
-	Segue o menu de velocidade com o destaque e com a whitelist.
+	Follows the speed menu with the highlight and the whitelist.
 
-	O botão `Interface.Speed` não abre um painel: ele **clona a si mesmo** uma vez por
-	degrau e põe os clones ao lado dele. Enquanto o menu está fechado, o que o passo
-	aponta é o botão; aberto, o que ele tem de apontar é o degrau que pede — apontar o
-	botão que o jogador acabou de clicar não diz qual das três opções é a certa, e as
-	três são iguais menos pela arte.
+	The `Interface.Speed` button does not open a panel: it **clones itself** once per step
+	and puts the clones next to it. While the menu is closed, what the step points at is
+	the button; open, what it must point at is the step it asks for: pointing at the
+	button the player just clicked does not say which of the three options is right, and
+	the three are identical except for the art.
 
-	As opções são criadas e destruídas de verdade, então quem avisa são o `ChildAdded`
-	e o `ChildRemoved` do pai — não há sinal a escutar nem laço a manter de pé. O
-	`defer` existe porque o clone nasce **antes** de o `SpeedController` escrever o
-	degrau nele: apontar no mesmo quadro pegaria a opção sem atributo.
+	The options are really created and destroyed, so the parent's `ChildAdded` and
+	`ChildRemoved` announce them: there is no signal to listen to or loop to keep up.
+	`defer` exists because the clone is born **before** `SpeedController` writes the step
+	on it: pointing on the same frame would catch the option without the attribute.
 
-	Fechado o menu, o destaque volta ao botão. O jogador que abriu e clicou fora não
-	pode ficar sem nada apontado no meio de um passo.
+	Once the menu closes, the highlight returns to the button. A player who opened it and
+	clicked outside must not be left with nothing pointed at mid-step.
 ]=]
 function TutorialStepController:watchSpeedOptions(step : any)
 	local speed = self.Controllers.SpeedController
@@ -560,8 +562,8 @@ function TutorialStepController:watchSpeedOptions(step : any)
 			highlight:Show(target)
 		end
 
-		-- A whitelist do passo pede `@SpeedOptions`, e a lista mudou: a conta do gate
-		-- não espera o próximo botão nascer para ser refeita.
+		-- The step's whitelist asks for `@SpeedOptions`, and the list changed: the gate's math
+		-- does not wait for the next button to be born to be redone.
 		self:refreshGate()
 	end
 
@@ -575,11 +577,11 @@ function TutorialStepController:watchSpeedOptions(step : any)
 end
 
 --[=[
-	Manda o gate refazer a conta agora.
+	Tells the gate to redo the math now.
 
-	Ele já se reaplica sozinho quando um botão nasce, mas o destaque mudar de alvo não
-	cria botão nenhum — e o apelido `@Highlight` segue o destaque. Sem isto, o passo
-	que libera "o que estiver destacado" continuaria liberando o alvo antigo.
+	It already reapplies on its own when a button is born, but the highlight changing
+	target creates no button, and the `@Highlight` alias follows the highlight. Without
+	this, a step that allows "whatever is highlighted" would keep allowing the old target.
 ]=]
 function TutorialStepController:refreshGate()
 	local gate = self.Controllers.ButtonGateController
@@ -590,13 +592,13 @@ function TutorialStepController:refreshGate()
 end
 
 --[=[
-	Espera a carta do passo aparecer na tela e a destaca.
+	Waits for the step's card to appear on screen and highlights it.
 
-	Passo de **compra** aponta a carta na mesa da loja; passo de **uso** aponta a
-	carta que foi parar na hotbar. As duas nascem depois do passo abrir, e nenhuma
-	das duas demora mais que o tempo de a loja subir — por isso a espera tem um
-	orçamento curto e desiste calada: o passo continua valendo com a fala e o
-	bloqueio, só sem o destaque.
+	A **purchase** step points at the card on the shop table; a **use** step points at the
+	card that ended up in the hotbar. Both are born after the step opens, and neither takes
+	longer than the shop rising, which is why the wait has a short budget and gives up
+	quietly: the step still applies with the dialog and the lock, just without the
+	highlight.
 ]=]
 function TutorialStepController:awaitCard(step : any)
 	local highlight = self.Controllers.HighlightController
@@ -623,18 +625,18 @@ function TutorialStepController:awaitCard(step : any)
 end
 
 --[=[
-	Espera o botão que o passo aponta aparecer na tela e o destaca.
+	Waits for the button the step points at to appear on screen and highlights it.
 
-	É o irmão do `awaitCard` para caminho de tela. Desiste calada pelo mesmo motivo:
-	o passo continua valendo com a fala, e um destaque que nunca chegou é melhor que
-	um laço que nunca morre.
+	It is `awaitCard`'s sibling for screen paths. It gives up quietly for the same reason:
+	the step still applies with the dialog, and a highlight that never arrived beats a
+	loop that never dies.
 ]=]
 function TutorialStepController:awaitHighlight(step : any)
 	local highlight = self.Controllers.HighlightController
 	if not highlight or not step.Highlight then return end
 
-	-- Alvo que nasce no fim de uma animação longa (o botão da tela de resultado)
-	-- pede mais tempo que um botão de HUD, que já está lá.
+	-- A target born at the end of a long animation (the results screen button)
+	-- needs more time than a HUD button, which is already there.
 	local frames = if typeof(step.HighlightWait) == "number"
 		then math.max(1, math.round(step.HighlightWait * 10))
 		else UI_WAIT_FRAMES
@@ -654,12 +656,12 @@ function TutorialStepController:awaitHighlight(step : any)
 			task.wait(0.1)
 		end
 
-		warn(`[TutorialStepController]: o passo "{step.Id}" pede o destaque em "{step.Highlight}", que nao apareceu na tela.`)
+		log:StudioWarn(`step "{step.Id}" asks to highlight "{step.Highlight}", which did not show up on screen.`)
 	end)
 end
 
 --[=[
-	A carta na mesa da loja de round.
+	The card on the round shop table.
 ]=]
 function TutorialStepController:offerCardOf(cardId : string) : GuiObject?
 	local shop = self.Controllers.RoundCardShopController
@@ -668,11 +670,11 @@ function TutorialStepController:offerCardOf(cardId : string) : GuiObject?
 end
 
 --[=[
-	A carta dentro de um wrapper, quando o que se tem é o wrapper.
+	The card inside a wrapper, when what you have is the wrapper.
 
-	O wrapper é a vaga do layout e o destaque não deve abraçá-lo; a carta é o filho
-	que carrega a arte. Sem a carta dentro, o wrapper serve — é melhor apontar a
-	vaga certa que não apontar nada.
+	The wrapper is the layout slot and the highlight should not hug it; the card is the
+	child that carries the art. Without a card inside, the wrapper will do: pointing at
+	the right slot beats pointing at nothing.
 ]=]
 function TutorialStepController:artOf(wrapper : GuiObject?) : GuiObject?
 	if not wrapper then
@@ -689,8 +691,8 @@ function TutorialStepController:artOf(wrapper : GuiObject?) : GuiObject?
 end
 
 --[=[
-	A carta de round que já está na hotbar, esperando uso. O componente `Card` a
-	nomeia `RoundCard_<Id>` quando ela entra.
+	The round card already in the hotbar, waiting to be used. The `Card` component names
+	it `RoundCard_<Id>` when it enters.
 ]=]
 function TutorialStepController:handCardOf(cardId : string) : GuiObject?
 	local interface = PlayerGui:FindFirstChild("Interface")
@@ -700,12 +702,12 @@ function TutorialStepController:handCardOf(cardId : string) : GuiObject?
 end
 
 --[=[
-	Tira o passo da tela. Chamado quando ele é cumprido e quando outro abre por
-	cima — um passo por vez, como no servidor.
+	Removes the step from the screen. Called when it is completed and when another opens
+	on top: one step at a time, as on the server.
 
-	O que ele **não** desfaz são as duas travas: a do deck (`AllowedUnits`) e a de
-	botões (`gateFor`). Elas são da partida, e não do passo — soltá-las aqui abriria o
-	intervalo entre duas waves como a hora de sair do roteiro.
+	What it does **not** undo are the two locks: the deck's (`AllowedUnits`) and the
+	buttons' (`gateFor`). They belong to the match, not the step: releasing them here would
+	make the gap between two waves the moment to leave the script.
 ]=]
 function TutorialStepController:clear()
 	self.Step = nil
@@ -715,11 +717,11 @@ function TutorialStepController:clear()
 end
 
 --[=[
-	Esconde (ou devolve) o `Interface.TowerContainer` inteiro, pelo
-	`DifficultyController`, que é o dono do `Visible` dele.
+	Hides (or restores) the whole `Interface.TowerContainer`, through
+	`DifficultyController`, which owns its `Visible`.
 
-	Diferente do `setCardsHidden`, que apaga as cartas uma a uma enquanto a fala está
-	no ar: este tira o container todo, e dura o passo inteiro.
+	Unlike `setCardsHidden`, which dims the cards one by one while the dialog is up, this
+	removes the whole container, and lasts the whole step.
 ]=]
 function TutorialStepController:setDeckHeld(held : boolean)
 	local difficulty = self.Controllers.DifficultyController
@@ -729,10 +731,10 @@ function TutorialStepController:setDeckHeld(held : boolean)
 end
 
 --[=[
-	Apaga o que o passo desenhou: o destaque, as setas e as escutas dele.
+	Clears what the step drew: the highlight, the arrows, and its listeners.
 
-	Separado do `clear` porque o respawn precisa de metade dele — lá o passo continua
-	aberto, e o que se quer é redesenhar por cima da tela nova, não esquecer o passo.
+	Separate from `clear` because respawn needs half of it: there the step stays open, and
+	the goal is to redraw over the new screen, not to forget the step.
 ]=]
 function TutorialStepController:clearVisuals()
 	local highlight = self.Controllers.HighlightController
@@ -754,31 +756,29 @@ function TutorialStepController:clearVisuals()
 end
 
 --[=[
-	O jogador renasceu: o passo aberto se redesenha na tela nova.
+	The player respawned: the open step redraws on the new screen.
 
-	Morrer não fecha passo nenhum — ele continua de pé no servidor, segurando a wave
-	se for o caso —, mas leva junto tudo o que tem `ResetOnSpawn`: a caixa de fala, a
-	tela de resultado, e no lobby a `HUD` inteira. Sem isto o jogador voltava para uma
-	partida parada num passo que não aponta mais nada.
+	Dying closes no step (it stays up on the server, holding the wave if that is the
+	case), but takes everything with `ResetOnSpawn` along: the dialog box, the results
+	screen, and in the Lobby the whole `HUD`. Without this the player would return to a
+	match stopped on a step that no longer points at anything.
 
-	**A fala tem precedência.** Se ela estiver voltando (ver
-	`DialogController:IsResuming`), o destaque e as setas esperam o fim dela, como
-	esperariam na primeira vez — acender o holofote por cima de uma instrução que está
-	a um segundo de reaparecer é a mesma disputa pelo olho do jogador que o `show`
-	evita.
+	**The dialog takes precedence.** If it is coming back (see
+	`DialogController:IsResuming`), the highlight and arrows wait for it to end, as they
+	would the first time: lighting the spotlight over an instruction a second away from
+	reappearing is the same fight for the player's eye `show` avoids.
 
-	O destaque em si já se reencontra sozinho pelo caminho de nomes
-	(`HighlightController:rebind`); o que só daqui pode vir são as **setas**, que
-	apontam lugares do mapa e não têm dono na tela, e a **trava de botões**, que tem
-	de ser refeita contra a árvore nova.
+	The highlight finds itself again by name path (`HighlightController:rebind`); what
+	only this can provide are the **arrows**, which point at map places and have no owner
+	on screen, and the **button lock**, which must be rebuilt against the new tree.
 ]=]
 function TutorialStepController:reassert()
 	local step = self.Step
 	if not step then return end
 
-	print(`[DEBUG/Tutorial] respawn com o passo "{step.Id}" aberto; redesenhando.`)
+	log:Debug(`respawn with step "{step.Id}" open; redrawing.`)
 
-	-- A tela é outra: a whitelist tem de ser recontada contra ela.
+	-- The screen is different: the whitelist must be recounted against it.
 	self:gateFor(step)
 
 	local dialog = self.Controllers.DialogController
@@ -805,16 +805,17 @@ end
 --[[ API ]]
 
 --[=[
-	A hotbar pode pôr esta carta na mão agora?
+	Can the hotbar put this card in hand now?
 
-	Sem passo aberto, tudo é permitido — fora do roteiro o tutorial não se mete. Com
-	um passo de colocação aberto, só a carta dele.
+	With no step open, everything is allowed: outside the script the tutorial does not
+	interfere. With a placement step open, only its card.
 ]=]
 function TutorialStepController:AllowsCard(unitName : string) : boolean
 	--[[
-		A trava do deck vem antes do passo e sobrevive a ele: entre a wave 1 e a 5 não
-		há passo de colocação nenhum, e sem esta pergunta a carta trancada voltaria a
-		ser equipável no intervalo. É a mesma conta do `CanPlace` no servidor.
+		The deck lock comes before the step and outlives it: between wave 1 and 5 there is
+		no placement step, and without this question the locked card would become
+		equippable again in the intermission. It is the same math as `CanPlace` on the
+		server.
 	]]
 	local allowed = self.AllowedUnits
 	if allowed and not allowed[unitName] then
@@ -831,11 +832,11 @@ function TutorialStepController:AllowsCard(unitName : string) : boolean
 end
 
 --[=[
-	Esta carta de round já pode ser usada?
+	Can this round card be used yet?
 
-	Espelha o `CanUse` do servidor para a mão não aceitar o clique de uma carta que
-	o servidor recusaria — a diferença é que aqui o jogador não vê nada acontecer,
-	em vez de ver a mira abrir e a carta voltar.
+	It mirrors the server's `CanUse` so the hand does not accept the click of a card the
+	server would refuse; the difference is that here the player sees nothing happen,
+	instead of seeing aiming open and the card come back.
 ]=]
 function TutorialStepController:AllowsCardUse(cardId : string) : boolean
 	local step = self.Step
@@ -848,30 +849,30 @@ function TutorialStepController:AllowsCardUse(cardId : string) : boolean
 end
 
 --[=[
-	Esta partida é o tutorial?
+	Is this match the tutorial?
 
-	Quem pergunta é quem tem de se comportar diferente nela e não faz parte do
-	roteiro — hoje o `ResultController`, que tranca o "PLAY AGAIN" da tela de fim.
+	Callers are those that must behave differently in it without being part of the
+	script: today `ResultController`, which locks "PLAY AGAIN" on the end screen.
 
-	A resposta só é confiável depois do primeiro passo, que chega no intervalo antes
-	da wave 1: qualquer tela de partida é bem depois disso.
+	The answer is only reliable after the first step, which arrives in the intermission
+	before wave 1: any match screen is well after that.
 ]=]
 function TutorialStepController:IsTutorial() : boolean
 	return self.InTutorial == true
 end
 
 --[=[
-	A loja de cartas de round pode ser fechada com um clique fora agora?
+	Can the round card shop be closed with a click outside right now?
 
-	**Na partida de tutorial, nunca.** O `RoundCardShopController` pergunta isto
-	antes de dispensar a loja, e quem está aprendendo o que é a loja clica na mesa,
-	no fundo e no que estiver por perto antes de escolher uma carta — fechar no
-	primeiro desses cliques tira da tela justamente o que o passo mandou ler.
+	**In the tutorial match, never.** `RoundCardShopController` asks this before
+	dismissing the shop, and a player learning what the shop is clicks the table, the
+	background, and whatever is nearby before choosing a card: closing on the first of
+	those clicks removes from the screen exactly what the step told them to read.
 
-	A saída continua existindo e é a de sempre: o botão que abriu a loja a fecha.
-	O que sai é só o "clicou em qualquer lugar, fechou".
+	The way out still exists and is the usual one: the button that opened the shop
+	closes it. Only "clicked anywhere, closed" goes away.
 
-	Fora do tutorial nada muda — a loja se dispensa como sempre se dispensou.
+	Outside the tutorial nothing changes: the shop dismisses as it always did.
 ]=]
 function TutorialStepController:AllowsShopDismiss() : boolean
 	if self.InTutorial then
@@ -884,23 +885,23 @@ function TutorialStepController:AllowsShopDismiss() : boolean
 end
 
 --[=[
-	O passo aberto agora, para quem precisar decidir alguma coisa com ele.
+	The step open now, for anyone who needs to decide something with it.
 ]=]
 function TutorialStepController:GetStep() : any
 	return self.Step
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function TutorialStepController:construct()
 	--[[
-		O respawn não fecha o passo, mas destrói metade do que ele desenhou. Ver
+		Respawn does not close the step, but destroys half of what it drew. See
 		`reassert`.
 
-		`task.defer` porque o `CharacterAdded` chega **antes** de a `StarterGui` ter
-		terminado de ser reclonada: procurar o botão do passo no mesmo quadro acharia a
-		tela velha, ou nenhuma. Quem espera de verdade são o destaque e a fala, cada um
-		com o prazo dele; aqui só se sai da frente do quadro do nascimento.
+		`task.defer` because `CharacterAdded` arrives **before** `StarterGui` has finished
+		being recloned: looking for the step's button on the same frame would find the old
+		screen, or none. The highlight and the dialog do the real waiting, each with its
+		own deadline; this only gets off the spawn frame.
 	]]
 	Player.CharacterAdded:Connect(function()
 		task.defer(function()
@@ -925,39 +926,39 @@ function TutorialStepController:construct()
 		local step = self.Step
 
 		--[=[
-			O fim de **um** passo não pode apagar o seguinte.
+			The end of **one** step must not erase the next.
 
-			Os dois avisos saem do servidor com microssegundos de diferença — o passo do
-			Ready fecha quando a contagem acaba, e a wave 1 abre o passo do Slingshot no
-			quadro seguinte — e eles viajam em **eventos diferentes**, que o `Me` (Warp)
-			enfileira separados: a ordem de chegada no cliente não é garantida.
+			The two notifications leave the server microseconds apart (the Ready step
+			closes when the countdown ends, and wave 1 opens the Slingshot step on the next
+			frame), and they travel in **different events**, which `Me` (Warp) queues
+			separately: the arrival order on the client is not guaranteed.
 
-			Sem conferir o id, o "acabou o Ready" chegando atrasado limpava o passo que
-			já estava aberto: `self.Step` virava `nil`, e quando a fala do Slingshot
-			fechava o `show` desistia sozinho — fala na tela, nenhum destaque, nenhuma
-			seta e a hotbar sem a trava do passo.
+			Without checking the id, a late "Ready ended" would clear the step already open:
+			`self.Step` would become `nil`, and when the Slingshot dialog closed `show`
+			would give up on its own: dialog on screen, no highlight, no arrow, and the
+			hotbar without the step's lock.
 		]=]
 		if step and id ~= nil and step.Id ~= id then
-			print(`[DEBUG/Tutorial] "{id}" terminou depois de "{step.Id}" abrir; o passo aberto fica.`)
+			log:Debug(`"{id}" finished after "{step.Id}" opened; the open step stays.`)
 
 			return
 		end
 
 		--[[
-			Passo cumprido tira o **prazo** da válvula, e não a trava.
+			A completed step removes the valve's **deadline**, not the lock.
 
-			A válvula existe para o passo que não reconheceu o que o jogador fez. Passo
-			cumprido não é esse caso: o que vem depois dele é a wave correndo, com nada a
-			clicar até o passo seguinte, e deixar o prazo correndo ali devolveria a tela
-			inteira no meio do roteiro por o jogador ter esperado.
+			The valve exists for a step that did not recognize what the player did. A
+			completed step is not that case: what comes after it is the wave running, with
+			nothing to click until the next step, and letting the deadline run there would
+			hand back the whole screen mid-script for the player having waited.
 		]]
 		local gate = self.Controllers.ButtonGateController
 		if gate then
 			gate:HoldRelease()
 		end
 
-		-- Passo cumprido destranca a carta dele: daí para a frente ela é uma carta
-		-- como outra qualquer.
+		-- A completed step unlocks its card: from then on it is a card
+		-- like any other.
 		if step and step.Kind == "Use" and step.Card then
 			self.LockedCards[step.Card] = nil
 		end
@@ -974,8 +975,8 @@ function TutorialStepController:init()
 		self.Controllers[Controller] = Framework:Get(Controller, false, true)
 	end
 
-	-- Em thread própria porque ele dorme (ver `cardComponent`), e o `init` do
-	-- framework não pode dormir: os controllers seguintes esperariam por este.
+	-- On its own thread because it yields (see `cardComponent`), and the framework's
+	-- `init` must not yield: the following controllers would wait for this one.
 	task.spawn(function()
 		self:resolveCardComponent()
 	end)

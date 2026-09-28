@@ -1,39 +1,39 @@
 --[[
-	O Index do jogador: o que ele ja descobriu no jogo.
+	The player's Index: what they have discovered in the game.
 
-	Uma categoria por tipo de coisa colecionavel, e cada uma guarda so
-	`{ [chave] = true }` no perfil. A chave e a mesma que o resto do jogo ja usa --
-	o nome da unit no `UnitStats`, o nome do mapa no `MapConfig` --, entao
-	descobrir nao duplica dado nenhum: o Index diz **se** o jogador conhece a
-	coisa, e quem a descreve continua sendo o config dela.
+	One category per kind of collectible, each storing only `{ [key] = true }` in
+	the profile. The key is the one the rest of the game already uses (the unit
+	name in `UnitStats`, the map name in `MapConfig`), so discovering duplicates no
+	data: the Index says **whether** the player knows the thing, and its own config
+	still describes it.
 
-	## Quem escreve
+	## Who writes
 
-	So o `IndexService` (servidor). Cada categoria tem um gatilho:
+	Only `IndexService` (server). Each category has a trigger:
 
-	| Categoria | Descobre quando |
+	| Category | Discovered when |
 	| --- | --- |
-	| `Units` | o jogador **obtem** a unit (caixa, invocacao) |
-	| `Maps` | o jogador **joga** o mapa pela primeira vez |
-	| `Enemies` | ainda nao tem gatilho -- a categoria existe e fica vazia |
+	| `Units` | the player **obtains** the unit (crate, summon) |
+	| `Maps` | the player **plays** the map for the first time |
+	| `Enemies` | no trigger yet; the category exists and stays empty |
 
-	`Enemies` esta aqui de proposito mesmo sem quem a preencha: o perfil ja nasce
-	com a chave, entao no dia em que o gatilho existir nenhum perfil precisa de
-	migracao -- e o reconcile do `DataService` ja resolve os antigos.
+	`Enemies` is here on purpose even with nothing filling it: profiles already get
+	the key, so when the trigger exists no profile needs a migration (and
+	`DataService`'s reconcile covers old ones).
 
-	## Quem le
+	## Who reads
 
-	O cliente, pela replica. O unboxing e o primeiro: a unit que o jogador ainda
-	nao descobriu aparece preta no carretel.
+	The client, through the replica. Unboxing is the first: a unit the player has
+	not discovered yet shows black on the reel.
 
-	Descobrir **nao** e ter. O Index e memoria: uma unit vendida (ou um mapa que o
-	jogador nao pode mais escolher) continua descoberta, porque ele ja a viu. Quem
-	responde "tem agora" e o `Units` do perfil, e nao esta tabela.
+	Discovering is **not** owning. The Index is memory: a sold unit (or a map the
+	player can no longer pick) stays discovered. The profile's `Units` answers "owns
+	it now", not this table.
 ]]
 
 local IndexConfig = {}
 
---- As categorias, na ordem em que uma UI de index as mostraria.
+--- The categories, in the order an index UI would show them.
 IndexConfig.CATEGORIES = {
 	"Units",
 	"Maps",
@@ -43,10 +43,10 @@ IndexConfig.CATEGORIES = {
 --[[ API ]]
 
 --[=[
-	O Index de um perfil novo: uma categoria vazia por linha de `CATEGORIES`.
+	A new profile's Index: one empty category per `CATEGORIES` entry.
 
-	E o que o `Data.Template` guarda. Categoria nova aqui entra sozinha nos perfis
-	antigos pelo reconcile do `DataService`.
+	This is what `Data.Template` stores. A new category here reaches old profiles
+	by itself through `DataService`'s reconcile.
 ]=]
 function IndexConfig.createEmpty() : { [string]: { [string]: boolean } }
 	local index = {}
@@ -58,7 +58,7 @@ function IndexConfig.createEmpty() : { [string]: { [string]: boolean } }
 	return index
 end
 
---- Se o nome e uma categoria de verdade. O que vem de fora passa por aqui.
+--- Whether the name is a real category. Anything from outside goes through here.
 function IndexConfig.isCategory(category : any) : boolean
 	if typeof(category) ~= "string" then return false end
 
@@ -72,12 +72,11 @@ function IndexConfig.isCategory(category : any) : boolean
 end
 
 --[=[
-	As descobertas de uma categoria: `{ [chave] = true }`.
+	A category's discoveries: `{ [key] = true }`.
 
-	Perfil que ainda nao carregou (ou categoria que nao existe) vale como vazio, e
-	nao como erro -- e o mesmo acordo do `GamepassConfig.ownedOf`: enquanto o dado
-	nao chegou, o jogador conta como quem ainda nao descobriu nada, que e o estado
-	que a UI sabe desenhar.
+	A profile not loaded yet (or a category that does not exist) counts as empty,
+	not an error, the same agreement as `GamepassConfig.ownedOf`: until the data
+	arrives, the player counts as having discovered nothing, which the UI can draw.
 ]=]
 function IndexConfig.entriesOf(profile : any, category : string) : { [string]: boolean }
 	local index = typeof(profile) == "table" and profile.Index
@@ -86,14 +85,14 @@ function IndexConfig.entriesOf(profile : any, category : string) : { [string]: b
 	return typeof(entries) == "table" and entries or {}
 end
 
---- Se o perfil ja descobriu esta chave.
+--- Whether the profile has already discovered this key.
 function IndexConfig.has(profile : any, category : string, key : any) : boolean
 	if typeof(key) ~= "string" then return false end
 
 	return IndexConfig.entriesOf(profile, category)[key] == true
 end
 
---- Quantas coisas o perfil descobriu numa categoria.
+--- How many things the profile has discovered in a category.
 function IndexConfig.count(profile : any, category : string) : number
 	local total = 0
 

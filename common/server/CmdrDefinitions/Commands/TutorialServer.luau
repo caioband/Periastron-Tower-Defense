@@ -7,12 +7,13 @@ local Me = require(Vendor:WaitForChild("Me"))
 local Framework = Me.new()
 
 --[[
-	Ver a oferta de tutorial sem zerar a própria data.
+	See the tutorial offer without resetting your own data.
 
-	Ela normalmente sai sozinha para quem tem `Tutorial = false` no perfil, ao cair
-	no lobby — o que significa que, depois da primeira vez, só quem apaga o perfil a
-	vê de novo. Este comando entra pelo mesmo `:Prompt` e não escreve nada, então
-	serve tanto para testar a fala quanto para mostrá-la a alguém.
+	It normally appears on its own for players with `Tutorial = false` in their
+	profile, on arriving in the Lobby, which means that after the first time only
+	someone who wipes their profile sees it again. This command goes through the same
+	`:Prompt` and writes nothing, so it works both to test the dialog and to show it
+	to someone.
 ]]
 return function(context, players : { Player }?)
 	local TutorialService = Framework:Get("TutorialService", false, true)

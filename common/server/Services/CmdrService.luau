@@ -25,11 +25,11 @@ local CmdrService = {
 }
 
 --[=[
-	O rank do jogador num grupo, ou 0.
+	The player's rank in a group, or 0.
 
-	`GetRankInGroup` e uma chamada web: ela falha, e falhar nao pode virar erro no
-	meio da checagem de permissao -- rank desconhecido e simplesmente "nao e admin
-	por aqui", e os outros caminhos continuam valendo.
+	`GetRankInGroup` is a web call: it fails, and failing must not become an error in
+	the middle of the permission check. An unknown rank is simply "not an admin this
+	way", and the other paths still apply.
 ]=]
 local function rankInGroup(Player : Player, groupId : number) : number
 	local success, rank = pcall(function()
@@ -58,12 +58,12 @@ function CmdrService:IsAdmin(Player : Player?) : boolean
 	end
 
 	--[[
-		O dono da place, que pode ser uma pessoa ou um grupo.
+		The place owner, which can be a person or a group.
 
-		O ramo do grupo nao e detalhe: **esta place pertence a um grupo**, e ai o
-		`game.CreatorId` e o id do grupo, nunca o de um jogador. Comparar um com o
-		outro nunca dava certo, e como o `ALLOW_IN_STUDIO` so vale no Studio, o
-		resultado era o console funcionar no teste e nao funcionar em jogo.
+		The group branch is not a detail: **this place belongs to a group**, and then
+		`game.CreatorId` is the group id, never a player's. Comparing one with the other
+		never matched, and since `ALLOW_IN_STUDIO` only applies in Studio, the result
+		was a console that worked in testing and not in the live game.
 	]]
 	if game.CreatorType == Enum.CreatorType.User then
 		if Player.UserId == game.CreatorId then
@@ -83,8 +83,8 @@ function CmdrService:IsAdmin(Player : Player?) : boolean
 end
 
 --[=[
-	Se o jogador pode rodar esse comando especifico: admin roda tudo, os outros so
-	o que o `COMMAND_PERMISSIONS` libera para o cargo deles.
+	Whether the player may run this specific command: admins run everything, others
+	only what `COMMAND_PERMISSIONS` allows for their role.
 ]=]
 function CmdrService:CanRun(Player : Player?, commandName : string) : boolean
 	if self:IsAdmin(Player) then
@@ -97,10 +97,10 @@ function CmdrService:CanRun(Player : Player?, commandName : string) : boolean
 end
 
 --[=[
-	Os nomes dos comandos que o jogador pode rodar. Admin recebe todos.
+	The names of the commands the player may run. Admins get all of them.
 
-	O cliente usa a lista para abrir o console (lista vazia = sem console) e para
-	tirar do `help` e do autocomplete o que ele nao pode rodar.
+	The client uses the list to open the console (empty list = no console) and to
+	remove from `help` and autocomplete what it cannot run.
 ]=]
 function CmdrService:GetAccessibleCommands(Player : Player) : { string }
 	if self:IsAdmin(Player) then
@@ -135,9 +135,9 @@ function CmdrService:construct()
 	end)
 
 	--[=[
-		O CmdrController pergunta aqui em vez de ler a lista de admins, que nao e
-		mais replicada. A resposta so decide o que o console mostra -- o BeforeRun
-		acima continua sendo quem de fato autoriza cada comando.
+		CmdrController asks here instead of reading the admin list, which is no
+		longer replicated. The answer only decides what the console shows; the
+		BeforeRun above is still what actually authorizes each command.
 	]=]
 	Framework:Listen("RequestCmdrAccess", function(player : Player)
 		Framework:Fire("CmdrAccess", player, self:GetAccessibleCommands(player))
@@ -145,10 +145,10 @@ function CmdrService:construct()
 end
 
 function CmdrService:init()
-	-- O cliente conecta em "CmdrAccess" logo no init dele, mas o servidor so criaria
-	-- esse evento na hora de responder -- ai o Warp reclama que ele "is taking too
-	-- long to retrieve". Declarar aqui, como os outros services fazem com os eventos
-	-- que so o servidor dispara.
+	-- The client connects to "CmdrAccess" right in its init, but the server would only
+	-- create the event when answering, and then Warp complains it "is taking too
+	-- long to retrieve". Declare it here, as other services do with the events
+	-- only the server fires.
 	Framework:Listen("CmdrAccess", function() end)
 
 	self:construct()

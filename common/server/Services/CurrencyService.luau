@@ -5,27 +5,31 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("CurrencyService")
 
 --[[
-	Mexer nas moedas salvas de um jogador: `Stats.Cash` e `Stats.Shards`.
+	Changes a player's saved currencies: `Stats.Cash` and `Stats.Shards`.
 
-	Escreve moeda num jogador **deste servidor** (`Apply`): é por aqui que o
-	`RobuxShopService` credita os packs de coins. Também lê (`Peek`) e semeia o
+	It writes currency to a player **on this server** (`Apply`): this is how
+	`RobuxShopService` credits coin packs. It also reads (`Peek`) and seeds
 	`Stats.CoinsEarned`.
 
-	Os comandos `cash` e `shards` do Cmdr não passam mais por aqui: eles alcançam
-	jogador fora do servidor, e quem escreve por eles é o `ProfileEditService`.
-	**Não apague o `Apply` achando que era só dos comandos** — sem ele o callback do
-	pack erra, o recibo volta como `NotProcessedYet` e ninguém recebe as coins.
+	Cmdr's `cash` and `shards` commands do not go through here: they reach players
+	off the server, and `ProfileEditService` writes for them. **Do not delete `Apply`
+	thinking it was only for the commands**: without it the pack callback errors,
+	the receipt comes back as `NotProcessedYet`, and nobody gets the coins.
 
-	Não é o dinheiro da partida. Aquele é do `MobService.SessionCash`, vive só
-	enquanto o round dura e nem chega ao perfil; quem mexe nele é o `roundcash`, que
-	mora na Game junto do service dono dele.
+	This is not match money. That belongs to `MobService.SessionCash`, lives only
+	while the round lasts, and never reaches the profile; `roundcash` changes it, and
+	lives in Game next to the service that owns it.
 
-	Fica em `common/` porque as duas places têm perfil aberto — o jogador pode estar
-	no lobby ou no meio de uma partida quando o comando roda.
+	It lives in `common/` because both places have an open profile: the player can
+	be in the Lobby or mid-match when the command runs.
+
+	See docs/common/data-and-profiles.md.
 ]]
 
 local CurrencyService = {
@@ -34,8 +38,8 @@ local CurrencyService = {
 	}
 }
 
--- As chaves de `Data.Stats` que este service aceita mexer. Escrever uma chave que
--- o template não tem criaria um campo fantasma no perfil, que ninguem le.
+-- The `Data.Stats` keys this service accepts changing. Writing a key the template
+-- lacks would create a ghost field in the profile that nobody reads.
 CurrencyService.Stats = {
 	Cash = "Cash",
 	Shards = "Shards",
@@ -44,9 +48,8 @@ CurrencyService.Stats = {
 --[[ INTERNAL ]]
 
 --[=[
-	O valor depois da operacao. Nunca negativo: saldo negativo nao existe em lugar
-	nenhum do jogo, e um `remove` grande demais e engano de quem digitou, nao um
-	pedido para dever.
+	The value after the operation. Never negative: a negative balance exists nowhere
+	in the game, and an oversized `remove` is a typo, not a request to owe.
 ]=]
 local function applyAction(action : string, current : number, amount : number) : number
 	if action == "set" then
@@ -59,16 +62,17 @@ local function applyAction(action : string, current : number, amount : number) :
 end
 
 --[=[
-	Cria o `Stats.CoinsEarned` (o total de coins ganhos, da MOST COINS) no perfil
-	que ainda nao tem, comecando pelo saldo atual.
+	Creates `Stats.CoinsEarned` (total coins earned, for MOST COINS) on a profile
+	that lacks it, starting from the current balance.
 
-	O saldo e o minimo que o jogador ja ganhou, entao e o melhor ponto de partida
-	para quem jogava antes da chave existir -- melhor que zero, que o poria atras
-	de quem acabou de chegar. Perfil novo tem saldo zero e comeca do zero.
+	The balance is the minimum the player has earned, so it is the best starting
+	point for someone who played before the key existed: better than zero, which
+	would put them behind a newcomer. A new profile has a zero balance and starts at
+	zero.
 
-	E por isso que a chave nao esta no template (ver `Config.Data`): o reconcile a
-	criaria em zero antes de este service ver que ela faltava. Roda uma vez por
-	perfil, e so enquanto a chave nao existe.
+	That is why the key is not in the template (see `Config.Data`): reconcile would
+	create it at zero before this service saw it was missing. It runs once per
+	profile, and only while the key does not exist.
 ]=]
 function CurrencyService:_seedCoinsEarned(player : Player)
 	local dataService = self.Services.DataService
@@ -91,7 +95,7 @@ end
 --[[ API ]]
 
 --[=[
-	Le uma moeda do perfil aberto, ou `nil` se o perfil ainda nao carregou.
+	Reads a currency from the open profile, or `nil` if the profile has not loaded yet.
 ]=]
 function CurrencyService:Peek(player : Player, stat : string) : number?
 	local dataService = self.Services.DataService
@@ -106,25 +110,25 @@ function CurrencyService:Peek(player : Player, stat : string) : number?
 end
 
 --[=[
-	Aplica `set`, `add` ou `remove` numa moeda e devolve `(anterior, novo)`, ou
-	`nil` mais o motivo.
+	Applies `set`, `add`, or `remove` to a currency and returns `(previous, new)`, or
+	`nil` plus the reason.
 
-	A leitura e a escrita acontecem dentro do mesmo `Update`, e nao em volta dele:
-	e o que garante que o `add` some em cima do valor que esta la agora, e nao no
-	que estava quando o comando foi digitado.
+	The read and the write happen inside the same `Update`, not around it: that is
+	what guarantees `add` sums on top of the value there now, not the one there when
+	the command was typed.
 ]=]
 function CurrencyService:Apply(player : Player, stat : string, action : string, amount : number) : (number?, number?, string?)
 	if not self.Stats[stat] then
-		return nil, nil, string.format("'%s' nao e uma moeda conhecida.", tostring(stat))
+		return nil, nil, string.format("'%s' is not a known currency.", tostring(stat))
 	end
 
 	local dataService = self.Services.DataService
 	if not dataService then
-		return nil, nil, "DataService indisponivel."
+		return nil, nil, "DataService unavailable."
 	end
 
 	if not (dataService.Profiles and dataService.Profiles[player]) then
-		return nil, nil, string.format("o perfil de %s ainda nao carregou.", player.Name)
+		return nil, nil, string.format("%s's profile has not loaded yet.", player.Name)
 	end
 
 	local previous, updated = 0, 0
@@ -142,12 +146,12 @@ function CurrencyService:Apply(player : Player, stat : string, action : string, 
 	return previous, updated, nil
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function CurrencyService:construct()
 	local dataService = self.Services.DataService
 	if not dataService then
-		warn("[CurrencyService]: sem DataService; o CoinsEarned de perfis antigos nao vai ser criado.")
+		log:Warn("no DataService; CoinsEarned will not be backfilled on old profiles.")
 		return
 	end
 
@@ -155,15 +159,15 @@ function CurrencyService:construct()
 		self:_seedCoinsEarned(player)
 	end)
 
-	-- Quem carregou antes deste service subir: o sinal deles ja passou.
+	-- Players who loaded before this service started: their signal already fired.
 	for _, player in Players:GetPlayers() do
 		self:_seedCoinsEarned(player)
 	end
 end
 
 function CurrencyService:start()
-	-- Com espera: o `construct` agora escuta o `PlayerDataLoaded`, e um DataService
-	-- que ainda nao subiu deixaria o perfil antigo sem o `CoinsEarned`.
+	-- With a wait: `construct` now listens to `PlayerDataLoaded`, and a DataService
+	-- that has not started yet would leave an older profile without `CoinsEarned`.
 	for Service, _ in self.Services do
 		self.Services[Service] = Framework:Get(Service, false, true)
 	end

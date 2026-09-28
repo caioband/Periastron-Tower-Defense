@@ -27,24 +27,23 @@ function CmdrController:construct()
 	Cmdr:SetPlaceName(CmdrConfig.PLACE_NAME)
 
 	--[=[
-		A lista de admins NAO e replicada: quem decide e o servidor.
+		The admin list is NOT replicated: the server decides.
 
-		Isto aqui e cosmetico -- so esconde o console de quem nao e admin. A
-		permissao de verdade e revalidada pelo hook BeforeRun do CmdrService a
-		cada comando, entao mesmo que um exploiter force SetEnabled(true) ele nao
-		consegue rodar nada.
+		This is cosmetic: it only hides the console from non-admins. The real
+		permission is revalidated by CmdrService's BeforeRun hook on every command,
+		so even if an exploiter forces SetEnabled(true) they cannot run anything.
 
-		Ate a resposta do servidor chegar o console fica desabilitado.
+		Until the server's answer arrives, the console stays disabled.
 	]=]
 	Cmdr:SetEnabled(false)
 
 	local accessible : { [string]: boolean } = {}
 
 	--[=[
-		Comandos com `ClientRun` (o `help`, por exemplo) rodam inteiros no cliente
-		e nunca passam pelo BeforeRun do servidor. Sem nenhum hook no cliente, o
-		Cmdr bloqueia esses comandos fora do Studio ("no BeforeRun hook is
-		configured"), entao o hook daqui e o que libera o `help` em jogo.
+		Commands with `ClientRun` (`help`, for example) run entirely on the client and
+		never go through the server's BeforeRun. With no hook on the client, Cmdr
+		blocks those commands outside Studio ("no BeforeRun hook is configured"), so
+		this hook is what enables `help` in the live game.
 	]=]
 	Cmdr.Registry:RegisterHook("BeforeRun", function(context)
 		if not accessible[context.Name] then
@@ -69,12 +68,12 @@ function CmdrController:construct()
 end
 
 --[=[
-	Tira do registro LOCAL os comandos que o jogador nao pode rodar, e com isso eles
-	somem do `help`, do autocomplete e do tipo `command` (que leem o registro).
+	Removes from the LOCAL registry the commands the player cannot run, which removes
+	them from `help`, autocomplete, and the `command` type (which read the registry).
 
-	Mexe nos campos internos do Registry do Cmdr (`Commands` e `CommandsArray`),
-	porque ele nao tem API para desregistrar. So afeta este cliente: o servidor
-	continua com tudo registrado e validando no BeforeRun.
+	It touches the Cmdr Registry's internal fields (`Commands` and `CommandsArray`),
+	because it has no API to unregister. It only affects this client: the server
+	keeps everything registered and validates in BeforeRun.
 ]=]
 function CmdrController:HideInaccessibleCommands(accessible : { [string]: boolean })
 	local Registry = self.Cmdr.Registry
@@ -85,7 +84,7 @@ function CmdrController:HideInaccessibleCommands(accessible : { [string]: boolea
 		end
 	end
 
-	-- `Commands` tem uma entrada por nome e por alias, todas apontando para o objeto.
+	-- `Commands` has one entry per name and per alias, all pointing at the object.
 	for key, commandObject in Registry.Commands do
 		if not accessible[commandObject.Name] then
 			Registry.Commands[key] = nil

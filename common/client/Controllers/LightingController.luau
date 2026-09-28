@@ -12,44 +12,48 @@ local SharedConfig = require(Configs.SharedConfig)
 local LightingUtil = require(Utils.LightingUtil)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("LightingController")
 
 local Config = SharedConfig.LightingConfig
 
 --[[
-	Transição de Lighting, só no cliente.
+	Lighting transitions, client only.
 
-	O `LightingService` troca o conteúdo do Lighting de uma vez — é o certo para o
-	servidor, e é o que quem entra no meio da partida precisa receber. Aqui a troca
-	vira transição: no aviso de que o preset mudou, o controller devolve as
-	propriedades ao valor do preset anterior e interpola até o novo.
+	`LightingService` swaps Lighting's contents all at once: that is right for the
+	server, and it is what a player joining mid-match needs to receive. Here the swap
+	becomes a transition: on the notification that the preset changed, the controller
+	puts properties back to the previous preset's values and interpolates to the new
+	one.
 
-	De onde vem cada ponta:
+	Where each end comes from:
 
-	- **origem**: `self.applied`, o estado que este controller mesmo escreveu por
-	  último. Não é lido do Lighting na hora — quando o aviso chega, o valor novo
-	  já pode ter replicado por cima.
-	- **destino**: a Folder do preset em `Assets.Lighting`, não a instância viva.
-	  Mesma razão: a pasta é estável, a instância viva é o que vai ser sobrescrito.
+	- **source**: `self.applied`, the state this controller itself wrote last. It is
+	  not read from Lighting at that moment: when the notification arrives, the new
+	  value may already have replicated over it.
+	- **target**: the preset Folder in `Assets.Lighting`, not the live instance. Same
+	  reason: the folder is stable, and the live instance is what gets overwritten.
 
-	O que não interpola (boolean, string, EnumItem, sequences) é aplicado de uma
-	vez — ligar entra no começo, desligar espera o fim, para um efeito aparecer
-	junto com a transição e sumir depois dela.
+	What does not interpolate (booleans, strings, EnumItems, sequences) is applied
+	at once: turning on happens at the start, turning off waits for the end, so an
+	effect appears along with the transition and disappears after it.
 
-	Instância só é interpolada se existir nos dois presets com o mesmo nome e a
-	mesma classe. A que só existe no preset novo já chega no valor final pela
-	replicação; a que só existia no antigo foi destruída pelo servidor. Na prática:
-	usar os mesmos nomes entre presets é o que faz a transição ficar completa.
+	An instance is only interpolated if it exists in both presets with the same name
+	and class. One that only exists in the new preset already arrives at its final
+	value through replication; one that only existed in the old one was destroyed by
+	the server. In practice: using the same names across presets is what makes the
+	transition complete.
 
-	Fica em `common/` porque as duas places usam.
+	It lives in `common/` because both places use it.
+
+	See docs/common/lighting.md.
 ]]
 
--- Quanto tempo esperar as instâncias do preset novo replicarem antes de desistir
--- de interpolá-las.
+-- How long to wait for the new preset's instances to replicate before giving up
+-- on interpolating them.
 local CHILD_WAIT = 0.5
-
-local IS_STUDIO = RunService:IsStudio()
 
 local LightingController = {
 	Controllers = {},
@@ -58,8 +62,8 @@ local LightingController = {
 LightingController.currentPreset = nil :: string?
 
 --[[
-	Último estado que este controller escreveu:
-	`{ Lighting = { prop -> valor }, Children = { nome -> { ClassName, Values } } }`
+	The last state this controller wrote:
+	`{ Lighting = { prop -> value }, Children = { name -> { ClassName, Values } } }`
 ]]
 LightingController.applied = nil :: any
 
@@ -67,10 +71,10 @@ LightingController._generation = 0
 LightingController._connection = nil :: RBXScriptConnection?
 LightingController._root = nil :: Folder?
 
--- Plano da transição em andamento, ou nil. Ver `_freeze` e `Skip`.
+-- The plan of the transition in progress, or nil. See `_freeze` and `Skip`.
 LightingController._plan = nil :: any
 
---[[ ESTADO ]]
+--[[ STATE ]]
 
 function LightingController:_readLive()
 	local state = {
@@ -78,20 +82,20 @@ function LightingController:_readLive()
 		Children = {},
 	}
 
-	-- Nome repetido fica com o primeiro, igual ao que `FindFirstChild` devolve.
-	-- Os mapas do jogo trazem dois filhos chamados `Atmosphere`, e as duas pontas
-	-- da transição têm que concordar em qual delas estão falando.
+	-- A repeated name keeps the first one, the same as `FindFirstChild` returns.
+	-- The game's maps carry two children named `Atmosphere`, and both ends of the
+	-- transition must agree on which one they are talking about.
 	for _, child in Lighting:GetChildren() do
 		--[[
-			O que está marcado com o `KeepAttribute` não é de preset nenhum: é de outro
-			sistema, que manda no efeito sozinho — hoje o `UIBlur` que a loja e o
-			`UILibraryController` acendem atrás dos painéis.
+			What is marked with `KeepAttribute` belongs to no preset: it belongs to
+			another system that controls the effect on its own, today the `UIBlur` that
+			the shop and `UILibraryController` turn on behind panels.
 
-			Ficar de fora do estado é o que impede a troca de preset de tratá-lo como
-			efeito **de saída**: ele não está no preset novo, então o `_fadeOut` criaria
-			um fantasma com o tamanho dele e o levaria até zero — um segundo blur por
-			cima do que o painel está usando. O `LightingService` já pula esses filhos na
-			varredura dele pela mesma razão.
+			Staying out of the state is what keeps a preset switch from treating it as
+			an **outgoing** effect: it is not in the new preset, so `_fadeOut` would
+			create a ghost of its size and take it to zero, a second blur on top of the
+			one the panel is using. `LightingService` already skips these children in
+			its sweep for the same reason.
 		]]
 		if child:GetAttribute(Config.KeepAttribute) == true then continue end
 
@@ -106,16 +110,16 @@ function LightingController:_readLive()
 	return state
 end
 
--- Assume o estado atual do Lighting como ponto de partida, sem transição.
+-- Takes Lighting's current state as the starting point, without a transition.
 function LightingController:_adopt(name: string?)
 	self.currentPreset = name
 	self.applied = self:_readLive()
 end
 
 --[[
-	Onde `self.applied` guarda os valores desta instância. Filho é indexado por
-	nome: a instância viva pode ter sido destruída e recriada pelo servidor entre
-	uma transição e outra.
+	Where `self.applied` keeps this instance's values. Children are indexed by name:
+	the live instance may have been destroyed and recreated by the server between one
+	transition and the next.
 ]]
 function LightingController:_bucketFor(instance: Instance)
 	if instance == Lighting then
@@ -142,15 +146,15 @@ function LightingController:_getPreset(name: string): Folder?
 	return preset
 end
 
---[[ PLANO ]]
+--[[ PLAN ]]
 
 --[[
-	Compara origem e destino de uma instância e enche o plano:
+	Compares an instance's source and target and fills the plan:
 
-	- `entries`: interpola quadro a quadro;
-	- `immediate`: corte que vale desde já (o valor de origem das interpoláveis
-	  entra por aqui também, porque é o que passa a estar escrito);
-	- `deferred`: corte que só vale quando a transição acabar.
+	- `entries`: interpolates frame by frame;
+	- `immediate`: a cut that applies right away (the source value of interpolable
+	  properties goes here too, because it is what is now written);
+	- `deferred`: a cut that only applies when the transition ends.
 ]]
 function LightingController:_collect(instance: Instance, from, to, plan)
 	for propertyName, target in to do
@@ -177,8 +181,8 @@ function LightingController:_collect(instance: Instance, from, to, plan)
 			continue
 		end
 
-		-- Corte: desligar espera o fim para o efeito ainda participar da transição;
-		-- o resto (ligar, trocar textura) entra logo, senão não haveria o que ver.
+		-- Cut: turning off waits for the end so the effect still takes part in the transition;
+		-- the rest (turning on, swapping a texture) goes in right away, or there would be nothing to see.
 		if target == false then
 			pcall(function()
 				(instance :: any)[propertyName] = origin
@@ -197,10 +201,10 @@ function LightingController:_collect(instance: Instance, from, to, plan)
 end
 
 --[[
-	Instância viva de cada filho do preset, esperando a replicação chegar.
+	Each preset child's live instance, waiting for replication to arrive.
 
-	Devolve `nil` se a geração ficou velha no meio da espera — outra troca começou
-	e este plano não vale mais.
+	Returns `nil` if the generation went stale during the wait: another switch
+	started and this plan no longer applies.
 ]]
 function LightingController:_resolveChildren(preset: Folder, generation: number)
 	local deadline = os.clock() + CHILD_WAIT
@@ -210,8 +214,8 @@ function LightingController:_resolveChildren(preset: Folder, generation: number)
 		local taken = {}
 
 		for _, presetChild in preset:GetChildren() do
-			-- Mesma regra do `_readLive`: nome repetido no preset fica com o
-			-- primeiro, senão dois planos brigariam pela mesma instância viva.
+			-- Same rule as `_readLive`: a repeated name in the preset keeps the first,
+			-- or two plans would fight over the same live instance.
 			if taken[presetChild.Name] then continue end
 
 			local live = Lighting:FindFirstChild(presetChild.Name)
@@ -224,8 +228,8 @@ function LightingController:_resolveChildren(preset: Folder, generation: number)
 		end
 
 		if not missing or os.clock() >= deadline then
-			if missing and IS_STUDIO then
-				print(`[LightingController]: "{missing}" não apareceu no Lighting a tempo; entra sem transição.`)
+			if missing then
+				log:Debug(`"{missing}" did not show up in Lighting in time; it enters without a transition.`)
 			end
 			return resolved
 		end
@@ -238,7 +242,7 @@ function LightingController:_resolveChildren(preset: Folder, generation: number)
 	end
 end
 
---[[ TRANSIÇÃO ]]
+--[[ TRANSITION ]]
 
 function LightingController:_stop()
 	if self._connection then
@@ -248,11 +252,11 @@ function LightingController:_stop()
 end
 
 --[[
-	Congela a transição em andamento onde ela está.
+	Freezes the transition in progress where it is.
 
-	Quem chama é a transição seguinte: a origem dela tem que ser o que está na tela
-	agora, não o preset de onde a interrompida tinha saído — senão a troca começaria
-	com um salto para trás.
+	The next transition calls this: its source must be what is on screen now, not the
+	preset the interrupted one started from, or the switch would begin with a jump
+	backward.
 ]]
 function LightingController:_freeze()
 	local plan = self._plan
@@ -272,9 +276,9 @@ function LightingController:_freeze()
 		end
 	end
 
-	-- Quem estava saindo já tinha sido destruído pelo servidor; o fantasma some
-	-- junto, e o registro dele sai do estado para a próxima troca não tentar
-	-- despedir a mesma instância de novo.
+	-- The outgoing instance was already destroyed by the server; the ghost goes with
+	-- it, and its record leaves the state so the next switch does not try to say
+	-- goodbye to the same instance again.
 	for _, ghost in plan.ghosts do
 		self.applied.Children[ghost.Name] = nil
 		ghost:Destroy()
@@ -285,17 +289,17 @@ function LightingController:_freeze()
 end
 
 --[[
-	Fantasma de saída.
+	Outgoing ghost.
 
-	A instância que só existia no preset antigo já foi destruída pelo servidor, então
-	não há o que interpolar — a não ser recriar uma cópia local (não replica) com os
-	valores de antes e levá-la até o neutro. Sem isto, metade da mudança visual de
-	uma troca de mapa é um corte seco.
+	The instance that only existed in the old preset was already destroyed by the
+	server, so there is nothing to interpolate, unless we recreate a local copy (it
+	does not replicate) with the old values and take it to neutral. Without this,
+	half the visual change of a map switch is a hard cut.
 ]]
 function LightingController:_fadeOut(name: string, previous, plan)
 	local target = Config:GetNeutral(previous.ClassName, previous.Values)
 	if target == previous.Values then
-		-- Classe sem neutro (Sky): não há meio-caminho, some de uma vez.
+		-- A class with no neutral (Sky): there is no halfway point, it disappears at once.
 		return
 	end
 
@@ -321,11 +325,11 @@ function LightingController:_transition(toName: string, duration: number)
 
 	local preset = self:_getPreset(toName)
 
-	-- Sem preset para ler, sem estado anterior, ou corte pedido: o Lighting já está
-	-- no valor final pela replicação, só falta registrar.
+	-- No preset to read, no previous state, or a cut requested: Lighting is already
+	-- at the final value through replication; it only needs recording.
 	if not preset or not self.applied or duration <= 0 then
-		if not preset and IS_STUDIO then
-			print(`[LightingController]: preset "{toName}" não está em Assets.Lighting; sem transição.`)
+		if not preset then
+			log:Debug(`preset "{toName}" is not in Assets.Lighting; no transition.`)
 		end
 		self:_adopt(toName)
 		return
@@ -333,8 +337,8 @@ function LightingController:_transition(toName: string, duration: number)
 
 	local plan = { entries = {}, immediate = {}, deferred = {}, ghosts = {} }
 
-	-- O Lighting em si não depende de replicação de instância: volta para o valor
-	-- antigo já, para não ficar um quadro com a cara nova.
+	-- Lighting itself does not depend on instance replication: it goes back to the old
+	-- value right away, so no frame shows the new look.
 	local lightingTarget = table.clone(self.applied.Lighting)
 	for propertyName, value in LightingUtil.ReadPresetAttributes(preset) do
 		lightingTarget[propertyName] = value
@@ -353,11 +357,11 @@ function LightingController:_transition(toName: string, duration: number)
 		local previous = self.applied.Children[presetChild.Name]
 
 		if previous and previous.ClassName == presetChild.ClassName then
-			-- Existe nos dois presets: interpola valor a valor.
+			-- Exists in both presets: interpolate value by value.
 			self:_collect(live, previous.Values, target, plan)
 		else
-			-- Só existe no preset novo. O servidor já a criou no valor final, então
-			-- a entrada é começar do neutro e subir até ele.
+			-- Only exists in the new preset. The server already created it at the final value,
+			-- so the entrance starts from neutral and rises to it.
 			self:_collect(live, Config:GetNeutral(presetChild.ClassName, target), target, plan)
 		end
 	end
@@ -386,8 +390,8 @@ function LightingController:_transition(toName: string, duration: number)
 			end)
 		end
 
-		-- Antes do `_adopt`: o fantasma não pode entrar no estado como se fosse uma
-		-- instância viva do preset novo.
+		-- Before `_adopt`: the ghost must not enter the state as if it were a live
+		-- instance of the new preset.
 		for _, ghost in plan.ghosts do
 			ghost:Destroy()
 		end
@@ -398,15 +402,13 @@ function LightingController:_transition(toName: string, duration: number)
 	plan.finish = finish
 
 	--[[
-		Vale logar mesmo quando deu certo: entre dois presets de mapa a diferença
-		costuma ser de uma ou duas propriedades, e "interpolou pouco" é
-		indistinguível de "não interpolou" olhando a tela.
+		Worth logging even when it went right: between two map presets the difference
+		is usually one or two properties, and "interpolated a little" is
+		indistinguishable from "did not interpolate" by looking at the screen.
 	]]
-	if IS_STUDIO then
-		print(string.format('[LightingController]: "%s" -> "%s" em %.4gs | %d propriedade(s) interpolando, %d corte(s) na entrada, %d no fim, %d saída(s) com fantasma',
-			self.currentPreset or "?", toName, duration,
-			#plan.entries, #plan.immediate, #plan.deferred, #plan.ghosts))
-	end
+	log:Debug(string.format('"%s" -> "%s" in %.4gs | %d propert(ies) tweening, %d cut(s) at the start, %d at the end, %d exit(s) with a ghost',
+		self.currentPreset or "?", toName, duration,
+		#plan.entries, #plan.immediate, #plan.deferred, #plan.ghosts))
 
 	if #plan.entries == 0 then
 		finish()
@@ -442,7 +444,7 @@ function LightingController:GetCurrent(): string?
 	return self.currentPreset
 end
 
--- Corta a transição em andamento e deixa tudo no valor final.
+-- Cuts the transition in progress and leaves everything at the final value.
 function LightingController:Skip()
 	local plan = self._plan
 	if plan and plan.finish then
@@ -450,21 +452,21 @@ function LightingController:Skip()
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function LightingController:construct()
 	Framework:Listen("LightingApplied", function(_previous, name, duration)
 		if typeof(name) ~= "string" then return end
 
-		-- `_transition` espera a replicação dos filhos, então cede a thread; sai da
-		-- callback da rede para não segurar os outros eventos.
+		-- `_transition` waits for children to replicate, so it yields; it leaves the
+		-- network callback so it does not hold up other events.
 		task.spawn(function()
 			self:_transition(name, tonumber(duration) or Config.Transition.Time)
 		end)
 	end)
 
-	-- Com que preset este cliente começa. O Lighting dele já chegou replicado no
-	-- estado certo; isto é só para a próxima troca ter de onde sair.
+	-- Which preset this client starts with. Its Lighting already arrived replicated in
+	-- the right state; this is only so the next switch has somewhere to start from.
 	Framework:Fire("RequestLighting")
 end
 
@@ -475,8 +477,8 @@ function LightingController:init()
 		self.Controllers[Controller] = Framework:Get(Controller)
 	end
 
-	-- Se a resposta do servidor demorar, o estado autorado da place já serve de
-	-- origem — melhor que a primeira troca sair sem transição.
+	-- If the server's answer takes long, the place's authored state already works as
+	-- the source: better than the first switch going out without a transition.
 	self:_adopt(nil)
 	self:construct()
 end

@@ -16,14 +16,16 @@ local WarningConfig = SharedConfig.WarningConfig
 local Config = WeatherConfig.Warning
 
 --[[
-	O aviso de que vem clima por aí.
+	The warning that weather is on the way.
 
-	O servidor manda `WeatherWarning` com o nome do clima e quantas waves faltam;
-	daqui sai só a frase — quem a coloca na tela, anima e resolve disputa com outros
-	avisos é o `WarningController`.
+	The server sends `WeatherWarning` with the weather name and how many waves are
+	left; only the sentence comes from here. `WarningController` puts it on screen,
+	animates it, and resolves conflicts with other warnings.
 
-	Um aviso novo derruba o anterior. Na prática isso quase não acontece: o servidor
-	não agenda um clima enquanto houver outro agendado ou no ar.
+	A new warning replaces the previous one. In practice this almost never happens:
+	the server does not schedule a weather while another is scheduled or active.
+
+	See docs/game/weather-in-match.md.
 ]]
 
 local WeatherWarningController = {
@@ -33,10 +35,10 @@ local WeatherWarningController = {
 }
 
 --[=[
-	Mostra o aviso de um clima.
+	Shows a weather's warning.
 
-	`wavesAhead` vem do servidor porque é ele que vai cumprir o prazo; o cliente só
-	escolhe entre a frase no plural e a de uma wave só.
+	`wavesAhead` comes from the server because the server keeps the deadline; the
+	client only picks between the plural sentence and the single-wave one.
 ]=]
 function WeatherWarningController:Show(weatherName : string, wavesAhead : number)
 	local warning = self.Controllers.WarningController
@@ -51,11 +53,11 @@ function WeatherWarningController:Show(weatherName : string, wavesAhead : number
 end
 
 --[=[
-	Tira o aviso de clima da tela na hora. É o que o recomeço de round precisa: o
-	aviso do round anterior não pode continuar lá.
+	Removes the weather warning from the screen immediately. It is what a round
+	restart needs: the previous round's warning must not stay there.
 
-	Passa a própria prioridade para não levar junto um aviso mais importante — o
-	restart do servidor não tem nada a ver com o round ter recomeçado.
+	It passes its own priority so it does not take a more important warning with it:
+	the server restart has nothing to do with the round restarting.
 ]=]
 function WeatherWarningController:Hide()
 	local warning = self.Controllers.WarningController
@@ -64,7 +66,7 @@ function WeatherWarningController:Hide()
 	warning:Hide(WarningConfig.Priority.Weather)
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function WeatherWarningController:construct()
 	Framework:Listen("WeatherWarning", function(weatherName : string, wavesAhead : number)
@@ -76,7 +78,7 @@ function WeatherWarningController:construct()
 		self:Hide()
 	end)
 
-	-- Quem entra no meio da partida com um clima ja avisado precisa ver o aviso.
+	-- A player who joins mid-match with a weather already announced needs to see the warning.
 	Framework:Fire("RequestWeatherWarning")
 end
 

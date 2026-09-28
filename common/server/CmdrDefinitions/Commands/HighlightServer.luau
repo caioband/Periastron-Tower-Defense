@@ -7,11 +7,11 @@ local Me = require(Vendor:WaitForChild("Me"))
 local Framework = Me.new()
 
 --[[
-	Apontar um botão sem precisar de um passo de tutorial para isso.
+	Point at a button without needing a tutorial step for it.
 
-	O caminho é de nomes a partir da `PlayerGui` — `highlight HUD.HUDLeft.Shop` —,
-	que é a única forma de o servidor falar de uma tela que só existe no cliente.
-	Sem caminho, apaga.
+	The path is names from `PlayerGui` (`highlight HUD.HUDLeft.Shop`), the only way
+	the server can talk about a screen that only exists on the client. Without a
+	path, it clears.
 ]]
 return function(context, path : string?, players : { Player }?)
 	local HighlightService = Framework:Get("HighlightService", false, true)

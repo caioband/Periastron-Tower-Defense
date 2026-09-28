@@ -20,9 +20,9 @@ local SpeedConfig = SharedConfig.SpeedConfig
 local GamepassConfig = SharedConfig.GamepassConfig
 
 --[[
-	O "pop" do clique, igual ao dos botoes do HUD do Lobby
-	(`HUDButtonController`): encolhe enquanto o botao esta apertado e volta com um
-	overshoot ao soltar, com o `UIClick` saindo na volta.
+	The click "pop", the same as the Lobby HUD buttons (`HUDButtonController`): shrinks
+	while the button is pressed and returns with an overshoot on release, with
+	`UIClick` playing on the return.
 ]]
 local PRESS_INFO = TweenInfo.new(0.08, Enum.EasingStyle.Circular, Enum.EasingDirection.Out)
 local RELEASE_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -32,25 +32,25 @@ local PRESS_SCALE = 0.9
 local CLICK_SOUND = "UIClick"
 
 --[[
-	A expansao. Cada opcao ocupa um "slot" a partir do original, e o slot vale a
-	largura renderizada do botao vezes EXPAND_SPACING -- medida na hora, e nao pelo
-	`Size` autorado, porque quem manda no tamanho final e o
-	UIAspectRatioConstraint do botao.
+	The expansion. Each option takes a "slot" starting from the original, and a slot is
+	the button's rendered width times EXPAND_SPACING, measured at the moment, not from
+	the authored `Size`, because the button's UIAspectRatioConstraint rules the final
+	size.
 ]]
-local EXPAND_DIRECTION = 1     -- 1 abre para a direita, -1 para a esquerda
-local EXPAND_SPACING = 1.2     -- largura do botao + folga, por slot
-local EXPAND_FROM_SCALE = 0.4  -- de que tamanho o clone nasce, em cima do original
+local EXPAND_DIRECTION = 1     -- 1 opens to the right, -1 to the left
+local EXPAND_SPACING = 1.2     -- button width + gap, per slot
+local EXPAND_FROM_SCALE = 0.4  -- the size the clone starts at, on top of the original
 
 local EXPAND_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local COLLAPSE_INFO = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local EXPAND_STAGGER = 0.04    -- atraso por slot, para as opcoes sairem em cascata
+local EXPAND_STAGGER = 0.04    -- delay per slot, so the options come out in a cascade
 
 local OPTION_NAME = "SpeedOption"
 
 --[[
-	A trava do degrau que pede gamepass: um veu preto por cima da opcao e o cadeado
-	no meio dele. Os dois nascem dentro do proprio botao, entao acompanham posicao,
-	tamanho e a animacao de abrir sem nada extra.
+	The lock for a step that needs a gamepass: a black veil over the option and the
+	padlock in the middle of it. Both are created inside the button itself, so they
+	follow position, size, and the opening animation with nothing extra.
 ]]
 local LOCK_NAME = "Lock"
 local LOCK_COLOR = Color3.new(0, 0, 0)
@@ -58,27 +58,28 @@ local LOCK_TRANSPARENCY = 0.5
 local LOCK_ICON = "rbxassetid://133112084847088"
 local LOCK_ICON_SCALE = 1
 
--- O degrau que a opcao representa, para reencontrar a trava depois da compra.
+-- The step the option represents, to find the lock again after the purchase.
 local STEP_ATTRIBUTE = "StepIndex"
 
 --[[
-	O botao de velocidade da partida (`Interface.Speed`).
+	The match speed button (`Interface.Speed`).
 
-	Um clique abre as opcoes em vez de trocar a velocidade: o botao clona a si
-	mesmo uma vez por degrau restante do `SpeedConfig`, cada clone com a arte do
-	seu degrau, e os clones saem de tras do original no eixo X. Clicar num deles
-	pede aquela velocidade e fecha; clicar no original (que e a opcao do degrau
-	atual) so fecha.
+	A click opens the options instead of changing speed: the button clones itself once
+	per remaining `SpeedConfig` step, each clone with its step's art, and the clones
+	slide out from behind the original on the X axis. Clicking one asks for that speed
+	and closes; clicking the original (the current step's option) only closes.
 
-	A arte do botao so muda quando o servidor confirma. E de proposito: a
-	velocidade e da sala, e trocar a imagem na hora mostraria 1,5x para quem clicou
-	enquanto os outros ainda estao no 1x -- e o clique de outro jogador tambem troca
-	a arte deste aqui, o que so funciona se a unica fonte for o `GameSpeedChanged`.
+	The button's art only changes when the server confirms. That is deliberate: speed
+	belongs to the room, and swapping the image right away would show 1.5x to whoever
+	clicked while the others are still at 1x; another player's click also changes this
+	button's art, which only works if the single source is `GameSpeedChanged`.
 
-	Alem da arte, cada confirmacao ajusta o `GameClock` local. Ele e quem faz o
-	modelo do mob andar mais rapido na tela (`MobController`) no mesmo ritmo da
-	distancia que o servidor esta somando -- sem isso, o servidor entregaria o mob
-	na base com o boneco ainda no meio do caminho.
+	Besides the art, each confirmation adjusts the local `GameClock`. It is what makes
+	the enemy model walk faster on screen (`MobController`) at the same pace as the
+	distance the server is adding; without it, the server would deliver the enemy to
+	the base with the model still halfway down the path.
+
+	See docs/game/match-speed.md.
 ]]
 
 local SpeedController = {
@@ -90,36 +91,37 @@ local SpeedController = {
 
 SpeedController.Index = SpeedConfig.DEFAULT_INDEX
 
--- A escala imposta por fora do botao, quando ha uma. Ver `applyOverride`.
+-- The scale imposed from outside the button, when there is one. See `applyOverride`.
 SpeedController.Override = nil
 
--- As opcoes abertas agora (os clones), do slot 1 em diante.
+-- The options open now (the clones), from slot 1 on.
 SpeedController.options = {}
 
--- Um tween de escala por UIScale. Chaves fracas porque as opcoes sao destruidas
--- ao fechar e o UIScale delas vai junto.
+-- One scale tween per UIScale. Weak keys because options are destroyed on close
+-- and their UIScale goes with them.
 SpeedController.scaleTweens = setmetatable({}, { __mode = "k" })
 
 --[[
-	As passes compradas nesta sessao, por chave.
+	The passes bought this session, by key.
 
-	Ponte entre o `PromptGamePassPurchaseFinished` e o perfil: o servidor recalibra
-	o `Gamepasses` na mesma compra, mas isso da a volta pela rede, e ate voltar o
-	jogador ja clicou de novo -- e levaria um segundo prompt de uma pass que acabou
-	de comprar. Quem manda continua sendo o perfil; isto so cobre a viagem.
+	A bridge between `PromptGamePassPurchaseFinished` and the profile: the server
+	recalibrates `Gamepasses` on the same purchase, but that goes around the network,
+	and before it comes back the player has already clicked again, which would bring a
+	second prompt for a pass they just bought. The profile still rules; this only
+	covers the trip.
 ]]
 SpeedController.purchased = {}
 
 --[[ INTERNAL ]]
 
 --[=[
-	A escala de um botao, num tween so por vez.
+	A button's scale, one tween at a time.
 
-	O anterior e cancelado em vez de deixado correndo: apertar de novo antes de a
-	volta terminar deixaria dois tweens escrevendo na mesma propriedade, e o botao
-	pararia num tamanho que nao e nem o apertado nem o normal. Por UIScale, e nao
-	um so para o controller inteiro, porque agora existem varios botoes ao mesmo
-	tempo -- o original e as opcoes abertas.
+	The previous one is canceled instead of left running: pressing again before the
+	return ends would leave two tweens writing the same property, and the button would
+	stop at a size that is neither pressed nor normal. Per UIScale, not one for the
+	whole controller, because there are several buttons at once: the original and the
+	open options.
 ]=]
 function SpeedController:tweenScale(uiScale : UIScale?, scale : number, info : TweenInfo)
 	if not uiScale then return end
@@ -136,7 +138,7 @@ function SpeedController:tweenScale(uiScale : UIScale?, scale : number, info : T
 	return tween
 end
 
---- O UIScale do botao, criado na primeira vez -- o `Interface.Speed` nao traz um.
+--- The button's UIScale, created the first time: `Interface.Speed` does not ship one.
 function SpeedController:getScale(button : GuiButton) : UIScale
 	local uiScale = button:FindFirstChildWhichIsA("UIScale")
 	if not uiScale then
@@ -148,12 +150,11 @@ function SpeedController:getScale(button : GuiButton) : UIScale
 end
 
 --[=[
-	Liga o pop do clique. O `UIScale` e criado se o botao nao trouxer um -- o
-	`Interface.Speed` de hoje nao traz.
+	Hooks up the click pop. The `UIScale` is created if the button does not ship one:
+	today's `Interface.Speed` does not.
 
-	`MouseButton1Down`/`Up`, e nao `Activated`: quem troca a velocidade continua
-	sendo o `MouseButton1Click` logo abaixo, e a animacao nao pode consumir o
-	clique dele.
+	`MouseButton1Down`/`Up`, not `Activated`: `MouseButton1Click` just below still
+	changes the speed, and the animation must not consume its click.
 ]=]
 function SpeedController:bindClickPop(button : GuiButton)
 	local uiScale = self:getScale(button)
@@ -171,22 +172,22 @@ function SpeedController:bindClickPop(button : GuiButton)
 		end
 	end)
 
-	-- Soltar o clique fora do botao nao dispara o `MouseButton1Up` dele, e a escala
-	-- ficaria presa no apertado.
+	-- Releasing the click outside the button does not fire its `MouseButton1Up`, and the
+	-- scale would stay stuck pressed.
 	button.MouseLeave:Connect(function()
 		self:tweenScale(uiScale, 1, RELEASE_INFO)
 	end)
 end
 
 --[=[
-	A escala que o relogio local deve estar: a imposta por fora do botao (a carta
-	Time Acceleration), se houver; o degrau da sala, se nao.
+	The scale the local clock should be at: the one imposed from outside the button
+	(the Time Acceleration card) if there is one; otherwise the room's step.
 ]=]
 function SpeedController:effectiveScale() : number
 	return self.Override or SpeedConfig.GetScale(self.Index)
 end
 
---- Passa a valer o degrau que o servidor mandou: relogio local e arte do botao.
+--- Applies the step the server sent: local clock and button art.
 function SpeedController:apply(index : number)
 	if not SpeedConfig.IsValid(index) then return end
 
@@ -197,15 +198,15 @@ function SpeedController:apply(index : number)
 		self.button.Image = SpeedConfig.GetImage(index)
 	end
 
-	-- O degrau mudou (pode ter sido outro jogador): as opcoes abertas sao as do
-	-- degrau anterior, entao fecham em vez de mentir.
+	-- The step changed (it may have been another player): the open options belong to
+	-- the previous step, so they close instead of lying.
 	self:collapse()
 end
 
 --[=[
-	A escala imposta por fora do botao. So o relogio muda: a arte continua sendo a
-	do degrau que a sala escolheu, porque o 3x da carta nao e um degrau e nao tem
-	imagem -- e o botao continua servindo para voltar ao 1x depois.
+	The scale imposed from outside the button. Only the clock changes: the art stays
+	the step the room chose, because the card's 3x is not a step and has no image, and
+	the button still serves to go back to 1x afterward.
 ]=]
 function SpeedController:applyOverride(scale : number?)
 	self.Override = if typeof(scale) == "number" then scale else nil
@@ -215,7 +216,7 @@ end
 
 --[[ GAMEPASS ]]
 
---- O perfil replicado, ou nil enquanto ele nao chegou.
+--- The replicated profile, or nil until it arrives.
 function SpeedController:profile()
 	local replica = self.replica
 
@@ -223,11 +224,11 @@ function SpeedController:profile()
 end
 
 --[=[
-	Segura a replica para as consultas do clique.
+	Holds the replica for the click's queries.
 
-	Guardada de uma vez, e nao pedida na hora: o `GetReplica` cede ate o perfil
-	chegar, e ceder dentro do clique atrasaria a abertura do menu. Sem replica
-	ainda, `isUnlocked` responde "trancado", que e o lado seguro.
+	Stored up front, not requested at the moment: `GetReplica` yields until the
+	profile arrives, and yielding inside the click would delay opening the menu. With
+	no replica yet, `isUnlocked` answers "locked", which is the safe side.
 ]=]
 function SpeedController:watchProfile()
 	task.spawn(function()
@@ -239,11 +240,12 @@ function SpeedController:watchProfile()
 end
 
 --[=[
-	Se o degrau esta liberado para este jogador.
+	Whether the step is unlocked for this player.
 
-	Degrau sem `Gamepass` no config e de todo mundo. Com pass, vale o que o perfil
-	declara -- e perfil que ainda nao chegou conta como "nao tem", igual ao resto
-	do jogo (`GamepassConfig.ownedOf`): aparece a trava, e o clique vira o prompt.
+	A step without `Gamepass` in the config belongs to everyone. With a pass, what the
+	profile declares applies, and a profile that has not arrived counts as "does not
+	have it", like the rest of the game (`GamepassConfig.ownedOf`): the lock shows, and
+	the click becomes the prompt.
 ]=]
 function SpeedController:isUnlocked(stepIndex : number?) : boolean
 	local key = SpeedConfig.GetGamepass(stepIndex)
@@ -255,11 +257,11 @@ function SpeedController:isUnlocked(stepIndex : number?) : boolean
 end
 
 --[=[
-	O veu e o cadeado por cima da opcao trancada.
+	The veil and padlock over a locked option.
 
-	O veu e um `Frame` comum, e nao um botao: `Frame` nao afunda input, entao o
-	clique atravessa e chega no `MouseButton1Click` da opcao embaixo -- que e quem
-	decide entre escolher a velocidade e abrir o prompt.
+	The veil is a plain `Frame`, not a button: a `Frame` does not sink input, so the
+	click passes through to the option's `MouseButton1Click` underneath, which decides
+	between choosing the speed and opening the prompt.
 ]=]
 function SpeedController:createLock(option : GuiButton)
 	local veil = Instance.new("Frame")
@@ -288,9 +290,9 @@ function SpeedController:createLock(option : GuiButton)
 end
 
 --[=[
-	O clique numa opcao. Trancada, abre o prompt da pass e o menu fica aberto: quem
-	comprar ve a trava cair e escolhe no clique seguinte, sem ter de abrir tudo de
-	novo. Liberada, escolhe a velocidade e fecha.
+	A click on an option. Locked, it opens the pass prompt and the menu stays open: a
+	buyer sees the lock drop and chooses on the next click, without opening everything
+	again. Unlocked, it chooses the speed and closes.
 ]=]
 function SpeedController:choose(stepIndex : number)
 	if self:isUnlocked(stepIndex) then
@@ -307,9 +309,9 @@ function SpeedController:choose(stepIndex : number)
 end
 
 --[=[
-	Comprou agora: a trava daquele degrau cai na hora, sem esperar o perfil dar a
-	volta pelo servidor (quem recalibra e o `MonetizationService`, no mesmo evento
-	do lado de la).
+	Just bought: that step's lock drops immediately, without waiting for the profile to
+	go around through the server (`MonetizationService` recalibrates, on the same event
+	over there).
 ]=]
 function SpeedController:bindPurchaseFinished()
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player : Player, gamePassId : number, purchased : boolean)
@@ -331,16 +333,16 @@ function SpeedController:bindPurchaseFinished()
 	end)
 end
 
---[[ EXPANSAO ]]
+--[[ EXPANSION ]]
 
 --[=[
-	O deslocamento de um slot, em scale do eixo X.
+	A slot's offset, in X-axis scale.
 
-	Medido pelo `AbsoluteSize` do botao e nao pelo `Size` autorado: o
-	UIAspectRatioConstraint pode ter dado ao botao uma largura diferente da que
-	esta escrita ali, e as opcoes precisam acompanhar a largura de verdade. Antes
-	do primeiro render o `AbsoluteSize` e zero, e ai o autorado e a melhor
-	estimativa que existe.
+	Measured by the button's `AbsoluteSize` and not the authored `Size`: the
+	UIAspectRatioConstraint may have given the button a different width from the one
+	written there, and the options must follow the real width. Before the first
+	render `AbsoluteSize` is zero, and then the authored value is the best estimate
+	there is.
 ]=]
 function SpeedController:slotOffset() : number
 	local button = self.button
@@ -359,14 +361,13 @@ function SpeedController:slotOffset() : number
 end
 
 --[=[
-	Uma opcao: o clone do proprio botao com a arte do degrau, nascendo em cima do
-	original e indo para o seu slot.
+	An option: a clone of the button itself with the step's art, starting on top of
+	the original and moving to its slot.
 
-	Clonar o botao (e nao montar um do zero) e o que mantem as opcoes iguais ao
-	original de graca -- tamanho, aspecto, ZIndex, o que a arte vier a ganhar
-	depois. O que precisa ser desfeito no clone e so o estado de animacao que
-	veio junto: o UIScale pode ter sido copiado no meio do "pop" do clique que
-	acabou de abrir o menu.
+	Cloning the button (instead of building one from scratch) is what keeps the options
+	identical to the original for free: size, aspect, ZIndex, whatever the art gains
+	later. The only thing to undo on the clone is the animation state that came along:
+	the UIScale may have been copied mid-"pop" of the click that just opened the menu.
 ]=]
 function SpeedController:createOption(stepIndex : number, slot : number)
 	local button = self.button
@@ -395,8 +396,8 @@ function SpeedController:createOption(stepIndex : number, slot : number)
 		self:choose(stepIndex)
 	end)
 
-	-- O atraso vive no proprio TweenInfo: cascata sem thread nenhuma pendurada,
-	-- que teria de ser cancelada se o menu fechasse no meio da abertura.
+	-- The delay lives in the TweenInfo itself: a cascade with no thread hanging around
+	-- that would have to be canceled if the menu closed mid-opening.
 	local delay = EXPAND_STAGGER * (slot - 1)
 	local moveInfo = TweenInfo.new(
 		EXPAND_INFO.Time,
@@ -416,9 +417,9 @@ function SpeedController:createOption(stepIndex : number, slot : number)
 end
 
 --[=[
-	Abre as opcoes: um clone por degrau que nao e o atual, na ordem do
-	`SpeedConfig`. O original fica onde esta e continua sendo a opcao do degrau em
-	uso.
+	Opens the options: one clone per step that is not the current one, in
+	`SpeedConfig` order. The original stays where it is and remains the option for the
+	step in use.
 ]=]
 function SpeedController:expand()
 	if self.expanded or not self.button then return end
@@ -438,7 +439,7 @@ function SpeedController:expand()
 	end
 end
 
---- Fecha as opcoes: elas voltam para tras do original e somem.
+--- Closes the options: they go back behind the original and disappear.
 function SpeedController:collapse()
 	if not self.expanded then return end
 
@@ -447,8 +448,8 @@ function SpeedController:collapse()
 	local origin = self.button and self.button.Position or UDim2.new()
 
 	for _, option in self.options do
-		-- Fora do caminho na hora: o clique que fechou nao pode pegar de novo numa
-		-- opcao que ainda esta encolhendo.
+		-- Out of the way immediately: the click that closed must not land again on an
+		-- option that is still shrinking.
 		option.Interactable = false
 
 		local tween = TweenService:Create(option, COLLAPSE_INFO, { Position = origin })
@@ -463,7 +464,7 @@ function SpeedController:collapse()
 	table.clear(self.options)
 end
 
---- A opcao escolhida: fecha o menu e pede a velocidade, se ela mudou.
+--- The chosen option: closes the menu and asks for the speed, if it changed.
 function SpeedController:select(stepIndex : number)
 	self:collapse()
 
@@ -473,12 +474,12 @@ function SpeedController:select(stepIndex : number)
 end
 
 --[=[
-	Fecha o menu quando o jogador clica no mundo -- posicionar uma unidade, girar a
-	camera -- em vez de deixar as opcoes abertas atras do jogo.
+	Closes the menu when the player clicks in the world (placing a unit, turning the
+	camera) instead of leaving the options open behind the game.
 
-	`processed` verdadeiro quer dizer que o clique caiu em alguma GUI; ai o menu
-	fica, porque um desses cliques pode ser justamente o de uma das opcoes, que se
-	resolve sozinha no `MouseButton1Click` dela.
+	`processed` true means the click landed on some GUI; then the menu stays, because
+	one of those clicks may be exactly one of the options, which resolves itself in its
+	own `MouseButton1Click`.
 ]=]
 function SpeedController:bindOutsideClick()
 	UserInputService.InputBegan:Connect(function(input : InputObject, processed : boolean)
@@ -497,25 +498,26 @@ end
 --[[ API ]]
 
 --[=[
-	O botao `Interface.Speed`, quando ele ja foi achado na tela.
+	The `Interface.Speed` button, once it has been found on screen.
 ]=]
 function SpeedController:GetButton() : GuiButton?
 	return self.button
 end
 
---- As opcoes abertas agora. Lista vazia com o menu fechado.
+--- The options open now. An empty list with the menu closed.
 function SpeedController:GetOptions() : { GuiButton }
 	return self.options
 end
 
 --[=[
-	A opcao de um degrau, ou `nil` quando o menu esta fechado (ou quando o degrau
-	pedido e o que ja esta em uso -- esse nao ganha clone, o proprio botao e ele).
+	A step's option, or `nil` when the menu is closed (or when the requested step is
+	the one already in use: that one gets no clone, the button itself is it).
 
-	Quem pergunta e quem precisa apontar ou liberar **uma** das opcoes de fora daqui:
-	hoje o passo do tutorial que manda acelerar a partida, que destaca o degrau que
-	pede e deixa so ele clicavel. Sem isto, a unica saida seria procurar o clone pelo
-	nome na tela -- um nome que e detalhe interno deste controller.
+	Callers are those that need to point at or unlock **one** of the options from
+	outside: today, the tutorial step that asks to speed up the match, which highlights
+	the step it wants and leaves only it clickable. Without this, the only way would be
+	to look for the clone by name on screen, a name that is an internal detail of this
+	controller.
 ]=]
 function SpeedController:GetOption(stepIndex : number?) : GuiButton?
 	if not stepIndex then return nil end
@@ -529,12 +531,12 @@ function SpeedController:GetOption(stepIndex : number?) : GuiButton?
 	return nil
 end
 
---- O menu de opcoes esta aberto?
+--- Is the options menu open?
 function SpeedController:IsExpanded() : boolean
 	return self.expanded == true
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function SpeedController:construct()
 	Framework:Listen("GameSpeedChanged", function(index : number)
@@ -551,14 +553,14 @@ function SpeedController:construct()
 	self.button = Interface:WaitForChild("Speed", 60)
 	if not self.button then return end
 
-	-- A arte autorada e a do 1x, mas o botao pode nascer no meio de uma partida
-	-- ja acelerada: desenha o que este cliente sabe e pergunta o resto.
+	-- The authored art is 1x's, but the button may be created in the middle of an
+	-- already sped-up match: it draws what this client knows and asks for the rest.
 	self.button.Image = SpeedConfig.GetImage(self.Index)
 
 	self:bindClickPop(self.button)
 
-	-- Fechado, o clique abre as opcoes; aberto, o original e a opcao do degrau
-	-- atual, e clicar nele so fecha.
+	-- Closed, the click opens the options; open, the original is the current step's
+	-- option, and clicking it only closes.
 	self.button.MouseButton1Click:Connect(function()
 		if self.expanded then
 			self:select(self.Index)
@@ -578,8 +580,8 @@ function SpeedController:start()
 		self.Controllers[Controller] = Framework:Get(Controller)
 	end
 
-	-- Depois do Get: o construct roda no init, quando os controllers ainda nao
-	-- foram resolvidos.
+	-- After the Get: construct runs in init, when the controllers have not been
+	-- resolved yet.
 	self:watchProfile()
 end
 

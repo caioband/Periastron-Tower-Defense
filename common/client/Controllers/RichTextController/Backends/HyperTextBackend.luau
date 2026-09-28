@@ -6,24 +6,29 @@ local Vendor = Shared:WaitForChild("Vendor")
 local Configs = Shared:WaitForChild("Config")
 
 local SharedConfig = require(Configs.SharedConfig)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
+
+local log = Log.new("RichTextController")
 
 local Config = SharedConfig.RichTextConfig
 
 --[[
-	O backend que fala HyperText.
+	The backend that speaks HyperText.
 
-	Este é o único arquivo do jogo que sabe que o HyperText existe. Ele traduz duas
-	coisas: as opções neutras do `RichTextController` para os markups da biblioteca,
-	e os aliases de `RichTextConfig` para as tags dela.
+	This is the only file in the game that knows HyperText exists. It translates two
+	things: `RichTextController`'s neutral options into the library's markups, and
+	`RichTextConfig`'s aliases into its tags.
 
-	**O require é tarde e dentro de um pcall** de propósito. O `Me:Load()` requer
-	todo descendente de `Controllers` num laço sem proteção: um erro no require do
-	vendor aqui em cima derrubaria o boot do cliente inteiro, e o preço de um render
-	de texto não pode ser a tela do jogador. Falhando, `Load()` devolve `false` e o
-	controller desce para o backend seguinte.
+	**The require is late and inside a pcall** on purpose. `Me:Load()` requires every
+	descendant of `Controllers` in an unprotected loop: a vendor require error up
+	here would take down the whole client boot, and the price of rendering text must
+	not be the player's screen. On failure, `Load()` returns `false` and the
+	controller drops to the next backend.
 
-	Sobre o vendor: `ReplicatedStorage.Shared.Vendor.HyperText`, v4.2.0, MIT — a
-	licença e o commit de origem estão no `Attribution.luau` ao lado dele.
+	About the vendor: `ReplicatedStorage.Shared.Vendor.HyperText`, v4.2.0, MIT; the
+	license and source commit are in the `Attribution.luau` next to it.
+
+	See docs/common/rich-text.md.
 ]]
 
 local Backend = {
@@ -33,14 +38,14 @@ local Backend = {
 local HyperText = nil :: any
 
 --[=[
-	Valor neutro virando valor do HyperText, para o que não tem a mesma unidade dos
-	dois lados. É o `Converter` da tabela de aliases.
+	A neutral value becoming a HyperText value, for things that do not share a unit
+	on both sides. It is the alias table's `Converter`.
 ]=]
 local Converters = {
 	--[[
-		Caractere por segundo (como se pensa em máquina de escrever) vira segundo
-		por caractere (como o HyperText conta). Zero ou menos é "tudo de uma vez",
-		que lá é intervalo zero.
+		Characters per second (how you think about a typewriter) become seconds per
+		character (how HyperText counts). Zero or less is "all at once", which there
+		is a zero interval.
 	]]
 	Speed = function(value : string) : string?
 		local speed = tonumber(value)
@@ -56,12 +61,12 @@ local Converters = {
 	end,
 
 	--[[
-		O nome de uma paleta de `RichTextConfig.Gradients` vira os atributos da tag.
+		The name of a `RichTextConfig.Gradients` palette becomes the tag's attributes.
 
-		O jogo escreve `[gradient=orange]` e não precisa saber que do outro lado
-		existe um atributo chamado `colors` com ponto e vírgula no meio. Paleta que
-		não existe devolve `nil`, e o alias avisa em vez de desenhar um gradiente
-		qualquer.
+		The game writes `[gradient=orange]` and does not need to know that on the other
+		side there is an attribute called `colors` with semicolons in it. A palette
+		that does not exist returns `nil`, and the alias warns instead of drawing some
+		random gradient.
 	]]
 	Gradient = function(value : string) : string?
 		local palette = Config.Gradients[value]
@@ -90,19 +95,19 @@ local Converters = {
 --[[ INTERNAL ]]
 
 --[=[
-	Valor de alias indo para dentro de uma tag.
+	An alias value going inside a tag.
 
-	`<` e `>` sairiam da tag e virariam outra; `%` estragaria o `string.format`.
-	Nada disso aparece num valor legítimo (uma cor, um número, um id), então cortar
-	é mais honesto que escapar.
+	`<` and `>` would escape the tag and become another one; `%` would break
+	`string.format`. None of these appear in a legitimate value (a color, a number,
+	an id), so stripping is more honest than escaping.
 ]=]
 local function sanitize(value : string) : string
 	return (string.gsub(value, "[<>%%]", ""))
 end
 
 --[=[
-	Id de som como o HyperText quer: URI. Aceita número porque é assim que id de
-	asset viaja no config do jogo.
+	A sound id the way HyperText wants it: a URI. Accepts a number because that is
+	how asset ids travel in the game config.
 ]=]
 local function toSoundURI(sound : string | number) : string
 	if type(sound) == "number" then
@@ -112,11 +117,11 @@ local function toSoundURI(sound : string | number) : string
 	return sound
 end
 
---[[ API DO BACKEND ]]
+--[[ BACKEND API ]]
 
 --[=[
-	Carrega a biblioteca. `false` quando ela não está lá ou não carrega — o
-	controller trata isso e desce para o backend seguinte.
+	Loads the library. `false` when it is not there or does not load; the controller
+	handles that and drops to the next backend.
 ]=]
 function Backend.Load() : boolean
 	if HyperText then
@@ -131,7 +136,7 @@ function Backend.Load() : boolean
 
 	local success, result = pcall(require, main)
 	if not success then
-		warn(`[RichTextController]: o HyperText nao carregou: {result}`)
+		log:StudioWarn(`HyperText did not load: {result}`)
 
 		return false
 	end
@@ -142,8 +147,8 @@ function Backend.Load() : boolean
 end
 
 --[=[
-	Um alias virando tag do HyperText. `nil` quando o nome não é alias — aí o
-	controller devolve o colchete ao texto como texto comum.
+	An alias becoming a HyperText tag. `nil` when the name is not an alias; then the
+	controller returns the bracket to the text as plain text.
 ]=]
 function Backend.Tag(name : string, value : string?, closing : boolean) : string?
 	local alias = Config.Aliases[name]
@@ -163,7 +168,7 @@ function Backend.Tag(name : string, value : string?, closing : boolean) : string
 
 	local raw = value or alias.Default
 	if not raw then
-		warn(`[RichTextController]: o alias "{name}" precisa de um valor: [{name}=...].`)
+		log:StudioWarn(`alias "{name}" needs a value: [{name}=...].`)
 
 		return ""
 	end
@@ -173,7 +178,7 @@ function Backend.Tag(name : string, value : string?, closing : boolean) : string
 		local converted = converter and converter(raw)
 
 		if not converted then
-			warn(`[RichTextController]: valor invalido em [{name}={raw}].`)
+			log:StudioWarn(`invalid value in [{name}={raw}].`)
 
 			return ""
 		end
@@ -185,12 +190,12 @@ function Backend.Tag(name : string, value : string?, closing : boolean) : string
 end
 
 --[=[
-	O objeto de render do container.
+	The container's render object.
 
-	Container que é TextLabel tem o próprio texto apagado: o HyperText desenha
-	**dentro** do container, e o texto autorado no Studio ficaria por baixo do
-	render, sobrando na tela. O label continua servindo de moldura (tamanho,
-	posição, âncora) — é dele que o designer cuida.
+	A TextLabel container gets its own text cleared: HyperText draws **inside** the
+	container, and the text authored in Studio would sit under the render, left over
+	on screen. The label still serves as the frame (size, position, anchor); that is
+	what the designer looks after.
 ]=]
 function Backend.Create(container : GuiObject) : any
 	if container:IsA("TextLabel") or container:IsA("TextButton") or container:IsA("TextBox") then
@@ -199,7 +204,7 @@ function Backend.Create(container : GuiObject) : any
 
 	local success, result = pcall(HyperText.new, container)
 	if not success then
-		warn(`[RichTextController]: nao consegui criar o render em {container:GetFullName()}: {result}`)
+		log:StudioWarn(`could not create the renderer in {container:GetFullName()}: {result}`)
 
 		return nil
 	end
@@ -208,11 +213,11 @@ function Backend.Create(container : GuiObject) : any
 end
 
 --[=[
-	Opções neutras virando markups padrão do objeto.
+	Neutral options becoming the object's default markups.
 
-	Só entra no dicionário o que foi pedido: `newMarkups()` nasce todo vazio e o
-	`UpdateDefaultMarkups` mescla, então o que não vier aqui continua no padrão da
-	biblioteca em vez de ser zerado.
+	Only what was requested goes into the dictionary: `newMarkups()` starts empty and
+	`UpdateDefaultMarkups` merges, so what does not come here stays at the library
+	default instead of being reset.
 ]=]
 function Backend.Apply(object : any, options : any)
 	local markups = HyperText.newMarkups()
@@ -251,8 +256,8 @@ function Backend.Apply(object : any, options : any)
 	end
 
 	if options.Anim then
-		-- "none" é a ausência da animação de entrada, e ausência no HyperText se
-		-- escreve deletando o markup — que é opcional justamente para isso.
+		-- "none" is the absence of the entrance animation, and absence in HyperText is
+		-- written by deleting the markup, which is optional precisely for that.
 		markups.anim.value = if options.Anim == "none" then HyperText.DELETE else options.Anim
 		markups.anim.attributes.dur = options.AnimDuration
 		markups.anim.attributes.loop = options.AnimLoop
@@ -283,26 +288,26 @@ function Backend.Apply(object : any, options : any)
 		markups.ZIndex.value = options.ZIndex
 	end
 
-	-- Um valor recusado (cor onde ele espera número, fonte que não existe) derruba
-	-- a thread de quem chamou, e quem chamou é uma tela do jogo. Vira warn.
+	-- A rejected value (a color where it expects a number, a font that does not exist)
+	-- kills the caller's thread, and the caller is a game screen. It becomes a warning.
 	local success, result = pcall(object.UpdateDefaultMarkups, object, markups)
 	if not success then
-		warn(`[RichTextController]: opcoes recusadas pelo HyperText: {result}`)
+		log:StudioWarn(`HyperText rejected the options: {result}`)
 	end
 end
 
 --[=[
-	Renderiza.
+	Renders.
 
-	O aviso do container sem tamanho é nosso, não da lib: ela simplesmente não
-	desenha nada quando o container mede zero (tela desligada, frame que ainda não
-	passou pelo layout), e um render que não acontece **e não reclama** é meia hora
-	de procurar defeito no lugar errado.
+	The sizeless-container warning is ours, not the library's: it simply draws
+	nothing when the container measures zero (a disabled screen, a frame that has not
+	been through layout yet), and a render that does not happen **and does not
+	complain** is half an hour of looking for the bug in the wrong place.
 ]=]
 function Backend.Render(object : any, text : string, options : any)
 	local container = object._container
 	if container and container.AbsoluteSize.Magnitude == 0 then
-		warn(`[RichTextController]: {container:GetFullName()} mede zero na tela; o texto nao foi desenhado.`)
+		log:StudioWarn(`{container:GetFullName()} measures zero on screen; the text was not drawn.`)
 	end
 
 	object:Render(text, options.Yield, options.Wrapped)

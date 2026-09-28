@@ -21,25 +21,24 @@ module.RARITIES = {
 }
 
 --[=[
-	A caixa de cada tier.
+	Each tier's crate.
 
-	| Campo | O que e |
+	| Field | What it is |
 	| --- | --- |
-	| `DisplayName` | o nome que o jogador le, com espacos |
-	| `Key` | o nome de codigo da caixa, sem espacos (ver abaixo) |
-	| `Image` | o icone dela na backpack e na loja |
-	| `Order` | a ordem em que ela aparece nas listas |
+	| `DisplayName` | the name the player reads, with spaces |
+	| `Key` | the crate's code name, without spaces (see below) |
+	| `Image` | its icon in the backpack and the shop |
+	| `Order` | its order in lists |
 
-	**`Key` e o nome da caixa em todo lugar que nao e texto de tela.** Ele e ao
-	mesmo tempo o modelo em `Assets.CratesModel` que o unboxing gera, o container
-	da caixa na `ShopUI` e o `Id` do item da loja no `ShopConfig`. Era so o nome do
-	modelo (`Model`), e virou um campo so quando a loja ganhou um container por
-	caixa: sao tres lugares que tem que casar, e um nome so garante que casem.
+	**`Key` is the crate's name everywhere that is not on-screen text.** It is at
+	once the model in `Assets.CratesModel` that unboxing spawns, the crate's
+	container in `ShopUI`, and the shop item `Id` in `ShopConfig`. Three places that
+	must match; one name guarantees they do.
 
-	Repare que **a chave da tabela e o tier, e o `Key` e a caixa**, e os dois nao se
-	parecem mais: a caixa do tier `Common` se chama `CrateOfBeginnings`. A chave e o
-	que liga a caixa ao `RarityConfig` e ao pool de drop, e nao pode mudar sem
-	migrar perfil; o `Key` e so nome, e muda quando a arte mudar.
+	Note that **the table key is the tier, and `Key` is the crate**, and they no
+	longer look alike: the `Common` tier's crate is `CrateOfBeginnings`. The table
+	key links the crate to `RarityConfig` and the drop pool and cannot change
+	without a profile migration; `Key` is only a name.
 ]=]
 module.CRATES = {
 	["Common"] = {
@@ -102,10 +101,10 @@ function module.resolveRarity(rarity: string?): string?
 end
 
 --[=[
-	O nome de codigo da caixa daquele tier, ou nil quando o tier nao existe.
+	The code name of that tier's crate, or nil when the tier does not exist.
 
-	E o mesmo nome em tres lugares (ver o comentario de `CRATES`): o modelo em
-	`Assets.CratesModel`, o container na `ShopUI` e o `Id` do item da loja.
+	The same name in three places (see `CRATES`): the model in
+	`Assets.CratesModel`, the container in `ShopUI`, and the shop item `Id`.
 ]=]
 function module.getKey(rarity: string?): string?
 	local resolvedRarity = module.resolveRarity(rarity)

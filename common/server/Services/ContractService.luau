@@ -11,8 +11,10 @@ local SharedConfig = require(Configs.SharedConfig)
 local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("ContractService")
 
 local ContractConfig = SharedConfig.ContractConfig
 local CrateConfig = SharedConfig.CrateConfig
@@ -25,37 +27,40 @@ local DIFFICULTY_ORDER = ServerConfig.Difficulty.Order
 local RANDOM = ContractConfig.RANDOM
 
 --[[
-	Os contratos do jogador: sorteio, progresso, resgate e pagamento.
+	The player's contracts: draw, progress, claim, and payout.
 
-	Mora em `common` porque as duas places mexem neles. A **Game** e onde quase tudo
-	conta (vitoria, kill, dano, clima...), pelo `ContractTrackerService`; a **Lobby**
-	conta as caixas (`CrateService`) e e onde o quadro esta, e portanto o resgate. O
-	login conta nas duas. E as duas precisam sortear: a hora pode virar com o
-	jogador no meio de uma partida.
+	It lives in `common` because both places touch them. **Game** is where almost
+	everything counts (win, kill, damage, weather...), through
+	`ContractTrackerService`; the **Lobby** counts crates (`CrateService`) and is where
+	the board is, and therefore the claim. Login counts in both. And both must draw:
+	the hour can roll over with the player mid-match.
 
-	**O sorteio e por jogador, e so acontece na virada.** A cada tick, e quando o
-	perfil carrega, cada periodo e comparado com o de agora; se mudou, os slots
-	daquele periodo sao sorteados de novo (ver `_draw`). Contrato nao resgatado se
-	perde junto -- e por isso nao ha nada a limpar.
+	**The draw is per player, and only happens on rollover.** On every tick, and when
+	the profile loads, each period is compared with the current one; if it changed,
+	that period's slots are drawn again (see `_draw`). Unclaimed contracts are lost
+	with it, so there is nothing to clean up.
 
-	**O progresso vai em lote.** `Record` so anota numa fila por jogador; o `Flush`
-	escreve tudo numa passada (`Update` de `Contracts`), a cada `FLUSH_INTERVAL`, no
-	resgate e na saida. Uma escrita por evento replicaria o `Contracts` inteiro a
-	cada inimigo morto. Cada entrada da fila lembra o periodo e o `Id` do slot, entao
-	o progresso de um contrato que venceu no meio do lote nao cai no que o substituiu.
+	**Progress is batched.** `Record` only notes into a per-player queue; `Flush`
+	writes everything in one pass (`Update` of `Contracts`), every `FLUSH_INTERVAL`,
+	on claim, and on leave. One write per event would replicate the whole
+	`Contracts` on every enemy killed. Each queue entry remembers the slot's period
+	and `Id`, so progress for a contract that expired mid-batch does not land on the
+	one that replaced it.
 
-	**O resgate e do servidor.** O cliente manda so "o slot N do periodo X"; quem
-	confere que ele esta completo e ainda nao foi pago e este service. Marcar como
-	pago e pagar acontecem em sequencia, sem nada que ceda no meio, entao dois
-	cliques nao pagam duas vezes.
+	**The claim belongs to the server.** The client sends only "slot N of period X";
+	this service checks it is complete and not yet paid. Marking as paid and paying
+	happen in sequence, with nothing yielding in between, so two clicks do not pay
+	twice.
+
+	See docs/common/contracts.md.
 ]]
 
--- De quanto em quanto tempo a fila e escrita, as viradas conferidas e o login
--- marcado.
+-- How often the queue is written, rollovers are checked, and login is
+-- marked.
 local FLUSH_INTERVAL = 2
 
--- Depois de quem ainda escreve progresso na saida (o `ContractTrackerService`, com a
--- ultima leitura da partida). Ver `DataService:OnBeforeRelease`.
+-- After those that still write progress on leave (`ContractTrackerService`, with
+-- the match's last reading). See `DataService:OnBeforeRelease`.
 local RELEASE_ORDER = 1
 
 local ContractService = {
@@ -97,9 +102,9 @@ function ContractService:_profileOf(player : Player) : any
 	return entry and entry.Profile.Data or nil
 end
 
---[[ SORTEIO ]]
+--[[ DRAW ]]
 
---- Os mapas que o jogador ja pode escolher.
+--- The maps the player can already choose.
 local function unlockedMaps(profile) : { string }
 	local wins = profile.Stats and profile.Stats.Wins or 0
 	local maps = {}
@@ -113,7 +118,7 @@ local function unlockedMaps(profile) : { string }
 	return maps
 end
 
---- As dificuldades que o jogador ja pode votar.
+--- The difficulties the player can already vote for.
 local function unlockedDifficulties(profile) : { string }
 	local difficulties = {}
 
@@ -127,8 +132,8 @@ local function unlockedDifficulties(profile) : { string }
 end
 
 --[=[
-	As classes das unidades que o jogador tem. "Win with only Fire" para quem nao
-	tem unidade Fire nao teria como ser feito; sem unidade nenhuma, qualquer classe.
+	The classes of the units the player owns. "Win with only Fire" could not be done
+	by a player with no Fire unit; with no units at all, any class.
 ]=]
 local function ownedClasses(profile) : { string }
 	local seen = {}
@@ -153,9 +158,9 @@ local function ownedClasses(profile) : { string }
 end
 
 --[=[
-	Se o jogador tem alguma unidade com o campo pedido no `UnitStats`. `stat` aceita
-	um nome so ou uma lista, e basta um deles: "atordoa", hoje, e `Stun` (o tranco do
-	Electro) ou `Frost` (o congelamento do Frostione).
+	Whether the player has any unit with the requested field in `UnitStats`. `stat`
+	accepts a single name or a list, and one is enough: "stuns", today, is `Stun`
+	(the Electro's jolt) or `Frost` (the Frostione's freeze).
 ]=]
 local function ownsUnitWith(profile, stat : string | { string }) : boolean
 	local wanted = if typeof(stat) == "table" then stat else { stat }
@@ -175,8 +180,8 @@ local function ownsUnitWith(profile, stat : string | { string }) : boolean
 end
 
 --[=[
-	Se o contrato pode sair para este jogador: mapa e dificuldade fixos precisam
-	estar abertos, e o `NeedsUnitStat` precisa de uma unidade que o tenha.
+	Whether the contract can be drawn for this player: a fixed map and difficulty
+	must be unlocked, and `NeedsUnitStat` requires a unit that has it.
 ]=]
 local function isAvailable(definition, profile) : boolean
 	local map = definition.Map
@@ -196,10 +201,10 @@ local function isAvailable(definition, profile) : boolean
 	return true
 end
 
--- Os campos que aceitam `Random` (ver `rollParams`).
+-- The fields that accept `Random` (see `rollParams`).
 local RANDOM_FIELDS = { "Map", "Difficulty", "Class" }
 
---- O que o `Random` de cada campo tira, entre o que este jogador ja abriu.
+--- What each field's `Random` draws from, among what this player has unlocked.
 local function rollParams(definition, profile, rng : Random) : { [string] : string }
 	local params = {}
 
@@ -223,15 +228,15 @@ local function rollParams(definition, profile, rng : Random) : { [string] : stri
 	return params
 end
 
---[[ RECOMPENSA POR DIFICULDADE ]]
+--[[ REWARD BY DIFFICULTY ]]
 
--- Quanto maior, mais redonda: 213 coins viram 215.
+-- The larger it is, the rounder: 213 coins become 215.
 local CASH_ROUNDING = 5
 
 --[=[
-	Se a recompensa do contrato acompanha a dificuldade sorteada: so quando a
-	dificuldade e `Random` e o contrato diz para qual dificuldade o `Rewards` foi
-	escrito (`RewardDifficulty`).
+	Whether the contract's reward follows the drawn difficulty: only when the
+	difficulty is `Random` and the contract says which difficulty its `Rewards` were
+	written for (`RewardDifficulty`).
 ]=]
 local function scalesWithDifficulty(definition) : boolean
 	return definition ~= nil
@@ -240,16 +245,16 @@ local function scalesWithDifficulty(definition) : boolean
 end
 
 --[=[
-	O `Rewards` do contrato levado da `RewardDifficulty` para a dificuldade sorteada.
+	The contract's `Rewards` carried from `RewardDifficulty` to the drawn difficulty.
 
-	A proporcao e a do premio de uma run inteira no `Config.Difficulty`: coins pelo
-	`WinCash`, shards e caixas pelo `WinShards`. Se uma run no Nightmare paga 4x o
-	Medio, o contrato no Nightmare tambem paga 4x. Mexer nos presets rebalanceia os
-	contratos dos proximos sorteios sem tocar aqui.
+	The ratio is that of a full run's reward in `Config.Difficulty`: coins by
+	`WinCash`, shards and crates by `WinShards`. If a Nightmare run pays 4x Medium,
+	the Nightmare contract also pays 4x. Changing the presets rebalances the next
+	draws' contracts without touching this.
 
-	Coins arredondam para `CASH_ROUNDING`; shards e caixas para o inteiro mais perto,
-	nunca abaixo de 1 quando a base paga alguma coisa. Devolve nil quando o contrato
-	nao escala -- ai vale o `Rewards` do config.
+	Coins round to `CASH_ROUNDING`; shards and crates to the nearest integer, never
+	below 1 when the base pays something. Returns nil when the contract does not
+	scale; then the config's `Rewards` apply.
 ]=]
 local function scaledRewards(definition, params) : { [string] : any }?
 	if not scalesWithDifficulty(definition) then return nil end
@@ -288,13 +293,13 @@ local function scaledRewards(definition, params) : { [string] : any }?
 end
 
 --[=[
-	Os slots de um periodo novo.
+	The slots for a new period.
 
-	A urna e a lista do periodo filtrada pelo que o jogador pode fazer. Os contratos
-	do periodo anterior (`previous`) vao para o fim: o sorteio tira primeiro dos
-	novos, e so completa com repetidos quando nao sobram novos suficientes. Se nem
-	assim fecha a conta (um jogador com quase tudo trancado), completa com o que o
-	filtro tinha tirado, para a secao nunca aparecer com buraco.
+	The urn is the period's list filtered by what the player can do. Contracts from
+	the previous period (`previous`) go to the end: the draw takes new ones first,
+	and only fills in with repeats when there are not enough new ones. If even that
+	does not add up (a player with almost everything locked), it fills in with what
+	the filter had removed, so the section never shows a gap.
 ]=]
 function ContractService:_draw(kind : string, previous : { any }, profile, rng : Random) : { any }
 	local count = ContractConfig.KINDS[kind].Count
@@ -332,7 +337,7 @@ function ContractService:_draw(kind : string, previous : { any }, profile, rng :
 			table.insert(slots, {
 				Id = definition.Id,
 				Params = params,
-				-- Nil quando o contrato nao escala: vale o `Rewards` do config.
+				-- Nil when the contract does not scale: the config's `Rewards` apply.
 				Rewards = scaledRewards(definition, params),
 				Progress = 0,
 				Claimed = false,
@@ -344,13 +349,13 @@ function ContractService:_draw(kind : string, previous : { any }, profile, rng :
 end
 
 --[=[
-	Se um slot ja sorteado precisa de conserto: campo `Random` sem valor no `Params`,
-	ou recompensa por dificuldade que ainda nao foi calculada.
+	Whether an already-drawn slot needs repair: a `Random` field with no value in
+	`Params`, or a difficulty reward that has not been computed yet.
 
-	Acontece quando o config muda com o periodo correndo. Sem o valor o `matches`
-	nunca casaria -- o contrato ficaria impossivel ate a virada (uma semana, no
-	semanal) --, e sem o `Rewards` o slot pagaria o do config em qualquer
-	dificuldade.
+	It happens when the config changes mid-period. Without the value, `matches`
+	would never match (the contract would be impossible until rollover, a week on
+	the weekly), and without `Rewards` the slot would pay the config's reward on any
+	difficulty.
 ]=]
 local function needsRepair(slot) : boolean
 	local definition = typeof(slot) == "table" and ContractConfig.get(slot.Id)
@@ -366,12 +371,12 @@ local function needsRepair(slot) : boolean
 end
 
 --[=[
-	Sorteia de novo cada periodo que virou. Uma escrita so para os tres, e nenhuma
-	quando nada virou -- que e o caso de quase todo tick.
+	Redraws every period that rolled over. A single write for all three, and none
+	when nothing rolled over, which is the case on almost every tick.
 
-	Na mesma escrita, conserta os slots que precisam (`needsRepair`): so o campo
-	que falta e sorteado, a recompensa sai da dificuldade que o slot tem, e o
-	progresso fica.
+	In the same write, it repairs slots that need it (`needsRepair`): only the
+	missing field is drawn, the reward comes from the slot's difficulty, and progress
+	stays.
 ]=]
 function ContractService:_ensurePeriods(player : Player)
 	local profile = self:_profileOf(player)
@@ -439,11 +444,11 @@ function ContractService:_ensurePeriods(player : Player)
 	end)
 end
 
---[[ PROGRESSO ]]
+--[[ PROGRESS ]]
 
 --[=[
-	Se o evento serve para este slot. Cada campo do contrato e uma condicao sobre o
-	contexto; campo que o contrato nao tem nao filtra nada.
+	Whether the event applies to this slot. Each contract field is a condition on the
+	context; a field the contract does not have filters nothing.
 ]=]
 local function matches(definition, slot, context) : boolean
 	if definition.Map then
@@ -472,7 +477,7 @@ local function matches(definition, slot, context) : boolean
 		return false
 	end
 
-	-- "Only X units": `CommonClasses` e o que **toda** unidade colocada tem em comum.
+	-- "Only X units": `CommonClasses` is what **every** placed unit has in common.
 	if definition.Class then
 		local class = ContractConfig.resolve(definition, slot, "Class")
 		if not (class and context.CommonClasses and context.CommonClasses[class]) then
@@ -488,12 +493,12 @@ local function matches(definition, slot, context) : boolean
 end
 
 --[=[
-	Anota um evento para os contratos do jogador que ele serve. Nao escreve nada: a
-	escrita e do `Flush`.
+	Notes an event for the player's contracts it applies to. It writes nothing:
+	writing is `Flush`'s job.
 
-	`value` e quanto somar (`Sum`), o valor a comparar (`Max`) ou o valor a marcar
-	(`Distinct`). `context` carrega o que os filtros olham -- `Map`, `Difficulty`,
-	`FullHealth`, `WithFriends`, `CommonClasses`, `Rarity`.
+	`value` is how much to add (`Sum`), the value to compare (`Max`), or the value to
+	mark (`Distinct`). `context` carries what the filters look at: `Map`,
+	`Difficulty`, `FullHealth`, `WithFriends`, `CommonClasses`, `Rarity`.
 ]=]
 function ContractService:Record(player : Player, event : string, value : number, context : { [string] : any }?)
 	local profile = self:_profileOf(player)
@@ -513,7 +518,7 @@ function ContractService:Record(player : Player, event : string, value : number,
 
 			local mode = definition.Mode or "Sum"
 
-			-- O dia de hoje ja marcado nao precisa passar pela fila de novo a cada tick.
+			-- Today's day, already marked, does not need to go through the queue again every tick.
 			if mode == "Distinct" and slot.Seen and slot.Seen[tostring(value)] then continue end
 
 			if not matches(definition, slot, context) then continue end
@@ -551,7 +556,7 @@ function ContractService:Record(player : Player, event : string, value : number,
 	end
 end
 
---- Escreve a fila do jogador no perfil, numa passada so.
+--- Writes the player's queue to the profile, in a single pass.
 function ContractService:Flush(player : Player)
 	local pending = self.Pending[player]
 	if not pending or next(pending) == nil then return end
@@ -599,26 +604,26 @@ end
 --[[ REROLL ]]
 
 --[=[
-	Sorteia a aba `kind` inteira de novo e soma um na contagem de rerolls dela. So
-	quem chama e o recibo do developer product (ver `construct`): nao ha evento do
-	cliente para isto, porque a unica prova de pagamento e o recibo.
+	Redraws the whole `kind` tab and adds one to its reroll count. Only the developer
+	product receipt calls this (see `construct`): there is no client event for it,
+	because the only proof of payment is the receipt.
 
-	Tudo sai: resgatado ou nao, com progresso ou nao. Os contratos novos evitam os
-	que estavam la sempre que sobra o bastante (o `previous` do `_draw`).
+	Everything goes: claimed or not, with progress or not. The new contracts avoid
+	the ones that were there whenever enough remain (`_draw`'s `previous`).
 
-	A fila de progresso e gravada **antes**: ela aponta para o slot pelo indice, pelo
-	periodo e pelo `Id`, e um reroll que sorteasse o mesmo contrato no mesmo lugar
-	receberia o progresso do anterior.
+	The progress queue is written **first**: it points at the slot by index, period,
+	and `Id`, and a reroll that drew the same contract in the same place would
+	receive the previous one's progress.
 
-	Devolve false quando nao deu para rerolar (perfil fechado) -- ai o recibo volta
-	como `NotProcessedYet` e a Roblox tenta de novo.
+	Returns false when the reroll could not happen (profile closed); then the receipt
+	comes back as `NotProcessedYet` and Roblox retries.
 ]=]
 function ContractService:Reroll(player : Player, kind : string) : boolean
 	if not ContractConfig.isKind(kind) or not self:_profileOf(player) then
 		return false
 	end
 
-	-- A virada primeiro: pago no ultimo segundo do periodo, o reroll vale para o novo.
+	-- Rollover first: paid in the period's last second, the reroll applies to the new one.
 	self:_ensurePeriods(player)
 	self:Flush(player)
 
@@ -642,12 +647,13 @@ function ContractService:Reroll(player : Player, kind : string) : boolean
 	return rerolled
 end
 
---[[ RESGATE ]]
+--[[ CLAIM ]]
 
 --[=[
-	Paga a recompensa. Os coins entram tambem no `CoinsEarned` (a MOST COINS e o
-	total ganho, e contrato e ganho). As caixas vao pelo `CrateService` quando ele
-	existe -- ele avisa a tela da backpack --, e direto no inventario quando nao.
+	Pays the reward. Coins also go into `CoinsEarned` (MOST COINS is the total
+	earned, and a contract is earnings). Crates go through `CrateService` when it
+	exists (it notifies the backpack screen), and straight into the inventory when
+	it does not.
 ]=]
 function ContractService:_grant(player : Player, rewards)
 	local dataService = self.Services.DataService
@@ -678,7 +684,7 @@ function ContractService:_grant(player : Player, rewards)
 
 		local resolved = CrateConfig.resolveRarity(rarity)
 		if not resolved then
-			warn(string.format("[ContractService]: %q nao e um tier de caixa; recompensa ignorada.", tostring(rarity)))
+			log:StudioWarn(string.format("%q is not a crate tier; reward skipped.", tostring(rarity)))
 			continue
 		end
 
@@ -695,11 +701,11 @@ function ContractService:_grant(player : Player, rewards)
 end
 
 --[=[
-	O resgate de um slot. Devolve se pagou e, quando nao, o motivo: `NotLoaded`,
-	`NoContract`, `NotComplete` ou `AlreadyClaimed`.
+	Claims a slot. Returns whether it paid and, when not, the reason: `NotLoaded`,
+	`NoContract`, `NotComplete`, or `AlreadyClaimed`.
 
-	A fila e escrita antes da conferencia: o evento que completou o contrato pode
-	estar nela, e o jogador que viu o "CLAIM" acender nao pode ouvir "incompleto".
+	The queue is written before the check: the event that completed the contract may
+	be in it, and a player who saw "CLAIM" light up must not hear "incomplete".
 ]=]
 function ContractService:Claim(player : Player, kind : any, index : any) : (boolean, string?)
 	if not ContractConfig.isKind(kind) or typeof(index) ~= "number" then
@@ -735,19 +741,19 @@ function ContractService:Claim(player : Player, kind : any, index : any) : (bool
 		return current
 	end)
 
-	-- A do slot quando a dificuldade sorteada mexeu nela (`scaledRewards`).
+	-- The slot's own, when the drawn difficulty changed it (`scaledRewards`).
 	self:_grant(player, slot.Rewards or definition.Rewards or {})
 
 	return true, nil
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function ContractService:_tick(player : Player)
 	self:_ensurePeriods(player)
 
-	-- O login conta pelo dia em que o jogador esta online, e nao so pela entrada:
-	-- quem atravessa a meia-noite jogando tambem marca o dia novo.
+	-- Login counts by the day the player is online, not just on join: someone who
+	-- plays through midnight also marks the new day.
 	self:Record(player, ContractConfig.Events.Login, dayIndex())
 	self:Flush(player)
 end
@@ -755,7 +761,7 @@ end
 function ContractService:construct()
 	local dataService = self.Services.DataService
 	if not dataService then
-		warn("[ContractService]: sem DataService; os contratos nao vao funcionar.")
+		log:Warn("no DataService; contracts will not work.")
 		return
 	end
 
@@ -769,8 +775,8 @@ function ContractService:construct()
 		end
 	end
 
-	-- O que ficou na fila entra com o perfil ainda aberto, depois de quem escreve na
-	-- saida.
+	-- Whatever is left in the queue goes in with the profile still open, after the
+	-- leave-time writers.
 	if dataService.OnBeforeRelease then
 		dataService:OnBeforeRelease(function(player : Player)
 			self:Flush(player)
@@ -790,9 +796,9 @@ function ContractService:construct()
 	end)
 
 	--[[
-		Os rerolls pagos: cada produto de cada aba credita um reroll dela. Registrado
-		nas duas places, porque o recibo que nao foi processado volta onde o jogador
-		estiver -- e ele pode ter ido para a partida antes disso.
+		Paid rerolls: each product of each tab credits one reroll for it. Registered in
+		both places, because an unprocessed receipt comes back wherever the player is,
+		and they may have gone to a match before then.
 	]]
 	local monetization = self.Services.MonetizationService
 	if monetization then
@@ -804,7 +810,7 @@ function ContractService:construct()
 			end
 		end
 	else
-		warn("[ContractService]: sem MonetizationService; o reroll dos contratos nao vai ser creditado.")
+		log:Warn("no MonetizationService; contract rerolls will not be credited.")
 	end
 
 	task.spawn(function()
@@ -829,8 +835,8 @@ function ContractService:start()
 end
 
 function ContractService:init()
-	-- So o servidor dispara este; sem o Listen vazio o cliente ficaria dez segundos
-	-- esperando o identificador (ver o README da raiz).
+	-- Only the server fires this one; without the empty Listen the client would wait
+	-- ten seconds for the identifier (see docs/architecture/me-framework.md).
 	Framework:Listen("ContractClaimResult", function() end)
 end
 

@@ -18,30 +18,32 @@ local Config = SharedConfig.WeatherConfig.Thunder
 local WeatherConfig = SharedConfig.WeatherConfig
 
 --[[
-	Raios do clima de trovao.
+	Thunder weather strikes.
 
-	Enquanto o clima do `Config.Weather` estiver ligado, cai um raio a cada
-	`Config.Interval` segundos. Onde ele cai e sorteado: ou em cima de uma unidade
-	posicionada, ou num ponto qualquer dentro da BoundingBox do mapa.
+	While the `Config.Weather` weather is on, a strike falls every `Config.Interval`
+	seconds. Where it falls is random: on top of a placed unit, or at any point inside
+	the map's BoundingBox.
 
-	A chance de acertar unidade e um pity — sobe a cada raio que cai no chao e volta
-	ao piso quando um acerta. Sem isso, com chance fixa baixa daria para passar a
-	partida inteira sem ver um raio em unidade nenhuma; e com chance fixa alta o
-	clima viraria uma metralhadora nas torres.
+	The chance of hitting a unit is a pity: it rises with each strike that hits the
+	ground and returns to the floor when one hits. Without it, a low fixed chance could
+	go a whole match without a strike on any unit; a high fixed chance would turn the
+	weather into a machine gun on the towers.
 
-	O servidor so decide **quando** e **onde**: o desenho e do `VFXController`,
-	porque o modulo `ReplicatedStorage.vfx` e client-only. Sortear aqui e o que faz
-	todo mundo ver o mesmo raio no mesmo lugar.
+	The server only decides **when** and **where**: `VFXController` draws it, because
+	the `ReplicatedStorage.vfx` module is client-only. Rolling here is what makes
+	everyone see the same strike in the same place.
 
-	Fica na Game porque depende do `UnitService` e do mapa carregado. O clima em si
-	e compartilhado (`common/server/Services/WeatherService`).
+	It lives in Game because it depends on `UnitService` and the loaded map. The
+	weather itself is shared (`common/server/Services/WeatherService`).
 
-	O raio nao tira vida: ele atordoa. Quem leva em cheio para por `Stun.Direct`
-	(20s, a wave inteira), e o choque salta para quem estiver perto, que para por
-	`Stun.Chain` (5s). Unidade `Electric` e a excecao que faz o clima valer a pena
-	para alguem: alem do bonus passivo do `Effects.Thunder`, levar o raio **nao** a
-	atordoa -- a carrega com dano e cooldown menor por `Charge.Duration`. Os numeros
-	estao todos em `WeatherConfig.Thunder`.
+	The strike does not take health: it stuns. A unit hit squarely stops for
+	`Stun.Direct` (20s, the whole wave), and the shock jumps to nearby units, which
+	stop for `Stun.Chain` (5s). `Electric` units are the exception that makes the
+	weather worth it for someone: besides `Effects.Thunder`'s passive bonus, being
+	struck does **not** stun them; it charges them with more damage and a shorter
+	cooldown for `Charge.Duration`. All the numbers are in `WeatherConfig.Thunder`.
+
+	See docs/game/weather-in-match.md.
 ]]
 
 local ThunderService = {
@@ -54,13 +56,13 @@ local ThunderService = {
 ThunderService.NextStrike = nil :: number?
 ThunderService.UnitChance = Config.UnitChance
 
---[[ ALVOS ]]
+--[[ TARGETS ]]
 
 --[=[
-	Uma unidade posicionada qualquer, ou nil se nao houver nenhuma.
+	Any placed unit, or nil if there is none.
 
-	`unitName` restringe a um tipo de unidade — o comando `strike` usa isso para
-	testar o raio numa unidade especifica em vez de esperar a sorte.
+	`unitName` restricts to one unit type: the `strike` command uses it to test the
+	strike on a specific unit instead of waiting for luck.
 ]=]
 function ThunderService:pickTarget(unitName : string?, skipImmune : boolean?)
 	local unitService = self.Services.UnitService
@@ -70,14 +72,14 @@ function ThunderService:pickTarget(unitName : string?, skipImmune : boolean?)
 	end
 
 	--[[
-		Unidade imune ao trovao sai do sorteio em vez de ser sorteada e ignorada.
+		A unit immune to thunder leaves the draw instead of being drawn and ignored.
 
-		Ela nao seria atordoada de qualquer jeito, e deixa-la no bolo estragaria o
-		pity: cada raio gasto numa Magic contaria como "acertou uma unidade" e a
-		chance voltaria ao piso sem nada ter acontecido na tela.
+		It would not be stunned anyway, and leaving it in the pool would spoil the pity:
+		every strike spent on a Magic unit would count as "hit a unit" and the chance
+		would return to the floor with nothing happening on screen.
 
-		Vale so para o raio do clima. O comando `strike` continua alcancando
-		qualquer unidade, porque testar o visual numa Magic e legitimo.
+		This only applies to the weather's strike. The `strike` command still reaches
+		any unit, because testing the visual on a Magic unit is legitimate.
 	]]
 	local matches = {}
 	for _, entry in units do
@@ -99,12 +101,12 @@ function ThunderService:getMap() : Instance?
 end
 
 --[=[
-	Um ponto no chao dentro da caixa do mapa.
+	A point on the ground inside the map box.
 
-	X e Z saem sorteados da caixa; o Y vem de um raio para baixo, porque o terreno
-	tem altura variavel e largar o raio no fundo da caixa deixaria ele enterrado nas
-	partes altas. A propria BoundingBox nao atrapalha a consulta: o `LoadMap` a clona
-	com `CanQuery` desligado.
+	X and Z are drawn from the box; Y comes from a downward ray, because the terrain
+	has varying height and dropping the strike at the bottom of the box would bury it
+	in the high parts. The BoundingBox itself does not get in the query's way:
+	`LoadMap` clones it with `CanQuery` off.
 ]=]
 function ThunderService:pickGround() : Vector3?
 	local target = self:getMap()
@@ -133,17 +135,18 @@ function ThunderService:pickGround() : Vector3?
 
 	local result = workspace:Raycast(Vector3.new(x, top, z), Vector3.new(0, bottom - top, 0), params)
 
-	-- Buraco no mapa (ou ponto fora da geometria): o fundo da caixa serve.
+	-- A hole in the map (or a point outside the geometry): the bottom of the box will do.
 	return result and result.Position or Vector3.new(x, bottom, z)
 end
 
---[[ EFEITO DO RAIO ]]
+--[[ STRIKE EFFECT ]]
 
 --[=[
-	Unidades ao alcance do arco, a partir de um ponto.
+	Units within the arc's reach, from a point.
 
-	`hit` é quem já levou choque nesta descarga — nem alvo, nem ponte. Sem isso o
-	arco voltaria para quem acabou de acertar e o salto nunca terminaria.
+	`hit` is who already got shocked in this discharge: neither target nor bridge.
+	Without it the arc would go back to whoever it just hit and the jump would never
+	end.
 ]=]
 function ThunderService:findChainTargets(origin : Vector3, hit : { [string]: boolean })
 	local unitService = self.Services.UnitService
@@ -168,15 +171,15 @@ function ThunderService:findChainTargets(origin : Vector3, hit : { [string]: boo
 end
 
 --[=[
-	O que uma unidade ganha por ser tocada pelo raio.
+	What a unit gets for being touched by the strike.
 
-	Atordoamento para todo mundo, menos para quem é `Electric`: essa leva a carga no
-	lugar, com dano acima e cooldown abaixo do normal por alguns segundos. É o outro
-	lado do trovão — para a maioria das unidades ele é uma wave perdida, e para
-	Electric é a melhor wave da partida.
+	A stun for everyone except `Electric` units: they get the charge instead, with
+	damage above and cooldown below normal for a few seconds. It is the other side of
+	thunder: for most units it is a lost wave, and for Electric it is the best wave of
+	the match.
 
-	A Electric continua servindo de ponte para o arco: o salto parte dela como de
-	qualquer outra unidade atingida.
+	Electric still serves as a bridge for the arc: the jump leaves from it like from
+	any other hit unit.
 ]=]
 function ThunderService:applyHit(entry, duration : number)
 	local unitService = self.Services.UnitService
@@ -194,20 +197,20 @@ function ThunderService:applyHit(entry, duration : number)
 end
 
 --[=[
-	A descarga inteira, a partir da unidade que o raio pegou em cheio.
+	The whole discharge, starting from the unit the strike hit squarely.
 
-	O salto anda em camadas: quem está no raio da unidade atingida leva `Chain`,
-	quem está no raio *dessas* leva na camada seguinte, até `Hops` camadas. Com o
-	`Hops = 1` de hoje só existe uma camada, mas a busca é escrita em largura
-	porque o número é config — e uma implementação recursiva sem controle de
-	visitados iria e voltaria entre duas unidades vizinhas para sempre.
+	The jump moves in layers: units within the hit unit's radius get `Chain`, units
+	within *their* radius get it in the next layer, up to `Hops` layers. With today's
+	`Hops = 1` there is only one layer, but the search is breadth-first because the
+	number is config, and a recursive implementation without visited tracking would
+	bounce between two neighboring units forever.
 
-	Cada unidade só é tocada uma vez por descarga, e o atordoamento do salto é
-	muito mais curto que o do acerto direto (5s contra 20s): um raio bem colocado
-	tem que doer, não apagar o mapa.
+	Each unit is touched only once per discharge, and the jump's stun is much shorter
+	than the direct hit's (5s against 20s): a well-placed strike should hurt, not
+	black out the map.
 
-	Devolve os arcos desenhados, para o cliente ligar as unidades com o mesmo asset
-	do raio.
+	Returns the drawn arcs, so the client links the units with the same asset as the
+	strike.
 ]=]
 function ThunderService:chainFrom(entry)
 	local stun = Config.Stun
@@ -249,7 +252,7 @@ function ThunderService:chainFrom(entry)
 	return links
 end
 
---[[ RAIOS ]]
+--[[ STRIKES ]]
 
 local function broadcast(position : Vector3, unitId : string?)
 	for _, player in Players:GetPlayers() do
@@ -257,8 +260,8 @@ local function broadcast(position : Vector3, unitId : string?)
 	end
 end
 
--- Os arcos do salto, para o cliente ligar uma unidade a outra com o mesmo asset
--- do raio. Lista vazia nao vira evento.
+-- The jump's arcs, so the client links one unit to another with the same asset as
+-- the strike. An empty list does not become an event.
 local function broadcastChain(links)
 	if #links == 0 then return end
 
@@ -268,12 +271,12 @@ local function broadcastChain(links)
 end
 
 --[=[
-	Raio em cima de uma unidade. Devolve a entrada atingida, ou nil se nao havia
-	alvo — e o que o comando `strike` usa para dizer em quem caiu.
+	A strike on a unit. Returns the hit entry, or nil if there was no target: that is
+	what the `strike` command uses to say whom it hit.
 
-	Vai o `unitId` junto da posicao: o cliente refina para o pe exato do modelo, que
-	ele mede da caixa da unidade. A posicao daqui e so o fallback de quando o modelo
-	ainda nao replicou.
+	The `unitId` goes along with the position: the client refines it to the model's
+	exact feet, which it measures from the unit's box. The position from here is only
+	the fallback for when the model has not replicated yet.
 ]=]
 function ThunderService:strikeUnit(unitName : string?, skipImmune : boolean?)
 	local entry = self:pickTarget(unitName, skipImmune)
@@ -284,10 +287,10 @@ function ThunderService:strikeUnit(unitName : string?, skipImmune : boolean?)
 	broadcast(entry.cf.Position, entry.unitId)
 
 	--[[
-		O visual sai primeiro e o efeito depois, na mesma linha de execucao: os dois
-		chegam no mesmo quadro, e a ordem so decide qual evento o cliente processa
-		antes. O raio na frente e o que faz o realce do atordoamento aparecer *com* o
-		clarao em vez de um piscar antes dele.
+		The visual goes first and the effect after, on the same execution line: both
+		arrive on the same frame, and the order only decides which event the client
+		processes first. The strike going first is what makes the stun highlight appear
+		*with* the flash instead of blinking before it.
 	]]
 	local stun = Config.Stun
 	if stun and not WeatherConfig.IsImmune(Config.Weather, entry.unitName) then
@@ -298,7 +301,7 @@ function ThunderService:strikeUnit(unitName : string?, skipImmune : boolean?)
 	return entry
 end
 
--- Raio num ponto qualquer do mapa. Devolve onde caiu, ou nil se nao deu para medir.
+-- A strike at any point on the map. Returns where it fell, or nil if it could not measure.
 function ThunderService:strikeGround() : Vector3?
 	local position = self:pickGround()
 	if not position then
@@ -310,11 +313,11 @@ function ThunderService:strikeGround() : Vector3?
 end
 
 --[=[
-	Um raio do clima: sorteia entre unidade e chao, e mexe no pity.
+	A weather strike: draws between unit and ground, and updates the pity.
 
-	Acertou unidade, a chance volta ao piso. Caiu no chao **tendo unidade no mapa**,
-	sobe um degrau. Sem unidade nenhuma a chance fica parada — ver o comentario do
-	`UnitChance` no config.
+	Hit a unit: the chance returns to the floor. Fell on the ground **with units on
+	the map**: it goes up a step. With no units at all the chance stays put; see the
+	`UnitChance` comment in the config.
 ]=]
 function ThunderService:rollStrike()
 	local hasUnits = self:pickTarget(nil, true) ~= nil
@@ -334,12 +337,12 @@ function ThunderService:rollStrike()
 end
 
 --[=[
-	O compasso.
+	The beat.
 
-	O relogio so anda com o clima ligado, e zera quando ele sai — assim ligar o
-	trovao nao dispara um raio atrasado da vez anterior, e o primeiro raio sempre
-	espera um intervalo inteiro em vez de cair junto com a troca de clima. O pity
-	tambem reseta: o clima novo comeca do piso.
+	The clock only runs with the weather on, and resets when it leaves: that way
+	turning thunder on does not fire a strike left over from the previous time, and
+	the first strike always waits a full interval instead of falling with the weather
+	change. The pity resets too: the new weather starts at the floor.
 ]=]
 function ThunderService:step(now : number)
 	local weatherService = self.Services.WeatherService
@@ -366,10 +369,10 @@ end
 
 function ThunderService:construct()
 	RunService.Heartbeat:Connect(function()
-		-- Tempo de partida: o atordoamento que este clima aplica ja encolhe com a
-		-- velocidade (o `UnitService` marca o prazo no mesmo relogio), entao a
-		-- cadencia tem que encolher junto -- senao acelerar seria uma forma de
-		-- levar menos clima por wave.
+		-- Match time: the stun this weather applies already shrinks with speed
+		-- (`UnitService` sets the deadline on the same clock), so the cadence must
+		-- shrink too; otherwise speeding up would be a way to take less weather per
+		-- wave.
 		self:step(GameClock.Now())
 	end)
 end

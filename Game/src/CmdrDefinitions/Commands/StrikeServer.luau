@@ -8,9 +8,9 @@ local Me = require(Vendor:WaitForChild("Me"))
 local Framework = Me.new()
 
 --[[
-	Nome dos tipos de unidade que estao de fato no mapa agora, sem repetir. E o que
-	a mensagem de erro precisa dizer: o autocomplete oferece o catalogo inteiro, mas
-	so da para acertar o que esta posicionado.
+	Names of the unit types actually on the map now, without repeats. It is what the
+	error message needs to say: autocomplete offers the whole catalog, but only what
+	is placed can be hit.
 ]]
 local function placedNames(ThunderService) : string
 	local unitService = ThunderService.Services.UnitService
@@ -34,7 +34,7 @@ end
 return function(_context, unitName : string?)
 	local ThunderService = Framework:Get("ThunderService", false, true)
 
-	-- Forca acerto em unidade, sem passar pelo sorteio do pity.
+	-- Forces a hit on a unit, bypassing the pity roll.
 	local entry = ThunderService:strikeUnit(unitName)
 	if entry then
 		local owner = Players:GetPlayerByUserId(entry.ownerUserId)

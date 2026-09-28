@@ -7,8 +7,10 @@ local Vendor = Shared:WaitForChild("Vendor")
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("HUDButtonController")
 
 --[[ CONSTANTS ]]
 local HUD_UI_NAME = "HUD"
@@ -16,13 +18,13 @@ local HUD_UI_NAME = "HUD"
 local WAIT_TIMEOUT = 10
 
 --[=[
-	As duas colunas do HUD e para onde o hover empurra o botão de cada uma. Com
-	AnchorPoint 0.5 dentro do wrapper (e `X.Scale = 0.5` em repouso), 0.3 é um quinto
-	da largura para o lado; o Y e os offsets ficam como estão.
+	The two HUD columns and where hover pushes each one's button. With AnchorPoint 0.5
+	inside the wrapper (and `X.Scale = 0.5` at rest), 0.3 is a fifth of the width to the
+	side; Y and the offsets stay as they are.
 
-	As duas colunas têm a mesma estrutura, e o que muda é só a direção: a da direita
-	desliza para a esquerda (0.3) e a da esquerda faz o espelho (0.7) — o botão sempre
-	sai **para dentro** da tela, e não pela borda.
+	Both columns have the same structure, and only the direction changes: the right one
+	slides left (0.3) and the left one mirrors it (0.7): the button always moves
+	**inward** on the screen, not past the edge.
 ]=]
 local HUD_FRAMES = {
 	{ Name = "HUDFrame", HoverX = 0.3 },
@@ -39,19 +41,20 @@ local HOVER_SOUND = "UIHover"
 local CLICK_SOUND = "UIClick"
 
 --[=[
-	O feedback dos botões das colunas do `StarterGui.HUD` (`HUDFrame` à direita e
-	`HUDLeft` à esquerda): o botão desliza para fora da coluna quando o mouse entra,
-	volta quando sai, e encolhe enquanto está apertado.
+	The feedback for the buttons in the `StarterGui.HUD` columns (`HUDFrame` on the right
+	and `HUDLeft` on the left): the button slides out of the column when the mouse enters,
+	returns when it leaves, and shrinks while pressed.
 
-	Só a parte visual e o som moram aqui. Quem abre a loja, a mochila e o deck
-	continua sendo o controller de cada painel, pelo `Activated` do mesmo botão —
-	por isso a animação de clique é `MouseButton1Down`/`Up`, que não consome o
-	clique de ninguém.
+	Only the visual part and the sound live here. Each panel's controller still opens the
+	shop, the backpack, and the deck, through the same button's `Activated`, which is why
+	the click animation is `MouseButton1Down`/`Up`, which consumes nobody's click.
 
-	Pega qualquer `GuiButton` dentro de cada coluna, em qualquer profundidade: cada
-	botão hoje está dentro de um `Wrapper`, e um botão novo entra na animação só de
-	nascer ali. O HUD tem `ResetOnSpawn` ligado, então o bind roda de novo a cada
-	cópia nova que a engine coloca na PlayerGui.
+	It picks up any `GuiButton` inside each column, at any depth: each button today is
+	inside a `Wrapper`, and a new button joins the animation just by being born there. The
+	HUD has `ResetOnSpawn` on, so the bind runs again for every new copy the engine puts
+	in PlayerGui.
+
+	See docs/lobby/hud.md.
 ]=]
 local HUDButtonController = {
 	Controllers = {
@@ -70,9 +73,9 @@ function HUDButtonController:_playSound(name : string)
 end
 
 --[=[
-	Toca um tween e deixa o cancelamento com o maid do próprio botão: o hover e o
-	clique mexem em coisas diferentes (posição e escala), mas os dois morrem juntos
-	quando o HUD é trocado.
+	Plays a tween and leaves cancellation to the button's own maid: hover and click touch
+	different things (position and scale), but both die together when the HUD is
+	replaced.
 ]=]
 function HUDButtonController:_tween(maid, object : Instance, info : TweenInfo, goal : { [string]: any })
 	local tween = TweenService:Create(object, info, goal)
@@ -95,8 +98,8 @@ function HUDButtonController:_bindButton(button : GuiButton, hoverX : number)
 		scale.Parent = button
 	end
 
-	-- A posição autorada é lida uma vez, antes de qualquer tween: é para ela que o
-	-- MouseLeave volta.
+	-- The authored position is read once, before any tween: it is where
+	-- MouseLeave returns to.
 	local home = button.Position
 	local hovered = UDim2.new(hoverX, home.X.Offset, home.Y.Scale, home.Y.Offset)
 
@@ -121,8 +124,8 @@ function HUDButtonController:_bindButton(button : GuiButton, hoverX : number)
 		slideMaid:DoCleaning()
 		self:_tween(slideMaid, button, SLIDE_INFO, { Position = home })
 
-		-- Soltar o clique fora do botão não dispara o `MouseButton1Up` dele, e a
-		-- escala ficaria presa no apertado.
+		-- Releasing the click outside the button does not fire its `MouseButton1Up`, and the
+		-- scale would stay stuck pressed.
 		scaleMaid:DoCleaning()
 		self:_tween(scaleMaid, scale, RELEASE_INFO, { Scale = 1 })
 	end))
@@ -145,8 +148,8 @@ function HUDButtonController:_bindButton(button : GuiButton, hoverX : number)
 end
 
 --[=[
-	Liga uma coluna. O `DescendantAdded` fica ligado porque a GUI chega em pedaços:
-	varrer uma vez só pegaria os botões que já tivessem replicado.
+	Hooks up a column. `DescendantAdded` stays connected because the GUI arrives in
+	pieces: sweeping once would only catch the buttons already replicated.
 ]=]
 function HUDButtonController:_bindFrame(hudFrame : Instance, hoverX : number)
 	self.HudMaid:GiveTask(hudFrame.DescendantAdded:Connect(function(descendant : Instance)
@@ -163,8 +166,8 @@ function HUDButtonController:_bindFrame(hudFrame : Instance, hoverX : number)
 end
 
 --[=[
-	Liga a uma cópia do HUD: as duas colunas, cada uma com a direção dela. Uma coluna
-	que não existe nessa cópia só fica de fora — as outras continuam animando.
+	Binds to a copy of the HUD: both columns, each with its direction. A column that does
+	not exist in that copy is just left out; the others keep animating.
 ]=]
 function HUDButtonController:_bindHud(screenGui : ScreenGui)
 	self.HudMaid:DoCleaning()
@@ -177,7 +180,7 @@ function HUDButtonController:_bindHud(screenGui : ScreenGui)
 			self:_bindFrame(hudFrame, column.HoverX)
 		elseif not self.Warned[column.Name] then
 			self.Warned[column.Name] = true
-			warn(`[HUDButtonController]: não achei {HUD_UI_NAME}.{column.Name}.`)
+			log:StudioWarn(`could not find {HUD_UI_NAME}.{column.Name}.`)
 		end
 	end
 end
@@ -213,8 +216,8 @@ function HUDButtonController:init()
 	self.HudMaid = Maid.new()
 	self.Bound = {}
 
-	-- O aviso de coluna que falta é por nome, e não por cópia do HUD: o HUD nasce de
-	-- novo a cada respawn, e o output encheria.
+	-- The missing-column warning is per name, not per HUD copy: the HUD is born again
+	-- on every respawn, and the output would fill up.
 	self.Warned = {}
 
 	self.Maid:GiveTask(self.HudMaid)

@@ -1,52 +1,52 @@
 --[[
-	Os contratos (missoes) do quadro do lobby: quais existem, quanto pagam, quando
-	viram e como a descricao aparece.
+	The Lobby board's contracts (missions): which exist, what they pay, when they
+	roll over, and how the description reads.
 
-	**Tres periodos, com a virada em hora fixa (UTC).** O de hora vira na hora cheia,
-	o diario a meia-noite UTC e o semanal na segunda 00:00 UTC. A virada e a mesma
-	para todo mundo; o **sorteio** e de cada jogador (`ContractService`), e so
-	acontece quando o perfil dele ve um periodo novo -- ao entrar, ou numa virada com
-	ele online.
+	**Three periods, rolling over at fixed times (UTC).** Hourly on the hour, daily
+	at midnight UTC, weekly on Monday 00:00 UTC. The rollover is the same for
+	everyone; the **draw** is per player (`ContractService`) and only happens when
+	the profile sees a new period, on join or at a rollover while online.
 
-	  | Periodo | Contratos por vez |
-	  | Hourly  | 2                 |
-	  | Daily   | 3                 |
-	  | Weekly  | 4                 |
+	  | Period | Contracts at a time |
+	  | Hourly | 2                   |
+	  | Daily  | 3                   |
+	  | Weekly | 4                   |
 
-	Contrato nao resgatado ate a virada se perde junto com o periodo.
+	A contract not claimed by the rollover is lost with the period.
 
-	**Variacao.** O sorteio tira da urna os contratos do periodo anterior sempre que
-	sobra o bastante sem eles; so completa com repetidos quando a conta nao fecha.
+	**Variety.** The draw removes the previous period's contracts from the urn
+	whenever enough remain without them, and only repeats when it has to.
 
-	**Cada contrato e uma linha de dados.** O que ele conta e o `Event`, e o resto
-	sao filtros sobre o contexto do evento (mapa, dificuldade...). Nada aqui roda
-	regra de jogo: quem casa evento com contrato e o `ContractService`, e quem
-	dispara os eventos sao os services da partida (`ContractTrackerService`, na Game)
-	e o `CrateService` (Lobby).
+	**Each contract is a line of data.** `Event` is what it counts, and the rest are
+	filters on the event context (map, difficulty...). No game rule runs here:
+	`ContractService` matches events to contracts, and the match services
+	(`ContractTrackerService` in the Game) and `CrateService` (Lobby) fire the events.
 
-	  | Campo | O que e |
+	  | Field | What it is |
 	  | --- | --- |
-	  | `Id` | a chave no perfil. **Nao troque** o de um contrato que ja existe. |
-	  | `Text` | a descricao. `{Map}`, `{Difficulty}` e `{Class}` viram o sorteado. |
-	  | `Event` | o que conta (ver `Events`) |
-	  | `Goal` | ate onde conta |
-	  | `Mode` | `Sum` (padrao) soma; `Max` guarda o maior valor; `Distinct` conta valores diferentes |
-	  | `Map` / `Difficulty` / `Class` | o evento tem de ser neste; `Random` sorteia um por jogador |
-	  | `MinDifficulty` | a dificuldade do evento tem de ser esta ou maior |
-	  | `FullHealth` / `WithFriends` | a vitoria tem de ter sido com a base cheia / com amigo na sala |
-	  | `Rarity` | a raridade da unidade que saiu da caixa |
-	  | `NeedsUnitStat` | so sai para quem tem uma unidade com esse campo no `UnitStats`; aceita uma lista, e basta um deles |
-	  | `Format` | `Hours` mostra o progresso em horas (o `Goal` e em segundos) |
-	  | `Rewards` | `Cash`, `Shards` e `Crates` (`{ [tier da caixa] = quantas }`, ver `CrateConfig.CRATES`) |
-	  | `RewardDifficulty` | com `Difficulty = Random`: a dificuldade para a qual o `Rewards` foi escrito. A recompensa escala para a sorteada na proporcao do premio de uma run (`WinCash` para coins, `WinShards` para shards e caixas, em `ServerScriptService.Config.Difficulty`) |
+	  | `Id` | the profile key. **Do not change** an existing contract's. |
+	  | `Text` | the description. `{Map}`, `{Difficulty}`, and `{Class}` become the drawn value. |
+	  | `Event` | what counts (see `Events`) |
+	  | `Goal` | how far it counts |
+	  | `Mode` | `Sum` (default) adds; `Max` keeps the highest value; `Distinct` counts different values |
+	  | `Map` / `Difficulty` / `Class` | the event must be this one; `Random` draws one per player |
+	  | `MinDifficulty` | the event's difficulty must be this or higher |
+	  | `FullHealth` / `WithFriends` | the win must be with a full base / a friend in the room |
+	  | `Rarity` | the rarity of the unit that came out of the crate |
+	  | `NeedsUnitStat` | only drawn for players with a unit that has this `UnitStats` field; accepts a list, one is enough |
+	  | `Format` | `Hours` shows progress in hours (`Goal` is in seconds) |
+	  | `Rewards` | `Cash`, `Shards`, and `Crates` (`{ [crate tier] = count }`, see `CrateConfig.CRATES`) |
+	  | `RewardDifficulty` | with `Difficulty = Random`: the difficulty `Rewards` was written for. The reward scales to the drawn one in proportion to a run's prize (`WinCash` for coins, `WinShards` for shards and crates, in `ServerScriptService.Config.Difficulty`) |
 
-	**Recompensa que escala e calculada no sorteio** e guardada no slot (`Slot.Rewards`),
-	porque o `Config.Difficulty` nao e replicado. A tela e o resgate leem a do slot
-	antes da do config.
+	**A scaling reward is computed at draw time** and stored in the slot
+	(`Slot.Rewards`), because `Config.Difficulty` is not replicated. The screen and
+	the claim read the slot's before the config's.
 
-	**Contrato preso a mapa ou dificuldade trancados nao sai.** O Nightmare de quem
-	ainda nao abriu, o Volcano de quem tem duas vitorias: o sorteio pula (ver
-	`ContractService`), e o `Random` sorteia so entre os que o jogador ja abriu.
+	**A contract tied to a locked map or difficulty is not drawn** (Nightmare for a
+	player who has not unlocked it, Volcano for one with two wins), and `Random`
+	draws only among unlocked options.
+
+	See docs/common/contracts.md.
 ]]
 
 local MapConfig = require(script.Parent.MapConfig)
@@ -55,7 +55,7 @@ local ContractConfig = {}
 
 ContractConfig.RANDOM = "Random"
 
--- A ordem em que as secoes aparecem e em que o servidor as confere.
+-- The order sections appear in and the server checks them in.
 ContractConfig.KIND_ORDER = { "Hourly", "Daily", "Weekly" }
 
 local HOUR = 3600
@@ -63,9 +63,9 @@ local DAY = 24 * HOUR
 local WEEK = 7 * DAY
 
 --[[
-	`Offset` e onde o primeiro periodo comeca, contado da epoca Unix. O dia 1 de
-	janeiro de 1970 foi uma quinta, entao a primeira segunda-feira e quatro dias
-	depois -- e a semana dos contratos vira na segunda.
+	`Offset` is where the first period starts, counted from the Unix epoch. January
+	1, 1970 was a Thursday, so the first Monday is four days later, and the
+	contracts week rolls over on Monday.
 ]]
 ContractConfig.KINDS = {
 	Hourly = { Count = 2, Length = HOUR, Offset = 0 },
@@ -74,10 +74,11 @@ ContractConfig.KINDS = {
 }
 
 --[[
-	O quadro no mapa do lobby: `Workspace.<Model>.<Target>` e o centro do raio que
-	abre a `StarterGui.Contracts`, do mesmo jeito que o balcao abre as lojas (ver
-	`ProximityPanel`). Um stud a mais que o das lojas: a `TargetPart` fica no chao, e
-	a medida e ate o `HumanoidRootPart`, uns tres studs acima dela.
+	The board on the Lobby map: `Workspace.<Model>.<Target>` is the center of the
+	radius that opens `StarterGui.Contracts`, the same way the counter opens the
+	shops (see `ProximityPanel`). One stud more than the shops: `TargetPart` sits on
+	the floor, and the distance is measured to the `HumanoidRootPart`, about three
+	studs above it.
 ]]
 ContractConfig.Board = {
 	Model = "ContractsBoard",
@@ -86,24 +87,25 @@ ContractConfig.Board = {
 	ProximityInterval = 0.2,
 	Animation = "OpenShop",
 
-	-- O botao da HUD larga o jogador **em cima** da propria `TargetPart` -- que e o
-	-- centro do raio, e nao um marcador de pouso a parte como o das lojas. A altura e
-	-- a mesma que elas usam, contada a partir do topo da peca.
+	-- The HUD button drops the player **on top of** the `TargetPart` itself, the radius
+	-- center, not a separate landing marker as with the shops. The height is the same
+	-- the shops use, counted from the part's top.
 	TeleportHeightOffset = 3,
 }
 
 --[[
-	O reroll de cada aba: um developer product por vez que o jogador rerola, em ordem.
-	O primeiro reroll do periodo abre o 1, o segundo o 2, e do 7 em diante fica no
-	ultimo da lista.
+	Each section's reroll: one developer product per reroll, in order. The period's
+	first reroll opens product 1, the second product 2, and from the 7th on it stays
+	on the last one.
 
-	A contagem mora no perfil (`Contracts[kind].Rerolls`) e zera sozinha na virada,
-	porque o periodo novo nasce sem ela. O reroll sorteia a aba **inteira** de novo --
-	inclusive o que ja foi resgatado --, com progresso zerado e evitando os contratos
-	que estavam la (ver `ContractService:Reroll`).
+	The count lives in the profile (`Contracts[kind].Rerolls`) and resets on
+	rollover, since the new period starts without it. The reroll redraws the
+	**whole** section (claimed slots included), with progress reset and avoiding the
+	contracts that were there (see `ContractService:Reroll`).
 
-	Quem credita e o recibo, no servidor: qualquer um destes produtos rerola a aba
-	dele, seja qual for a contagem. O numero so decide qual produto o botao abre.
+	The receipt on the server does the crediting: any of these products rerolls its
+	section, whatever the count. The number only decides which product the button
+	opens.
 ]]
 ContractConfig.Reroll = {
 	Button = "RerollDice",
@@ -139,9 +141,10 @@ ContractConfig.Contracts = {
 			Rewards = { Cash = 250, Shards = 3 } },
 
 		--[[
-			Os Ids que citam um mapa ou dificuldade (`H_Win2Castle`, `D_Win3Nightmare`...)
-			sao de quando o campo era fixo. Ficaram assim de proposito: o Id e a chave no
-			perfil, e troca-lo zeraria o progresso de quem ja tem o contrato.
+			Ids that mention a map or difficulty (`H_Win2Castle`, `D_Win3Nightmare`...)
+			date from when the field was fixed. They stay on purpose: the Id is the
+			profile key, and changing it would reset the progress of players who have
+			the contract.
 		]]
 		{ Id = "H_Win2Castle", Text = "Win 2 games in {Map}", Event = E.Win, Goal = 2, Map = RANDOM,
 			Rewards = { Cash = 200, Shards = 3 } },
@@ -152,7 +155,7 @@ ContractConfig.Contracts = {
 		{ Id = "H_Win2Medium", Text = "Win {Difficulty} difficulty twice on any map", Event = E.Win, Goal = 2, Difficulty = RANDOM, RewardDifficulty = "Medium",
 			Rewards = { Cash = 250, Shards = 3 } },
 
-		-- "Durante uma partida": o `Max` guarda a melhor partida, e nao a soma delas.
+		-- "During one match": `Max` keeps the best match, not the sum.
 		{ Id = "H_Spend5000", Text = "Spend 5,000 coins during a match", Event = E.MatchCashSpent, Goal = 5000, Mode = "Max",
 			Rewards = { Cash = 200, Shards = 3 } },
 
@@ -182,15 +185,15 @@ ContractConfig.Contracts = {
 		{ Id = "D_Win6VolcanoMedium", Text = "Win 6 games in {Map} on {Difficulty} difficulty", Event = E.Win, Goal = 6, Map = RANDOM, Difficulty = RANDOM, RewardDifficulty = "Medium",
 			Rewards = { Cash = 700, Shards = 9 } },
 
-		-- So quem tem uma unidade que atordoa recebe este: o tranco do Electro (`Stun`) ou
-		-- o congelamento do Frostione (`Frost`).
+		-- Only players with a unit that stuns get this: the Electro's jolt (`Stun`) or
+		-- the Frostione's freeze (`Frost`).
 		{ Id = "D_Stun676", Text = "Stun enemies 676 times", Event = E.Stun, Goal = 676, NeedsUnitStat = { "Stun", "Frost" },
 			Rewards = { Cash = 800, Shards = 9 } },
 
 		{ Id = "D_Win3Nightmare", Text = "Win 3 games in {Difficulty} mode", Event = E.Win, Goal = 3, Difficulty = RANDOM, RewardDifficulty = "Nightmare",
 			Rewards = { Cash = 900, Shards = 8 } },
 
-		-- O caixa da partida, numa partida so (o `Max`), e nao os coins do perfil.
+		-- Round cash in a single match (the `Max`), not profile coins.
 		{ Id = "D_Earn20k", Text = "Earn 20,000 Cash in a single match", Event = E.MatchCashEarned, Goal = 20000, Mode = "Max",
 			Rewards = { Cash = 500, Shards = 7 } },
 
@@ -211,7 +214,7 @@ ContractConfig.Contracts = {
 		{ Id = "W_Win7MapClassNightmare", Text = "Win 7 games in {Map} with only {Class} units in {Difficulty}", Event = E.Win, Goal = 7, Map = RANDOM, Class = RANDOM, Difficulty = RANDOM, RewardDifficulty = "Nightmare",
 			Rewards = { Cash = 1000, Crates = { Epic = 8 } } },
 
-		-- Um dia UTC por vez, e so dentro da semana: e preciso entrar nos sete.
+		-- One UTC day at a time, only within the week: all seven are needed.
 		{ Id = "W_Login7", Text = "Log in for 7 days straight", Event = E.Login, Goal = 7, Mode = "Distinct",
 			Rewards = { Cash = 777, Shards = 7, Crates = { Common = 7, Rare = 7 } } },
 
@@ -238,7 +241,7 @@ ContractConfig.Contracts = {
 	},
 }
 
---[[ INDICE ]]
+--[[ INDEX ]]
 
 local byId = {}
 local kindOf = {}
@@ -265,14 +268,14 @@ function ContractConfig.isKind(kind : any) : boolean
 	return typeof(kind) == "string" and ContractConfig.KINDS[kind] ~= nil
 end
 
---- O periodo em que `now` (segundos Unix) cai.
+--- The period `now` (Unix seconds) falls in.
 function ContractConfig.periodOf(kind : string, now : number) : number
 	local info = ContractConfig.KINDS[kind]
 
 	return math.floor((now - info.Offset) / info.Length)
 end
 
---- Quando o periodo termina, em segundos Unix.
+--- When the period ends, in Unix seconds.
 function ContractConfig.endsAt(kind : string, period : number) : number
 	local info = ContractConfig.KINDS[kind]
 
@@ -280,8 +283,8 @@ function ContractConfig.endsAt(kind : string, period : number) : number
 end
 
 --[=[
-	O `Contracts` de um perfil novo. `Period = -1` nao e periodo nenhum, entao o
-	primeiro carregamento sorteia os tres.
+	A new profile's `Contracts`. `Period = -1` is no period, so the first load draws
+	all three.
 ]=]
 function ContractConfig.createEmpty()
 	local contracts = {}
@@ -293,7 +296,7 @@ function ContractConfig.createEmpty()
 	return contracts
 end
 
---- O valor de um campo que pode ser `Random`: o sorteado no slot, ou o fixo.
+--- The value of a field that may be `Random`: the slot's drawn value, or the fixed one.
 function ContractConfig.resolve(definition, slot, field : string) : any?
 	local value = definition[field]
 
@@ -317,7 +320,7 @@ end
 
 local function formatAmount(definition, value : number) : string
 	if definition.Format == "Hours" then
-		-- Uma casa, para baixo: 6,99 horas nao podem aparecer como "7/7".
+		-- One decimal place, rounded down: 6.99 hours must not show as "7/7".
 		local hours = math.floor(value / HOUR * 10) / 10
 		local text = string.format("%.1f", hours)
 
@@ -328,7 +331,7 @@ local function formatAmount(definition, value : number) : string
 end
 
 --[=[
-	A descricao com o sorteado no lugar e o progresso no fim:
+	The description with the drawn value in place and progress at the end:
 	`Win 4 games in Volcano on Hard (1/4)`.
 ]=]
 function ContractConfig.describe(definition, slot) : string
@@ -355,8 +358,8 @@ function ContractConfig.describe(definition, slot) : string
 end
 
 --[=[
-	O developer product do proximo reroll da aba, dado quantos o jogador ja fez neste
-	periodo. Passou do fim da lista, fica no ultimo.
+	The developer product for the section's next reroll, given how many the player
+	has done this period. Past the end of the list, it stays on the last.
 ]=]
 function ContractConfig.rerollProduct(kind : string, rerolls : number?) : number?
 	local products = ContractConfig.Reroll.Products[kind]
@@ -367,12 +370,12 @@ function ContractConfig.rerollProduct(kind : string, rerolls : number?) : number
 	return products[index]
 end
 
---- Se o progresso do slot ja chegou no objetivo.
+--- Whether the slot's progress has reached the goal.
 function ContractConfig.isComplete(definition, slot) : boolean
 	return definition ~= nil and slot ~= nil and (slot.Progress or 0) >= definition.Goal
 end
 
---- Tempo em `HH:MM:SS`, com as horas passando de 24 (a semana mostra `167:59:59`).
+--- Time as `HH:MM:SS`, with hours past 24 (the week shows `167:59:59`).
 function ContractConfig.formatRemaining(seconds : number) : string
 	seconds = math.max(0, math.floor(seconds))
 

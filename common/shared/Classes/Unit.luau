@@ -32,27 +32,26 @@ function Unit:loadAnimations()
 		local track = animator:LoadAnimation(animation)
 
 		--[=[
-			A `Idle` desce para `Movement`, qualquer que seja a prioridade com que ela
-			foi exportada.
+			`Idle` is lowered to `Movement`, whatever priority it was exported with.
 
-			Ela e a **pose de base**: toca em laco a partida inteira e tudo o mais e um
-			gesto por cima dela. Duas tracks na mesma prioridade nao se substituem --
-			elas se misturam por peso --, entao uma unidade com a `Idle` e a `Attack`
-			as duas em `Action` bate com meio golpe e meia pose parada. O Berserker e o
-			Archer sao exportados assim; o Sword e o Subspace Tripminer, que ja vem com
-			a `Idle` em `Movement`, sao o comportamento certo que os outros copiam
-			daqui.
+			It is the **base pose**: it loops the whole match and every gesture plays
+			on top of it. Two tracks at the same priority do not replace each other,
+			they blend by weight, so a unit with both `Idle` and `Attack` at `Action`
+			swings with half a hit and half a standing pose. The Berserker and the
+			Archer are exported that way; the Sword and the Subspace Tripminer, whose
+			`Idle` already comes at `Movement`, are the right behavior the others copy
+			from here.
 
-			A regra e so rebaixar a `Idle`, e nao promover o golpe: assim a prioridade
-			que quem animou escreveu em cada gesto continua valendo entre eles (a
-			`MoneyWave` do Entrepreneur, o `Slash2` do Slasher), e nao ha um segundo
-			lugar onde a arte da unidade e decidida.
+			The rule only lowers `Idle` and does not promote the attack, so the
+			priority the animator wrote on each gesture still applies between them
+			(the Entrepreneur's `MoneyWave`, the Slasher's `Slash2`), and there is no
+			second place where a unit's art is decided.
 		]=]
 		if animation.Name == "Idle" then
 			track.Priority = Enum.AnimationPriority.Movement
 
-			-- A pose de base toca a partida inteira, entao ela e sempre em laco --
-			-- mesmo exportada sem o `Loop` ligado, como a do Archmage veio.
+			-- The base pose plays the whole match, so it always loops, even when exported
+			-- without `Loop` on, as the Archmage's was.
 			track.Looped = true
 		end
 
@@ -61,27 +60,26 @@ function Unit:loadAnimations()
 end
 
 --[=[
-	Poe as animacoes da unidade na velocidade da partida.
+	Puts the unit's animations at match speed.
 
-	O `GameClock` acelera as esperas, e nao as `AnimationTrack`. Sem esta varredura
-	duas coisas ficam para tras da escala: a `Idle`, que e tocada uma unica vez no
-	`Unit.new` e nunca mais e tocada por ninguem -- ela passaria a partida inteira
-	no 1x --, e o golpe que ja estava no ar quando o jogador trocou de degrau, que
-	continuaria no ritmo antigo enquanto o `GameClock.Wait` do windup ja encolheu.
+	`GameClock` speeds up waits, not `AnimationTrack`s. Without this sweep two things
+	fall behind the scale: `Idle`, played once in `Unit.new` and never again (it
+	would spend the whole match at 1x), and an attack already in the air when the
+	player changed step, which would keep the old pace while the windup's
+	`GameClock.Wait` already shrank.
 
-	A varredura e a lista toda de proposito, e nao so a track do golpe: a
-	`MoneyWave` do Entrepreneur corre no mesmo tempo de partida que a wave que a
-	pagou.
+	The sweep covers the whole list on purpose, not just the attack track: the
+	Entrepreneur's `MoneyWave` runs on the same match time as the wave that paid it.
 
-	`AdjustSpeed` numa track parada e inofensivo -- a velocidade fica guardada e
-	vale quando ela tocar --, entao nao ha o que filtrar aqui.
+	`AdjustSpeed` on a stopped track is harmless (the speed is kept and applies when
+	it plays), so nothing needs filtering here.
 
-	O `animationSpeeds` entra como **produto**, e nao como substituto: a track do
-	golpe pode ja estar comprimida para caber no cooldown (ver o
-	`playAttackVisual`), e escrever so a escala da partida por cima apagaria a
-	compressao na primeira troca de degrau.
+	`animationSpeeds` enters as a **product**, not a replacement: the attack track
+	may already be compressed to fit the cooldown (see `playAttackVisual`), and
+	writing only the match scale on top would erase the compression on the first
+	step change.
 
-	O par disto do lado dos mobs e o `MobController:applyTimeScale`.
+	The enemy-side counterpart is `MobController:applyTimeScale`.
 ]=]
 function Unit:applyTimeScale(scale : number)
 	self.timeScale = scale
@@ -127,20 +125,14 @@ function Unit:playSound(soundName, cutAfter)
 end
 
 --[=[
-	De onde o projetil sai: o `RootPart` da unidade.
+	Where the projectile starts: the unit's `RootPart`.
 
-	Era o pivo do modelo **mais dois studs**, e os dois studs eram o problema. As
-	unidades tem pouco mais de dois studs de altura inteira (o `HumanoidRootPart`
-	fica no meio do torso, a cerca de um stud do chao), entao somar dois punha a
-	flecha nascendo acima da cabeca do boneco, no ar. Some do pivo do modelo por
-	seguranca tambem: `GetPivot` responde pelo `WorldPivot`, que so coincide com o
-	root enquanto o `PrimaryPart` estiver certo -- e um modelo que perca o
-	`PrimaryPart` passa a responder pelo centro da caixa delimitadora, que muda de
-	altura conforme a pose da animacao.
-
-	Nao ha offset nenhum aqui de proposito: o lugar de nascer mais alto (na ponta do
-	arco, na boca do cano) e uma peca no modelo, e nao um numero somado no codigo
-	que vale para todas as unidades ao mesmo tempo.
+	No offset here on purpose: a higher starting point (the bow tip, a barrel) is a
+	part in the model, not a number added in code for every unit at once. The root
+	is also safer than the model pivot: `GetPivot` follows `WorldPivot`, which only
+	matches the root while `PrimaryPart` is set, and a model that loses its
+	`PrimaryPart` reports the bounding box center, which moves with the animation
+	pose.
 ]=]
 function Unit:projectileOrigin() : Vector3?
 	local model = self.model
@@ -171,8 +163,8 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?, swingWindow
 	local animName = step and step.Animation or "Attack"
 	local hitTime = step and step.HitTime or 0
 
-	-- O golpe que acerta varias vezes dentro da mesma animacao, cada acerto no seu
-	-- instante. Ver o `HitTimes` no `UnitAttackConfig`.
+	-- An attack that hits several times within one animation, each hit at its own
+	-- instant. See `HitTimes` in `UnitAttackConfig`.
 	local hitTimes = step and step.HitTimes
 
 	local track = self.loadedAnimations[animName]
@@ -186,25 +178,25 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?, swingWindow
 	end
 
 	--[[
-		A velocidade da partida entra na animacao e nas esperas daqui.
+		Match speed applies to the animation and the waits here.
 
-		Quem decide quando o dano sai e o servidor (`UnitService:executeAttack`), e
-		la o windup e o intervalo entre golpes ja correm no relogio acelerado. Este
-		lado desenha o mesmo ataque: sem a escala, no 2x a torre bateria duas vezes
-		enquanto o boneco ainda termina o primeiro golpe.
+		The server decides when damage lands (`UnitService:executeAttack`), where the
+		windup and the gap between hits already run on the sped-up clock. This side
+		draws the same attack: without the scale, at 2x the tower would hit twice
+		while the model is still finishing the first swing.
 
-		Na Lobby a escala e sempre 1 -- nao existe `SpeedService` la --, entao isto
-		nao muda nada para as unidades do menu.
+		In the Lobby the scale is always 1 (there is no `SpeedService`), so this
+		changes nothing for menu units.
 
-		A escala e lida de novo aqui, e nao herdada do `self.timeScale`, porque uma
-		track recem-tocada volta ao 1x: o `applyTimeScale` so reage a *mudanca* de
-		escala, e nao veria um golpe que comecou com a escala parada. Por isso o
-		`AdjustSpeed` explicito la embaixo, mesmo com a varredura por quadro ligada.
+		The scale is read again here, not inherited from `self.timeScale`, because a
+		freshly played track returns to 1x: `applyTimeScale` only reacts to a scale
+		*change* and would not see an attack started with the scale unchanged. Hence
+		the explicit `AdjustSpeed` below, even with the per-frame sweep on.
 
-		E quando a leitura daqui chega antes da do quadro, quem responde e a
-		varredura inteira, e nao so a track do golpe: adiantar o `self.timeScale`
-		sozinho calaria a comparacao do `RenderStepped` e deixaria a `Idle` e a
-		`MoneyWave` presas na escala velha para sempre.
+		When this read comes before the frame's, the whole sweep answers, not only the
+		attack track: advancing `self.timeScale` alone would silence the
+		`RenderStepped` comparison and leave `Idle` and `MoneyWave` stuck on the old
+		scale forever.
 	]]
 	local timeScale = GameClock.GetScale()
 	if timeScale ~= self.timeScale then
@@ -212,28 +204,26 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?, swingWindow
 	end
 
 	--[=[
-		A animacao cabe dentro do golpe.
+		The animation fits inside the attack.
 
-		Uma animacao mais longa que o cooldown e o que tirava o boneco do lugar: o
-		pedido seguinte chegava com a track ainda no ar, o `Play` daqui nao
-		reiniciava o que ja estava tocando, e o golpe saia sem gesto nenhum -- um
-		tiro com animacao, o proximo sem, alternando. O Rocket e o caso mais visivel
-		(2,667s de animacao para 2,5s de cooldown), e o Azure, o Archer e o `Slash1`
-		do Slasher estao na mesma situacao.
+		An animation longer than the cooldown knocked the model out of sync: the next
+		request arrived with the track still playing, `Play` here did not restart it,
+		and the attack went out with no gesture (one shot animated, the next not,
+		alternating). The Rocket is the most visible case (2.667 s of animation for a
+		2.5 s cooldown), and the Azure, the Archer, and the Slasher's `Slash1` are in
+		the same situation.
 
-		A saida nao e encurtar a animacao no arquivo nem mexer no `Cooldown` -- que e
-		numero de balanceamento e nao de arte --, e sim **tocar a animacao mais
-		rapido** exatamente o tanto que falta para ela caber. O gesto inteiro
-		aparece, so que espremido no tempo que a unidade tem.
+		The fix is neither shortening the animation file nor touching `Cooldown` (a
+		balance number, not art), but **playing the animation faster** by exactly what
+		it needs to fit. The whole gesture shows, squeezed into the time the unit has.
 
-		A janela vem do servidor ja com clima, upgrade, carta e carga dentro, e nao
-		do `stats.Cooldown` daqui: uma carta de `AttackSpeed` encurta o cooldown, e a
-		animacao tem que encurtar junto ou a dessincronizacao volta com a carta em
-		campo. Sem a janela (uma unidade que ainda nao recebeu o campo), o fator e 1
-		e o comportamento e o de antes.
+		The window comes from the server with weather, upgrades, cards, and charge
+		already in, not from `stats.Cooldown` here: an `AttackSpeed` card shortens
+		the cooldown, and the animation must shorten with it. Without the window (a
+		unit that has not received the field yet), the factor is 1.
 
-		`track.Length` e zero enquanto a animacao nao terminou de carregar; a
-		comparacao com a janela ja recusa esse caso sozinha.
+		`track.Length` is zero until the animation finishes loading; the comparison
+		with the window already rejects that case.
 	]=]
 	local fit = 1
 	if track and swingWindow and swingWindow > 0 and track.Length > swingWindow then
@@ -245,22 +235,19 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?, swingWindow
 	end
 
 	--[[
-		O golpe reinicia a track mesmo com ela tocando.
+		The attack restarts the track even while it is playing.
 
-		Com a compressao acima a sobra e de milissegundos -- o suficiente para o
-		pedido seguinte chegar antes de a track fechar, por jitter de rede, e o
-		gesto ser pulado de novo. Reiniciar fecha essa fresta, e para quem ja cabia
-		no cooldown (Sword, Slingshot, Subspace Tripminer) nao muda nada: a track ja
-		tinha terminado quando o pedido chega.
+		With the compression above the slack is milliseconds, enough for the next
+		request to arrive before the track closes (network jitter) and the gesture to
+		be skipped again. Restarting closes that gap, and for units that already fit
+		the cooldown (Sword, Slingshot, Subspace Tripminer) it changes nothing: the
+		track had ended by the time the request arrives.
 
-		Como todo golpe passou a ser um golpe novo, o `SwingSound` volta a tocar em
-		todos eles -- antes o Azure perdia o som do Periastron um tiro sim, um nao,
-		pelo mesmo motivo que perdia o gesto.
+		Since every attack is a new attack, `SwingSound` plays on all of them.
 
-		Quem volta o gesto para o comeco e o `TimePosition`, e nao um `Play`: `Play`
-		numa track que ja esta tocando nao faz nada. Tambem nao e um `Stop(0)`
-		seguido de `Play`, como no `playFarmVisual` -- aquilo tira a track do ar por
-		um instante e o boneco pisca para a `Idle` antes de voltar.
+		`TimePosition` rewinds the gesture, not `Play`: `Play` on a playing track does
+		nothing. Nor `Stop(0)` then `Play`, as in `playFarmVisual`: that takes the
+		track off for an instant and the model flickers to `Idle` before returning.
 	]]
 	if track then
 		if track.IsPlaying then
@@ -322,16 +309,16 @@ function Unit:playAttackVisual(target : Model?, stepIndex : number?, swingWindow
 
 	if hitTimes then
 		--[[
-			Um `fireHit` por instante da lista, e nao o `scheduleHits`: os acertos
-			deste golpe tem tempos proprios, e nao o espacamento regular do
-			`HitInterval`. Quem conta e a lista, e nao o `stats.Hits` -- os dois tem
-			que continuar iguais, mas quem manda aqui e a coreografia da animacao.
+			One `fireHit` per instant in the list, not `scheduleHits`: this attack's hits
+			have their own times, not `HitInterval`'s even spacing. The list counts, not
+			`stats.Hits`; the two must stay equal, but the animation's choreography rules
+			here.
 
-			Os instantes sao divididos pelo `fit` pelo mesmo motivo que a track e
-			tocada multiplicada por ele: com a animacao espremida para caber na janela
-			do golpe, o marcador `Hit` chega antes, e o acerto tem que chegar junto. O
-			servidor divide pelo mesmo fator (`UnitService:executeAttack`), a partir do
-			`Duration` do config -- que e a copia do `track.Length` lido aqui.
+			The instants are divided by `fit` for the same reason the track is played
+			multiplied by it: with the animation squeezed to fit the attack window, the
+			`Hit` marker arrives earlier, and the hit must arrive with it. The server
+			divides by the same factor (`UnitService:executeAttack`) using the config's
+			`Duration`, the copy of the `track.Length` read here.
 		]]
 		for _, at in ipairs(hitTimes) do
 			GameClock.Delay(at / fit, fireHit)
@@ -412,8 +399,8 @@ function Unit.new(name : string, model : Model)
 	self.noTargetSince = nil
 	self.timeScale = GameClock.GetScale()
 
-	-- Velocidade propria de cada track, por nome, multiplicada pela escala da
-	-- partida no `applyTimeScale`. Hoje so a do golpe sai de 1 (ver o
+	-- Each track's own speed, by name, multiplied by the match scale in
+	-- `applyTimeScale`. Today only the attack's differs from 1 (see
 	-- `playAttackVisual`).
 	self.animationSpeeds = {}
 
@@ -433,18 +420,18 @@ function Unit.new(name : string, model : Model)
 	self:loadAnimations()
 	self.loadedAnimations.Idle:Play()
 
-	-- Uma unidade colocada com a partida ja no 2x nasce no ritmo certo, sem esperar
-	-- a proxima troca de degrau para ser varrida.
+	-- A unit placed with the match already at 2x starts at the right pace, without
+	-- waiting for the next step change to be swept.
 	self:applyTimeScale(self.timeScale)
 
 	self.rotationConn = RunService.RenderStepped:Connect(function(dt)
 		if not self.model or not self.model.Parent then return end
 
 		--[[
-			A escala e lida a cada quadro em vez de empurrada pelo `SpeedController`:
-			e uma comparacao, e em troca a unidade nao depende da ordem em que os
-			controllers ligam nem de quem avisou quem. Mesmo arranjo do
-			`MobController:startMovementLoop`, e pelo mesmo motivo.
+			The scale is read every frame instead of pushed by `SpeedController`: it is a
+			comparison, and in exchange the unit does not depend on the order controllers
+			start or who notified whom. Same arrangement as
+			`MobController:startMovementLoop`, for the same reason.
 		]]
 		local scale = GameClock.GetScale()
 		if scale ~= self.timeScale then

@@ -8,21 +8,20 @@ local Me = require(Vendor:WaitForChild("Me"))
 local Framework = Me.new()
 
 --[[
-	Faz a loja de cartas aparecer na hora, sem esperar a wave certa.
+	Makes the card shop appear right away, without waiting for the right wave.
 
-	É o mesmo `Open` que o `WaveStarted` chama de X em X waves (ver
-	`RoundCardConfig.Intervals`): as três cartas são sorteadas de novo e a oferta
-	anterior de quem estava com a loja aberta perde a validade — o `Token` sobe, e
-	um clique atrasado na loja velha não compra nada da nova.
+	It is the same `Open` that `WaveStarted` calls every X waves (see
+	`RoundCardConfig.Intervals`): the three cards are drawn again and the previous
+	offer of anyone with the shop open loses validity: the `Token` goes up, and a late
+	click on the old shop buys nothing from the new one.
 
-	**Ele sorteia da pool de cada alvo**, e não do catálogo: as cartas que aquele
-	jogador destravou na loja de cartas do lobby. Quem não destravou nenhuma não
-	recebe oferta, e é por isso que o comando pode não abrir nada mesmo com alvos
-	válidos — para dar carta a alguém, o caminho é o perfil (`Data.RoundCards`), e não
-	este comando.
+	**It draws from each target's pool**, not the catalog: the cards that player
+	unlocked in the Lobby card shop. A player who unlocked none gets no offer, which
+	is why the command may open nothing even with valid targets. To give someone
+	cards, the way is the profile (`Data.RoundCards`), not this command.
 
-	Só a Game tem loja: o `CardShopService` não existe no Lobby, e lá o
-	`Framework:Get` com yield esperaria para sempre.
+	Only Game has the shop: `CardShopService` does not exist in the Lobby, and there
+	a yielding `Framework:Get` would wait forever.
 ]]
 return function(_context, players : { Player }?)
 	local CardShopService = Framework:Get("CardShopService", false, true)
@@ -37,10 +36,10 @@ return function(_context, players : { Player }?)
 	end
 
 	--[[
-		`Open` só devolve true quando **alguém** recebeu oferta. Os dois motivos para não
-		receber são diferentes, e o de baixo é o comum: nenhum dos alvos destravou carta
-		nenhuma. O outro (catálogo sem efeito registrado) já sai como aviso no output do
-		servidor quando isso acontece.
+		`Open` only returns true when **someone** got an offer. The two reasons for not
+		getting one differ, and the one below is the common one: none of the targets
+		unlocked any card. The other (a catalog with no registered effect) already shows
+		as a warning in the server output when it happens.
 	]]
 	if not CardShopService:Open(targets) then
 		return "Nothing to offer: no target has any round card unlocked (see the lobby card shop)."

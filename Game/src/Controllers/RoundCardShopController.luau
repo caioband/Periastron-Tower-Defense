@@ -22,8 +22,10 @@ local UIUtil = require(Utils.UIUtil)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("RoundCardShopController")
 
 local RoundCardConfig = SharedConfig.RoundCardConfig
 
@@ -34,93 +36,95 @@ local TARGETING = RoundCardConfig.Targeting
 
 local WAIT_TIMEOUT = 60
 
--- O som de carta, o mesmo do painel de deck e da hotbar.
+-- The card sound, the same as the deck panel's and the hotbar's.
 local CARD_SOUND = "CardFlip"
 
--- Os **parametros** do marcador de keyframe do gesto (ver `_playUseVisual`). Vem do
--- config porque o servidor procura pela mesma palavra ao conferir o `EffectDelay`.
+-- The gesture keyframe marker's **parameters** (see `_playUseVisual`). They come from
+-- config because the server looks for the same word when checking `EffectDelay`.
 local MARKERS = RoundCardConfig.Markers
 
 local CHARACTER_ROOT = "HumanoidRootPart"
 
 --[[
-	Quanto o anel de uma carta de area precisa andar para a previa ser refeita, em
-	studs.
+	How far an area card's ring must move for the preview to be redone, in studs.
 
-	A previa e uma varredura por todas as unidades do mapa, e o cursor parado manda o
-	mesmo ponto sessenta vezes por segundo. Um decimo de stud e menor do que qualquer
-	movimento que mude quem esta dentro do anel, e corta a varredura inteira nos
-	quadros em que o jogador nao mexeu a mao.
+	The preview is a sweep over every unit on the map, and a still cursor sends the same
+	point sixty times a second. A tenth of a stud is smaller than any movement that changes
+	who is inside the ring, and it cuts the whole sweep on frames where the player did not
+	move their hand.
 ]]
 local PREVIEW_STEP = 0.1
 
--- Quanto o jogador pode ficar ancorado, no maximo, esperando a animacao terminar.
--- E rede de seguranca, e nao a duracao do gesto: ver o `task.delay` no fim do
+-- The longest the player may stay anchored waiting for the animation to finish.
+-- It is a safety net, not the gesture's duration: see the `task.delay` at the end of
 -- `_playUseVisual`.
 local ANCHOR_TIMEOUT = 8
 
 --[=[
-	A loja de cartas de round, do lado da tela.
+	The round card shop, on the screen side.
 
-	Quem decide **quando** ela abre, **quais** cartas saem e **se** a compra vale e
-	o `CardShopService`. Daqui sai so o desenho: o botao que entra pela beirada, o
-	escurecido de tela cheia, as tres cartas caindo e a carta comprada indo parar
-	na hotbar.
+	`CardShopService` decides **when** it opens, **which** cards come out, and **whether**
+	the purchase counts. Only the drawing comes from here: the button sliding in from the
+	edge, the full-screen darkening, the three cards falling, and the bought card landing
+	in the hotbar.
 
-	O caminho de uma oferta:
+	An offer's path:
 
-		1. o servidor manda `RoundCardState` com um `token` e tres ids de carta; o
-		   botao `RCSFrame` entra pela direita e fica balancando na beirada;
-		2. o clique no `CardShop` recolhe o proprio botao, escurece a tela, apaga a
-		   hotbar e desenha as tres cartas, uma a cada `CardStagger`;
-		3. o clique numa carta pede a compra e recolhe a loja na hora; a carta so
-		   entra na hotbar quando o `RoundCardBought` confirma;
-		4. o clique (ou toque) **fora** das cartas toca a entrada delas ao contrario e
-		   fecha a loja; o botao **nao** volta -- ele foi gasto no clique de abrir, e
-		   so a proxima oferta (outro `token`, na proxima wave de loja) o traz de
-		   volta para a beirada;
-		5. o clique na carta da hotbar pede o uso -- na hora, se a carta for
-		   instantanea, ou depois da **mira**, se ela pedir alvo. A carta some quando o
-		   `RoundCardUsed` confirma, que e tambem quando o personagem de quem usou faz
-		   o gesto dela, se ela tiver um `Visual` no config. O gesto e da **sala**: a
-		   animacao replica sozinha, e o som e as particulas chegam nas outras telas
-		   pelo `RoundCardVisual` (ver `_playRemoteUseVisual`).
+		1. the server sends `RoundCardState` with a `token` and three card ids; the
+		   `RCSFrame` button slides in from the right and sways at the edge;
+		2. a click on `CardShop` retracts the button itself, darkens the screen, dims the
+		   hotbar, and draws the three cards, one every `CardStagger`;
+		3. a click on a card requests the purchase and retracts the shop right away; the
+		   card only enters the hotbar when `RoundCardBought` confirms;
+		4. a click (or tap) **outside** the cards plays their entrance backward and closes
+		   the shop; the button does **not** come back: it was spent on the opening click,
+		   and only the next offer (another `token`, on the next shop wave) brings it back
+		   to the edge;
+		5. a click on the hotbar card requests the use: right away if the card is
+		   instant, or after **aiming** if it asks for a target. The card disappears when
+		   `RoundCardUsed` confirms, which is also when the user's character makes its
+		   gesture, if it has a `Visual` in the config. The gesture belongs to the
+		   **room**: the animation replicates on its own, and sound and particles reach the
+		   other screens through `RoundCardVisual` (see `_playRemoteUseVisual`).
 
-	## A mira
+	## Aiming
 
-	Nem toda carta age sozinha. O `Use` do `RoundCardConfig` diz o que ela pede antes
-	de agir: nada (`Instant`), uma torre (`Unit`), um lugar (`Area`) ou os dois em
-	fila (`Move`, que e o Zippers). Pedindo alvo, o clique na hotbar nao vira pedido
-	-- ele entra na mira, e quem vira pedido e o clique **seguinte**, o que escolhe.
+	Not every card acts on its own. `RoundCardConfig`'s `Use` says what it asks for
+	before acting: nothing (`Instant`), a tower (`Unit`), a spot (`Area`), or both in
+	sequence (`Move`, which is Zippers). When it asks for a target, the hotbar click does
+	not become a request: it enters aiming, and the **next** click, the one that chooses,
+	becomes the request.
 
-	**Uma carta em mira e uma carta na mao**, e a hotbar a desenha como desenha uma
-	unidade equipada: ela cresce e as vizinhas apagam (`Card:setSelectedRound`). Nao
-	ha painel nem botao de cancelar -- o aviso e a propria carta, do mesmo jeito que
-	nao ha aviso nenhum quando o jogador poe uma unidade na mao. Desistir e clicar
-	nela de novo, igual a largar a unidade; no PC o Esc tambem serve.
+	**A card being aimed is a card in hand**, and the hotbar draws it as it draws an
+	equipped unit: it grows and its neighbors dim (`Card:setSelectedRound`). There is no
+	panel or cancel button: the notice is the card itself, just as there is no notice
+	when the player puts a unit in hand. Giving up is clicking it again, like dropping the
+	unit; on PC Esc works too.
 
-	Enquanto a mira dura, o clique no mundo pertence a carta: o
-	`UnitPlacementController` larga a mao inteira (o fantasma, a torre selecionada e
-	a carta de unidade equipada) e para de selecionar torre. Sem isso o mesmo clique
-	faria as duas coisas, e o fantasma de uma unidade equipada disputaria o mesmo
-	ponto do mapa. Ele volta ao normal quando a mira acaba, de que jeito for --
-	confirmada, cancelada, ou com a carta saindo da mao por baixo dela.
+	While aiming lasts, clicks in the world belong to the card: `UnitPlacementController`
+	drops the whole hand (the ghost, the selected tower, and the equipped unit card) and
+	stops selecting towers. Without that the same click would do both, and an equipped
+	unit's ghost would compete for the same point on the map. It returns to normal when
+	aiming ends, however it ends: confirmed, canceled, or with the card leaving the hand
+	underneath it.
 
-	Desistir nao custa nada: a carta so e gasta quando o servidor confirma o uso, e
-	escolher um lugar e depois mudar de ideia nao e usar a carta. Quem confere o alvo
-	e o servidor, como tudo o mais -- daqui sai a escolha, e nao a permissao.
+	Giving up costs nothing: the card is only spent when the server confirms the use, and
+	choosing a spot and then changing your mind is not using the card. The server checks
+	the target, as everything else: the choice comes from here, not the permission.
 
-	**Nada e desenhado por conta propria.** A carta nao entra no deck no clique e
-	nao sai dele no uso: as duas coisas esperam a confirmacao do servidor, que e
-	quem tem o dinheiro e o estoque. Recusado, o `RoundCardState` que chega em
-	seguida devolve a tela ao que o servidor sabe -- a carta nao aparece na hotbar,
-	e o botao da beirada continua recolhido: ele e gasto na abertura, e nao na
-	compra.
+	**Nothing is drawn on its own authority.** The card does not enter the deck on the
+	click nor leave it on use: both wait for the server's confirmation, which holds the
+	money and the stock. If refused, the `RoundCardState` that follows returns the screen
+	to what the server knows: the card does not appear in the hotbar, and the edge button
+	stays retracted: it is spent on opening, not on purchase.
 
-	**A carta e um clone do molde autorado**, e o molde e tirado da tela na primeira
-	vez que ele e preciso (como o `Components/Card` faz com o `CardWrapper` da
-	hotbar). As transparencias de destino sao lidas de cada clone recem-feito, antes
-	de qualquer animacao: "voltar ao original" e literal, e repintar no Studio basta.
+	**The card is a clone of the authored template**, and the template is taken off the
+	screen the first time it is needed (as `Components/Card` does with the hotbar's
+	`CardWrapper`). The target transparencies are read from each freshly made clone,
+	before any animation: "back to the original" is literal, and repainting in Studio is
+	enough.
+
+	See docs/game/round-card-shop.md.
 ]=]
 local RoundCardShopController = {
 	Controllers = {
@@ -128,20 +132,20 @@ local RoundCardShopController = {
 		UILibraryController = {},
 		VFXController = {},
 
-		-- Quem sabe se um passo do tutorial esta exigindo uma compra. Ver o
-		-- `_dismissShop` do clique fora.
+		-- The one that knows whether a tutorial step requires a purchase. See the
+		-- click-outside `_dismissShop`.
 		TutorialStepController = {},
 
-		-- Quem sabe que torre esta debaixo do ponteiro, e quem tranca o clique no
-		-- mundo enquanto uma carta esta pedindo alvo. Ver `_beginTargeting`.
+		-- The one that knows which tower is under the pointer, and that locks clicks in the
+		-- world while a card asks for a target. See `_beginTargeting`.
 		UnitPlacementController = {},
 
-		-- Quem desenha o buff e o debuff em cima das unidades. E ele quem mostra, na
-		-- cabeca de cada torre, o que a carta que esta sendo mirada faria com ela.
+		-- The one that draws buffs and debuffs over units. It shows, over each tower's head,
+		-- what the card being aimed would do to it.
 		WeatherFeedbackController = {},
 
-		-- Quem tem a lista das areas que ja estao no chao. E ele quem diz se o anel
-		-- debaixo do cursor encosta numa area deste jogador. Ver `_updateTargeting`.
+		-- The one with the list of areas already on the ground. It says whether the ring
+		-- under the cursor touches this player's area. See `_updateTargeting`.
 		CardModifierController = {},
 	},
 }
@@ -149,17 +153,18 @@ local RoundCardShopController = {
 --[[ INTERNAL ]]
 
 --[=[
-	As duas metades da revelacao de uma carta, do `UIUtil`: o `captureFades` le o que
-	o designer deixou no clone intocado e o `applyFades` leva tudo de transparente
-	ate lá.
+	The two halves of a card's reveal, from `UIUtil`: `captureFades` reads what the
+	designer left on the untouched clone and `applyFades` takes everything from
+	transparent to there.
 
-	Elas moram no `UIUtil` porque a **loja de cartas do lobby** desenha a mesma carta
-	pelo mesmo caminho (ver o `RoundCardShopController` do Lobby): uma segunda copia
-	aqui seria a mesma varredura de propriedades para manter em dois lugares.
+	They live in `UIUtil` because the **Lobby card shop** draws the same card the same way
+	(see the Lobby's `RoundCardShopController`): a second copy here would be the same
+	property sweep to maintain in two places.
 
-	Este embrulho e so a curva. A entrada chega desacelerando (`CardDirection`, que e
-	`Out`) e a saida sai acelerando (`In`): sem isso o sumico das cartas arrastaria no
-	comeco e pareceria travamento, e nao resposta ao clique.
+	This wrapper is only the curve. The entrance arrives decelerating (`CardDirection`,
+	which is `Out`) and the exit leaves accelerating (`In`): without that the cards'
+	disappearance would drag at the start and look like a freeze, not a response to the
+	click.
 ]=]
 local captureFades = UIUtil.captureFades
 
@@ -177,12 +182,11 @@ function RoundCardShopController:_playSound(name : string)
 end
 
 --[=[
-	Fala com a hotbar.
+	Talks to the hotbar.
 
-	Quem desenha a mao do jogador e o componente `Card`
-	(`UILibraryController/Components/Card.luau`), e e ele quem cuida do arco, da
-	escala e da ordem da fila -- inclusive das cartas de round, depois que elas
-	entram por `addRound`. Daqui so saem as tres ordens: poe, tira e esconde.
+	The `Card` component (`UILibraryController/Components/Card.luau`) draws the player's
+	hand, and handles the arc, scale, and row order, including round cards once they come
+	in through `addRound`. Only three orders come from here: add, remove, and hide.
 ]=]
 function RoundCardShopController:_deck(func : string, ...)
 	local library = self.Controllers.UILibraryController
@@ -191,9 +195,9 @@ function RoundCardShopController:_deck(func : string, ...)
 	library:doComponent("Card", func, ...)
 end
 
---[[ O BOTAO DA BEIRADA ]]
+--[[ THE EDGE BUTTON ]]
 
---- Onde o `RCSFrame` fica quando esta fora da tela.
+--- Where `RCSFrame` sits when it is off screen.
 function RoundCardShopController:_hiddenPosition() : UDim2
 	local base = self.BasePosition
 
@@ -201,10 +205,10 @@ function RoundCardShopController:_hiddenPosition() : UDim2
 end
 
 --[=[
-	Poe o botao na tela: ele nasce em `HiddenX` e corre ate o X autorado.
+	Puts the button on screen: it starts at `HiddenX` and runs to the authored X.
 
-	O `Circular` chega devagar no fim -- e o que da o encaixe na beirada, em vez de
-	o botao parar seco no lugar.
+	`Circular` arrives slowly at the end: that gives the snap against the edge, instead of
+	the button stopping dead.
 ]=]
 function RoundCardShopController:_showFrame()
 	local frame = self.Frame
@@ -229,8 +233,8 @@ function RoundCardShopController:_showFrame()
 		tween:Cancel()
 	end)
 
-	-- O balanco so comeca com o botao ja encaixado na beirada: gingar durante a
-	-- entrada brigaria com o proprio deslize e faria o botao chegar torto.
+	-- The sway only starts with the button already snapped to the edge: swaying during the
+	-- entrance would fight the slide itself and make the button arrive crooked.
 	tween.Completed:Connect(function(state : Enum.PlaybackState)
 		if state ~= Enum.PlaybackState.Completed or self.FrameToken ~= token then return end
 
@@ -240,7 +244,7 @@ function RoundCardShopController:_showFrame()
 	tween:Play()
 end
 
---- Recolhe o botao para fora da tela e o desliga quando ele termina de sair.
+--- Retracts the button off screen and disables it when it finishes leaving.
 function RoundCardShopController:_hideFrame()
 	local frame = self.Frame
 	if not frame or not self.FrameShown then return end
@@ -263,8 +267,8 @@ function RoundCardShopController:_hideFrame()
 	end)
 
 	tween.Completed:Connect(function(state : Enum.PlaybackState)
-		-- Uma oferta nova durante a saida manda: o botao que esta na tela agora e o
-		-- dela, e desligar aqui apagaria uma loja que acabou de abrir.
+		-- A new offer during the exit wins: the button on screen now is its button, and
+		-- disabling here would erase a shop that just opened.
 		if state ~= Enum.PlaybackState.Completed or self.FrameToken ~= token then return end
 
 		frame.Visible = false
@@ -274,17 +278,16 @@ function RoundCardShopController:_hideFrame()
 end
 
 --[=[
-	Poe o botao para balancar enquanto ninguem clica nele.
+	Makes the button sway while nobody clicks it.
 
-	Sao dois movimentos ao mesmo tempo: ele sobe `IdleLift` pixels e fica gingando
-	entre `+IdleSwing` e `-IdleSwing` graus, para sempre. O vai-e-vem infinito e um
-	tween so, com `repeatCount = -1` e `reverses = true` -- o `swingIn` existe
-	porque o balanco comeca no meio (na rotacao autorada) e o loop precisa partir
-	de uma das pontas, senao a primeira travessia sairia pela metade.
+	There are two movements at once: it rises `IdleLift` pixels and swings between
+	`+IdleSwing` and `-IdleSwing` degrees, forever. The endless back-and-forth is a single
+	tween, with `repeatCount = -1` and `reverses = true`; `swingIn` exists because the sway
+	starts in the middle (at the authored rotation) and the loop must start from one of
+	the ends, or the first pass would come out halved.
 
-	**A altura e a rotacao de volta sao lidas do Studio**, e nao escritas aqui: e o
-	`ButtonPosition` / `ButtonRotation` que o bind guardou antes de qualquer
-	animacao tocar.
+	**The return height and rotation are read from Studio**, not written here: they are
+	the `ButtonPosition` / `ButtonRotation` the bind stored before any animation played.
 ]=]
 function RoundCardShopController:_startIdle()
 	local button = self.Button
@@ -330,11 +333,11 @@ function RoundCardShopController:_startIdle()
 end
 
 --[=[
-	Desliga o balanco e devolve o botao ao estado autorado.
+	Stops the sway and returns the button to its authored state.
 
-	A volta e um tween, e nao uma escrita seca: o botao pode estar em qualquer
-	ponto da ginga na hora do clique, e cortar para a rotacao zero no mesmo quadro
-	daria um solavanco bem na resposta ao clique.
+	The return is a tween, not an abrupt write: the button may be at any point of the
+	swing at click time, and cutting to zero rotation on the same frame would jolt right
+	at the click's response.
 ]=]
 function RoundCardShopController:_stopIdle()
 	local button = self.Button
@@ -355,33 +358,31 @@ function RoundCardShopController:_stopIdle()
 	tween:Play()
 end
 
---[[ A HOTBAR DO JOGADOR ]]
+--[[ THE PLAYER'S HOTBAR ]]
 
 --[=[
-	Apaga (ou devolve) as cartas do jogador enquanto a loja esta aberta.
+	Dims (or restores) the player's cards while the shop is open.
 
-	Quem esconde e o proprio componente `Card`, e nao um `Visible` escrito daqui: o
-	`Visible` de cada wrapper ja tem dono la (carta sem unidade sobrando fica fora
-	da tela por conta propria), e apagar por fora acenderia de volta, na saida da
-	loja, uma carta que o deck tinha derrubado.
+	The `Card` component itself hides them, not a `Visible` written from here: each
+	wrapper's `Visible` already has an owner there (a card with no units left stays off
+	screen on its own), and hiding from outside would light back up, on leaving the shop,
+	a card the deck had dropped.
 
-	Some por dentro, e nao pelo `Visible` do `TowerContainer`: quem manda no
-	container e o `DifficultyController` (a hotbar so aparece com a dificuldade
-	decidida), e duas maos no mesmo interruptor acabariam com a hotbar sumindo no
-	meio da partida.
+	It hides from inside, not through `TowerContainer`'s `Visible`: `DifficultyController`
+	owns the container (the hotbar only appears once the difficulty is decided), and two
+	hands on the same switch would end with the hotbar vanishing mid-match.
 ]=]
 function RoundCardShopController:_setDeckHidden(hidden : boolean)
 	self:_deck("setHidden", hidden)
 end
 
---[[ AS CARTAS DA LOJA ]]
+--[[ THE SHOP CARDS ]]
 
 --[=[
-	O molde de uma carta, tirado da tela na primeira vez que alguem precisa dele.
+	A card's template, taken off the screen the first time someone needs it.
 
-	O `CardWrapper` que veio autorado na fileira nao e uma carta: e o desenho de
-	uma. Ele sai de la junto, entao o que fica na tela e sempre o que o servidor
-	sorteou.
+	The `CardWrapper` authored in the row is not a card: it is the drawing of one. It
+	leaves too, so what stays on screen is always what the server drew.
 ]=]
 function RoundCardShopController:_template() : Frame?
 	if self.Template then
@@ -390,7 +391,7 @@ function RoundCardShopController:_template() : Frame?
 
 	local authored = self.Row and self.Row:FindFirstChild(GUI.Wrapper)
 	if not authored then
-		warn(`[RoundCardShopController]: nao achei o {GUI.Wrapper} autorado em {GUI.Row}.`)
+		log:StudioWarn(`could not find the authored {GUI.Wrapper} in {GUI.Row}.`)
 		return nil
 	end
 
@@ -401,8 +402,8 @@ function RoundCardShopController:_template() : Frame?
 end
 
 --[=[
-	Escreve os textos e a arte de uma carta no clone. `showPrice` e false para a
-	carta que ja foi paga e esta indo para a hotbar.
+	Writes a card's texts and art on the clone. `showPrice` is false for a card already
+	paid for and on its way to the hotbar.
 ]=]
 function RoundCardShopController:_writeCard(card : GuiObject, definition, showPrice : boolean)
 	local title = card:FindFirstChild(GUI.Title)
@@ -425,19 +426,19 @@ function RoundCardShopController:_writeCard(card : GuiObject, definition, showPr
 		end
 	end
 
-	-- Carta sem arte propria fica com a autorada no molde: carta com a arte errada
-	-- e melhor do que carta invisivel.
+	-- A card without its own art keeps the template's authored art: a card with the wrong
+	-- art beats an invisible card.
 	if definition.Image and (card:IsA("ImageLabel") or card:IsA("ImageButton")) then
 		card.Image = definition.Image
 	end
 end
 
 --[=[
-	Tira as cartas que estao na fileira. A da compra ja foi clonada antes disto.
+	Removes the cards in the row. The purchased one was already cloned before this.
 
-	O `DismissToken` sobe junto: uma saida em andamento nao pode continuar mexendo
-	em cartas que acabaram de ser destruidas -- e a oferta nova, que chega quando a
-	wave vira com a loja aberta, faz exatamente isso.
+	`DismissToken` goes up too: an exit in progress must not keep touching cards that were
+	just destroyed, and the new offer that arrives when the wave turns with the shop open
+	does exactly that.
 ]=]
 function RoundCardShopController:_clearRow()
 	self.CardEntries = {}
@@ -448,16 +449,16 @@ function RoundCardShopController:_clearRow()
 end
 
 --[=[
-	Desenha as tres cartas da oferta.
+	Draws the offer's three cards.
 
-	Cada carta tem duas metades, nesta ordem: ela **cai** de `DropOffset` alturas
-	acima do lugar dela enquanto a imagem sai de transparente (`CardDrop`), e so
-	quando isso termina o conteudo -- titulo, descricao, preco, contornos, sombra --
-	sobe de 1 ate o valor autorado (`CardReveal`).
+	Each card has two halves, in this order: it **drops** from `DropOffset` heights above
+	its place while its image fades in (`CardDrop`), and only when that ends does the
+	content (title, description, price, outlines, shadow) go from 1 to the authored value
+	(`CardReveal`).
 
-	As tres nao saem juntas: a segunda comeca `CardStagger` depois da primeira, e a
-	terceira `CardStagger` depois da segunda. O atraso e um `task.delay` guardado no
-	maid da fileira, entao fechar a loja no meio cancela o que ainda nao comecou.
+	The three do not go out together: the second starts `CardStagger` after the first, and
+	the third `CardStagger` after the second. The delay is a `task.delay` kept in the
+	row's maid, so closing the shop midway cancels whatever has not started.
 ]=]
 function RoundCardShopController:_renderCards()
 	local row = self.Row
@@ -472,7 +473,7 @@ function RoundCardShopController:_renderCards()
 	for index, cardId in offer.cards do
 		local definition = RoundCardConfig.Get(cardId)
 		if not definition then
-			warn(`[RoundCardShopController]: a oferta trouxe a carta '{tostring(cardId)}', que nao esta no config.`)
+			log:StudioWarn(`the offer brought card '{tostring(cardId)}', which is not in the config.`)
 			continue
 		end
 
@@ -489,17 +490,17 @@ function RoundCardShopController:_renderCards()
 		self:_writeCard(card, definition, true)
 
 		--[[
-			Lido do clone intocado: e para ca que a segunda metade da animacao leva
-			tudo de volta. Precisa vir **antes** de qualquer escrita de transparencia,
-			senao o alvo seria o estado escondido.
+			Read from the untouched clone: this is where the animation's second half takes
+			everything back. It must come **before** any transparency write, or the target
+			would be the hidden state.
 		]]
 		local fades = captureFades(card)
 		local basePosition = card.Position
 
 		--[[
-			O que a saida precisa saber para tocar esta mesma animacao ao contrario:
-			onde a carta mora, para onde as transparencias voltam e o que ainda esta
-			no ar (o atraso da entrada e o tween da queda) e precisa ser cancelado.
+			What the exit needs to know to play this same animation backward: where the card
+			lives, where the transparencies return to, and what is still in flight (the
+			entrance delay and the drop tween) and needs canceling.
 		]]
 		local entry = {
 			Wrapper = wrapper,
@@ -511,8 +512,8 @@ function RoundCardShopController:_renderCards()
 
 		table.insert(self.CardEntries, entry)
 
-		-- Estado de partida: a carta acima do lugar dela, a imagem e o conteudo
-		-- transparentes.
+		-- Starting state: the card above its place, the image and content
+		-- transparent.
 		card.Position = UDim2.new(
 			basePosition.X.Scale, basePosition.X.Offset,
 			basePosition.Y.Scale - ANIM.DropOffset, basePosition.Y.Offset
@@ -528,10 +529,10 @@ function RoundCardShopController:_renderCards()
 		self.RowMaid:GiveTask(wrapper)
 
 		--[[
-			A carta so aceita clique depois de comecar a cair. Ela ja existe na tela
-			desde o `Parent`, transparente e fora do lugar, e sem isto a terceira carta
-			-- que so entra um segundo depois -- poderia ser comprada enquanto ainda
-			nao ha nada para o jogador ver.
+			The card only accepts clicks after it starts falling. It exists on screen from
+			`Parent` on, transparent and out of place, and without this the third card
+			(which only comes in a second later) could be bought while there is nothing for
+			the player to see.
 		]]
 		if card:IsA("GuiButton") then
 			self.RowMaid:GiveTask(card.Activated:Connect(function()
@@ -541,11 +542,11 @@ function RoundCardShopController:_renderCards()
 			end))
 
 			--[[
-				A marca do clique que **foi** numa carta.
+				The mark of a click that **was** on a card.
 
-				Quem escuta o clique-fora e o `UserInputService`, que ve **todo** clique,
-				inclusive o que caiu numa carta. Esta marca e o que diz a ele que aquele
-				input ja tinha dono -- ver o `InputBegan` em `_openShop`.
+				`UserInputService` listens for the click-outside, and it sees **every** click,
+				including one that landed on a card. This mark is what tells it that input
+				already had an owner; see `InputBegan` in `_openShop`.
 			]]
 			self.RowMaid:GiveTask(card.InputBegan:Connect(function(input : InputObject)
 				self.CardInput = input
@@ -584,20 +585,19 @@ function RoundCardShopController:_renderCards()
 	end
 end
 
---[[ ABRIR E FECHAR ]]
+--[[ OPEN AND CLOSE ]]
 
 --[=[
-	Abre a aba da loja: o botao da beirada recolhe, a tela escurece, a hotbar apaga
-	e, quando o escurecido termina, as cartas comecam a cair.
+	Opens the shop tab: the edge button retracts, the screen darkens, the hotbar dims, and
+	when the darkening ends the cards start falling.
 
-	As cartas so entram depois do fundo de proposito -- a queda delas e contra o
-	escuro, e desenha-las durante o fade as poria aparecendo por cima da partida.
+	The cards only come in after the background on purpose: they fall against the dark,
+	and drawing them during the fade would have them appear over the match.
 
-	O botao sai junto com a abertura e **nao volta nesta oferta**. Ele e o convite de
-	uma wave de loja, e o clique e a resposta: sair sem comprar continua sendo uma
-	escolha, e nao um engano a desfazer. O `OpenedToken` e o que guarda isso -- a
-	beirada so acende de novo com um `token` diferente, ou seja, na proxima wave de
-	loja da dificuldade.
+	The button leaves with the opening and **does not come back for this offer**. It is a
+	shop wave's invitation, and the click is the answer: leaving without buying is still a
+	choice, not a mistake to undo. `OpenedToken` keeps that: the edge only lights again
+	with a different `token`, that is, on the difficulty's next shop wave.
 ]=]
 function RoundCardShopController:_openShop()
 	local background = self.Background
@@ -614,23 +614,22 @@ function RoundCardShopController:_openShop()
 	self:_clearRow()
 
 	--[=[
-		O clique (ou toque) fora das cartas desfaz a oferta na tela.
+		A click (or tap) outside the cards undoes the offer on screen.
 
-		Quem escuta e o `UserInputService`, e nao o escurecido. O fundo parecia o
-		dono natural do assunto -- ele cobre a tela -- mas ele so recebe o clique que
-		ninguem mais quis: **qualquer** `ScreenGui` com `DisplayOrder` maior (o HUD,
-		o container da hotbar) come o clique antes dele, e ali a loja ficava aberta
-		sem jeito de sair a nao ser comprando. O `UserInputService` ve o clique
-		independentemente de quem o consumiu, e a loja e modal: clique em lugar
-		nenhum e clique em qualquer outra coisa fecham igual.
+		`UserInputService` listens, not the darkening. The background looks like the
+		natural owner (it covers the screen), but it only receives clicks nobody else
+		wanted: **any** `ScreenGui` with a higher `DisplayOrder` (the HUD, the hotbar
+		container) eats the click first, and there the shop would stay open with no way out
+		except buying. `UserInputService` sees the click regardless of who consumed it, and
+		the shop is modal: a click on nothing and a click on anything else close the same.
 
-		O que **nao** fecha e o clique numa das tres cartas, e e o `CardInput` que
-		diz isso: a carta marca o proprio `InputObject`, e a conferencia sai num
-		`task.defer` porque a ordem entre os dois handlers do mesmo evento nao e
-		promessa de lugar nenhum -- um quadro depois os dois ja rodaram. Comparar
-		objeto de input dispensa medir retangulo na tela, e medir seria pior: a
-		conta entre `InputObject.Position` e `AbsolutePosition` muda com o
-		`IgnoreGuiInset` da tela e com a barra do topo no celular.
+		What does **not** close is a click on one of the three cards, and `CardInput` says
+		so: the card marks its own `InputObject`, and the check goes out in a `task.defer`
+		because the order between the two handlers of the same event is not promised
+		anywhere: one frame later both have run. Comparing input objects avoids measuring
+		rectangles on screen, and measuring would be worse: the math between
+		`InputObject.Position` and `AbsolutePosition` changes with the screen's
+		`IgnoreGuiInset` and with the top bar on mobile.
 	]=]
 	self.ShopMaid:GiveTask(UserInputService.InputBegan:Connect(function(input : InputObject)
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1
@@ -641,8 +640,8 @@ function RoundCardShopController:_openShop()
 		task.defer(function()
 			if input == self.CardInput then return end
 
-			-- O tutorial pode estar exigindo uma compra: enquanto exigir, clique fora
-			-- não fecha a loja.
+			-- The tutorial may be requiring a purchase: while it does, a click outside
+			-- does not close the shop.
 			local tutorial = self.Controllers.TutorialStepController
 			if tutorial and not tutorial:AllowsShopDismiss() then return end
 
@@ -669,15 +668,15 @@ function RoundCardShopController:_openShop()
 end
 
 --[=[
-	Fecha a aba e devolve a hotbar.
+	Closes the tab and restores the hotbar.
 
-	Sem `fade`, o escurecido some na hora -- e o que a compra pede: ela ja tem a
-	animacao dela, que e o botao da beirada recolhendo, e um segundo fade por cima
-	disso so atrasaria o jogador de voltar a partida.
+	Without `fade`, the darkening disappears immediately: that is what a purchase needs:
+	it already has its own animation (the edge button retracting), and a second fade on
+	top would only delay the player's return to the match.
 
-	Com `fade`, o escurecido sai em `fade` segundos. E o caminho do clique fora das
-	cartas, onde nao houve compra nenhuma: ali a tela some sozinha, e cortar o
-	escuro de uma vez pareceria erro em vez de recuo.
+	With `fade`, the darkening leaves over `fade` seconds. It is the path of a click
+	outside the cards, where there was no purchase: there the screen goes away on its own,
+	and cutting the dark at once would look like an error instead of a retreat.
 ]=]
 function RoundCardShopController:_closeShop(fade : number?)
 	if not self.ShopOpen then return end
@@ -698,8 +697,8 @@ function RoundCardShopController:_closeShop(fade : number?)
 				{ BackgroundTransparency = 1 }
 			)
 
-			-- Reabrir durante o fade manda: o escurecido que esta na tela agora e o da
-			-- loja nova, e desliga-lo aqui apagaria uma aba que acabou de abrir.
+			-- Reopening during the fade wins: the darkening on screen now is the new shop's, and
+			-- disabling it here would erase a tab that just opened.
 			tween.Completed:Connect(function(state : Enum.PlaybackState)
 				if state ~= Enum.PlaybackState.Completed or self.OpenToken ~= token then return end
 
@@ -714,23 +713,21 @@ function RoundCardShopController:_closeShop(fade : number?)
 		end
 	end
 
-	-- A hotbar volta. Quem a escondeu foi esta loja, ao abrir, e fechando ela nao ha
-	-- mais nada por cima da mao.
+	-- The hotbar comes back. This shop hid it when opening, and with it closing there is
+	-- nothing left over the hand.
 	self:_setDeckHidden(false)
 end
 
 --[=[
-	Toca a entrada das cartas ao contrario e chama `onFinished` quando a ultima
-	termina.
+	Plays the cards' entrance backward and calls `onFinished` when the last one ends.
 
-	A ordem e o espelho da entrada: o conteudo desce de volta ao transparente
-	(`CardReveal`) e so entao a carta sobe apagando a imagem (`CardDrop`) -- se as
-	duas metades saissem juntas, o texto ficaria boiando sozinho no ar depois que a
-	carta ja tivesse subido.
+	The order mirrors the entrance: the content goes back to transparent (`CardReveal`)
+	and only then does the card rise, fading its image (`CardDrop`); if both halves went
+	together, the text would float alone in the air after the card had already risen.
 
-	Carta que ainda estava caindo entra na saida do mesmo jeito: o atraso que nao
-	comecou e cancelado e a queda em andamento e cortada, entao ela sobe do ponto
-	onde estava, em vez de continuar descendo enquanto o resto some.
+	A card still falling enters the exit the same way: the delay that has not started is
+	canceled and the drop in progress is cut, so it rises from where it was, instead of
+	continuing down while the rest vanishes.
 ]=]
 function RoundCardShopController:_dismissCards(onFinished : (() -> ())?)
 	self.DismissToken += 1
@@ -787,10 +784,10 @@ function RoundCardShopController:_dismissCards(onFinished : (() -> ())?)
 	end
 
 	--[[
-		Este e o unico atraso que **nao** entra no maid da fileira: e ele quem fecha a
-		loja, e fechar a loja limpa o maid -- ele se cancelaria no meio da propria
-		chamada, e a hotbar nunca voltaria. O `DismissToken` ja faz o servico: uma
-		oferta nova que chegue antes da hora derruba este fim quando ele acordar.
+		This is the only delay that does **not** go in the row's maid: it closes the shop,
+		and closing the shop clears the maid: it would cancel itself mid-call, and the
+		hotbar would never come back. `DismissToken` already does the job: a new offer that
+		arrives early knocks this end down when it wakes.
 	]]
 	task.delay(longest, function()
 		if self.DismissToken ~= token then return end
@@ -804,13 +801,13 @@ function RoundCardShopController:_dismissCards(onFinished : (() -> ())?)
 end
 
 --[=[
-	A saida sem compra: as cartas somem ao contrario e o escurecido apaga.
+	The exit without purchase: the cards vanish backward and the darkening fades.
 
-	O botao **nao** volta, e e de proposito: ele foi gasto no clique que abriu a
-	loja, e quem o traz de volta e a proxima oferta -- ver o `OpenedToken` em
-	`_openShop`. A oferta em si continua de pe no servidor (quem a tira e a compra
-	ou a virada do round), entao a carta segue comprável se o estado for redesenhado
-	por outro caminho; o que acabou foi o convite na beirada.
+	The button does **not** come back, on purpose: it was spent on the click that opened
+	the shop, and the next offer brings it back; see `OpenedToken` in `_openShop`. The
+	offer itself stays up on the server (a purchase or the round turning removes it), so
+	the card stays buyable if the state is redrawn some other way; what ended was the
+	invitation at the edge.
 ]=]
 function RoundCardShopController:_dismissShop()
 	if not self.ShopOpen or self.Dismissing then return end
@@ -820,27 +817,27 @@ function RoundCardShopController:_dismissShop()
 	end)
 end
 
---[[ COMPRAR E USAR ]]
+--[[ BUY AND USE ]]
 
 --[=[
-	Pede a compra de uma carta.
+	Requests the purchase of a card.
 
-	Sem dinheiro, o clique nao vira pedido: o servidor recusaria do mesmo jeito
-	(ele e quem tem o caixa de verdade), e o que se evita e a loja fechar e
-	reabrir sozinha por causa de um clique que nunca ia dar certo.
+	Without money, the click does not become a request: the server would refuse anyway (it
+	holds the real cash), and what is avoided is the shop closing and reopening on its own
+	because of a click that was never going to work.
 
-	Dando certo, a loja recolhe **na hora** -- e a resposta ao clique, e ela nao
-	pode esperar a rede. A carta, essa sim, so entra na hotbar quando o
-	`RoundCardBought` confirma: quem tem o estoque e o servidor.
+	When it goes through, the shop retracts **right away**: it is the click's response, and
+	it cannot wait for the network. The card, however, only enters the hotbar when
+	`RoundCardBought` confirms: the server holds the stock.
 ]=]
 --[=[
-	A carta desta oferta na tela, ou `nil` se ela não está na mesa agora.
+	This offer's card on screen, or `nil` if it is not on the table now.
 
-	Os wrappers são nomeados pelo `Id` da carta quando a rotação é montada, então
-	achar é olhar dentro da fileira — não há registro a manter.
+	The wrappers are named by the card's `Id` when the rotation is built, so finding one
+	is looking inside the row; there is no registry to maintain.
 
-	Existe para quem precisa **apontar** uma carta: hoje o `TutorialStepController`,
-	que pede ao destaque para abraçar a que o passo exige comprar.
+	It exists for code that needs to **point at** a card: today `TutorialStepController`,
+	which asks the highlight to hug the one the step requires buying.
 ]=]
 function RoundCardShopController:GetOfferCard(cardId : string) : GuiObject?
 	local row = self.Row
@@ -868,13 +865,13 @@ function RoundCardShopController:_buy(cardId : string)
 end
 
 --[=[
-	Poe na hotbar a carta que o servidor confirmou.
+	Puts the card the server confirmed into the hotbar.
 
-	Daqui sai so a **aparencia**: um clone do mesmo molde da loja, no tamanho da
-	hotbar e sem a placa de preco -- no deck a carta ja foi paga. O que ela faz na
-	mao e do componente `Card`: a partir do `addRound` ela e uma carta da hotbar
-	como qualquer outra, cai no arco, cresce no hover, e empurrada pelas vizinhas e
-	apaga quando outra carta e escolhida.
+	Only the **appearance** comes from here: a clone of the same shop template, at hotbar
+	size and without the price plate (in the deck the card is already paid for). What it
+	does in the hand is the `Card` component's: from `addRound` on it is a hotbar card like
+	any other: it falls into the arc, grows on hover, gets pushed by its neighbors, and dims
+	when another card is selected.
 ]=]
 function RoundCardShopController:_addToDeck(uid : string, cardId : string)
 	if typeof(uid) ~= "string" or self.DeckCards[uid] then return end
@@ -905,19 +902,19 @@ function RoundCardShopController:_addToDeck(uid : string, cardId : string)
 end
 
 --[=[
-	O clique numa carta da hotbar.
+	A click on a hotbar card.
 
-	Carta instantanea vira pedido na hora, como sempre foi. Carta que pede alvo
-	entra na mira, e so vira pedido no clique seguinte -- o que escolhe a torre ou o
-	lugar.
+	An instant card becomes a request right away. A card that asks for a target enters
+	aiming, and only becomes a request on the next click, the one that chooses the tower or
+	the spot.
 
-	Clicar de novo na carta que **ja** esta mirando desiste dela. E o par natural do
-	clique que comecou: quem clicou por engano procura o mesmo lugar para desfazer, e
-	nao o botao de cancelar.
+	Clicking again on the card **already** aiming gives it up. It is the natural pair of
+	the click that started it: someone who clicked by mistake looks in the same place to
+	undo it, not for a cancel button.
 ]=]
 function RoundCardShopController:_requestUse(uid : string, cardId : string)
-	-- O tutorial pode estar guardando esta carta para o passo dela. É educação de
-	-- interface: quem recusa de verdade é o `TutorialMatchService`.
+	-- The tutorial may be saving this card for its step. It is interface courtesy:
+	-- `TutorialMatchService` does the real refusing.
 	local tutorial = self.Controllers.TutorialStepController
 	if tutorial and not tutorial:AllowsCardUse(cardId) then
 		return
@@ -941,15 +938,15 @@ function RoundCardShopController:_requestUse(uid : string, cardId : string)
 end
 
 --[=[
-	Manda o uso para o servidor.
+	Sends the use to the server.
 
-	`target` e o que a mira escolheu -- a torre, o lugar, ou os dois --, e vai como
-	tabela porque o servidor confere campo por campo contra o tipo da carta.
+	`target` is what aiming chose (the tower, the spot, or both), and it goes as a table
+	because the server checks field by field against the card's type.
 
-	**Um uso por carta, e quem gasta e o servidor.** O trinco local existe para o
-	clique duplo nao virar dois pedidos: o segundo seria recusado, mas o primeiro ja
-	teria sumido com a carta e o jogador veria um erro no log por algo que ele nao fez
-	de errado.
+	**One use per card, and the server spends it.** The local latch exists so a double
+	click does not become two requests: the second would be refused, but the first would
+	already have removed the card, and the player would see an error in the log for
+	something they did not do wrong.
 ]=]
 function RoundCardShopController:_sendUse(uid : string, target : any?)
 	if self.UsePending[uid] then return end
@@ -962,8 +959,8 @@ function RoundCardShopController:_sendUse(uid : string, target : any?)
 end
 
 --[=[
-	Tira da hotbar a carta que o servidor deu por usada (ou por perdida). Quem faz a
-	carta cair para fora e fecha a vaga e o componente.
+	Removes from the hotbar the card the server counted as used (or lost). The component
+	makes the card drop out and closes the slot.
 ]=]
 function RoundCardShopController:_removeFromDeck(uid : string)
 	if not self.DeckCards[uid] then return end
@@ -972,9 +969,9 @@ function RoundCardShopController:_removeFromDeck(uid : string)
 	self.UsePending[uid] = nil
 
 	--[[
-		A carta que estava mirando saiu da mao: ou o servidor a gastou, ou ele a
-		recusou e devolveu o estado. Nos dois casos nao ha mais o que mirar, e uma mira
-		orfa deixaria o clique do jogador trancado num alvo que nao vai a lugar nenhum.
+		The card that was aiming left the hand: either the server spent it, or it refused
+		and returned the state. Either way there is nothing left to aim, and an orphaned aim
+		would leave the player's click locked on a target that goes nowhere.
 	]]
 	if self.Targeting and self.Targeting.Uid == uid then
 		self:_stopTargeting()
@@ -984,25 +981,24 @@ function RoundCardShopController:_removeFromDeck(uid : string)
 end
 
 --[=[
-	O gesto de usar a carta: a animacao no personagem de quem usou, e o som e as
-	particulas que ela dispara.
+	The gesture of using the card: the animation on the user's character, and the sound
+	and particles it fires.
 
-	**Quem manda no tempo e a animacao.** O `Marker` do config e um marcador de
-	keyframe so, e o que separa as duas metades e o **parametro** dele: `Sound` toca
-	o som, `VFX` estoura as particulas. Reanimar a carta no Moon Animator remarca as
-	duas sem passar por aqui -- que e o que um `task.delay` com o tempo escrito no
-	codigo nao daria.
+	**The animation keeps time.** The config's `Marker` is a single keyframe marker, and
+	its **parameter** separates the two halves: `Sound` plays the sound, `VFX` bursts the
+	particles. Reanimating the card in Moon Animator re-marks both without going through
+	here, which a `task.delay` with the time written in code would not do.
 
-	O clone do VFX nasce **agora**, no uso, e nao no marcador: pendurado na
-	`HumanoidRootPart` ele acompanha o jogador, e fazer isso no meio da animacao
-	arriscaria o quadro do estouro chegar antes de o asset estar no lugar. Em troca,
-	quem pendura deve o estouro **ou** a faxina -- e por isso a animacao que termina
-	sem passar pelo marcador leva o clone junto.
+	The VFX clone is created **now**, on use, not at the marker: hung on the
+	`HumanoidRootPart` it follows the player, and doing it mid-animation would risk the
+	burst frame arriving before the asset is in place. In exchange, whoever hangs it owes
+	the burst **or** the cleanup, which is why an animation that ends without passing the
+	marker takes the clone with it.
 
-	Isto e o gesto **de quem usou**, na tela dele: o `RoundCardUsed` sai do servidor
-	so para ele. Quem esta assistindo recebe `RoundCardVisual` e cai no
-	`_playRemoteUseVisual` logo abaixo, que e a metade que falta na tela dos outros --
-	a animacao e a trava ja chegam la sozinhas.
+	This is the **user's** gesture, on their screen: the server sends `RoundCardUsed` only
+	to them. Watchers receive `RoundCardVisual` and land in `_playRemoteUseVisual` just
+	below, which is the missing half on the others' screens; the animation and the lock
+	already arrive there on their own.
 ]=]
 function RoundCardShopController:_playUseVisual(cardId : any)
 	local definition = RoundCardConfig.Get(cardId)
@@ -1016,7 +1012,7 @@ function RoundCardShopController:_playUseVisual(cardId : any)
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
 	if not animator or not visual.Animation then
-		warn(`[RoundCardShopController]: a carta '{tostring(cardId)}' tem Visual, mas o personagem nao tem Animator (ou falta o AnimationId).`)
+		log:StudioWarn(`card '{tostring(cardId)}' has a Visual, but the character has no Animator (or the AnimationId is missing).`)
 		return
 	end
 
@@ -1024,10 +1020,9 @@ function RoundCardShopController:_playUseVisual(cardId : any)
 	local clone = vfx and vfx:AttachAsset(visual.VFX, root)
 
 	--[[
-		A `Animation` fica solta de proposito: quem a segura viva e a propria track,
-		e as duas somem juntas quando a animacao termina e ninguem mais aponta para
-		ela. Destrui-la aqui seria arrancar a referencia debaixo da track que acabou
-		de nascer dela.
+		The `Animation` stays loose on purpose: the track itself keeps it alive, and both go
+		away together when the animation ends and nothing else points at it. Destroying it
+		here would pull the reference out from under the track just created from it.
 	]]
 	local animation = Instance.new("Animation")
 	animation.AnimationId = visual.Animation
@@ -1035,10 +1030,10 @@ function RoundCardShopController:_playUseVisual(cardId : any)
 	local track = animator:LoadAnimation(animation)
 
 	--[[
-		`Action` para o gesto passar por cima da idle do personagem. A prioridade vem
-		assada no asset, e uma exportada como `Idle` ou `Core` empataria com a
-		animacao que o `Animate` padrao ja esta tocando -- a carta seria usada e o
-		boneco nao faria nada.
+		`Action` so the gesture plays over the character's idle. The priority comes baked in
+		the asset, and one exported as `Idle` or `Core` would tie with the animation the
+		default `Animate` is already playing: the card would be used and the model would do
+		nothing.
 	]]
 	track.Priority = Enum.AnimationPriority.Action
 
@@ -1046,33 +1041,33 @@ function RoundCardShopController:_playUseVisual(cardId : any)
 	local emitted = false
 
 	--[[
-		O jogador trava no lugar enquanto o gesto acontece: a carta para o tempo, e um
-		personagem andando por baixo da propria pose entregaria que nada parou.
-		Ancorar a `HumanoidRootPart` basta -- o resto do corpo vem pendurado nela.
+		The player locks in place while the gesture happens: the card stops time, and a
+		character walking under its own pose would give away that nothing stopped.
+		Anchoring the `HumanoidRootPart` is enough: the rest of the body hangs from it.
 
-		O estado anterior e lido, e nao presumido: ancorado ele ja podia estar por
-		outro motivo, e devolver um `false` escrito na mao destravaria o que nao era
-		nosso para destravar.
+		The previous state is read, not assumed: it could already be anchored for another
+		reason, and restoring a hand-written `false` would unlock what was not ours to
+		unlock.
 	]]
 	local wasAnchored = root.Anchored
 	root.Anchored = true
 
 	--[=[
-		O fim do gesto, de onde quer que ele venha: destrava o jogador, recolhe o que
-		sobrou e desliga as escutas.
+		The gesture's end, wherever it comes from: unlocks the player, collects what is left,
+		and disconnects the listeners.
 
-		Ele existe como funcao unica de proposito. Sao tres fins possiveis -- a
-		animacao terminou, a animacao foi cortada, a animacao nunca tocou -- e o
-		jogador **precisa** ser destravado nos tres. Deixar o `Anchored = false` em
-		um caminho so era a maneira de a partida dele acabar ali.
+		It is a single function on purpose. There are three possible ends (the animation
+		finished, the animation was cut, the animation never played) and the player **must**
+		be unlocked in all three. Leaving `Anchored = false` on one path only would be the
+		way for their match to end right there.
 	]=]
 	local done = false
 	local function finish()
 		if done then return end
 		done = true
 
-		-- O personagem pode ter morrido no meio: a peca ja nao esta em lugar nenhum,
-		-- e o proximo `Character` vem com a `HumanoidRootPart` dele, solta.
+		-- The character may have died meanwhile: the part is no longer anywhere,
+		-- and the next `Character` comes with its own, unanchored `HumanoidRootPart`.
 		if root.Parent then
 			root.Anchored = wasAnchored
 		end
@@ -1093,57 +1088,57 @@ function RoundCardShopController:_playUseVisual(cardId : any)
 		elseif parameter == MARKERS.VFX then
 			emitted = true
 
-			-- Daqui em diante a vida do clone e do proprio asset: o modulo tira o
-			-- prazo do tempo de vida das particulas dele.
+			-- From here on the clone's lifetime belongs to the asset itself: the module takes the
+			-- deadline from its particles' lifetime.
 			if vfx then
 				vfx:EmitAttached(clone)
 			end
 		end
 	end))
 
-	-- O fim normal: a animacao acabou, o jogador anda de novo.
+	-- The normal end: the animation finished, the player walks again.
 	maid:GiveTask(track.Stopped:Connect(finish))
 
 	track:Play()
 
 	--[=[
-		A rede de seguranca.
+		The safety net.
 
-		Uma animacao que nao carrega (id errado, asset sem permissao) nunca toca e,
-		por isso, nunca **para**: o `Stopped` nao vem, e sem prazo maximo o jogador
-		ficaria ancorado no lugar ate morrer. Preso alguns segundos e um defeito;
-		preso para sempre acaba a partida dele.
+		An animation that does not load (wrong id, asset without permission) never plays
+		and therefore never **stops**: `Stopped` does not come, and without a maximum
+		deadline the player would stay anchored in place until they died. Stuck for a few
+		seconds is a bug; stuck forever ends their match.
 
-		O prazo e folgado de proposito -- ele so precisa ser maior que a animacao
-		mais longa que uma carta venha a ter, e nunca cortar um gesto legitimo. Ele
-		tambem nao e cancelado quando a animacao termina antes: acordar e ver que o
-		`done` ja passou nao custa nada, e cancelar o fio de dentro dele mesmo seria
-		mata-lo no meio da propria faxina.
+		The deadline is generous on purpose: it only needs to be longer than the longest
+		animation a card may ever have, and never cut a legitimate gesture. It is also not
+		canceled when the animation ends first: waking and seeing that `done` already
+		happened costs nothing, and canceling the thread from inside itself would kill it
+		mid-cleanup.
 	]=]
 	task.delay(ANCHOR_TIMEOUT, finish)
 end
 
 --[=[
-	O mesmo gesto, visto de fora: o som e as particulas da carta que **outro** jogador
-	usou, no personagem dele.
+	The same gesture, seen from outside: the sound and particles of a card **another**
+	player used, on their character.
 
-	Duas metades chegam aqui sozinhas e nao sao refeitas. A **animacao** toca no
-	personagem de quem usou, e o `Animator` a replica para todo mundo -- carrega-la de
-	novo aqui poria duas tracks iguais no mesmo corpo. A **trava** e o mesmo caso: o
-	dono ancora a `HumanoidRootPart` que ele controla, e o personagem para de andar em
-	todas as telas por consequencia. O que nao atravessa e o som (que e local) e o VFX
-	(que e um clone feito no cliente), e e so isso que este caminho faz.
+	Two halves arrive here on their own and are not redone. The **animation** plays on the
+	user's character, and the `Animator` replicates it to everyone: loading it again here
+	would put two identical tracks on the same body. The **lock** is the same case: the
+	owner anchors the `HumanoidRootPart` they control, and the character stops walking on
+	every screen as a consequence. What does not cross is the sound (which is local) and
+	the VFX (which is a clone made on the client), and that is all this path does.
 
-	**O relogio aqui e o config, e nao o marcador.** O marcador de keyframe so chega
-	em quem carregou a track, e esta tela nao carregou nenhuma -- ela esta olhando uma
-	animacao replicada. `SoundDelay` e `EffectDelay` sao as copias dos instantes dos
-	dois marcadores, e o `CardShopService` as confere contra a animacao de verdade
-	quando sobe: e o mesmo numero que o servidor usa para cronometrar o congelamento,
-	entao as particulas caem no quadro em que os inimigos param, aqui como la.
+	**The clock here is the config, not the marker.** The keyframe marker only reaches
+	whoever loaded the track, and this screen loaded none: it is watching a replicated
+	animation. `SoundDelay` and `EffectDelay` are copies of the two markers' instants, and
+	`CardShopService` checks them against the real animation on startup: it is the same
+	number the server uses to time the freeze, so the particles land on the frame the
+	enemies stop, here as there.
 
-	O clone nasce agora e nao no estouro, pelo mesmo motivo do gesto do dono: pendurado
-	na raiz ele acompanha o jogador, e cria-lo no ultimo instante arriscaria o asset
-	chegar depois da hora.
+	The clone is created now and not at the burst, for the same reason as the owner's
+	gesture: hung on the root it follows the player, and creating it at the last instant
+	would risk the asset arriving late.
 ]=]
 function RoundCardShopController:_playRemoteUseVisual(cardId : any, user : Player?)
 	if not user or user == Player then return end
@@ -1157,12 +1152,12 @@ function RoundCardShopController:_playRemoteUseVisual(cardId : any, user : Playe
 	if not root or not root:IsA("BasePart") then return end
 
 	--[[
-		O som e da **sala**, e nao do personagem: ele toca em `SoundService`, sem
-		posicao. A carta congela os inimigos de todo mundo, e um som que sumisse com a
-		distancia diria que o efeito e de la, e nao daqui.
+		The sound belongs to the **room**, not the character: it plays in `SoundService`,
+		with no position. The card freezes everyone's enemies, and a sound fading with
+		distance would say the effect is over there, not here.
 
-		Por isso ele nao depende do clone nem do personagem continuar de pe: quem usou
-		pode morrer no meio do gesto, e o congelamento acontece do mesmo jeito.
+		That is why it does not depend on the clone or the character staying up: the user
+		may die mid-gesture, and the freeze happens anyway.
 	]]
 	if visual.Sound then
 		task.delay(visual.SoundDelay or visual.EffectDelay or 0, function()
@@ -1178,23 +1173,23 @@ function RoundCardShopController:_playRemoteUseVisual(cardId : any, user : Playe
 	if not clone then return end
 
 	task.delay(visual.EffectDelay or 0, function()
-		-- O personagem pode ter saido de cena no meio da espera, e o clone vai junto
-		-- com ele: nao ha onde estourar, e nao ha o que limpar.
+		-- The character may have left the scene during the wait, and the clone goes with
+		-- it: there is nowhere to burst, and nothing to clean up.
 		if not clone.Parent then return end
 
 		vfx:EmitAttached(clone)
 	end)
 end
 
---[[ A MIRA ]]
+--[[ AIMING ]]
 
 --[=[
-	O anel que segue o ponteiro enquanto a carta pede um lugar.
+	The ring that follows the pointer while the card asks for a spot.
 
-	E o mesmo modelo do circulo de alcance de uma torre selecionada, de proposito: o
-	jogador ja aprendeu que aquele desenho quer dizer "esta area". A escala sai do
-	diametro da part de dentro dele, do mesmo jeito que o `UnitPlacementController`
-	faz -- assim mexer no anel no Studio nao deixa o raio mentindo.
+	It is the same model as a selected tower's range circle, on purpose: the player
+	already learned that drawing means "this area". The scale comes from the diameter of
+	the part inside it, the same way `UnitPlacementController` does it: that way changing
+	the ring in Studio does not leave the radius lying.
 ]=]
 function RoundCardShopController:_buildRing(radius : number, color : Color3?) : Model?
 	local template : Instance? = UIAssets
@@ -1203,7 +1198,7 @@ function RoundCardShopController:_buildRing(radius : number, color : Color3?) : 
 	end
 
 	if not template or not template:IsA("Model") then
-		warn(`[RoundCardShopController]: nao achei o anel {table.concat(TARGETING.RingAsset, ".")} em Assets.UI; a mira fica sem circulo.`)
+		log:StudioWarn(`could not find ring {table.concat(TARGETING.RingAsset, ".")} in Assets.UI; targeting has no circle.`)
 		return nil
 	end
 
@@ -1217,11 +1212,11 @@ function RoundCardShopController:_buildRing(radius : number, color : Color3?) : 
 	for _, descendant in ring:GetDescendants() do
 		if descendant:IsA("BasePart") then
 			--[[
-				`Anchored` pelo mesmo motivo do anel de chao (ver
-				`CardModifierController:_drawZones`): o Workspace simula o que esta
-				pendurado na Camera, e uma Part solta cai e some sozinha. Este anel e
-				reposicionado a cada quadro, entao a queda seria menos visivel -- e mais
-				dificil de achar.
+				`Anchored` for the same reason as the ground ring (see
+				`CardModifierController:_drawZones`): the Workspace simulates what hangs from
+				the Camera, and a loose Part falls and vanishes on its own. This ring is
+				repositioned every frame, so the fall would be less visible, and harder to
+				find.
 			]]
 			descendant.Anchored = true
 			descendant.CanCollide = false
@@ -1241,15 +1236,15 @@ function RoundCardShopController:_buildRing(radius : number, color : Color3?) : 
 end
 
 --[=[
-	Pinta o anel da mira.
+	Paints the aiming ring.
 
-	E uma funcao a parte porque a cor do anel de area **muda no meio da mira**: ela
-	vira vermelha onde o lugar esta ocupado por outra area do mesmo jogador e volta ao
-	verde quando o cursor sai de la (ver `_updateTargeting`).
+	It is a separate function because the area ring's color **changes mid-aim**: it turns
+	red where the spot is taken by another area of the same player and back to green when
+	the cursor leaves it (see `_updateTargeting`).
 
-	A cor pedida e guardada no proprio Model, e a pintura sai fora quando ela nao mudou:
-	percorrer os descendentes do anel sessenta vezes por segundo para escrever a mesma
-	cor e trabalho que nao aparece na tela.
+	The requested color is stored on the Model itself, and painting bails out when it did
+	not change: walking the ring's descendants sixty times a second to write the same color
+	is work that does not show on screen.
 ]=]
 function RoundCardShopController:_paintRing(ring : Model, color : Color3)
 	if ring:GetAttribute("PaintedColor") == color then return end
@@ -1263,21 +1258,20 @@ function RoundCardShopController:_paintRing(ring : Model, color : Color3)
 end
 
 --[=[
-	Este lugar esta ocupado por outra area do **mesmo jogador**?
+	Is this spot taken by another area of the **same player**?
 
-	Vale so para o `Use.Area`: o segundo passo do Zippers tambem anda pelo chao, mas o
-	que decide o destino dele e o fantasma da torre, e nem ele nem a torre desenham
-	area nenhuma.
+	It only applies to `Use.Area`: Zippers' second step also moves over the ground, but
+	the tower's ghost decides its destination, and neither it nor the tower draws any area.
 
-	Quem responde e o `CardModifierController`, pela mesma conta que o servidor faz no
-	`FindZoneOverlap`. Sem ele (a lista ainda nao chegou), o lugar conta como livre: o
-	servidor confere de novo, e travar a carta por causa de um controller que nao subiu
-	seria pior do que um clique recusado.
+	`CardModifierController` answers, by the same math the server does in
+	`FindZoneOverlap`. Without it (the list has not arrived yet), the spot counts as free:
+	the server checks again, and locking the card over a controller that did not start
+	would be worse than a refused click.
 
-	Perguntado nos dois lugares que precisam da resposta -- a cor do anel, a cada
-	quadro, e o clique -- em vez de o clique reaproveitar o ultimo quadro desenhado: no
-	celular o primeiro toque **e** o primeiro quadro em que existe "onde o dedo esta", e
-	ali nao ha quadro anterior nenhum para consultar.
+	It is asked in both places that need the answer (the ring's color, every frame, and the
+	click) instead of the click reusing the last drawn frame: on mobile the first tap **is**
+	the first frame where "where the finger is" exists, and there is no previous frame to
+	consult.
 ]=]
 function RoundCardShopController:_blockedAt(cardId : string, ground : Vector3?) : boolean
 	if not ground then return false end
@@ -1289,11 +1283,11 @@ function RoundCardShopController:_blockedAt(cardId : string, ground : Vector3?) 
 end
 
 --[=[
-	O chao debaixo do ponteiro.
+	The ground under the pointer.
 
-	Devolve o ponto do mundo, ou nil quando o raio nao encosta em nada -- o ceu, a
-	beirada do mapa. Quem raia e o `UnitPlacementController`, que ja filtra o
-	personagem do proprio jogador: ele anda pelo mapa e taparia o chao atras dele.
+	Returns the world point, or nil when the ray touches nothing (the sky, the edge of the
+	map). `UnitPlacementController` casts the ray, and it already filters the player's own
+	character: it walks around the map and would hide the ground behind it.
 ]=]
 function RoundCardShopController:_groundAt(screenPosition : Vector2) : Vector3?
 	local placement = self.Controllers.UnitPlacementController
@@ -1305,20 +1299,20 @@ function RoundCardShopController:_groundAt(screenPosition : Vector2) : Vector3?
 end
 
 --[=[
-	Os modificadores que esta carta **criaria** se fosse usada agora, para a previa.
+	The modifiers this card **would** create if used now, for the preview.
 
-	Sao os mesmos registros do `RoundCardConfig` que o servidor poria no campo, com a
-	zona ja preenchida com o ponto do mapa onde o cursor esta -- e e de proposito que
-	seja a mesma lista: quem desenha o feedback e a mesma funcao que desenha o efeito
-	de verdade, entao o que o jogador le antes de soltar a carta e exatamente o que
-	ele vai ver depois.
+	They are the same `RoundCardConfig` records the server would put on the field, with the
+	zone already filled with the map point under the cursor, and being the same list is on
+	purpose: the function that draws the feedback is the same one that draws the real
+	effect, so what the player reads before releasing the card is exactly what they will
+	see afterward.
 
-	Os registros sao **copiados** antes de ganhar a zona: os do config sao a
-	declaracao da carta, e escrever a posicao do cursor neles deixaria o proximo uso
-	daquela carta nascendo com a zona da mira anterior.
+	The records are **copied** before getting the zone: the config's are the card's
+	declaration, and writing the cursor position into them would make that card's next use
+	start with the previous aim's zone.
 
-	Carta sem `Modifiers` (o Zippers, o Staff of Healing) devolve nil: nao ha buff nem
-	debuff para antecipar, e a mira dela continua so com o anel e o realce.
+	A card without `Modifiers` (Zippers, the Staff of Healing) returns nil: there is no buff
+	or debuff to anticipate, and its aiming keeps only the ring and the highlight.
 ]=]
 function RoundCardShopController:_previewRecords(cardId : string, position : Vector3?)
 	local definition = RoundCardConfig.Get(cardId)
@@ -1334,8 +1328,8 @@ function RoundCardShopController:_previewRecords(cardId : string, position : Vec
 		local copy = table.clone(record)
 
 		if record.Zone then
-			-- Registro que pede zona e ainda nao tem ponto nenhum viraria um buff
-			-- global na previa, que e o oposto do que um cajado de area promete.
+			-- A record that asks for a zone and has no point yet would become a global
+			-- buff in the preview, the opposite of what an area staff promises.
 			if not position then
 				return nil
 			end
@@ -1349,7 +1343,7 @@ function RoundCardShopController:_previewRecords(cardId : string, position : Vec
 	return preview
 end
 
---- Larga a previa, se houver uma no ar.
+--- Drops the preview, if one is up.
 function RoundCardShopController:_clearPreview()
 	local feedback = self.Controllers.WeatherFeedbackController
 	if feedback then
@@ -1363,10 +1357,10 @@ function RoundCardShopController:_clearPreview()
 end
 
 --[=[
-	Realca a torre debaixo do ponteiro, enquanto a carta espera uma.
+	Highlights the tower under the pointer while the card waits for one.
 
-	O realce e trocado, e nao redesenhado: passar o ponteiro por uma fileira de
-	torres criaria e destruiria um Highlight por quadro.
+	The highlight is moved, not redrawn: sweeping the pointer over a row of towers would
+	create and destroy a Highlight per frame.
 ]=]
 function RoundCardShopController:_hoverUnit(unitModel : Model?)
 	if self.HoverModel == unitModel then return end
@@ -1377,13 +1371,13 @@ function RoundCardShopController:_hoverUnit(unitModel : Model?)
 	if not unitModel then return end
 
 	--[[
-		Carta que mexe em estatistica nao ganha realce proprio: quem pinta a torre
-		debaixo do ponteiro nela e o `WeatherFeedbackController`, com **este mesmo
-		amarelo** (`Targeting.Colors.Unit`) mais os icones do que ela vai sentir. Dois
-		Highlights no mesmo modelo deixariam as duas cores brigando, e o dele diz mais.
+		A card that changes stats gets no highlight of its own: `WeatherFeedbackController`
+		paints the tower under the pointer for it, with **this same yellow**
+		(`Targeting.Colors.Unit`) plus icons for what it will feel. Two Highlights on the same
+		model would leave the two colors fighting, and its one says more.
 
-		Sobra o realce daqui para quem nao tem o que antecipar: o Zippers, que so muda
-		a torre de lugar.
+		The highlight here is left for cards with nothing to anticipate: Zippers, which only
+		moves the tower.
 	]]
 	if self.Targeting and self.Targeting.PreviewRecords then
 		return
@@ -1401,15 +1395,15 @@ function RoundCardShopController:_hoverUnit(unitModel : Model?)
 end
 
 --[=[
-	Comeca a mira de uma carta que pede alvo.
+	Starts aiming for a card that asks for a target.
 
-	Enquanto ela dura, o clique no mundo pertence a carta: o
-	`UnitPlacementController` para de selecionar torre (senao o mesmo clique faria
-	as duas coisas) e volta a selecionar quando a mira acaba, de que jeito for.
+	While it lasts, clicks in the world belong to the card: `UnitPlacementController` stops
+	selecting towers (or the same click would do both) and resumes when aiming ends,
+	however it ends.
 
-	`Move` (o Zippers) e os dois passos em fila: primeiro a torre, depois o destino.
-	Ele nao e um terceiro modo -- ele **e** os outros dois, um depois do outro, e por
-	isso o `Stage` e que manda no que a tela desenha, e nao o `Use` da carta.
+	`Move` (Zippers) is the two steps in sequence: first the tower, then the destination.
+	It is not a third mode: it **is** the other two, one after the other, which is why
+	`Stage` rules what the screen draws, not the card's `Use`.
 ]=]
 function RoundCardShopController:_beginTargeting(uid : string, cardId : string, use : string)
 	self:_stopTargeting()
@@ -1424,9 +1418,9 @@ function RoundCardShopController:_beginTargeting(uid : string, cardId : string, 
 	}
 
 	--[[
-		A tranca sobe agora e so cai no quadro seguinte ao fim da mira -- ver
-		`_stopTargeting`. O token e o que impede que a queda de uma mira anterior
-		destranque esta, que acabou de comecar.
+		The lock goes up now and only drops on the frame after aiming ends; see
+		`_stopTargeting`. The token keeps a previous aim's drop from unlocking this one,
+		which just started.
 	]]
 	self.LockToken += 1
 
@@ -1436,13 +1430,12 @@ function RoundCardShopController:_beginTargeting(uid : string, cardId : string, 
 	end
 
 	--[[
-		A carta passa a estar **na mao**, e a hotbar a desenha como desenha uma carta
-		de unidade equipada: ela cresce e as outras apagam. E o unico aviso de que a
-		mira esta aberta -- nao ha painel nem botao de cancelar, do mesmo jeito que
-		nao ha nenhum quando o jogador poe uma unidade na mao.
+		The card is now **in hand**, and the hotbar draws it as it draws an equipped unit
+		card: it grows and the others dim. It is the only sign that aiming is open: there is
+		no panel or cancel button, just as there is none when the player puts a unit in hand.
 
-		O `onCleared` e o caso em que a mao muda por fora daqui: o jogador clicou numa
-		carta de unidade, e a mira daquela carta de round nao tem mais dono.
+		`onCleared` is the case where the hand changes from outside: the player clicked a
+		unit card, and that round card's aim has no owner anymore.
 	]]
 	self:_deck("setSelectedRound", uid, function()
 		self:_stopTargeting()
@@ -1451,9 +1444,9 @@ function RoundCardShopController:_beginTargeting(uid : string, cardId : string, 
 	self:_playSound(CARD_SOUND)
 
 	--[[
-		A lista da previa e montada uma vez aqui, e o que muda a cada quadro e so a
-		posicao da zona dentro dela. Carta sem modificador (o Zippers) fica com nil, e
-		a mira dela nao antecipa nada -- nao ha o que antecipar.
+		The preview list is built once here, and what changes every frame is only the zone's
+		position inside it. A card without a modifier (Zippers) keeps nil, and its aiming
+		anticipates nothing: there is nothing to anticipate.
 	]]
 	self.Targeting.PreviewRecords = self:_previewRecords(cardId, Vector3.zero)
 
@@ -1470,16 +1463,16 @@ function RoundCardShopController:_beginTargeting(uid : string, cardId : string, 
 	end))
 
 	--[=[
-		Desistir pelo teclado.
+		Giving up by keyboard.
 
-		O botao direito ficou de fora de proposito: no celular ele nao existe, e no PC
-		ele e a camera -- quem gira a tela olhando onde por o anel cancelaria a carta
-		sem querer. A saida que vale em qualquer aparelho e clicar de novo na carta,
-		que e como se larga uma unidade equipada (ver `_requestUse`).
+		The right button is left out on purpose: it does not exist on mobile, and on PC it
+		is the camera: someone turning the view to find where to put the ring would cancel
+		the card by accident. The exit that works on any device is clicking the card again,
+		which is how an equipped unit is dropped (see `_requestUse`).
 
-		O `gameProcessedEvent` **nao** e filtrado no Esc de proposito: ele pode chegar
-		marcado como processado (o Roblox usa a mesma tecla), e uma mira da qual nao
-		se sai e pior do que uma mira que sai uma vez a mais.
+		`gameProcessedEvent` is **not** filtered for Esc on purpose: it may arrive marked as
+		processed (Roblox uses the same key), and an aim you cannot leave is worse than one
+		that leaves once too often.
 	]=]
 	self.TargetMaid:GiveTask(UserInputService.InputBegan:Connect(function(input : InputObject)
 		if input.KeyCode == Enum.KeyCode.Escape then
@@ -1488,23 +1481,22 @@ function RoundCardShopController:_beginTargeting(uid : string, cardId : string, 
 	end))
 end
 
---- Redesenha o que a mira mostra, no quadro: o anel no chao ou o realce na torre.
+--- Redraws what aiming shows, on the frame: the ring on the ground or the tower highlight.
 function RoundCardShopController:_updateTargeting()
 	local targeting = self.Targeting
 	if not targeting then return end
 
 	--[[
-		O segundo passo do Zippers e desenhado pelo `UnitPlacementController`: o
-		fantasma, o anel de alcance e o caminho pintado sao dele. Daqui nao sai mais
-		nada enquanto ele estiver no ar, senao seriam dois desenhos disputando o
-		mesmo ponteiro.
+		Zippers' second step is drawn by `UnitPlacementController`: the ghost, the range
+		ring, and the painted path are its own. Nothing else comes from here while it is up,
+		or there would be two drawings competing for the same pointer.
 	]]
 	if targeting.Placement then return end
 
 	local screenPosition = PointerUtil.getScreenPosition()
 
-	-- No celular, antes do primeiro toque, nao existe "onde o dedo esta": a mira
-	-- fica esperando em vez de desenhar no canto da tela.
+	-- On mobile, before the first tap, "where the finger is" does not exist: aiming
+	-- waits instead of drawing in the corner of the screen.
 	if not screenPosition then return end
 
 	local feedback = self.Controllers.WeatherFeedbackController
@@ -1516,9 +1508,9 @@ function RoundCardShopController:_updateTargeting()
 		self:_hoverUnit(unitModel)
 
 		--[[
-			A torre debaixo do ponteiro mostra, na propria cabeca, o que a carta faria
-			com ela. So na troca de torre: enquanto o ponteiro fica na mesma, nao ha nada
-			de novo para desenhar.
+			The tower under the pointer shows, over its own head, what the card would do to
+			it. Only on a tower change: while the pointer stays on the same one, there is
+			nothing new to draw.
 		]]
 		if feedback and targeting.PreviewUnit ~= unitModel then
 			targeting.PreviewUnit = unitModel
@@ -1532,14 +1524,13 @@ function RoundCardShopController:_updateTargeting()
 	local ground = self:_groundAt(screenPosition)
 	if not ground then return end
 
-	-- Vermelho onde o anel encostaria numa area que este jogador ja desenhou. Ver
-	-- `_blockedAt`, que o clique pergunta de novo.
+	-- Red where the ring would touch an area this player already drew. See
+	-- `_blockedAt`, which the click asks again.
 	local blocked = targeting.Stage == USE.Area and self:_blockedAt(targeting.CardId, ground)
 
 	--[[
-		O anel segue o chao debaixo do cursor. Ele pode nao existir (asset faltando), e
-		a previa continua valendo do mesmo jeito: o que decide onde a carta cai e o
-		ponto, e nao o desenho dele.
+		The ring follows the ground under the cursor. It may not exist (missing asset), and
+		the preview still applies: the point decides where the card lands, not its drawing.
 	]]
 	local ring = targeting.Ring
 	if ring and ring.Parent then
@@ -1548,13 +1539,13 @@ function RoundCardShopController:_updateTargeting()
 	end
 
 	--[[
-		Toda torre que o anel alcanca acende com o que ela vai sentir, e apaga quando o
-		anel sai de cima dela. E o que faz a decisao "onde por o cajado" ser tomada
-		olhando o mapa, e nao lendo a descricao da carta.
+		Every tower the ring reaches lights up with what it will feel, and goes dark when the
+		ring leaves it. That is what makes "where to put the staff" a decision made by
+		looking at the map, not by reading the card's description.
 
-		O `PREVIEW_STEP` e o freio: o cursor parado manda o mesmo ponto sessenta vezes
-		por segundo, e cada previa e uma varredura por todas as torres. Movimento menor
-		que ele nao muda quem esta dentro do anel.
+		`PREVIEW_STEP` is the brake: a still cursor sends the same point sixty times a
+		second, and each preview is a sweep over every tower. Movement smaller than it does
+		not change who is inside the ring.
 	]]
 	if not feedback then return end
 
@@ -1567,9 +1558,9 @@ function RoundCardShopController:_updateTargeting()
 	targeting.PreviewAt = ground
 
 	--[[
-		A zona e reescrita **no lugar**, e nao remontada: a lista foi clonada uma vez no
-		comeco da mira (ver `_beginTargeting`), e refaze-la a cada quadro alocaria uma
-		copia da carta inteira sessenta vezes por segundo para mudar tres numeros.
+		The zone is rewritten **in place**, not rebuilt: the list was cloned once at the
+		start of aiming (see `_beginTargeting`), and rebuilding it every frame would allocate
+		a copy of the whole card sixty times a second to change three numbers.
 	]]
 	for _, record in records do
 		if record.Zone then
@@ -1581,18 +1572,18 @@ function RoundCardShopController:_updateTargeting()
 end
 
 --[=[
-	O clique que escolhe.
+	The click that chooses.
 
-	Clique que nao acerta nada (o ceu, um lugar sem chao) **nao** cancela: ele
-	simplesmente nao vale. Cancelar ali faria um clique torto custar a carta -- e a
-	saida ja tem tres portas proprias (botao direito, Esc e o botao de cancelar).
+	A click that hits nothing (the sky, a spot with no ground) does **not** cancel: it just
+	does not count. Canceling there would make a crooked click cost the card, and the exit
+	already has its own doors (clicking the card again, and Esc).
 ]=]
 function RoundCardShopController:_confirmTarget(screenPosition : Vector2)
 	local targeting = self.Targeting
 	if not targeting then return end
 
-	-- Quem confirma o destino do Zippers e o proprio fantasma, pelo `OnConfirm` do
-	-- `_beginMovePlacement`. Este clique e o mesmo, e valeria duas vezes.
+	-- The ghost itself confirms Zippers' destination, through `_beginMovePlacement`'s
+	-- `OnConfirm`. This click is the same one, and would count twice.
 	if targeting.Placement then return end
 
 	if targeting.Stage == USE.Unit then
@@ -1607,8 +1598,8 @@ function RoundCardShopController:_confirmTarget(screenPosition : Vector2)
 			return
 		end
 
-		-- A torre escolhida: o segundo passo do Zippers e o posicionamento inteiro,
-		-- e nao um anel no chao. Ver `_beginMovePlacement`.
+		-- The chosen tower: Zippers' second step is the whole placement,
+		-- not a ring on the ground. See `_beginMovePlacement`.
 		targeting.UnitId = unitId
 		targeting.Stage = USE.Move
 
@@ -1623,13 +1614,13 @@ function RoundCardShopController:_confirmTarget(screenPosition : Vector2)
 	if not ground then return end
 
 	--[[
-		Clique no vermelho nao vale, e nao cancela: e a mesma regra do clique no ceu logo
-		acima. A carta continua na mao e a mira aberta, e o jogador move o cursor para
-		fora da area que ja esta no chao.
+		A click on red does not count, and does not cancel: the same rule as the click on
+		the sky just above. The card stays in hand and aiming open, and the player moves the
+		cursor out of the area already on the ground.
 
-		O servidor confere isto de novo por conta dele (ver `CardShopService:_checkTarget`).
-		Aqui e feedback, e nao a regra -- o que esta em jogo e a viagem de ida e volta de um
-		clique que ja se sabe recusado.
+		The server checks this again on its own (see `CardShopService:_checkTarget`). Here it
+		is feedback, not the rule: what is at stake is the round trip of a click already
+		known to be refused.
 	]]
 	if targeting.Stage == USE.Area and self:_blockedAt(targeting.CardId, ground) then
 		return
@@ -1639,29 +1630,28 @@ function RoundCardShopController:_confirmTarget(screenPosition : Vector2)
 end
 
 --[=[
-	O segundo passo do Zippers: escolher para onde a torre vai.
+	Zippers' second step: choosing where the tower goes.
 
-	Ele **e** o posicionamento de uma unidade, e nao uma mira parecida com ele. Quem
-	desenha e quem decide se o lugar serve e o `UnitPlacementController:visualize`,
-	o mesmo que larga uma torre nova -- o jogador ve o modelo da propria torre em
-	meio-tom, verde onde ela pode ficar e vermelho onde nao pode, com o anel do
-	alcance dela e o caminho pintado, e no celular o mesmo painel de confirmar.
+	It **is** a unit placement, not an aim that looks like one.
+	`UnitPlacementController:visualize` draws it and decides whether the spot works, the
+	same one that drops a new tower: the player sees their own tower's model in half-tone,
+	green where it can go and red where it cannot, with its range ring and the painted
+	path, and on mobile the same double tap.
 
-	Reaproveitar aquilo, em vez de repetir as conferencias aqui, e o ponto: o
-	destino do Zippers passa pelas mesmas regras de um posicionamento novo (fora do
-	caminho, sem obstaculo, longe das outras torres, sem ninguem em cima), e uma
-	segunda copia dessas regras divergiria da primeira no dia em que uma delas
-	mudasse -- que e o mesmo motivo de o `PlacementUtil` existir entre o cliente e o
-	servidor.
+	Reusing that, instead of repeating the checks here, is the point: Zippers' destination
+	goes through the same rules as a new placement (off the path, unobstructed, away from
+	other towers, nobody on top), and a second copy of those rules would diverge from the
+	first the day one of them changed, which is the same reason `PlacementUtil` exists
+	between client and server.
 
-	**A propria torre sai das contas** (`IgnoreModel`): ela continua de pe no lugar
-	velho durante a escolha, e sem isso ela obstruiria o proprio destino. E o que o
-	`ignoreEntry` do `UnitService:isSpotFree` ja faz do lado do servidor.
+	**The tower itself leaves the math** (`IgnoreModel`): it is still standing at the old
+	spot during the choice, and without this it would obstruct its own destination. That is
+	what `UnitService:isSpotFree`'s `ignoreEntry` already does on the server side.
 
-	**O giro vale**, como em qualquer posicionamento: o R gira o fantasma e o angulo
-	viaja junto com o destino. O fantasma comeca no giro que a torre ja tem, entao
-	quem so quer muda-la de lugar nao precisa fazer nada -- e quem quer virar a torre
-	para o outro lado do caminho consegue, sem vender e recomprar.
+	**Rotation counts**, as in any placement: R rotates the ghost and the angle travels with
+	the destination. The ghost starts at the tower's current rotation, so someone who only
+	wants to move it need not do anything, and someone who wants to turn the tower to the
+	other side of the path can, without selling and rebuying.
 ]=]
 function RoundCardShopController:_beginMovePlacement(unitModel : Model, unitId : string)
 	local targeting = self.Targeting
@@ -1681,13 +1671,13 @@ function RoundCardShopController:_beginMovePlacement(unitModel : Model, unitId :
 		Rotation = math.deg(yaw),
 
 		--[[
-			Vai o CFrame que o fantasma validou, aberto em ponto e angulo.
+			It sends the CFrame the ghost validated, split into point and angle.
 
-			O ponto e o do CFrame, e nao o chao debaixo do cursor: aquele ja e a altura
-			em que a unidade fica apoiada, medida da mesma forma que o `PlaceUnit` mede
-			para uma torre nova. O angulo e so o Y, em radianos, porque e o unico que o
-			fantasma gira -- mandar o CFrame inteiro daria ao cliente doze numeros para
-			mentir onde bastam um.
+			The point is the CFrame's, not the ground under the cursor: that is already the
+			height at which the unit rests, measured the same way `PlaceUnit` measures for a
+			new tower. The angle is only Y, in radians, because it is the only one the ghost
+			rotates: sending the whole CFrame would give the client twelve numbers to lie
+			with where one is enough.
 		]]
 		OnConfirm = function(cf : CFrame)
 			local _, spin = cf:ToEulerAnglesYXZ()
@@ -1701,14 +1691,14 @@ function RoundCardShopController:_beginMovePlacement(unitModel : Model, unitId :
 	})
 
 	--[[
-		O passo so vira "posicionamento" se o fantasma de fato subiu.
+		The step only becomes "placement" if the ghost actually came up.
 
-		`visualize` desiste em silencio em dois casos -- ja existe um fantasma no ar,
-		ou o modelo nao esta em `Assets.Units` --, e marcar o passo antes de saber
-		disso deixaria a carta num limbo: nada desenhado na tela, o clique sem dono
-		(o `_confirmTarget` ja teria saido pela porta do `Placement`) e so o Esc
-		como saida. Sem fantasma, a mira e desfeita e a carta volta inteira para a
-		mao -- ela so e gasta quando o servidor confirma.
+		`visualize` gives up silently in two cases (a ghost is already up, or the model is
+		not in `Assets.Units`), and marking the step before knowing that would leave the card
+		in limbo: nothing drawn on screen, the click with no owner (`_confirmTarget` would
+		already have left through the `Placement` door) and only Esc as a way out. With no
+		ghost, aiming is undone and the card returns whole to the hand: it is only spent when
+		the server confirms.
 	]]
 	targeting.Placement = placement.isPlacing == true
 
@@ -1717,7 +1707,7 @@ function RoundCardShopController:_beginMovePlacement(unitModel : Model, unitId :
 	end
 end
 
---- Recolhe o que a mira desenhou e devolve o clique ao posicionamento.
+--- Collects what aiming drew and returns clicks to placement.
 function RoundCardShopController:_stopTargeting()
 	if not self.Targeting then return end
 
@@ -1728,41 +1718,40 @@ function RoundCardShopController:_stopTargeting()
 	self.TargetMaid:DoCleaning()
 	self:_hoverUnit(nil)
 
-	-- As unidades voltam a mostrar o que elas de fato estao sentindo.
+	-- Units go back to showing what they are actually feeling.
 	self:_clearPreview()
 
-	-- A carta sai da mao: ela volta ao tamanho normal e as vizinhas acendem de volta.
+	-- The card leaves the hand: it returns to normal size and its neighbors light back up.
 	self:_deck("setSelectedRound", nil)
 
 	local placement = self.Controllers.UnitPlacementController
 	if not placement then return end
 
 	--[[
-		O fantasma do Zippers cai junto com a mira, seja qual for a saida: o destino
-		confirmado, o Esc, a carta clicada de novo ou a carta que o servidor tirou da
-		mao. `unequip` numa mao vazia nao faz nada, mas o teste evita derrubar um
-		fantasma que nao e nosso.
+		Zippers' ghost drops along with aiming, whatever the exit: the confirmed destination,
+		Esc, the card clicked again, or the card the server took out of the hand. `unequip`
+		on an empty hand does nothing, but the check avoids knocking down a ghost that is not
+		ours.
 	]]
 	if hadPlacement then
 		placement:unequip()
 	end
 
 	--[=[
-		A tranca do clique cai no **quadro seguinte**, e nao agora.
+		The click lock drops on the **next frame**, not now.
 
-		O clique que escolheu o alvo e o mesmo `InputBegan` que o `UnitPlacementController`
-		escuta para selecionar torre, e os dois sao escutas separadas do mesmo evento:
-		a ordem entre elas nao e promessa de lugar nenhum. Destrancando aqui, na
-		metade do processamento daquele clique, o handler do posicionamento podia
-		rodar depois -- e ai o mesmo clique que gastou a carta abria o card de upgrade
-		da torre escolhida.
+		The click that chose the target is the same `InputBegan` `UnitPlacementController`
+		listens to for selecting towers, and the two are separate listeners on the same
+		event: their order is not promised anywhere. Unlocking here, midway through
+		processing that click, the placement handler could run afterward, and then the same
+		click that spent the card would open the chosen tower's upgrade card.
 
-		Um quadro de atraso resolve porque ele e sempre depois de **todas** as escutas
-		daquele input. E o mesmo remedio do clique-fora da loja, que compara o
-		`InputObject` num `task.defer` pelo mesmo motivo.
+		One frame of delay solves it because it is always after **all** of that input's
+		listeners. It is the same remedy as the shop's click-outside, which compares the
+		`InputObject` in a `task.defer` for the same reason.
 
-		O token e a corrida do outro lado: uma carta nova mirada no mesmo quadro em que
-		a anterior terminou nao pode ser destrancada pela queda da anterior.
+		The token is the race on the other side: a new card aimed on the same frame the
+		previous one ended must not be unlocked by the previous one's drop.
 	]=]
 	self.LockToken += 1
 	local token = self.LockToken
@@ -1775,23 +1764,22 @@ function RoundCardShopController:_stopTargeting()
 end
 
 --[=[
-	Desistir da mira. A carta **continua na mao**: ela so e gasta quando o servidor
-	confirma o uso, e desistir de escolher um lugar nao e usar a carta.
+	Gives up aiming. The card **stays in hand**: it is only spent when the server confirms
+	the use, and giving up choosing a spot is not using the card.
 ]=]
 function RoundCardShopController:_cancelTargeting()
 	self:_stopTargeting()
 end
 
---[[ ESTADO DO SERVIDOR ]]
+--[[ SERVER STATE ]]
 
 --[=[
-	O estado inteiro da loja, do jeito que o servidor o ve: a oferta aberta e as
-	cartas na mao.
+	The shop's whole state, as the server sees it: the open offer and the cards in hand.
 
-	E ele quem reconstroi a tela de quem entrou no meio da partida, de quem
-	recarregou a interface e de quem teve uma compra recusada. Por isso a hotbar e
-	reconciliada nos dois sentidos -- o que o servidor tem e nao esta na tela entra,
-	e o que esta na tela e o servidor nao tem sai.
+	It rebuilds the screen of a player who joined mid-match, who reloaded the interface,
+	and who had a purchase refused. That is why the hotbar is reconciled both ways: what
+	the server has and is not on screen comes in, and what is on screen and the server
+	does not have leaves.
 ]=]
 function RoundCardShopController:_applyState(state)
 	if typeof(state) ~= "table" then return end
@@ -1803,16 +1791,15 @@ function RoundCardShopController:_applyState(state)
 			self:_addToDeck(entry.Uid, entry.Id)
 
 			--[[
-				A carta continua na mao do servidor, entao o uso que estava no ar nao
-				aconteceu: ele foi recusado (a torre escolhida foi vendida no meio, o
-				lugar nao servia) e o trinco tem que sair, senao aquela carta ficaria
-				para sempre sem responder ao clique.
+				The card is still in the server's hand, so the use that was in flight did not
+				happen: it was refused (the chosen tower was sold meanwhile, the spot did not
+				work) and the latch must come off, or that card would never respond to a click
+				again.
 
-				O preco disso e uma corrida estreita: um estado que chegue por outro
-				motivo (a loja abrindo numa wave nova) entre o pedido e a confirmacao
-				solta o trinco cedo, e um clique duplo bem no meio disso vira um segundo
-				pedido -- que o servidor recusa com uma linha no log. Uma carta morta na
-				mao e bem pior do que isso.
+				The price is a narrow race: a state arriving for another reason (the shop
+				opening on a new wave) between the request and the confirmation releases the
+				latch early, and a double click right then becomes a second request, which the
+				server refuses with a log line. A dead card in hand is much worse than that.
 			]]
 			self.UsePending[entry.Uid] = nil
 		end
@@ -1836,23 +1823,22 @@ function RoundCardShopController:_applyState(state)
 	end
 
 	--[[
-		O botao so acende para uma oferta que este jogador ainda nao abriu.
+		The button only lights for an offer this player has not opened yet.
 
-		Sao duas recusas em uma. Com a aba aberta ele esta recolhido de proposito, e
-		um estado que chegue do servidor no meio disso nao pode traze-lo de volta por
-		cima do escurecido. E, aberta a loja uma vez, o `token` daquela oferta fica
-		marcado no `OpenedToken`: os estados que o servidor reenvia depois (uma compra
-		recusada, um uso recusado, a interface recarregando) redesenham a hotbar sem
-		fazer o convite de novo. Quem acende a beirada e `token` diferente -- a
-		proxima wave de loja da dificuldade.
+		It is two refusals in one. With the tab open it is retracted on purpose, and a state
+		arriving from the server meanwhile must not bring it back over the darkening. And
+		once the shop is opened, that offer's `token` is marked in `OpenedToken`: the states
+		the server resends later (a refused purchase, a refused use, the interface reloading)
+		redraw the hotbar without making the invitation again. A different `token` lights the
+		edge: the difficulty's next shop wave.
 	]]
 	if not self.ShopOpen and offer.token ~= self.OpenedToken then
 		self:_showFrame()
 	end
 
-	-- Oferta nova com a aba ja aberta (a wave virou enquanto o jogador olhava as
-	-- cartas): as cartas na tela sao da oferta velha e precisam ser redesenhadas, e
-	-- e esta oferta, e nao mais a anterior, que a aba esta gastando.
+	-- A new offer with the tab already open (the wave turned while the player looked at the
+	-- cards): the cards on screen belong to the old offer and must be redrawn, and
+	-- it is this offer, not the previous one, the tab is spending.
 	if self.ShopOpen and not sameOffer then
 		self.OpenedToken = offer.token
 
@@ -1865,7 +1851,7 @@ end
 function RoundCardShopController:_bind() : boolean
 	local screen = PlayerGui:WaitForChild(GUI.ScreenGui, WAIT_TIMEOUT)
 	if not screen then
-		warn(`[RoundCardShopController]: nao achei a {GUI.ScreenGui}.`)
+		log:StudioWarn(`could not find {GUI.ScreenGui}.`)
 		return false
 	end
 
@@ -1873,7 +1859,7 @@ function RoundCardShopController:_bind() : boolean
 	local background = screen:WaitForChild(GUI.Background, WAIT_TIMEOUT)
 
 	if not frame or not background then
-		warn(`[RoundCardShopController]: a {GUI.ScreenGui} nao tem {GUI.Frame} e {GUI.Background}.`)
+		log:StudioWarn(`{GUI.ScreenGui} has no {GUI.Frame} and {GUI.Background}.`)
 		return false
 	end
 
@@ -1888,11 +1874,10 @@ function RoundCardShopController:_bind() : boolean
 	background.Visible = false
 
 	--[[
-		O escurecido passa a comer input: e o que impede que o clique dado com a loja
-		aberta atravesse a tela e vire uma torre colocada no chao atras dela. Quem
-		**escuta** o clique fora e o `UserInputService` (ver `_openShop`); isto aqui
-		e so a barreira. So vale enquanto ele esta visivel -- fechado, ele nao come
-		clique de ninguem.
+		The darkening starts eating input: that keeps a click made with the shop open from
+		going through the screen and becoming a tower placed on the ground behind it.
+		`UserInputService` **listens** for the click outside (see `_openShop`); this is only
+		the barrier. It only applies while visible: closed, it eats nobody's clicks.
 	]]
 	background.Active = true
 
@@ -1900,7 +1885,7 @@ function RoundCardShopController:_bind() : boolean
 	if button and button:IsA("GuiButton") then
 		self.Button = button
 
-		-- Lidos antes de qualquer animacao tocar: e para ca que o balanco volta.
+		-- Read before any animation plays: this is where the sway returns to.
 		self.ButtonPosition = button.Position
 		self.ButtonRotation = button.Rotation
 
@@ -1913,19 +1898,19 @@ function RoundCardShopController:_bind() : boolean
 			self:_openShop()
 		end)
 	else
-		warn(`[RoundCardShopController]: o {GUI.Frame} nao tem o botao {GUI.Button}.`)
+		log:StudioWarn(`{GUI.Frame} has no {GUI.Button} button.`)
 	end
 
 	return true
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function RoundCardShopController:construct()
 	--[[
-		Os `Listen` entram antes do bind porque o bind espera a GUI replicar: um
-		estado que chegasse durante a espera se perderia, e a loja so voltaria a
-		aparecer na proxima wave de loja.
+		The `Listen`s go in before the bind because the bind waits for the GUI to replicate:
+		a state arriving during that wait would be lost, and the shop would only reappear on
+		the next shop wave.
 	]]
 	Framework:Listen("RoundCardState", function(state)
 		self:_applyState(state)
@@ -1945,13 +1930,13 @@ function RoundCardShopController:construct()
 
 		self:_removeFromDeck(payload.uid)
 
-		-- O gesto sai na confirmacao, e nao no clique: quem gasta a carta e o
-		-- servidor, e um uso recusado nao pode deixar o personagem posando.
+		-- The gesture goes out on confirmation, not on the click: the server spends the card,
+		-- and a refused use must not leave the character posing.
 		self:_playUseVisual(payload.id)
 	end)
 
-	-- A mesma carta, usada por outra pessoa. O servidor so manda isto para quem **nao**
-	-- usou; quem usou ja esta no `RoundCardUsed` acima.
+	-- The same card, used by someone else. The server only sends this to those who did **not**
+	-- use it; the user is already in `RoundCardUsed` above.
 	Framework:Listen("RoundCardVisual", function(payload)
 		if typeof(payload) ~= "table" then return end
 
@@ -1959,15 +1944,15 @@ function RoundCardShopController:construct()
 	end)
 
 	--[[
-		Rede de seguranca: o round reiniciou com uma mira aberta. Sem isto o clique do
-		jogador ficaria trancado no posicionamento de uma partida que ja acabou.
+		Safety net: the round restarted with aiming open. Without this the player's click
+		would stay locked in the placement of a match that already ended.
 	]]
 	Framework:Listen("RoundRestarted", function()
 		self:_stopTargeting()
 	end)
 
-	-- O preco esta escrito na carta e o caixa da partida e quem paga: sem isto o
-	-- clique viraria um pedido que o servidor recusa.
+	-- The price is written on the card and match cash pays it: without this the
+	-- click would become a request the server refuses.
 	Framework:Listen("UpdateCash", function(amount : number)
 		self.Cash = amount or 0
 	end)
@@ -1978,8 +1963,8 @@ function RoundCardShopController:construct()
 			return
 		end
 
-		-- A oferta que ja estava aberta quando este cliente carregou, e as cartas
-		-- que ele ja tinha comprado.
+		-- The offer already open when this client loaded, and the cards
+		-- it had already bought.
 		Framework:Fire("RequestRoundCardState")
 	end)
 end
@@ -2000,23 +1985,23 @@ function RoundCardShopController:init()
 	self.FrameToken = 0
 	self.DismissToken = 0
 
-	-- Sobe a cada tranca e a cada destranca do clique no mundo. Ver `_stopTargeting`.
+	-- Goes up on every lock and unlock of clicks in the world. See `_stopTargeting`.
 	self.LockToken = 0
 
-	-- O `token` da oferta que o jogador ja abriu: o botao nao se oferece duas vezes
-	-- pela mesma. Nil ate a primeira loja da partida.
+	-- The `token` of the offer the player already opened: the button does not offer itself
+	-- twice for the same one. Nil until the match's first shop.
 	self.OpenedToken = nil
 
-	-- [uid] = Maid do wrapper que esta na hotbar.
+	-- [uid] = the Maid of the wrapper in the hotbar.
 	self.DeckCards = {}
 	self.UsePending = {}
 
-	-- As tres cartas na tela, na ordem em que cairam: e por ela que a saida escalona.
+	-- The three cards on screen, in the order they fell: the exit staggers by it.
 	self.CardEntries = {}
 
 	--[[
-		A mira de uma carta que pede alvo: qual carta, em que passo e o que ela ja
-		escolheu. Nil quando ninguem esta mirando.
+		A target-asking card's aim: which card, at what step, and what it has chosen so
+		far. Nil when nobody is aiming.
 	]]
 	self.Targeting = nil
 
@@ -2025,8 +2010,8 @@ function RoundCardShopController:init()
 	self.ShopMaid = Maid.new()
 	self.IdleMaid = Maid.new()
 
-	-- O que a mira desenhou (o anel, as escutas) e o realce da torre sob o ponteiro.
-	-- Separados porque o realce troca a cada torre, e o resto so no fim da mira.
+	-- What aiming drew (the ring, the listeners) and the highlight of the tower under the pointer.
+	-- Separate because the highlight changes per tower, and the rest only at the end of aiming.
 	self.TargetMaid = Maid.new()
 	self.HoverMaid = Maid.new()
 

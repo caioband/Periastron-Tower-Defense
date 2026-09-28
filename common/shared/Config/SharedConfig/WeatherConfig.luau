@@ -1,216 +1,216 @@
 --[[
-	Climas.
+	Weathers.
 
-	Um clima é um Model em `ReplicatedStorage.Shared.Assets.Weathers`:
+	A weather is a Model in `ReplicatedStorage.Shared.Assets.Weathers`:
 
 		Assets.Weathers
 		├── Snow                  (Model, tag "AreaWeather")
-		│   ├── Part              (Part com os ParticleEmitters)
-		│   └── Lighting          (Folder — preset do LightingService)
+		│   ├── Part              (Part with the ParticleEmitters)
+		│   └── Lighting          (Folder: LightingService preset)
 		└── Rain                  (Model, tags "AreaWeather" + "SkyWeather")
-			├── Part              (tag "SkyWeather"  — a camada de nuvem)
-			├── Part              (tag "AreaWeather" — a chuva na área jogável)
+			├── Part              (tag "SkyWeather":  the cloud layer)
+			├── Part              (tag "AreaWeather": the rain over the play area)
 			└── Lighting          (Folder)
 
-	A **tag** diz como cada Part é encaixada no mapa. Um clima pode ter os dois
-	tipos ao mesmo tempo: aí o Model leva as duas tags e **cada Part diz a sua**.
-	Clima de um tipo só não precisa marcar nada nas Parts — a tag do Model vale para
-	todas elas, que é como os climas antigos continuam funcionando.
+	The **tag** says how each Part is fitted to the map. A weather can have both
+	kinds at once: then the Model carries both tags and **each Part states its own**.
+	A single-kind weather does not need to tag its Parts: the Model's tag applies to
+	all of them.
 
-	A pasta `Lighting` é um preset no mesmo formato de `Assets.Lighting` (atributos
-	= propriedades do Lighting, filhos = instâncias). O `WeatherService` registra
-	essa pasta como preset e aplica pelo `LightingService`, então a troca de clima
-	entra na mesma transição interpolada de qualquer outra troca de iluminação.
+	The `Lighting` folder is a preset in the same format as `Assets.Lighting`
+	(attributes = Lighting properties, children = instances). `WeatherService`
+	registers it as a preset and applies it through `LightingService`, so a weather
+	change goes through the same interpolated transition as any other lighting change.
 
-	Fica em `common/` porque as duas places montam o Weathers.
+	It lives in `common/` because both places mount Weathers.
+
+	See docs/common/weather.md.
 ]]
 
 local WeatherConfig = {}
 
--- Onde os climas moram, a partir de `ReplicatedStorage`.
+-- Where weathers live, starting from `ReplicatedStorage`.
 WeatherConfig.AssetsPath = { "Shared", "Assets", "Weathers" }
 
 --[[
-	Como cada Part do clima é encaixada no mapa:
+	How each weather Part is fitted to the map:
 
-	- `Area`: vira a caixa do mapa. Neblina, neve — coisa que acontece *dentro* da
-	  área jogável.
-	- `Sky`: fica X e Z do tamanho do mapa e sobe para um offset acima do pico. A
-	  altura (Y da Part) é a autorada, porque é a espessura da camada, não a
-	  extensão dela.
+	- `Area`: becomes the map box. Fog, snow: things that happen *inside* the play
+	  area.
+	- `Sky`: takes the map's X and Z size and rises to an offset above the peak. The
+	  height (the Part's Y) is the authored one, because it is the layer's thickness,
+	  not its extent.
 
-	As duas valem tanto no **Model** quanto em cada **Part**, e a da Part manda:
+	Both apply to the **Model** and to each **Part**, and the Part's tag wins:
 
-	- Model com uma tag só e Parts sem tag: todas as Parts são daquele tipo. É como
-	  os climas de um tipo só são autorados, e como todos eram antes de existir
-	  clima misto.
-	- Model com as duas tags: cada Part precisa dizer a sua, senão não há como
-	  adivinhar em qual das duas caixas ela entra — a Part sem tag é recusada com
-	  aviso, e o resto do clima entra normalmente.
+	- Model with a single tag and untagged Parts: every Part is of that kind. This is
+	  how single-kind weathers are authored.
+	- Model with both tags: each Part must state its own, or there is no way to guess
+	  which of the two boxes it goes in. An untagged Part is rejected with a warning,
+	  and the rest of the weather loads normally.
 
-	Model sem nenhuma das duas tags é recusado inteiro — é mais fácil de achar do
-	que um clima que entra e não encaixa em nada.
+	A Model with neither tag is rejected entirely: that is easier to spot than a
+	weather that loads and fits nothing.
 
-	As Parts não precisam ter nomes diferentes: o `Rain` tem duas chamadas `Part`, e
-	quem as separa é a tag, não o nome.
+	Parts do not need distinct names: `Rain` has two called `Part`, and the tag
+	separates them, not the name.
 ]]
 WeatherConfig.Tags = {
 	Area = "AreaWeather",
 	Sky = "SkyWeather",
 }
 
--- Quanto o clima de céu sobe acima do pico do mapa. Um Model pode trazer o
--- atributo `HeightOffset` para mandar no seu próprio valor.
+-- How far a sky weather rises above the map's peak. A Model can carry the
+-- `HeightOffset` attribute to set its own value.
 WeatherConfig.SkyHeightOffset = 20
 WeatherConfig.HeightOffsetAttribute = "HeightOffset"
 
 --[[
-	Part que o mapa traz dizendo onde ele fica.
+	A Part the map carries saying where it is.
 
-	Quando existe, ela manda — nos dois tipos de clima. É exata e não depende de
-	heurística nenhuma: o `Volcano` calculado dá 500x500 porque a água de fundo mora
-	dentro do `Terrain` dele, e a caixa autorada tem 147x109.
+	When present, it wins, for both weather kinds. It is exact and depends on no
+	heuristic: the computed box for `Volcano` is 500x500 because the background water
+	lives inside its `Terrain`, and the authored box is 147x109.
 
-	Só `Position` e `Size` são lidos; rotação é ignorada de propósito.
+	Only `Position` and `Size` are read; rotation is ignored on purpose.
 
-	O `BoundsFolders` e o `MaxPartFootprint` abaixo são o plano B, para mapa que
-	ainda não tenha a caixa.
+	`BoundsFolders` and `MaxPartFootprint` below are the fallback, for a map that does
+	not have the box yet.
 ]]
 WeatherConfig.BoundsPartName = "BoundingBox"
 
 --[[
-	Quais subpastas do mapa contam para a caixa.
+	Which map subfolders count toward the box.
 
-	Não é o mapa inteiro de propósito. `Locked` guarda o cenário de fundo — um chão
-	de 2047 studs no Farm, uma água de 2033x2048 no Mountain — e medir isso junto
-	daria uma caixa 10x a área jogável, espalhando as partículas até sumirem. O
-	`Terrain` do Farm tem 93x103, e a Part autorada do Snow tem 100x100: é essa a
-	escala que os climas foram feitos para cobrir.
+	Not the whole map, on purpose. `Locked` holds the background scenery (a
+	2047-stud floor on Farm, 2033x2048 water on Mountain), and measuring it too would
+	give a box 10x the play area, spreading the particles until they vanish. Farm's
+	`Terrain` is 93x103, and Snow's authored Part is 100x100: that is the scale the
+	weathers were made to cover.
 
-	Mapa que não tenha nenhuma destas pastas cai para a caixa do mapa inteiro.
+	A map with none of these folders falls back to the whole map's box.
 
-	Vale só para `AreaWeather`. O `SkyWeather` mede o mapa inteiro de propósito:
-	a camada de céu cobre tudo que se vê, o chão de fundo incluído.
+	Applies only to `AreaWeather`. `SkyWeather` measures the whole map on purpose:
+	the sky layer covers everything visible, background floor included.
 ]]
 WeatherConfig.BoundsFolders = { "Terrain", "Path" }
 
 --[[
-	Part maior que isto em X ou Z não conta para a caixa.
+	A Part larger than this in X or Z does not count toward the box.
 
-	As pastas acima não bastam: o `Snowy` tem duas parts `Ice` de 2048x0x2048 dentro
-	do próprio `Terrain`, e o `Volcano` guarda a água de 2048x0x2048 lá também (ele
-	nem tem `Locked`). São planos de fundo — chão pintado até o horizonte, não área
-	jogável — e uma sozinha estica a caixa para 20x o resto do mapa.
+	The folders above are not enough: `Snowy` has two 2048x0x2048 `Ice` parts inside
+	its own `Terrain`, and `Volcano` keeps its 2048x0x2048 water there too (it has no
+	`Locked` at all). They are backdrops (ground painted to the horizon, not play
+	area), and a single one stretches the box to 20x the rest of the map.
 
-	512 separa as duas populações com folga: a maior geometria jogável dos mapas de
-	hoje tem ~150 studs, e o menor plano de fundo tem 2048. Sobrando nada depois do
-	corte, a caixa é medida de novo sem ele — um mapa pequeno feito de uma part só
-	continua funcionando.
+	512 separates the two populations with room to spare: the largest playable
+	geometry in today's maps is ~150 studs, and the smallest backdrop is 2048. If
+	nothing is left after the cut, the box is measured again without it, so a small
+	map made of a single part keeps working.
 
-	Como o `BoundsFolders`, vale só para `AreaWeather`.
+	Like `BoundsFolders`, applies only to `AreaWeather`.
 ]]
 WeatherConfig.MaxPartFootprint = 512
 
--- Model do mapa carregado, dentro do Workspace.
+-- The loaded map's Model, inside the Workspace.
 WeatherConfig.TargetName = "Map"
 
--- Onde o clone do clima em uso fica pendurado no Workspace.
+-- Where the active weather's clone hangs in the Workspace.
 WeatherConfig.ContainerName = "Weather"
 
--- Prefixo do preset que o clima registra em `Assets.Lighting`, pelo mesmo motivo
--- do `MapPrefix`: o nome de um clima não pode esbarrar num preset autorado.
+-- Prefix of the preset the weather registers in `Assets.Lighting`, for the same
+-- reason as `MapPrefix`: a weather name must not collide with an authored preset.
 WeatherConfig.PresetPrefix = "Weather_"
 
 --[[
-	Mecânica do clima de trovão: de tempos em tempos um raio cai em cima de uma
-	unidade posicionada.
+	The thunder weather's mechanic: every so often lightning strikes a placed unit.
 
-	Quem sorteia o alvo e dá o compasso é o `ThunderService` (servidor), para todo
-	mundo ver o mesmo raio na mesma unidade. Quem desenha é o `VFXController`, no
-	cliente — o módulo `ReplicatedStorage.vfx` só roda lá.
+	`ThunderService` (server) picks the target and keeps the beat, so everyone sees
+	the same strike on the same unit. `VFXController` draws it on the client, since
+	the `ReplicatedStorage.vfx` module only runs there.
 ]]
 --[[
-	Som de fundo por clima, tocado em loop pelo `WeatherController` enquanto ele
-	estiver ligado. `Sound` é o nome dentro de `SharedSounds.SFX` (a busca é
-	recursiva, então a subpasta não entra no nome).
+	Background sound per weather, looped by `WeatherController` while the weather is
+	on. `Sound` is the name inside `SharedSounds.SFX` (the lookup is recursive, so
+	the subfolder is not part of the name).
 
-	Clima que não estiver aqui simplesmente entra sem ambiente.
+	A weather not listed here simply has no ambience.
 ]]
 WeatherConfig.Ambience = {
 	Thunder = { Sound = "Thunderstorm", Fade = 2 },
 }
 
--- Key do `PlaySFX` do ambiente: uma só, para um clima derrubar o do anterior.
+-- The ambience's `PlaySFX` key: a single one, so a weather replaces the previous one's.
 WeatherConfig.AmbienceKey = "WeatherAmbience"
 
 WeatherConfig.Thunder = {
-	-- Nome do Model em `Assets.Weathers` que liga a mecânica.
+	-- The Model name in `Assets.Weathers` that turns the mechanic on.
 	Weather = "Thunder",
 
-	-- VFX em `Assets.VFX`: um Attachment (começo do raio) com um Attachment filho
-	-- de letra única (o fim). É assim que o addon `LightningBeams` reconhece um raio.
+	-- VFX in `Assets.VFX`: an Attachment (the bolt's start) with a single-letter child
+	-- Attachment (the end). That is how the `LightningBeams` addon recognizes a bolt.
 	Asset = "LightningBeam",
 
-	-- Intervalo entre raios.
+	-- Interval between strikes.
 	Interval = 5,
 
 	--[[
-		Chance de o raio escolher uma unidade em vez de um ponto qualquer da caixa.
+		Chance that a strike picks a unit instead of any point in the box.
 
-		É um sistema de pity: cada raio que cai no chão soma `UnitChanceStep`, e o
-		primeiro que acerta uma unidade devolve a chance para `UnitChance`. Com os
-		valores de hoje a chance sobe 0.15 → 0.30 → … → 1.00, então o sétimo raio é
-		garantido. Simulado em 20 mil sequências: média de 2,9 raios até acertar
-		(~15s no intervalo de 5s) e pior caso 7 (~35s).
+		It is a pity system: each strike that hits the ground adds `UnitChanceStep`,
+		and the first one that hits a unit resets the chance to `UnitChance`. With
+		today's values the chance rises 0.15 → 0.30 → … → 1.00, so the seventh strike
+		is guaranteed. Simulated over 20 thousand sequences: an average of 2.9 strikes
+		until a hit (~15s at the 5s interval) and a worst case of 7 (~35s).
 
-		A chance não sobe quando não há unidade nenhuma no mapa: o pity conta raio que
-		*poderia* ter acertado e não acertou, não raio que não tinha alvo.
+		The chance does not rise when there are no units on the map: pity counts
+		strikes that *could* have hit and did not, not strikes that had no target.
 	]]
 	UnitChance = 0.15,
 	UnitChanceStep = 0.15,
 	MaxUnitChance = 1,
 
 	--[[
-		De onde o raio sai, quando não dá para usar a camada de nuvem.
+		Where the bolt starts when the cloud layer cannot be used.
 
-		O normal é a origem ser a própria Part do clima em `workspace.Weather` — o
-		raio descendo de onde está a nuvem. Sem ela, cai para esta altura acima do pé
-		da unidade.
+		Normally the origin is the weather's own Part in `workspace.Weather`, the bolt
+		coming down from where the cloud is. Without it, it falls back to this height
+		above the unit's feet.
 	]]
 	StrikeHeight = 90,
 
-	-- Margem depois do `Duration` do asset antes de destruir o clone.
+	-- Margin after the asset's `Duration` before destroying the clone.
 	Cleanup = 3,
 
 	--[[
-		Estouro do raio: um clone de `SharedSounds.SFX.Thunders.Thunder` por queda,
-		com fade no fim para a cauda não cortar seca. Sem `Key`, de propósito — dois
-		raios seguidos podem se sobrepor.
+		The strike's crack: one clone of `SharedSounds.SFX.Thunders.Thunder` per strike,
+		with a fade at the end so the tail does not cut off abruptly. No `Key`, on
+		purpose: two strikes in a row may overlap.
 
-		O Sound nasce dentro do Attachment da ponta do raio, então é 3D e sai do ponto
-		de impacto. `StrikeVolume` existe por causa disso: o asset tem
-		`RollOffMinDistance = 10`, e com a câmera de tower defense longe do chão a
-		atenuação come boa parte do volume. É o multiplicador para compensar sem
-		mexer no asset.
+		The Sound is created inside the Attachment at the bolt's tip, so it is 3D and
+		comes from the impact point. `StrikeVolume` exists because of that: the asset
+		has `RollOffMinDistance = 10`, and with the tower defense camera far from the
+		ground, attenuation eats much of the volume. It is the multiplier that
+		compensates without touching the asset.
 	]]
 	StrikeSound = "Thunder",
 	StrikeFadeOut = 1,
 	StrikeVolume = 1,
 
 	--[[
-		O atordoamento que o raio deixa.
+		The stun the strike leaves.
 
-		`Direct` e de quem o raio pegou em cheio; `Chain` e de quem levou o arco que
-		saltou dele. A diferenca e grande de proposito — 20s tira a unidade da wave
-		inteira, e sem um valor bem menor no salto um raio bem colocado apagaria meio
-		mapa de uma vez.
+		`Direct` is for the unit the bolt hit squarely; `Chain` is for units hit by the
+		arc that jumped from it. The gap is large on purpose: 20s takes a unit out of
+		the whole wave, and without a much smaller value on the jump, a well-placed
+		strike would black out half the map at once.
 
-		`Radius` e o alcance do salto, medido do pe da unidade atingida. `Hops` e
-		quantas vezes o arco pode saltar: 1 significa que so quem esta perto do alvo
-		original pega, e ninguem propaga de novo. `MaxTargets` fecha o teto por salto.
+		`Radius` is the jump's reach, measured from the struck unit's feet. `Hops` is
+		how many times the arc may jump: 1 means only units near the original target
+		are hit, and none propagate again. `MaxTargets` caps each jump.
 
-		Unidade imune ao clima (ver `Effects.Thunder.Immune`) nao e atordoada nem
-		serve de ponte para o arco.
+		A unit immune to the weather (see `Effects.Thunder.Immune`) is neither stunned
+		nor used as a bridge for the arc.
 	]]
 	Stun = {
 		Direct = 20,
@@ -221,17 +221,17 @@ WeatherConfig.Thunder = {
 	},
 
 	--[[
-		O premio de levar um raio, para quem e do tipo `Electric` -- no lugar do
-		atordoamento: Electric tocada pelo raio (ou pelo arco) nunca para.
+		The reward for being struck, for `Electric` units, in place of the stun: an
+		Electric touched by the bolt (or the arc) never stops.
 
-		`Damage` multiplica o dano e `AttackSpeed` a cadencia: 1.5 nos dois e o "+50%
-		DMG / +50% SPD (WHEN STRUCK)" que o painel do indicador mostra. Quem divide o
-		cooldown pela cadencia e o `UnitUpgradeConfig:GetCooldown`, entao 1.5 aqui e um
-		terco de recarga a menos, e nao metade.
+		`Damage` multiplies damage and `AttackSpeed` attack speed: 1.5 on both is the
+		"+50% DMG / +50% SPD (WHEN STRUCK)" the indicator panel shows.
+		`UnitUpgradeConfig:GetCooldown` divides the cooldown by attack speed, so 1.5
+		here is a third less recharge, not half.
 
-		Fora isso o Electric ja ganha um bonus passivo enquanto o clima durar, que
-		mora em `Effects.Thunder.Units.Electric` — este aqui e o temporario, que so
-		entra quando o raio (ou o arco) encosta na unidade.
+		Besides this, Electric already gets a passive bonus while the weather lasts,
+		which lives in `Effects.Thunder.Units.Electric`; this one is the temporary
+		bonus that only applies when the bolt (or the arc) touches the unit.
 	]]
 	Charge = {
 		Damage = 1.5,
@@ -240,19 +240,19 @@ WeatherConfig.Thunder = {
 	},
 }
 
---[[ ============================ CLIMA DE PARTIDA ============================ ]]
+--[[ ============================ MATCH WEATHER ============================= ]]
 
 --[[
-	Quais climas cada mapa pode sortear.
+	Which weathers each map can roll.
 
-	A chave é o nome do mapa em `MapConfig.MAPS` — que é o mesmo nome da pasta em
-	`ServerStorage.Maps` — e o valor é a lista de Models de `Assets.Weathers` que
-	fazem sentido ali. Neve no deserto e tempestade de areia na caverna não entram
-	não por regra de código, mas porque não estão nesta lista.
+	The key is the map name in `MapConfig.MAPS` (the same as the folder name in
+	`ServerStorage.Maps`), and the value is the list of `Assets.Weathers` Models that
+	make sense there. Snow in the desert and a sandstorm in the cave are left out not
+	by a code rule, but because they are not in this list.
 
-	Mapa fora daqui (ou com a lista vazia) simplesmente não tem clima: o sorteio de
-	cada wave nem chega a rodar. É o comportamento certo para um mapa novo que
-	ainda não foi ambientado.
+	A map missing from here (or with an empty list) simply has no weather: the
+	per-wave roll never runs. That is the right behavior for a new map that has not
+	been themed yet.
 ]]
 WeatherConfig.MapPools = {
 	Farm = { "Fog", "Wind", "Thunder", "Rain" },
@@ -268,23 +268,24 @@ WeatherConfig.MapPools = {
 }
 
 --[[
-	O ritmo do clima dentro da partida.
+	The pace of weather within a match.
 
-	A cada wave que começa o `WeatherRoundService` joga um dado. Passando, ele não
-	liga o clima na hora: ele **avisa**, e o clima entra `LeadWaves` waves depois.
-	As três waves de antecedência são o ponto todo do sistema — o jogador vê o
-	aviso, sabe o que vem e tem tempo de trocar o posicionamento antes.
+	On every wave start, `WeatherRoundService` rolls a die. If it passes, it does not
+	turn the weather on right away: it **announces** it, and the weather arrives
+	`LeadWaves` waves later. The three waves of notice are the whole point of the
+	system: the player sees the warning, knows what is coming, and has time to
+	rearrange placement.
 
-	`Duration` é por quantas waves o clima fica no ar depois de entrar. Sai sozinho
-	no começo da wave seguinte à última — com 4, um clima que entra na wave 10 vale
-	da 10 à 13 e some na 14.
+	`Duration` is how many waves the weather stays on after it arrives. It leaves on
+	its own at the start of the wave after the last: with 4, a weather that arrives on
+	wave 10 lasts from 10 to 13 and is gone on 14.
 
-	`Chance` é só o piso: quem manda é o `WeatherChance` do preset de dificuldade
-	(`ServerScriptService.Config.Difficulty`), que sobe do Fácil para o Nightmare.
-	Este valor cobre preset sem o campo.
+	`Chance` is only the floor: the difficulty preset's `WeatherChance`
+	(`ServerScriptService.Config.Difficulty`) rules, rising from Easy to Nightmare.
+	This value covers presets without the field.
 
-	Enquanto houver clima agendado ou no ar, o dado não é jogado de novo — dois
-	climas ao mesmo tempo não existem, e um aviso por cima de outro só confundiria.
+	While a weather is scheduled or active, the die is not rolled again: two weathers
+	never run at the same time, and a warning on top of another would only confuse.
 ]]
 WeatherConfig.Round = {
 	LeadWaves = 3,
@@ -294,24 +295,24 @@ WeatherConfig.Round = {
 }
 
 --[[
-	A frase do aviso de clima.
+	The weather warning's sentence.
 
-	`Text` leva o nome do clima e quantas waves faltam; `TextOne` existe só para
-	não escrever "1 ROUNDS". `DisplayNames` é para quando o nome do Model não for o
-	nome que o jogador deve ler.
+	`Text` takes the weather name and how many waves remain; `TextOne` exists only to
+	avoid writing "1 ROUNDS". `DisplayNames` is for when the Model name is not the
+	name the player should read.
 
-	O label em si e a animação não estão aqui: são do `WarningConfig`, que o clima
-	divide com os outros avisos de tela (hoje, o restart do servidor).
+	The label itself and the animation are not here: they belong to `WarningConfig`,
+	which weather shares with the other screen warnings (today, the server restart).
 ]]
 WeatherConfig.Warning = {
 	Text = "WARNING! %s COMING IN %d ROUNDS",
 	TextOne = "WARNING! %s COMING NEXT ROUND",
 
 	--[[
-		O `Snow` do código é a "BLIZZARD" do jogo, e é este o nome que o jogador lê no
-		aviso e no painel do indicador. O nome do Model não muda: renomeá-lo levaria
-		junto o pool de cada mapa, o comando `weather` e as tabelas de efeito, para o
-		jogador ler a mesma palavra que já lia.
+		The code's `Snow` is the game's "BLIZZARD", and that is the name the player reads
+		in the warning and in the indicator panel. The Model name stays: renaming it
+		would drag along every map's pool, the `weather` command, and the effect tables,
+		just so the player reads the word they already read.
 	]]
 	DisplayNames = {
 		Snow = "BLIZZARD",
@@ -319,50 +320,52 @@ WeatherConfig.Warning = {
 }
 
 --[=[
-	O indicador de clima do HUD: o botão no canto e o painel que ele abre.
+	The HUD weather indicator: the corner button and the panel it opens.
 
-	São duas peças **irmãs** na `Interface`, e não uma dentro da outra:
+	They are two **sibling** pieces in `Interface`, not one inside the other:
 
 		Interface
-		├── WeatherButton        (ImageButton — o ícone do clima, e o interruptor)
-		│   └── New              (opcional — o selo de "abre isto aqui")
-		└── IndicatorWeather     (o painel, com um UIScale)
-			├── WeatherImg       (ImageLabel — o mesmo ícone do botão)
-			├── WeatherName      (TextLabel  — o nome do clima)
-			├── Duration         (TextLabel  — "WEATHER ENDS IN 3 WAVES")
-			└── Container        (UIListLayout — uma linha por efeito)
+		├── WeatherButton        (ImageButton: the weather icon, and the toggle)
+		│   └── New              (optional: the "open this" badge)
+		└── IndicatorWeather     (the panel, with a UIScale)
+			├── WeatherImg       (ImageLabel: the same icon as the button)
+			├── WeatherName      (TextLabel: the weather name)
+			├── Duration         (TextLabel: "WEATHER ENDS IN 3 WAVES")
+			└── Container        (UIListLayout: one line per effect)
 
-	O botão é um **interruptor**: aperta e o painel entra crescendo o `UIScale`,
-	aperta de novo e ele sai encolhendo. Nenhum tempo de leitura é contado por nós —
-	quem fecha é o jogador, quando terminou de ler.
+	The button is a **toggle**: press it and the panel grows in through its
+	`UIScale`, press again and it shrinks out. We count no reading time: the player
+	closes it when done reading.
 
-	**Sem clima no ar não há indicador**: o botão some e o painel fecha, mesmo aberto.
-	"Céu limpo" não é informação que valha um canto da tela ocupado — o indicador
-	existe para as waves em que há o que ler nele.
+	**With no active weather there is no indicator**: the button hides and the panel
+	closes, even if open. "Clear sky" is not worth occupying a corner of the screen;
+	the indicator exists for waves where there is something to read.
 
-	**O selo de novidade.** Quem nunca abriu o painel nesta partida não sabe que o
-	botão abre coisa alguma, então o `New` — a filha opcional do botão — acende junto
-	com ele e **insiste**: aparece em toda tempestade enquanto o painel não for aberto
-	uma vez. Aberto, ele se aposenta pelo resto da partida; a partida seguinte começa
-	sem essa memória, e o selo volta no primeiro clima dela.
+	**The new badge.** A player who has not opened the panel this match does not
+	know the button opens anything, so `New` (the button's optional child) lights up
+	with it and **insists**: it appears on every storm until the panel is opened once.
+	Once opened, it retires for the rest of the match; the next match starts without
+	that memory, and the badge returns on its first weather.
 
-	As linhas do `Container` são escritas pelo `RichTextController`, uma depois da
-	outra (ver `Line.Stagger`), e a cor dentro delas é automática: o número entra na
-	cor do que ele faz com o jogador, e o tipo de unidade na cor do tipo. Ver `Colors`
-	e `Details`.
+	The `Container` lines are written by `RichTextController`, one after another (see
+	`Line.Stagger`), and the color inside them is automatic: a number takes the color
+	of what it does to the player, and a unit type takes the type's color. See
+	`Colors` and `Details`.
+
+	See docs/game/weather-in-match.md.
 ]=]
 WeatherConfig.Indicator = {
 	--[[
-		Os nomes na árvore, a partir da `PlayerGui`.
+		The names in the tree, starting from `PlayerGui`.
 
-		`Line` é o **molde opcional** de uma linha: existindo dentro do `Container`, ele
-		é clonado uma vez por efeito e nunca aparece ele mesmo, e é dele que saem o
-		tamanho e as margens que o designer desenhou. Não existindo, o controller cria
-		um Frame de `Line.HeightScale` da altura do `Container`.
+		`Line` is the **optional template** for a line: when it exists inside
+		`Container`, it is cloned once per effect and never shown itself, and the
+		designer's size and margins come from it. When it does not exist, the
+		controller creates a Frame `Line.HeightScale` of the `Container`'s height.
 
-		A tipografia **não** sai do molde em nenhum dos dois casos: ela é do `Text`
-		aqui embaixo, porque quem desenha as letras é o renderizador de texto rico, e
-		não o TextLabel.
+		Typography does **not** come from the template in either case: it belongs to
+		`Text` below, because the rich text renderer draws the letters, not the
+		TextLabel.
 	]]
 	Gui = {
 		Screen = "Interface",
@@ -370,9 +373,9 @@ WeatherConfig.Indicator = {
 		Button = "WeatherButton",
 
 		--[[
-			O selo de novidade **dentro** do botão, e é opcional: não existindo, o
-			indicador funciona igual e ninguém avisa nada. Quem o acende e o apaga é o
-			`WeatherIndicatorController:refreshButton`.
+			The new badge **inside** the button, and it is optional: without it, the
+			indicator works the same and nothing announces anything.
+			`WeatherIndicatorController:refreshButton` lights and clears it.
 		]]
 		New = "New",
 		Image = "WeatherImg",
@@ -383,13 +386,13 @@ WeatherConfig.Indicator = {
 	},
 
 	--[[
-		O ícone de cada clima, no botão e no painel.
+		Each weather's icon, on the button and on the panel.
 
-		A chave é o nome do clima como o resto do jogo o escreve (o Model em
-		`Assets.Weathers`, o `WeatherConfig.Effects`), e não o nome comercial: o
-		"blizzard" do desenho é o `Snow` do código — ver `Warning.DisplayNames`.
+		The key is the weather name as the rest of the game writes it (the Model in
+		`Assets.Weathers`, `WeatherConfig.Effects`), not the display name: the art's
+		"blizzard" is the code's `Snow`; see `Warning.DisplayNames`.
 
-		Não há ícone de "sem clima" aqui de propósito: sem clima, o botão some.
+		There is no "no weather" icon on purpose: with no weather, the button hides.
 	]]
 	Icons = {
 		Rain = "rbxassetid://137668421407555",
@@ -402,29 +405,29 @@ WeatherConfig.Indicator = {
 	},
 
 	--[=[
-		A entrada e a saída do painel, escritas no `UIScale` dele.
+		The panel's entrance and exit, written to its `UIScale`.
 
-		O `UIScale` é o autorado, quando existe; sem ele o controller cria um. A
-		animação é de escala, e não de posição, justamente por isso: ela funciona em
-		qualquer canto em que o painel esteja ancorado, sem o controller ter de saber
-		de onde ele deveria vir.
+		The `UIScale` is the authored one when it exists; without it the controller
+		creates one. The animation is scale, not position, precisely for this: it works
+		in whatever corner the panel is anchored to, without the controller needing to
+		know where it should come from.
 
-		A entrada passa do ponto e volta (`Back`) e a saída não (`Quad`): o mesmo
-		exagero na volta faria o painel parecer que quicou para fora em vez de ter
-		sido fechado. A saída também é mais curta — fechar é resposta a um clique, e
-		clique esperando animação parece travamento.
+		The entrance overshoots and returns (`Back`) and the exit does not (`Quad`): the
+		same overshoot on the way out would make the panel look like it bounced out
+		instead of being closed. The exit is also shorter: closing answers a click, and
+		a click waiting on an animation feels like a freeze.
 
-		`Open` é o **plano B** da escala de repouso: quem manda é a escala autorada no
-		`UIScale` do painel, lida antes de a animação escrever nele. Painel desenhado em
-		0.8 abre em 0.8, e não estufa para 1 porque o controller achou que 1 fosse o
-		tamanho certo. Este valor cobre o `UIScale` que nasce em zero e o que o
-		controller cria.
+		`Open` is the **fallback** resting scale: the authored scale on the panel's
+		`UIScale` rules, read before the animation writes to it. A panel designed at 0.8
+		opens at 0.8 and does not puff up to 1 because the controller assumed 1 was the
+		right size. This value covers a `UIScale` that starts at zero and one the
+		controller creates.
 
-		**A lista de efeitos não é escrita durante a entrada**, e isso é parte do
-		contrato desta animação: o texto rico se dimensiona pelo tamanho que a caixa
-		tinha no instante em que ele entrou, e caixa medida no meio do crescimento dá
-		linha gigante — ou linha nenhuma, medindo zero. Quem trocar esta animação por
-		outra tem de manter isso: ver `writeLinesWhenSettled` no controller.
+		**The effect list is not written during the entrance**, and that is part of
+		this animation's contract: rich text sizes itself by the box size at the moment
+		it was written, and a box measured mid-growth gives a giant line, or no line at
+		all when it measures zero. Anyone replacing this animation must keep that; see
+		`writeLinesWhenSettled` in the controller.
 	]=]
 	Scale = {
 		Open = 1,
@@ -434,116 +437,119 @@ WeatherConfig.Indicator = {
 	},
 
 	--[=[
-		Quanto o painel cresce com a tela.
+		How much the panel grows with the screen.
 
-		O tamanho do painel é do designer, e o que está desenhado é em pixels: o mesmo
-		painel numa tela de 1080 e numa de 1440 ocupa a mesma quantidade de pixels, e por
-		isso **parece menor** na maior — ela tem mais pixels para a mesma área de visão. A
-		letra, que sai da caixa medida (ver `Line.Fit`), encolhe na mesma proporção.
+		The panel's size is the designer's, and what is drawn is in pixels: the same
+		panel on a 1080 screen and a 1440 one takes the same number of pixels, so it
+		**looks smaller** on the larger one, which has more pixels for the same field of
+		view. The text, which comes from the measured box (see `Line.Fit`), shrinks in
+		the same proportion.
 
-		A correção é um fator na escala de repouso do `UIScale`:
+		The fix is a factor on the `UIScale`'s resting scale:
 
-			fator = clamp(alturaDaTela / ReferenceHeight, Min, Max)
+			factor = clamp(screenHeight / ReferenceHeight, Min, Max)
 
-		Tudo dentro do painel cresce junto — a arte, o ícone, os labels e a letra das
-		linhas, que é medida da caixa depois de o fator já estar aplicado.
+		Everything inside the panel grows together: the art, the icon, the labels, and
+		the line text, which is measured from the box after the factor is applied.
 
-		`Min = 1` é o que segura o celular no lugar: tela menor que a referência **não
-		encolhe** o painel, porque lá ele já ocupa a fração certa da tela e encolher o
-		deixaria ilegível. `Max` existe porque o fator não pode crescer para sempre: numa
-		tela de 4K o painel dobraria de tamanho e passaria a competir com o jogo.
+		`Min = 1` is what keeps mobile in place: a screen smaller than the reference
+		**does not shrink** the panel, because there it already takes the right share of
+		the screen and shrinking would make it unreadable. `Max` exists because the
+		factor cannot grow forever: on a 4K screen the panel would double and start
+		competing with the game.
 
-		`ReferenceHeight` é a **altura** da tela em que o painel foi desenhado, em pixels —
-		1080 para um monitor 1080p, e não 1920, que é a largura dele. É o erro fácil de
-		cometer aqui, e ele é silencioso: referência grande demais joga o fator abaixo de 1
-		em qualquer tela, o `Min` o prende em 1, e os dois números param de fazer efeito.
+		`ReferenceHeight` is the screen **height** the panel was designed at, in pixels:
+		1080 for a 1080p monitor, not 1920, which is its width. It is the easy mistake
+		here, and it is silent: a reference that is too large pushes the factor below 1
+		on every screen, `Min` pins it at 1, and both numbers stop having any effect.
 
-		O valor certo é a altura da tela em que o painel **já está do tamanho que você
-		quer**. Se o celular está bom e o monitor está pequeno, a referência é a altura do
-		celular — é daí para cima que o painel cresce. O print do Studio (ver
-		`indicatorPrint` no controller) mostra a altura de cada tela e o fator que saiu
-		dela, que é o jeito de descobrir os dois números em vez de tentar.
+		The right value is the screen height at which the panel **is already the size
+		you want**. If mobile looks right and the monitor looks small, the reference is
+		the mobile height: the panel grows from there up. The controller's Studio debug
+		log shows each screen's height and the resulting factor, which is how to find
+		both numbers instead of guessing.
 
-		O **botão** não entra nesta conta de propósito: o `UIScale` dele é onde o
-		`AnimatedButton` do `UILibraryController` escreve o hover e o aperto, e dois donos
-		na mesma propriedade dariam um botão que volta do hover no tamanho errado. Botão
-		que precise crescer com a tela cresce pelo `Size` dele, no Studio.
+		The **button** is left out of this math on purpose: its `UIScale` is where
+		`UILibraryController`'s `AnimatedButton` writes hover and press, and two owners
+		of the same property would give a button that returns from hover at the wrong
+		size. A button that needs to grow with the screen grows through its `Size`, in
+		Studio.
 	]=]
 	Responsive = {
 		ReferenceHeight = 720,
 
 		--[[
-			**Hoje desligado** (`Min` e `Max` iguais a 1): o painel está do tamanho certo em
-			todas as telas, e o que estava pequeno era a letra dentro dele — que tem a conta
-			dela em `Line`. Isto aqui fica como o botão para o dia em que for o painel que
-			estiver errado: `Max = 1.5` o deixa crescer até uma vez e meia acima da
-			referência.
+			**Currently off** (`Min` and `Max` equal to 1): the panel is the right size
+			on every screen, and what was small was the text inside it, which has its
+			own math in `Line`. This stays as the knob for the day the panel itself is
+			wrong: `Max = 1.5` lets it grow up to one and a half times the reference.
 		]]
 		Min = 1,
 		Max = 1,
 	},
 
 	--[=[
-		As linhas do `Container`.
+		The `Container` lines.
 
-		`Height` é a altura de uma linha em pixels, e vale só para o Frame que o
-		controller cria quando não há molde no Studio — com molde, a altura é a dele. O
-		espaço entre uma e outra é do `UIListLayout`, que é do designer nos dois casos.
+		`Height` is a line's height in pixels, and applies only to the Frame the
+		controller creates when there is no template in Studio; with a template, the
+		height is the template's. The spacing between lines belongs to the
+		`UIListLayout`, which is the designer's in both cases.
 
-		`Stagger` é o atraso entre o começo de uma linha e o da seguinte. É curto de
-		propósito: a lista inteira tem de estar escrita em menos de um segundo, senão
-		quem abriu o painel para conferir um número fica esperando a animação em vez de
-		lendo.
+		`Stagger` is the delay between the start of one line and the next. It is short
+		on purpose: the whole list must be written in under a second, or a player who
+		opened the panel to check a number ends up waiting on the animation instead of
+		reading.
 	]=]
 	Line = {
 		Stagger = 0.06,
 
 		--[=[
-			A altura de uma linha como **fração da altura do `Container`**, e não em pixels:
-			vale só para o Frame que o controller cria quando não há molde no Studio, e é
-			assim porque pixel não é responsivo — 22px num monitor é um quinto do painel, e
-			no celular é metade dele.
+			A line's height as a **fraction of the `Container`'s height**, not in
+			pixels: it applies only to the Frame the controller creates when there is no
+			template in Studio, and it is a fraction because pixels are not responsive:
+			22px on a monitor is a fifth of the panel, and on mobile it is half.
 
-			0.2 dá cinco linhas enchendo a caixa, que é o maior clima de hoje (Drought e
-			Blizzard). Clima de duas linhas ocupa 40% e o resto sobra, que é o certo: a
-			altura de uma linha não pode depender de quantas linhas o clima tem, senão a
-			letra muda de tamanho de clima para clima.
+			0.2 gives five lines filling the box, which is today's largest weather
+			(Drought and Blizzard). A two-line weather takes 40% and the rest stays
+			empty, which is right: a line's height must not depend on how many lines the
+			weather has, or the text would change size from weather to weather.
 		]=]
 		HeightScale = 0.2,
 
 		--[=[
-			Quanto se espera uma peça ter tamanho **estável** na tela antes de escrever
-			nela de qualquer jeito.
+			How long to wait for a piece to have a **stable** on-screen size before
+			writing to it anyway.
 
-			Peça criada agora só mede depois da passada de layout, e escrever antes disso
-			é o que fazia a primeira linha sair do tamanho errado. Esgotado o prazo, a
-			escrita acontece e o renderizador reclama no output — é a pista de que a peça
-			tem tamanho zero autorado ou um pai apagado.
+			A freshly created piece only measures after the layout pass, and writing
+			before that is what made the first line come out the wrong size. Once the
+			timeout runs out, the write happens and the renderer complains in the
+			output: the hint that the piece has an authored zero size or a hidden parent.
 		]=]
 		MeasureTimeout = 1,
 
 		--[=[
-			O tamanho da letra sai da **caixa medida**, e não de um número de pixels: é o
-			que faz a lista se parecer a mesma no monitor e no celular, onde o painel tem
-			uma fração dos pixels e uma letra de 12px ocuparia o dobro do espaço relativo.
+			The text size comes from the **measured box**, not from a pixel number: that
+			is what makes the list look the same on a monitor and on mobile, where the
+			panel has a fraction of the pixels and 12px text would take twice the
+			relative space.
 
-			Quem faz a conta é o `RichTextController:FitSize`, e é lá (em
-			`RichTextConfig.Fit`) que cada campo está explicado. O que se ajusta aqui é o
-			que é desta lista:
+			`RichTextController:FitSize` does the math, and each field is explained
+			there (in `RichTextConfig.Fit`). What is tuned here is specific to this list:
 
-			  1. `MaxRows = 2` porque `+50% ELEC UNIT DMG (WHEN STRUCK)` numa caixa estreita
-			     cabe em uma fileira só com uma letra que não se lê, e em duas fileiras com o
-			     dobro da largura disponível. Caixa larga e baixa continua escolhendo uma
-			     fileira sozinha, porque ali a altura é que limita;
-			  2. `WidthPerChar = 1` porque a Press Start 2P é quase monoespaçada — e isto é
-			     o plano B, para quando a medida de verdade falhar.
+			  1. `MaxRows = 2` because `+50% ELEC UNIT DMG (WHEN STRUCK)` in a narrow box
+			     fits on one row only with unreadable text, and on two rows with twice
+			     the available width. A wide, short box still picks one row on its own,
+			     because there the height is the limit;
+			  2. `WidthPerChar = 1` because Press Start 2P is nearly monospaced, and
+			     this is the fallback for when the real measurement fails.
 
-			A conta vale para a lista inteira, e não por linha: o controller mede a primeira
-			peça com a **frase mais comprida** e o tamanho vale para todas, porque lista com
-			uma tipografia por linha parece defeito.
+			The math applies to the whole list, not per line: the controller measures
+			the first piece with the **longest sentence** and the size applies to all,
+			because a list with a different font size per line looks broken.
 
-			No Studio, a linha do `[RichTextController]` no output diz qual das duas paredes
-			mandou no tamanho — sem ela, ajustar isto aqui é tentativa e erro.
+			In Studio, the `[RichTextController]` line in the output says which of the
+			two walls set the size; without it, tuning this is trial and error.
 		]=]
 		Fit = {
 			TextRatio = 0.9,
@@ -553,26 +559,26 @@ WeatherConfig.Indicator = {
 		},
 
 		--[[
-			Quanto se espera a tela parar de mudar antes de reescrever a lista na medida
-			nova (rotação do celular, arraste da janela). Sem esta pausa, um arraste
-			recomeçaria a animação de digitação a cada quadro.
+			How long to wait for the screen to stop changing before rewriting the list
+			at the new measurement (phone rotation, window drag). Without this pause, a
+			drag would restart the typing animation every frame.
 		]]
 		ResizeDebounce = 0.2,
 	},
 
 	--[=[
-		Como as linhas são escritas. Vai inteiro para o `RichTextController`, então
-		qualquer opção dele cabe aqui.
+		How the lines are written. It goes whole to `RichTextController`, so any of its
+		options fits here.
 
-		**`Size` não está aqui de propósito**: o tamanho da letra é medido da caixa a
-		cada escrita (ver `Line.Fit`), e um número fixo aqui seria o mesmo pixel no
-		monitor e no celular. Quem quiser letra maior ou menor mexe na proporção, não
-		aqui.
+		**`Size` is not here on purpose**: the text size is measured from the box on
+		every write (see `Line.Fit`), and a fixed number here would be the same pixel
+		size on a monitor and on mobile. To make text larger or smaller, change the
+		proportion, not this.
 
-		**`Fit` também não**, pelo mesmo motivo de sempre: ligado aqui, cada linha se
-		mediria pela própria frase e a lista sairia com uma tipografia por linha. O
-		controller chama o `FitSize` uma vez, com `Line.Fit`, e passa o tamanho pronto
-		para todas.
+		**Neither is `Fit`**, for the usual reason: turned on here, each line would
+		measure itself by its own sentence and the list would come out with a
+		different font size per line. The controller calls `FitSize` once, with
+		`Line.Fit`, and passes the resulting size to all of them.
 	]=]
 	Text = {
 		Font = "rbxasset://fonts/families/PressStart2P.json",
@@ -585,20 +591,21 @@ WeatherConfig.Indicator = {
 	},
 
 	--[=[
-		Os dois labels do topo do painel: o nome do clima e o prazo.
+		The two labels at the top of the panel: the weather name and the time left.
 
-		Eles são texto comum, e a tipografia deles é do designer — este controller só
-		escreve a frase. O que ele faz por responsividade é ligar o `TextScaled` deles e
-		**travar o teto no tamanho autorado**, com um `UITextSizeConstraint`: no monitor a
-		letra fica do tamanho que foi desenhada, e no celular ela encolhe com o label em
-		vez de estourar a caixa.
+		They are plain text, and their typography is the designer's: this controller
+		only writes the sentence. What it does for responsiveness is turn on their
+		`TextScaled` and **cap it at the authored size** with a
+		`UITextSizeConstraint`: on a monitor the text stays at the size it was
+		designed at, and on mobile it shrinks with the label instead of overflowing
+		the box.
 
-		Label que já venha com `TextScaled` ligado do Studio não é tocado: aí o designer
-		já resolveu o tamanho dele, e o `TextSize` autorado não quer dizer mais nada —
-		usá-lo de teto cravaria a letra no 14 que ninguém escolheu.
+		A label that already comes from Studio with `TextScaled` on is not touched: the
+		designer already settled its size, and the authored `TextSize` no longer means
+		anything; using it as a cap would pin the text at a 14 nobody chose.
 
-		`Scale = false` devolve os dois ao que o Studio disser, para o dia em que a arte
-		quiser mandar sozinha.
+		`Scale = false` hands both back to whatever Studio says, for the day the art
+		wants full control.
 	]=]
 	Labels = {
 		Scale = true,
@@ -606,29 +613,29 @@ WeatherConfig.Indicator = {
 	},
 
 	--[[
-		A linha do `Duration`: quantas waves o clima ainda vale, contando a que está
-		rodando. `EndsOne` existe pelo mesmo motivo do `Warning.TextOne` — para não
-		escrever "1 WAVES".
+		The `Duration` line: how many waves the weather still lasts, counting the one
+		in progress. `EndsOne` exists for the same reason as `Warning.TextOne`: to
+		avoid writing "1 WAVES".
 
-		Clima ligado na mão (o comando `weather`) não tem prazo nenhum, e aí o label
-		simplesmente não aparece: melhor um painel sem a linha que uma promessa de fim
-		que ninguém vai cumprir.
+		A weather turned on by hand (the `weather` command) has no end, and then the
+		label simply does not appear: better a panel without the line than a promise
+		of an end nobody will keep.
 	]]
 	Ends = "WEATHER ENDS IN %d WAVES",
 	EndsOne = "WEATHER ENDS IN 1 WAVE",
 
 	--[=[
-		As cores dentro de uma linha, em `r,g,b` — o formato que o `[color=...]` do
-		texto rico entende.
+		The colors inside a line, in `r,g,b`: the format rich text's `[color=...]`
+		understands.
 
-		`Buff` e `Debuff` pintam **o número**, e não a linha: a frase continua na cor do
-		label e só o "+40%" muda de cor, que é o que faz a lista ser lida de relance.
-		Quem escolhe entre as duas é o sinal do número, com a exceção que mora no `Kind`
-		de `Details`.
+		`Buff` and `Debuff` paint **the number**, not the line: the sentence stays in
+		the label's color and only the "+40%" changes color, which is what makes the
+		list readable at a glance. The number's sign picks between the two, with the
+		exception that lives in `Details`' `Kind`.
 
-		`Classes` pinta a palavra do tipo de unidade, para o jogador achar o que é dele
-		na lista sem ler a linha inteira. A chave é a palavra como ela aparece escrita —
-		`ELEC`, e não `Electric`.
+		`Classes` paints the unit type word, so players find what concerns them in the
+		list without reading the whole line. The key is the word as written: `ELEC`,
+		not `Electric`.
 	]=]
 	Colors = {
 		Buff = "85,170,255",
@@ -645,20 +652,20 @@ WeatherConfig.Indicator = {
 	},
 
 	--[=[
-		O que cada clima faz, uma linha por efeito, na ordem em que o painel as mostra.
+		What each weather does, one line per effect, in the order the panel shows them.
 
-		É o resumo do que está em `WeatherConfig.Effects` — quem mexer nos números de lá
-		mexe na linha daqui também, porque não há como derivar uma da outra sem virar
-		uma tabela de multiplicadores na cara do jogador. E nem tudo o que o clima faz
-		está aqui, de propósito: a imunidade do Magic ao raio, por exemplo, não é uma
-		linha — o painel é o que o jogador precisa saber para jogar a wave, e não a
-		documentação do clima.
+		It summarizes `WeatherConfig.Effects`: whoever changes the numbers there changes
+		the line here too, because there is no way to derive one from the other without
+		throwing a multiplier table in the player's face. And not everything the weather
+		does is here, on purpose: Magic's immunity to lightning, for example, is not a
+		line. The panel is what the player needs to know to play the wave, not the
+		weather's documentation.
 
-		Cada linha é uma string, ou uma tabela `{ Text = ..., Kind = ... }` quando o
-		sinal engana. `Kind` é "Buff" ou "Debuff" e manda na cor de todos os números da
-		linha: `+40% ENEMY HP` é um "+" péssimo para o jogador, e pintá-lo de azul
-		porque o número cresce seria mentir na única coisa que a cor diz. Número sem
-		sinal nenhum (`20s UNIT STUN`) é debuff — é o que os stuns de hoje são.
+		Each line is a string, or a `{ Text = ..., Kind = ... }` table when the sign is
+		misleading. `Kind` is "Buff" or "Debuff" and sets the color of every number in
+		the line: `+40% ENEMY HP` is a terrible "+" for the player, and painting it blue
+		because the number goes up would lie about the only thing the color says. A
+		number with no sign (`20s UNIT STUN`) is a debuff, which is what today's stuns are.
 	]=]
 	Details = {
 		Rain = {
@@ -707,69 +714,70 @@ WeatherConfig.Indicator = {
 		},
 	},
 
-	-- Clima sem lista escrita ainda: melhor uma linha honesta que um painel vazio.
+	-- A weather without a written list yet: better an honest line than an empty panel.
 	UnknownDetails = { "NO DETAILS ON THIS ONE YET" },
 }
 
 --[[
-	O que o clima mostra em cima da unidade afetada.
+	What the weather shows above an affected unit.
 
-	Duas coisas, e as duas saem do mesmo cálculo: um Highlight no modelo (azul claro
-	quando o clima está ajudando, vermelho quando está atrapalhando) e uma billboard
-	na cabeça com um ícone por estatística mexida.
+	Two things, both from the same computation: a Highlight on the model (light blue
+	when the weather helps, red when it hurts) and a billboard over the head with one
+	icon per changed stat.
 
-	A arte é o Attachment `Assets.UI.BuffDebuffBillboard`, e dentro de
-	`BillboardGui.Frame` mora um ImageLabel por ícone. O asset tem os seis:
-	`BuffDamage`/`DebuffDamage`, `BuffRange`/`DebuffRange` e
-	`BuffCooldown`/`DebuffCooldown` — as três estatísticas que aparecem na billboard,
-	nos dois sentidos. Os labels vêm todos `Visible = true` do Studio, e quem desenha
-	liga o do que a unidade está sentindo e **apaga o resto**; nome pedido aqui que
-	não exista lá simplesmente não aparece, com um aviso no Studio.
+	The art is the `Assets.UI.BuffDebuffBillboard` Attachment, and inside
+	`BillboardGui.Frame` lives one ImageLabel per icon. The asset has all six:
+	`BuffDamage`/`DebuffDamage`, `BuffRange`/`DebuffRange`, and
+	`BuffCooldown`/`DebuffCooldown`: the three stats the billboard shows, in both
+	directions. The labels all come from Studio with `Visible = true`, and the drawing
+	code turns on the ones the unit is feeling and **hides the rest**; a name
+	requested here that does not exist there simply does not show, with a warning in
+	Studio.
 
-	`Cost` fica de fora de propósito: ele não é um estado da unidade em campo, é o
-	preço de colocar uma nova. Quem o mostra é o próprio número da carta na hotbar,
-	que já sai com o desconto.
+	`Cost` is left out on purpose: it is not a state of the unit on the field, it is
+	the price of placing a new one. The card's own number in the hotbar shows it,
+	already discounted.
 
-	`AttackSpeed` aparece como **Cooldown** porque é assim que o jogador lê o número
-	no card: cadência maior é recarga menor. Por isso `AttackSpeed > 1` acende o
-	ícone de *buff* de cooldown, e não o de debuff.
+	`AttackSpeed` shows as **Cooldown** because that is how the player reads the
+	number on the card: higher attack speed is a shorter recharge. So
+	`AttackSpeed > 1` lights the cooldown *buff* icon, not the debuff one.
 ]]
 WeatherConfig.Feedback = {
-	-- Attachment em `Assets.UI`, clonado para dentro da cabeça da unidade.
+	-- An Attachment in `Assets.UI`, cloned into the unit's head.
 	Asset = "BuffDebuffBillboard",
 
-	-- Onde ele é encaixado. Todas as unidades de hoje são modelos de personagem.
+	-- Where it is attached. All current units are character models.
 	HeadName = "Head",
 
 	--[[
-		Nome do Highlight do clima.
+		The weather Highlight's name.
 
-		Ele é procurado pelo nome em vez de guardado numa tabela: assim a unidade
-		levar `Destroy` (venda, recomeço de round) já limpa tudo, e não sobra
-		bookkeeping para desencontrar do que está no Workspace.
+		It is looked up by name instead of kept in a table: that way `Destroy` on the
+		unit (sale, round restart) already cleans everything, and no bookkeeping is left
+		to drift from what is in the Workspace.
 
-		Nome próprio também o mantém fora do caminho dos outros Highlights que a
-		unidade recebe — o verde da seleção, o amarelo do atordoamento e o ciano da
-		carga do raio.
+		A distinct name also keeps it out of the way of the other Highlights a unit
+		gets: the green of selection, the yellow of stun, and the cyan of the
+		lightning charge.
 	]]
 	HighlightName = "WeatherHighlight",
 
 	--[[
-		Uma linha por ícone da billboard, na ordem em que eles aparecem. `Buff` é o
-		label para multiplicador acima de 1 e `Debuff` o de abaixo.
+		One line per billboard icon, in the order they appear. `Buff` is the label for
+		a multiplier above 1 and `Debuff` the one below.
 
-		**Esta lista não é só do clima.** Ela é o vocabulário da billboard, e quem a
-		lê são as duas coisas que mexem numa unidade em campo: o clima e as cartas de
-		round (ver `CardModifier` e o `WeatherFeedbackController`, que combina as
-		duas). Por isso `Income`/`HitIncome` estão aqui mesmo sem nenhum clima
-		mexendo em renda — o multiplicador de um clima para uma estatística que ele
-		não declara é 1, e a linha simplesmente não acende.
+		**This list is not weather-only.** It is the billboard's vocabulary, and both
+		things that change a unit on the field read it: weather and round cards (see
+		`CardModifier` and `WeatherFeedbackController`, which combines the two). That is
+		why `Income`/`HitIncome` are here even though no weather touches income: a
+		weather's multiplier for a stat it does not declare is 1, and the line simply
+		does not light.
 
-		`Stats` é uma **lista** porque um ícone pode representar mais de uma
-		estatística: o dinheiro da unidade sai de dois números — a renda da farm
-		(`Income`) e o que o dano dela paga (`HitIncome`) —, e são um ícone só na
-		cabeça dela. Os multiplicadores da linha são multiplicados entre si, então o
-		que acende é o efeito líquido no bolso do jogador.
+		`Stats` is a **list** because one icon can stand for more than one stat: the
+		unit's money comes from two numbers, the farm's income (`Income`) and what its
+		damage pays (`HitIncome`), and they are a single icon over its head. The line's
+		multipliers are multiplied together, so what lights is the net effect on the
+		player's wallet.
 	]]
 	Stats = {
 		{ Stats = { "Damage" }, Buff = "BuffDamage", Debuff = "DebuffDamage" },
@@ -779,12 +787,12 @@ WeatherConfig.Feedback = {
 	},
 
 	--[[
-		O ícone da unidade **desligada** (`Disable`).
+		The icon for a **disabled** unit (`Disable`).
 
-		É o de debuff de cooldown, e não um sétimo desenho: parar de atacar é o
-		extremo do que aquele ícone já significa, e a unidade também leva o realce
-		vermelho junto. Um ícone próprio pode entrar aqui no dia em que a arte
-		existir — muda esta linha e mais nada.
+		It is the cooldown debuff icon, not a seventh drawing: stopping attacks is the
+		extreme of what that icon already means, and the unit also gets the red
+		highlight. A dedicated icon can go here once the art exists: change this line
+		and nothing else.
 	]]
 	Disabled = "DebuffCooldown",
 
@@ -796,49 +804,49 @@ WeatherConfig.Feedback = {
 }
 
 --[[
-	As classes que os efeitos enxergam.
+	The classes effects can see.
 
-	A classe de cada unidade fica em `UnitStats[nome].Class`, que aceita uma string
-	ou uma lista — uma unidade pode ser `{"Melee", "Fire"}` e receber os dois lados
-	do mesmo clima. Unidade sem `Class` continua funcionando: ela só não entra em
-	nenhuma regra por tipo, e leva apenas o que o clima faz com `All`.
+	Each unit's class lives in `UnitStats[name].Class`, which accepts a string or a
+	list: a unit can be `{"Melee", "Fire"}` and receive both sides of the same
+	weather. A unit without `Class` still works: it just falls under no per-type rule
+	and only gets what the weather does to `All`.
 ]]
 WeatherConfig.ClassList = { "Melee", "Ranged", "Magic", "Fire", "Ice", "Electric" }
 
 --[[
-	O que cada clima faz.
+	What each weather does.
 
-	Tudo aqui é **multiplicador**: 0.7 é "cai 30%", 1.3 é "sobe 30%". Nunca um
-	valor absoluto, para o efeito valer igual numa unidade de nível 0 e numa de
-	nível 5.
+	Everything here is a **multiplier**: 0.7 is "down 30%", 1.3 is "up 30%". Never an
+	absolute value, so the effect is the same on a level 0 unit and a level 5 one.
 
-	- `Units.All` vale para todas as unidades.
-	- `Units.<Classe>` vale só para quem tem aquela classe, e **substitui** o `All`
-	  naquela estatística. É por isso que o Fog escreve 0.55 para Magic em vez de
-	  esperar que 0.7 e 0.55 se multipliquem: o número da classe é o número final.
-	  A substituição é **por estatística**: o Ice da chuva escreve só `Cost`, e a
-	  cadência dele continua saindo do `All`.
-	- `Immune` tira a unidade do clima inteiro — nem debuff, nem buff, nem
-	  congelamento, nem raio, nem desligamento.
-	- `Disable` **desliga** a unidade: ela para de atacar enquanto o clima durar. É
-	  um sim-ou-não por classe, e não um multiplicador, porque não existe "atacar
-	  90% menos" — ou a unidade está no combate ou não está.
-	- `Mobs` mexe nos inimigos: `Speed` entra na hora (inclusive nos que já estão
-	  andando) e `Health` só vale para quem nascer com o clima ligado.
+	- `Units.All` applies to every unit.
+	- `Units.<Class>` applies only to units with that class, and **replaces** `All`
+	  for that stat. That is why Fog writes 0.55 for Magic instead of expecting 0.7
+	  and 0.55 to multiply: the class number is the final number. Replacement is
+	  **per stat**: Rain's Ice entry writes only `Cost`, and its attack speed still
+	  comes from `All`.
+	- `Immune` takes the unit out of the whole weather: no debuff, no buff, no
+	  freeze, no lightning, no disabling.
+	- `Disable` **turns the unit off**: it stops attacking while the weather lasts.
+	  It is yes-or-no per class, not a multiplier, because there is no "attack 90%
+	  less": a unit is either in combat or it is not.
+	- `Mobs` affects enemies: `Speed` applies immediately (including those already
+	  walking) and `Health` applies only to enemies spawned while the weather is on.
 
-	As estatísticas de unidade são `Damage`, `Range`, `AttackSpeed` e `Cost`.
+	The unit stats are `Damage`, `Range`, `AttackSpeed`, and `Cost`.
 
-	`AttackSpeed` acima de 1 é ataque mais rápido — quem divide o cooldown por ela é
-	o `UnitUpgradeConfig:GetCooldown`.
+	`AttackSpeed` above 1 is a faster attack: `UnitUpgradeConfig:GetCooldown` divides
+	the cooldown by it.
 
-	`Cost` é o preço de **colocar** a unidade, e não o dos upgrades: quem o aplica é
-	o `UnitUpgradeConfig:GetPlaceCost`, que o servidor cobra e o card mostra. O que a
-	unidade vale na venda não muda com ele — ver o comentário do `GetPlaceCost`.
+	`Cost` is the price of **placing** the unit, not of upgrades:
+	`UnitUpgradeConfig:GetPlaceCost` applies it, the server charges it, and the card
+	shows it. The unit's sell value does not change with it; see the `GetPlaceCost`
+	comment.
 ]]
 WeatherConfig.Effects = {
 	--[[
-		Neblina: todo mundo enxerga menos. Magic sofre 1.5x mais o mesmo corte
-		(30% * 1.5 = 45%), então o multiplicador dela é 0.55.
+		Fog: everyone sees less. Magic suffers the same cut 1.5x (30% * 1.5 = 45%),
+		so its multiplier is 0.55.
 	]]
 	Fog = {
 		Units = {
@@ -847,7 +855,7 @@ WeatherConfig.Effects = {
 		},
 	},
 
-	-- Vento: empurra o inimigo para a frente e o corpo a corpo para bater mais.
+	-- Wind: pushes enemies forward and makes melee hit harder.
 	Wind = {
 		Mobs = { Speed = 1.3 },
 		Units = {
@@ -856,8 +864,8 @@ WeatherConfig.Effects = {
 	},
 
 	--[[
-		Seca: inimigo mais gordo, fogo em vantagem e gelo praticamente fora de
-		combate — 60% a menos de dano, de cadência e de alcance.
+		Drought: beefier enemies, fire at an advantage, and ice practically out of the
+		fight: 60% less damage, attack speed, and range.
 	]]
 	Drought = {
 		Mobs = { Health = 1.4 },
@@ -868,13 +876,13 @@ WeatherConfig.Effects = {
 	},
 
 	--[[
-		Nevasca (a "BLIZZARD" da tela): além do corte de cadência, congela uma unidade
-		sorteada de tempos em tempos (o `SnowService` cuida do compasso). Magic passa
-		ileso pelos dois.
+		Snow (the "BLIZZARD" on screen): besides the attack speed cut, it freezes a
+		random unit every so often (`SnowService` keeps the beat). Magic is unaffected
+		by both.
 
-		Ice é a única que sai ganhando, e nas duas pontas — 25% de dano e 25% de
-		cadência. Como a substituição é por estatística, o `1.25` dela cobre o `0.6`
-		do `All`, e a unidade de gelo atira mais rápido na nevasca em vez de menos.
+		Ice is the only one that comes out ahead, on both ends: 25% damage and 25%
+		attack speed. Since replacement is per stat, its `1.25` overrides `All`'s
+		`0.6`, and the ice unit shoots faster in the blizzard instead of slower.
 	]]
 	Snow = {
 		Immune = { Magic = true },
@@ -887,26 +895,26 @@ WeatherConfig.Effects = {
 			Duration = 10,
 
 			--[[
-				O desenho do congelamento, em `Assets.VFX`: o mesmo `IcedVFX` do
-				congelamento do Frostione nos inimigos -- particulas soldadas no corpo
-				da unidade e o Highlight dele pintando o modelo inteiro, pelos segundos
-				que o servidor aplicou (`VFXController:PlayFreeze`).
+				The freeze's visual, in `Assets.VFX`: the same `IcedVFX` as the
+				Frostione's freeze on enemies, particles welded to the unit's body and its
+				Highlight painting the whole model, for the seconds the server applied
+				(`VFXController:PlayFreeze`).
 
-				`Freeze` existir e tambem o que diz ao `VFXController` que este
-				atordoamento tem desenho proprio: ele nao compara o clima com "Snow",
-				ele procura o `Freeze` de quem causou o atordoamento. Clima sem `Freeze`
-				— e o raio, e o gimmick de mob — continua so com o realce amarelo, e o
-				congelado fica sem ele, para o amarelo nao brigar com o gelo.
+				`Freeze` existing is also what tells `VFXController` this stun has its
+				own visual: it does not compare the weather with "Snow", it looks for the
+				`Freeze` of whatever caused the stun. A weather without `Freeze` (and the
+				lightning, and the enemy gimmick) keeps only the yellow highlight, and a
+				frozen unit goes without it, so the yellow does not fight the ice.
 			]]
 			Asset = "IcedVFX",
 		},
 	},
 
 	--[[
-		Trovão: o raio atordoa quem acerta e salta para quem estiver perto (os
-		números estão em `WeatherConfig.Thunder.Stun`). Electric ganha um bônus
-		passivo enquanto o clima durar, e quando leva o raio não é atordoada: ganha
-		um bem maior e temporário (`WeatherConfig.Thunder.Charge`). Magic não é alvo.
+		Thunder: the bolt stuns whoever it hits and jumps to nearby units (the numbers
+		are in `WeatherConfig.Thunder.Stun`). Electric gets a passive bonus while the
+		weather lasts, and when struck it is not stunned: it gets a much larger,
+		temporary one (`WeatherConfig.Thunder.Charge`). Magic is not a target.
 	]]
 	Thunder = {
 		Immune = { Magic = true },
@@ -916,17 +924,17 @@ WeatherConfig.Effects = {
 	},
 
 	--[[
-		Chuva: apaga o fogo e encharca o resto.
+		Rain: puts out fire and soaks the rest.
 
-		Unidade `Fire` **desliga** — não é debuff, ela sai do combate enquanto
-		chover. As outras batem 35% mais devagar (0.65), e `Magic` sofre 1.5x o mesmo
-		corte (52.5%), então o multiplicador dela é 0.475 — a mesma regra do Fog, e o
-		motivo de o número da classe ser escrito pronto em vez de composto.
+		`Fire` units **turn off**: not a debuff, they leave combat while it rains.
+		The others attack 35% slower (0.65), and `Magic` suffers the same cut 1.5x
+		(52.5%), so its multiplier is 0.475: the same rule as Fog, and the reason the
+		class number is written final instead of compounded.
 
-		`Ice` é a única que ganha alguma coisa: colocar custa 25% menos. É um convite
-		a trocar o tabuleiro enquanto chove, e não um buff de combate — a cadência
-		dela cai igual à de todo mundo, porque `Cost` é a única estatística que a
-		linha da classe escreve.
+		`Ice` is the only one that gains anything: placing costs 25% less. It is an
+		invitation to rearrange the board while it rains, not a combat buff: its
+		attack speed drops like everyone else's, because `Cost` is the only stat the
+		class line writes.
 	]]
 	Rain = {
 		Disable = { Fire = true },
@@ -938,8 +946,8 @@ WeatherConfig.Effects = {
 	},
 
 	--[[
-		Tempestade de areia: menos dano, menos cadência e menos alcance para quem
-		depende de ver. Magic não depende, e passa ileso.
+		Sandstorm: less damage, attack speed, and range for units that rely on sight.
+		Magic does not, and is unaffected.
 	]]
 	Sandstorm = {
 		Immune = { Magic = true },
@@ -949,17 +957,17 @@ WeatherConfig.Effects = {
 	},
 }
 
---[[ ============================== CONSULTAS ================================ ]]
+--[[ ================================ QUERIES ================================ ]]
 
 local UnitStats = require(script.Parent.UnitStats)
 
 local EMPTY = table.freeze({})
 
 --[=[
-	As classes de uma unidade, sempre como lista.
+	A unit's classes, always as a list.
 
-	Aceita `Class = "Melee"` e `Class = {"Melee", "Fire"}` porque a primeira forma é
-	a que se escreve em 99% dos casos e a segunda é a que o config precisa suportar.
+	Accepts `Class = "Melee"` and `Class = {"Melee", "Fire"}` because the first form
+	is what is written 99% of the time and the second is what the config must support.
 ]=]
 function WeatherConfig.GetClasses(unitName : string?) : { string }
 	local stats = unitName and UnitStats[unitName]
@@ -991,11 +999,10 @@ function WeatherConfig.GetEffects(weatherName : string?)
 end
 
 --[=[
-	A unidade está fora deste clima?
+	Is the unit outside this weather?
 
-	Imunidade é total: nem o debuff que todo mundo leva, nem o buff da própria
-	classe, nem congelamento ou raio. É o que "não afeta unidades do tipo Magic"
-	quer dizer.
+	Immunity is total: not the debuff everyone gets, not its own class's buff, not
+	freeze or lightning. That is what "does not affect Magic units" means.
 ]=]
 function WeatherConfig.IsImmune(weatherName : string?, unitName : string?) : boolean
 	local effects = WeatherConfig.GetEffects(weatherName)
@@ -1012,15 +1019,15 @@ function WeatherConfig.IsImmune(weatherName : string?, unitName : string?) : boo
 end
 
 --[=[
-	A unidade está **desligada** por este clima?
+	Is the unit **turned off** by this weather?
 
-	Desligada é sim-ou-não: ela para de atacar enquanto o clima durar, e nenhum
-	multiplicador tem como dizer isso. Quem faz valer é o `UnitService`, que pula a
-	unidade no laço de ataque; o resto (alcance, dano, cadência) continua sendo
-	calculado normalmente e simplesmente não é usado.
+	Off is yes-or-no: it stops attacking while the weather lasts, and no multiplier
+	can say that. `UnitService` enforces it by skipping the unit in the attack loop;
+	the rest (range, damage, attack speed) is still computed normally and simply not
+	used.
 
-	Imunidade vence: `Immune` tira a unidade do clima inteiro, e "inteiro" inclui
-	não ser desligada.
+	Immunity wins: `Immune` takes the unit out of the whole weather, and "whole"
+	includes not being turned off.
 ]=]
 function WeatherConfig.IsDisabled(weatherName : string?, unitName : string?) : boolean
 	local effects = WeatherConfig.GetEffects(weatherName)
@@ -1039,13 +1046,11 @@ function WeatherConfig.IsDisabled(weatherName : string?, unitName : string?) : b
 end
 
 --[=[
-	Multiplicador do clima para uma estatística de unidade (`Damage`, `Range`,
-	`AttackSpeed` ou `Cost`). Sem clima, clima desconhecido ou unidade imune,
-	devolve 1.
+	The weather's multiplier for a unit stat (`Damage`, `Range`, `AttackSpeed`, or
+	`Cost`). With no weather, an unknown weather, or an immune unit, returns 1.
 
-	A regra de precedência está no comentário de `Effects`: o valor da classe
-	substitui o de `All`, e duas classes que mexam na mesma estatística se
-	multiplicam entre si.
+	The precedence rule is in the `Effects` comment: the class value replaces `All`'s,
+	and two classes that change the same stat multiply together.
 ]=]
 function WeatherConfig.GetUnitMultiplier(weatherName : string?, unitName : string?, stat : string) : number
 	local effects = WeatherConfig.GetEffects(weatherName)
@@ -1074,22 +1079,22 @@ function WeatherConfig.GetUnitMultiplier(weatherName : string?, unitName : strin
 	return (all and all[stat]) or 1
 end
 
--- Multiplicador do clima para uma estatística de inimigo (`Speed` ou `Health`).
+-- The weather's multiplier for an enemy stat (`Speed` or `Health`).
 function WeatherConfig.GetMobMultiplier(weatherName : string?, stat : string) : number
 	local effects = WeatherConfig.GetEffects(weatherName)
 	local mobs = effects and effects.Mobs
 	return (mobs and mobs[stat]) or 1
 end
 
--- Os climas que um mapa pode sortear. Mapa sem pool devolve lista vazia.
+-- The weathers a map can roll. A map without a pool returns an empty list.
 function WeatherConfig.GetPool(mapName : string?) : { string }
 	local pool = mapName and WeatherConfig.MapPools[mapName]
 	return pool or EMPTY
 end
 
 --[[
-	Nome que o aviso mostra. Sem entrada em `DisplayNames`, é o nome do Model em
-	caixa alta.
+	The name the warning shows. With no entry in `DisplayNames`, it is the Model name
+	in uppercase.
 ]]
 function WeatherConfig.GetDisplayName(weatherName : string) : string
 	return WeatherConfig.Warning.DisplayNames[weatherName] or string.upper(weatherName)

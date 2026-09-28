@@ -18,22 +18,24 @@ local WeatherConfig = SharedConfig.WeatherConfig
 local WEATHER = "Snow"
 
 --[[
-	O congelamento da neve.
+	The snow freeze.
 
-	Enquanto o clima `Snow` estiver no ar, de tempos em tempos uma unidade sorteada
-	congela e para de atacar. O corte de cadência que todo mundo leva mora nos
-	multiplicadores do `WeatherConfig.Effects.Snow`; aqui está só o compasso do
-	congelamento, que é o único pedaço da neve que precisa de um relógio.
+	While the `Snow` weather is active, every so often a random unit freezes and
+	stops attacking. The attack speed cut everyone gets lives in the
+	`WeatherConfig.Effects.Snow` multipliers; only the freeze's beat is here, the one
+	part of snow that needs a clock.
 
-	Congelar é o mesmo atordoamento que o raio usa (`UnitService:StunUnit`) — o
-	cliente já desenha o realce e a unidade já para de procurar alvo. O que muda é
-	quem pode ser sorteado: quem é imune ao clima (Magic, hoje) fica fora do
-	sorteio, e não apenas "é sorteado e não congela", senão um mapa com muitas
-	unidades Magic passaria waves inteiras sem nada acontecer.
+	Freezing is the same stun lightning uses (`UnitService:StunUnit`): the client
+	already draws the highlight and the unit already stops looking for targets. What
+	changes is who can be picked: units immune to the weather (Magic, today) are left
+	out of the draw, not just "picked and not frozen", or a map with many Magic units
+	would go whole waves with nothing happening.
 
-	Espelha o `ThunderService`: mesma forma, mesmo lugar, e o relógio zera junto com
-	o clima para o primeiro congelamento sempre esperar um intervalo inteiro em vez
-	de cair junto com a transição.
+	It mirrors `ThunderService`: same shape, same place, and the clock resets along
+	with the weather so the first freeze always waits a full interval instead of
+	landing with the transition.
+
+	See docs/game/weather-in-match.md.
 ]]
 
 local SnowService = {
@@ -51,8 +53,8 @@ function SnowService:getConfig()
 end
 
 --[=[
-	Congela uma unidade sorteada. Devolve a entrada congelada, ou nil quando não
-	havia ninguém elegível no mapa.
+	Freezes a random unit. Returns the frozen entry, or nil when there was nobody
+	eligible on the map.
 ]=]
 function SnowService:FreezeRandom()
 	local config = self:getConfig()
@@ -91,10 +93,10 @@ end
 
 function SnowService:construct()
 	RunService.Heartbeat:Connect(function()
-		-- Tempo de partida: o atordoamento que este clima aplica ja encolhe com a
-		-- velocidade (o `UnitService` marca o prazo no mesmo relogio), entao a
-		-- cadencia tem que encolher junto -- senao acelerar seria uma forma de
-		-- levar menos clima por wave.
+		-- Match time: the stun this weather applies already shrinks with speed
+		-- (`UnitService` sets the deadline on the same clock), so the cadence must
+		-- shrink too; otherwise speeding up would be a way to take less weather per
+		-- wave.
 		self:step(GameClock.Now())
 	end)
 end

@@ -8,65 +8,67 @@ local Dash = require(script.Parent.Dash)
 local Player = Players.LocalPlayer
 
 --[=[
-	Os botoes de correr e de dash no celular, desenhados no mesmo idioma do botao de
-	pulo do Roblox: um circulo escuro translucido de borda branca, no canto direito,
-	ao alcance do mesmo polegar.
+	The mobile run and dash buttons, drawn in the same language as Roblox's jump
+	button: a translucent dark circle with a white border, in the right corner,
+	within reach of the same thumb.
 
-	**Tudo sai do botao de pulo.** O tamanho e uma fracao do dele, e a posicao e
-	contada a partir do centro dele -- entao quando o Roblox troca o pulo de 70 para
-	120 pixels numa tela maior, os dois crescem e se afastam junto. E ele tambem
-	decide se os botoes aparecem: sem pulo na tela nao ha controle de toque (PC,
-	controle), ou alguem tirou o pulo de proposito (o card de upgrade da Game esconde
-	ele), e nos dois casos correr e dash saem junto.
+	**Everything comes from the jump button.** The size is a fraction of its size,
+	and the position is measured from its center, so when Roblox changes the jump
+	button from 70 to 120 pixels on a larger screen, both grow and move apart with
+	it. It also decides whether the buttons appear: with no jump button on screen
+	there is no touch control (PC, gamepad), or someone removed it on purpose (Game's
+	upgrade card hides it), and in both cases run and dash go too.
 
-	**Nao colidir com nada.** O lugar nao e fixo: ha uma lista de vagas em volta do
-	pulo (esquerda, acima, diagonal, e uma segunda fileira de cada), e cada botao fica
-	na primeira que estiver livre. Livre e medido na tela de verdade, com
-	`GetGuiObjectsAtPosition` numa grade de pontos da vaga -- vale para qualquer UI
-	das duas places, inclusive as que ainda nao existem, sem uma lista de nomes para
-	manter. Um painel que abre por cima de uma vaga empurra o botao para a seguinte;
-	sem vaga nenhuma o botao some ate abrir espaco.
+	**Collide with nothing.** The spot is not fixed: there is a list of slots around
+	the jump button (left, above, diagonal, and a second row of each), and each button
+	takes the first free one. Free is measured on the real screen, with
+	`GetGuiObjectsAtPosition` over a grid of points in the slot: it works for any UI in
+	both places, including ones that do not exist yet, with no list of names to
+	maintain. A panel opening over a slot pushes the button to the next one; with no
+	free slot the button hides until space opens up.
 
-	`GetGuiObjectsAtPosition` devolve ate o que esta escondido e as molduras vazias
-	que so organizam layout, entao cada resultado passa por `isShown` e `hasContent`:
-	so conta o que esta de fato na tela e tem alguma coisa desenhada. Os tres
-	ScreenGuis de insets diferentes nao atrapalham a conta: o `AbsolutePosition` de
-	todos ja sai no mesmo espaco (o inset entra no da propria ScreenGui), e e nesse
-	espaco que o `GetGuiObjectsAtPosition` responde.
+	`GetGuiObjectsAtPosition` returns even hidden objects and empty frames that only
+	organize layout, so each result goes through `isShown` and `hasContent`: only
+	what is actually on screen and draws something counts. The three ScreenGuis with
+	different insets do not throw off the math: all their `AbsolutePosition`s already
+	come out in the same space (the inset goes into the ScreenGui's own), and that is
+	the space `GetGuiObjectsAtPosition` answers in.
 
 	---
 
-	**O cluster nao e mais so do movimento.** Correr e dash sao dois inquilinos entre
-	outros: qualquer controller registra um botao aqui com `:register(nome, config)` e
-	o tira com `:unregister(nome)`. Quem faz isso hoje, alem do `MovementController`,
-	e o `UnitPlacementController` -- `ROTATE` e `LOCK` aparecem junto dos outros dois
-	enquanto ha uma unidade em mao no celular.
+	**The cluster is not only for movement.** Run and dash are two tenants among
+	others: any controller registers a button here with `:register(name, config)` and
+	removes it with `:unregister(name)`. Besides `MovementController`,
+	`UnitPlacementController` does this today: `ROTATE` and `LOCK` appear next to the
+	other two while a unit is in hand on mobile.
 
-	A razao de eles morarem aqui, e nao numa GUI propria, e o solucionador de vagas:
-	quatro circulos em volta do mesmo polegar tem de dividir as seis vagas sem se
-	sobrepor nem cair embaixo da HUD, e isso e uma conta so. Duas GUIs independentes
-	se resolveriam cada uma por si e se encontrariam na tela.
+	The reason they live here, and not in a GUI of their own, is the slot solver:
+	four circles around the same thumb must share the six slots without overlapping
+	or falling under the HUD, and that is a single computation. Two independent GUIs
+	would each solve on their own and collide on screen.
 
-	Como o `Me` registra **todo** ModuleScript sob `Controllers`, chega-se aqui por
-	`Framework:Get("MobileButtons")` de qualquer lugar das duas places.
+	Since `Me` registers **every** ModuleScript under `Controllers`, this is reached
+	through `Framework:Get("MobileButtons")` from anywhere in both places.
+
+	See docs/common/controls.md.
 ]=]
 local module = {}
 
 --[[ CONSTANTS ]]
 local GUI_NAME = "MovementButtons"
 
--- Fracoes do tamanho do botao de pulo.
+-- Fractions of the jump button's size.
 local BUTTON_SCALE = 0.78
 local GAP_SCALE = 0.12
 local MIN_GAP = 6
 
--- Folga extra em volta da vaga ao medir colisao, em pixels.
+-- Extra margin around the slot when measuring collision, in pixels.
 local COLLISION_MARGIN = 4
 
--- Pontos por lado da grade que mede cada vaga (GRID x GRID).
+-- Points per side of the grid that measures each slot (GRID x GRID).
 local GRID = 4
 
--- A cada quanto a posicao e reconferida. Sem vaga, a busca e mais espacada.
+-- How often the position is rechecked. With no slot, the search is spaced out more.
 local CHECK_INTERVAL = 0.25
 local HIDDEN_CHECK_INTERVAL = 0.5
 
@@ -79,13 +81,13 @@ local ACTIVE_COLOR = Color3.fromRGB(255, 200, 60)
 local gui : ScreenGui? = nil
 local buttons = {}
 
--- As do movimento (Run.Changed), soltas pelo `stop`.
+-- The movement ones (Run.Changed), released by `stop`.
 local connections = {}
 
--- As do cluster (o laco de layout), soltas quando o ultimo botao sai.
+-- The cluster ones (the layout loop), released when the last button leaves.
 local loopConnections = {}
 
--- Declaradas aqui porque `register` as chama antes de elas serem definidas.
+-- Declared here because `register` calls them before they are defined.
 local ensureLoop, stopLoop
 
 --[[ HELPERS ]]
@@ -103,8 +105,8 @@ local function findJumpButton() : GuiObject?
 	return button and button:IsA("GuiObject") and button or nil
 end
 
--- Se o objeto esta de fato na tela: ele e todos os pais visiveis, dentro de um
--- ScreenGui ligado.
+-- Whether the object is actually on screen: it and all its parents visible, inside
+-- an enabled ScreenGui.
 local function isShown(object : Instance) : boolean
 	local node = object
 	while node do
@@ -122,7 +124,7 @@ local function isShown(object : Instance) : boolean
 	return false
 end
 
--- Se o objeto desenha alguma coisa: moldura vazia de layout nao ocupa espaco.
+-- Whether the object draws something: an empty layout frame takes no space.
 local function hasContent(object : GuiObject) : boolean
 	if object.BackgroundTransparency < 0.95 then return true end
 
@@ -177,7 +179,7 @@ local function createButton(name : string, text : string) : TextButton
 	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	stroke.Parent = circle
 
-	-- A recarga do dash: um veu escuro que desce conforme o cooldown acaba.
+	-- The dash recharge: a dark veil that goes down as the cooldown ends.
 	local cooldown = makeCircle(button, "Cooldown", 2)
 	cooldown.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 	cooldown.BackgroundTransparency = 0
@@ -200,8 +202,8 @@ local function createButton(name : string, text : string) : TextButton
 	label.ZIndex = 3
 	label.Parent = button
 
-	-- O aperto responde no toque, e nao no soltar: e o que o botao de pulo faz, e um
-	-- dash que so sai quando o dedo levanta chega atrasado.
+	-- The press responds on touch, not on release: that is what the jump button does,
+	-- and a dash that only fires when the finger lifts arrives late.
 	button.InputBegan:Connect(function(input)
 		if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 		if input.UserInputState ~= Enum.UserInputState.Begin then return end
@@ -240,11 +242,11 @@ local function ensureGui() : ScreenGui?
 end
 
 --[=[
-	O realce de "este botao esta ligado": a mesma cor e o mesmo peso que o `RUN`
-	aceso sempre teve, agora disponivel a qualquer registro.
+	The "this button is on" highlight: the same color and weight the lit `RUN` always
+	had, now available to any registration.
 
-	Quem usa hoje e o `RUN` (correndo) e o `LOCK` (fantasma travado). Sao os dois
-	botoes de estado do cluster; `DASH` e `ROTATE` disparam e voltam.
+	`RUN` (running) and `LOCK` (ghost locked) use it today. They are the cluster's two
+	state buttons; `DASH` and `ROTATE` fire and return.
 ]=]
 function module:setActive(name : string, active : boolean)
 	local entry = buttons[name]
@@ -274,7 +276,7 @@ local function updateDashCooldown()
 		return
 	end
 
-	-- O veu cobre de cima para baixo a fracao que ainda falta.
+	-- The veil covers, from the top down, the fraction still left.
 	local cut = math.clamp(alpha, 0.002, 0.998)
 	veil.UIGradient.Transparency = NumberSequence.new({
 		NumberSequenceKeypoint.new(0, 0.45),
@@ -287,8 +289,8 @@ end
 
 --[[ LAYOUT ]]
 
--- Os botoes sao circulos: dois deles se tocam pela distancia dos centros, e nao
--- pelas caixas -- a vaga diagonal nunca caberia se fossem quadrados.
+-- The buttons are circles: two of them touch by the distance between centers, not
+-- by their boxes; the diagonal slot would never fit if they were squares.
 local function circlesTouch(a : Vector2, aSize : number, b : Vector2, bSize : number, gap : number) : boolean
 	return (a - b).Magnitude < (aSize + bSize) / 2 + gap
 end
@@ -299,14 +301,14 @@ local function makeRect(center : Vector2, size : number, margin : number)
 end
 
 --[=[
-	Se nada da tela desenha dentro da vaga. `memo` guarda o veredito de cada objeto
-	durante uma busca: a mesma moldura aparece em varios pontos da grade.
+	Whether nothing on screen draws inside the slot. `memo` keeps each object's
+	verdict during a search: the same frame shows up at several grid points.
 ]=]
 local function isAreaFree(rect, memo) : boolean
 	local playerGui = getPlayerGui()
 	if not playerGui or not gui then return false end
 
-	-- Fora da tela nao e vaga.
+	-- Off screen is not a slot.
 	local screenMin = gui.AbsolutePosition
 	local screenMax = screenMin + gui.AbsoluteSize
 	if rect.min.X < screenMin.X or rect.min.Y < screenMin.Y or rect.max.X > screenMax.X or rect.max.Y > screenMax.Y then
@@ -340,11 +342,11 @@ local function isAreaFree(rect, memo) : boolean
 end
 
 --[[
-	As vagas em volta do pulo, em ordem de preferencia de cada botao.
+	The slots around the jump button, in each button's order of preference.
 
-	Cada registro traz a sua; esta e a ordem de quem nao trouxer. As listas dos
-	quatro botoes de hoje comecam em vagas diferentes de proposito -- assim o caso
-	comum se resolve sem o solucionador ter de desempatar nada.
+	Each registration brings its own; this is the order for those that do not. The
+	lists of today's four buttons start at different slots on purpose, so the common
+	case resolves without the solver having to break any tie.
 ]]
 local DEFAULT_SLOT_ORDER = { "Left", "Up", "Diagonal", "FarLeft", "FarUp", "LeftUp" }
 
@@ -365,7 +367,7 @@ end
 
 local layout = {
 	key = nil,
-	placed = {}, -- [nome] = centro na tela
+	placed = {}, -- [name] = center on screen
 	size = 0,
 	gap = 0,
 }
@@ -398,21 +400,20 @@ local function applyPlacement(name : string, center : Vector2?)
 end
 
 --[=[
-	Distribui os botoes registrados pelas vagas livres.
+	Distributes the registered buttons over the free slots.
 
-	Busca em profundidade, e nao ganancia. A diferenca aparece justamente no caso
-	apertado: a primeira vaga da lista do dash pode ser a unica que serve ao `RUN`,
-	e um laco ganancioso a tomaria e deixaria o outro botao fora da tela. A busca
-	desiste dessa vaga e tenta a seguinte quando isso rende **mais** botoes na tela.
+	Depth-first search, not greedy. The difference shows exactly in the tight case:
+	the first slot in dash's list may be the only one that works for `RUN`, and a
+	greedy loop would take it and leave the other button off screen. The search gives
+	up that slot and tries the next when that yields **more** buttons on screen.
 
-	Cada nivel tem tambem o ramo de **nao** colocar aquele botao -- e o que permite
-	uma solucao parcial quando a HUD nao deixa espaco para todos. Como so se troca o
-	melhor por um estritamente maior, a primeira solucao encontrada com aquele numero
-	e a que vence, e ela e a que respeita a ordem de prioridade e a lista de vagas de
-	cada um.
+	Each level also has the branch of **not** placing that button, which allows a
+	partial solution when the HUD leaves no room for all. Since the best is only
+	replaced by a strictly larger one, the first solution found with that count wins,
+	and it is the one that respects the priority order and each button's slot list.
 
-	O espaco e minusculo (seis vagas, um punhado de botoes) e o `free` e memoizado,
-	entao a conta inteira custa menos que a medida de tela que a alimenta.
+	The space is tiny (six slots, a handful of buttons) and `free` is memoized, so the
+	whole computation costs less than the screen measurement that feeds it.
 ]=]
 local function solve(jumpCenter : Vector2, jumpSize : number, slots, order : { string })
 	local memo = {}
@@ -429,8 +430,8 @@ local function solve(jumpCenter : Vector2, jumpSize : number, slots, order : { s
 		return result
 	end
 
-	local taken = {}        -- [vaga] = nome
-	local chosen = {}       -- [nome] = vaga
+	local taken = {}        -- [slot] = name
+	local chosen = {}       -- [name] = slot
 	local best, bestCount = nil, -1
 
 	local function conflicts(slotName : string) : boolean
@@ -443,7 +444,7 @@ local function solve(jumpCenter : Vector2, jumpSize : number, slots, order : { s
 	end
 
 	local function search(index : number, placed : number)
-		-- Todos couberam: nao ha nada melhor a procurar.
+		-- All fit: there is nothing better to look for.
 		if bestCount == #order then return end
 
 		if index > #order then
@@ -471,7 +472,7 @@ local function solve(jumpCenter : Vector2, jumpSize : number, slots, order : { s
 			end
 		end
 
-		-- Este fica de fora; talvez os de baixo caibam.
+		-- This one stays out; maybe the ones below fit.
 		search(index + 1, placed)
 	end
 
@@ -480,8 +481,8 @@ local function solve(jumpCenter : Vector2, jumpSize : number, slots, order : { s
 	return best or {}
 end
 
---- Os nomes registrados, do mais importante para o menos. Empate cai no nome, para
---- a ordem nao depender da iteracao de uma tabela com chave.
+--- The registered names, most important first. Ties fall back to the name, so the
+--- order does not depend on iterating a keyed table.
 local function registeredOrder() : { string }
 	local order = {}
 	for name in buttons do
@@ -520,11 +521,12 @@ local function refreshLayout(force : boolean?)
 	layout.gap = math.max(MIN_GAP, math.round(jumpSize * GAP_SCALE))
 
 	--[[
-		Nada mudou de tamanho e todo mundo esta na tela: se as vagas de agora
-		continuam livres, fica tudo onde esta, sem o botao pular de lugar a toa.
+		Nothing changed size and everyone is on screen: if the current slots are still
+		free, everything stays put, without a button jumping around for nothing.
 
-		A contagem entra na chave porque registrar ou tirar um botao muda o problema
-		mesmo com a tela igual -- sem ela, o `ROTATE` entrando nao redistribuiria nada.
+		The count goes into the key because registering or removing a button changes
+		the problem even with the same screen; without it, `ROTATE` coming in would not
+		redistribute anything.
 	]]
 	local allPlaced = true
 	for _, name in order do
@@ -557,20 +559,20 @@ local function refreshLayout(force : boolean?)
 	end
 end
 
---[[ REGISTRO ]]
+--[[ REGISTRATION ]]
 
 --[=[
-	Poe um botao no cluster.
+	Puts a button in the cluster.
 
 	`config`:
-	  - `Text`        rotulo, em caixa alta (`DASH`, `LOCK`)
-	  - `OnActivate`  chamada no **toque**, e nao no soltar
-	  - `Priority`    menor escolhe vaga primeiro
-	  - `Slots`       ordem de preferencia de vagas; sem isto, a padrao
-	  - `OnHeartbeat` opcional, por quadro, para quem desenha estado continuo
+	  - `Text`        label, in uppercase (`DASH`, `LOCK`)
+	  - `OnActivate`  called on **touch**, not on release
+	  - `Priority`    lower picks a slot first
+	  - `Slots`       slot preference order; without it, the default
+	  - `OnHeartbeat` optional, per frame, for buttons that draw continuous state
 
-	Registrar o mesmo nome duas vezes substitui o anterior, o que faz de `register`
-	a chamada segura de repetir num `begin` que roda a cada respawn.
+	Registering the same name twice replaces the previous one, which makes `register`
+	safe to repeat in a `begin` that runs on every respawn.
 ]=]
 function module:register(name : string, config)
 	if not UserInputService.TouchEnabled then return end
@@ -602,10 +604,10 @@ function module:unregister(name : string)
 	entry.instance:Destroy()
 
 	--[[
-		Sai da tela **e** devolve a vaga. Sem o `force` o atalho acima veria a chave
-		mudada e redistribuiria mesmo assim, mas por um motivo lateral; aqui e
-		explicito porque tirar um botao e justamente quando os outros podem subir
-		para uma vaga melhor.
+		Leaves the screen **and** gives back the slot. Without `force` the shortcut
+		above would see the changed key and redistribute anyway, but for a side reason;
+		here it is explicit because removing a button is exactly when the others may
+		move up to a better slot.
 	]]
 	refreshLayout(true)
 
@@ -618,11 +620,11 @@ end
 --[[ LIFECYCLE ]]
 
 --[=[
-	O laco do cluster: pertence a ele, e nao a quem registrou.
+	The cluster loop: it belongs to the cluster, not to whoever registered.
 
-	Enquanto houver um botao registrado ele remede a tela de tempos em tempos -- e o
-	que faz o botao fugir de um painel que abriu por cima da vaga dele. Liga no
-	primeiro registro e desliga no ultimo.
+	While any button is registered it re-measures the screen every so often: that
+	is what makes a button move away from a panel that opened over its slot. It
+	starts on the first registration and stops on the last.
 ]=]
 function ensureLoop()
 	if loopConnections[1] then return end
@@ -651,7 +653,7 @@ function ensureLoop()
 		refreshLayout()
 	end))
 
-	-- Girar a tela ou trocar o tamanho do pulo pede a busca na hora.
+	-- Rotating the screen or changing the jump button's size triggers the search right away.
 	if gui then
 		table.insert(loopConnections, gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 			refreshLayout(true)
@@ -667,11 +669,12 @@ function stopLoop()
 end
 
 --[=[
-	Os dois botoes do movimento entram aqui, e nao no `register` de fora, porque sao
-	os unicos que dependem do personagem: eles nascem com ele e morrem com ele.
+	The two movement buttons come in here, not through the outside `register`,
+	because they are the only ones that depend on the character: they are born and
+	die with it.
 ]=]
 function module:begin(character)
-	-- Aparelho sem toque nunca tem botao de pulo; nao ha o que montar.
+	-- A device without touch never has a jump button; there is nothing to build.
 	if not UserInputService.TouchEnabled then return end
 
 	self:stop()
@@ -698,8 +701,8 @@ function module:begin(character)
 end
 
 --[=[
-	Tira o movimento do cluster. O que outros controllers registraram **fica**: um
-	respawn no meio de um posicionamento nao deve levar o `ROTATE` junto.
+	Removes movement from the cluster. What other controllers registered **stays**: a
+	respawn mid-placement must not take `ROTATE` with it.
 ]=]
 function module:stop()
 	for _, connection in connections do

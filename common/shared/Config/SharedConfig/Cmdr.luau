@@ -1,9 +1,9 @@
 --[[
-	Parte do Cmdr que o cliente precisa — puramente cosmética, pode ser replicada.
+	The part of Cmdr the client needs: purely cosmetic, safe to replicate.
 
-	As regras de permissão (ADMIN_USER_IDS, GROUP_ID, ALLOW_IN_STUDIO) ficam em
-	`ServerScriptService.Config.Cmdr` e não são replicadas. O cliente descobre se
-	é admin perguntando ao servidor pelo evento `RequestCmdrAccess`.
+	Permission rules (ADMIN_USER_IDS, GROUP_ID, ALLOW_IN_STUDIO) live in
+	`ServerScriptService.Config.Cmdr` and are not replicated. The client learns
+	whether it is an admin by asking the server through `RequestCmdrAccess`.
 ]]
 
 return {

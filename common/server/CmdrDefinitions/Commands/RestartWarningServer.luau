@@ -9,10 +9,11 @@ local Framework = Me.new()
 local DEFAULT_SECONDS = 300
 
 --[[
-	O restart de verdade não dá para ensaiar: `game.ServerRestartScheduled` é a
-	engine que dispara, e a única forma de vê-lo é publicar uma atualização. Este
-	comando entra pelo mesmo `Schedule` que o evento usa, então o que aparece na
-	tela é exatamente o que apareceria no dia — só que sem ninguém ser derrubado.
+	The real restart cannot be rehearsed: the engine fires
+	`game.ServerRestartScheduled`, and the only way to see it is to publish an
+	update. This command goes through the same `Schedule` the event uses, so what
+	shows on screen is exactly what would show on the day, without anyone being
+	kicked.
 ]]
 return function(_context, source : string, seconds : number?)
 	local ServerRestartService = Framework:Get("ServerRestartService", false, true)

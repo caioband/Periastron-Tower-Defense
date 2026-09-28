@@ -1,5 +1,4 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -11,148 +10,143 @@ local UIAssets = Assets:WaitForChild("UI")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("WeatherFeedbackController")
 
 local WeatherConfig = SharedConfig.WeatherConfig
 local CardModifier = SharedConfig.CardModifier
 
 --[[
-	A cor da torre que uma carta de alvo único está prestes a pegar. Vem do
-	`RoundCardConfig` porque é a mesma que a mira usa no realce da carta que não mexe
-	em estatística nenhuma (ver `RoundCardShopController:_hoverUnit`): um amarelo só
-	para "é esta aqui", venha ele de onde vier.
+	The color of the tower a single-target card is about to take. It comes from
+	`RoundCardConfig` because it is the same one aiming uses to highlight a card that
+	changes no stat (see `RoundCardShopController:_hoverUnit`): a single yellow for
+	"this one", wherever it comes from.
 ]]
 local PREVIEW_COLOR = SharedConfig.RoundCardConfig.Targeting.Colors.Unit
 
 --[[
-	O vocabulário da billboard: o asset, o nome do Highlight, as cores e a lista de
-	ícones. Mora no `WeatherConfig` por herança -- o clima foi a primeira coisa a
-	desenhar nela --, mas ele vale para as duas fontes. Ver o cabeçalho.
+	The billboard's vocabulary: the asset, the Highlight name, the colors, and the icon
+	list. It lives in `WeatherConfig` by inheritance (weather was the first thing to
+	draw on it), but it applies to both sources. See the header.
 ]]
 local Config = WeatherConfig.Feedback
 
-local IS_STUDIO = RunService:IsStudio()
-
 --[[
-	O que está mexendo com a unidade, em cima dela.
+	What is affecting a unit, shown above it.
 
-	Toda unidade afetada ganha duas coisas:
+	Every affected unit gets two things:
 
-	- um **Highlight** no modelo, azul claro quando estão ajudando e vermelho quando
-	  estão atrapalhando;
-	- uma **billboard na cabeça** com um ícone por estatística mexida — dano,
-	  alcance, cooldown e dinheiro.
+	- a **Highlight** on the model, light blue when they help and red when they hurt;
+	- a **billboard over the head** with one icon per changed stat: damage, range,
+	  cooldown, and money.
 
-	## São três camadas, e elas se multiplicam
+	## There are three layers, and they multiply
 
-	1. **O clima**, que é de onde tudo isto veio (`WeatherConfig.GetUnitMultiplier`);
-	2. **as cartas de round** já usadas, que deixaram regras no campo
-	   (`CardModifier`, a lista que o `CardModifierController` guarda);
-	3. **a prévia**, que é uma carta que o jogador está mirando *agora* e ainda não
-	   usou (`SetPreview`).
+	1. **Weather**, where all of this came from (`WeatherConfig.GetUnitMultiplier`);
+	2. **round cards** already used, which left rules on the field (`CardModifier`, the
+	   list `CardModifierController` keeps);
+	3. **the preview**, a card the player is aiming *now* and has not used yet
+	   (`SetPreview`).
 
-	As três entram na mesma conta por estatística, e o ícone que acende é o do
-	**efeito líquido**: um clima que dá +30% de dano com uma carta que tira 20%
-	acende o ícone de buff, e não os dois ao mesmo tempo. Somar listas de ícones em
-	vez de multiplicar números faria a unidade mostrar buff e debuff da mesma coisa
-	lado a lado, que não quer dizer nada.
+	All three enter the same per-stat math, and the icon that lights is the **net
+	effect**: a weather giving +30% damage with a card taking 20% lights the buff icon,
+	not both at once. Adding icon lists instead of multiplying numbers would make the
+	unit show buff and debuff for the same thing side by side, which means nothing.
 
-	A ordem dos ícones e o nome de cada um saem de `WeatherConfig.Feedback.Stats`,
-	que é o vocabulário da billboard — e não uma lista do clima. É a mesma tabela que
-	o clima usa, justamente para as duas fontes falarem a mesma língua na mesma
-	cabeça.
+	The icon order and each icon's name come from `WeatherConfig.Feedback.Stats`, which
+	is the billboard's vocabulary, not a weather list. It is the same table weather
+	uses, precisely so both sources speak the same language over the same head.
 
-	Daqui sai só o desenho: as contas são as mesmas funções compartilhadas que o
-	servidor usa para aplicar o efeito de verdade. O que o jogador vê e o que ele
-	leva no combate saem da mesma linha de config.
+	Only the drawing comes from here: the math uses the same shared functions the server
+	uses to apply the real effect. What the player sees and what they get in combat come
+	from the same config line.
 
-	Tudo mora **dentro do modelo da unidade** (o Attachment na cabeça, o Highlight no
-	próprio modelo), então vender a unidade ou recomeçar o round limpa junto, sem
-	este controller precisar saber. É também por isso que ele procura o que já
-	desenhou pelo nome em vez de guardar numa tabela: não existe estado para
-	desencontrar do que está no Workspace.
+	Everything lives **inside the unit's model** (the Attachment on the head, the
+	Highlight on the model itself), so selling the unit or restarting the round cleans
+	it up too, without this controller needing to know. That is also why it looks up
+	what it drew by name instead of keeping a table: there is no state to drift from
+	what is in the Workspace.
 
-	É cliente puro. Nenhum evento novo trafega — a troca de clima chega em
-	`WeatherChanged`, a lista de cartas em `RoundCardModifiers`, e o resto é config
-	compartilhada.
+	It is client only. No new event travels: weather changes arrive in
+	`WeatherChanged`, the card list in `RoundCardModifiers`, and the rest is shared
+	config.
+
+	See docs/game/weather-in-match.md.
 ]]
 
 local WeatherFeedbackController = {
 	Controllers = {
 		WeatherController = {},
 
-		-- Quem guarda a lista de cartas valendo no campo e monta o `world` que as
-		-- condições de vizinhança precisam.
+		-- Keeps the list of cards in effect on the field and builds the `world` that
+		-- neighborhood conditions need.
 		CardModifierController = {},
 
-		-- A vida da base, para a carta que só vale abaixo de 20% dela.
+		-- Base health, for the card that only applies below 20% of it.
 		BaseHealthController = {},
 	}
 }
 
 --[[
-	As unidades no mapa, para a troca de clima alcançar todas.
+	The units on the map, so a weather change reaches all of them.
 
-	Registro próprio em vez de ler o `createdClasses` do `UnitPlacementController`:
-	é ele quem chama o `Apply` daqui, e pedir o controller dele de volta fecharia um
-	ciclo no `Framework:Get` — os dois esperariam o outro carregar.
+	Its own registry instead of reading `UnitPlacementController`'s `createdClasses`:
+	that controller calls this one's `Apply`, and requesting it back would close a
+	cycle in `Framework:Get`: each would wait for the other to load.
 
-	Modelo destruído sai na próxima varredura (`Parent == nil`), então venda e
-	recomeço de round não precisam avisar nada.
+	A destroyed model leaves on the next sweep (`Parent == nil`), so selling and round
+	restarts need not notify anything.
 ]]
 WeatherFeedbackController.Units = {} :: { Model }
 
--- Aviso de ícone faltando, uma vez por nome: a varredura roda por unidade e por
--- troca de clima, e sem isso um label ausente entupiria o output.
-WeatherFeedbackController.Warned = {}
-
 --[[
-	O `unitId` de cada modelo, entregue pelo `Register`.
+	Each model's `unitId`, handed over by `Register`.
 
-	Vem de fora em vez de ser lido do `createdClasses` pelo mesmo motivo da lista
-	acima: quem chama o `Register` é o `UnitPlacementController`, e pedir o
-	controller dele de volta fecharia um ciclo. Ele já tem o id na mão no momento em
-	que registra.
+	It comes from outside instead of being read from `createdClasses` for the same
+	reason as the list above: `UnitPlacementController` calls `Register`, and
+	requesting that controller back would close a cycle. It already has the id in hand
+	when it registers.
 
-	Serve para uma coisa só, mas essencial: uma carta de alvo único (o Bloxiade numa
-	torre) só acende na torre certa se der para dizer qual torre é qual.
+	It serves one purpose, but an essential one: a single-target card (Bloxiade on a
+	tower) only lights on the right tower if it can tell which tower is which.
 ]]
 WeatherFeedbackController.UnitIds = {} :: { [Model] : string }
 
 --[[
-	O último desenho de cada unidade, como texto.
+	Each unit's last drawing, as text.
 
-	A prévia é refeita **a cada quadro** enquanto o jogador arrasta o anel de uma
-	carta de área pelo mapa, e quase todo quadro não muda nada: a torre que estava
-	dentro do anel continua dentro. Comparar a assinatura antes de escrever é o que
-	transforma "reescrever a billboard de todas as torres 60 vezes por segundo" em
-	"escrever quando alguma de fato entra ou sai".
+	The preview is redone **every frame** while the player drags an area card's ring
+	across the map, and almost every frame changes nothing: the tower that was inside
+	the ring is still inside. Comparing the signature before writing is what turns
+	"rewrite every tower's billboard 60 times a second" into "write when one actually
+	enters or leaves".
 
-	Modelo destruído sai daqui na mesma varredura que o tira de `Units`.
+	A destroyed model leaves this table in the same sweep that removes it from `Units`.
 ]]
 WeatherFeedbackController.Signatures = {} :: { [Model] : string }
 
 --[[
-	A carta que o jogador está mirando agora, se ela mexer em alguma unidade.
+	The card the player is aiming now, if it affects any unit.
 
-	`Records` é a lista de modificadores que a carta *criaria* se fosse usada onde o
-	cursor está -- os mesmos registros do `RoundCardConfig`, com a zona já preenchida
-	com o ponto do mapa. `Unit` restringe a prévia a um modelo só, que é o caso da
-	carta de alvo único: sem ele, um registro de `Target` (que ainda não tem `UnitId`
-	nenhum) valeria para o mapa inteiro.
+	`Records` is the list of modifiers the card *would* create if used where the cursor
+	is: the same records as `RoundCardConfig`, with the zone already filled with the
+	map point. `Unit` restricts the preview to a single model, which is the
+	single-target card's case: without it, a `Target` record (which has no `UnitId`
+	yet) would apply to the whole map.
 
-	Nil quando ninguém está mirando.
+	Nil when nobody is aiming.
 ]]
 WeatherFeedbackController.Preview = nil
 
 --[[ BILLBOARD ]]
 
 --[=[
-	A billboard da unidade, criando-a na primeira vez.
+	The unit's billboard, creating it the first time.
 
-	Devolve `nil` para unidade sem cabeça ou sem o asset — nenhum dos dois deveria
-	acontecer, e nos dois casos o Highlight ainda entra sozinho.
+	Returns `nil` for a unit with no head or without the asset: neither should happen,
+	and in both cases the Highlight still goes on alone.
 ]=]
 function WeatherFeedbackController:getBillboard(unitModel : Model) : Instance?
 	local head = unitModel:FindFirstChild(Config.HeadName)
@@ -165,19 +159,16 @@ function WeatherFeedbackController:getBillboard(unitModel : Model) : Instance?
 
 	local asset = UIAssets:FindFirstChild(Config.Asset)
 	if not asset then
-		if IS_STUDIO and not self.Warned[Config.Asset] then
-			self.Warned[Config.Asset] = true
-			warn(string.format("[WeatherFeedbackController]: nao achei '%s' em Assets.UI.", Config.Asset))
-		end
+		log:StudioWarnOnce(Config.Asset, string.format("could not find '%s' in Assets.UI.", Config.Asset))
 		return nil
 	end
 
 	local clone = asset:Clone()
 
 	--[[
-		O `Adornee` autorado aponta para uma cabeça que não veio no clone, e um
-		Adornee morto deixa a billboard sem âncora. Zerar devolve a BillboardGui para
-		o Attachment que a carrega, que é o encaixe que o asset já traz pronto.
+		The authored `Adornee` points at a head that did not come with the clone, and a
+		dead Adornee leaves the billboard without an anchor. Clearing it returns the
+		BillboardGui to the Attachment that carries it, the fit the asset already ships.
 	]]
 	local gui = clone:FindFirstChildWhichIsA("BillboardGui")
 	if gui then
@@ -190,12 +181,12 @@ function WeatherFeedbackController:getBillboard(unitModel : Model) : Instance?
 end
 
 --[=[
-	Acende exatamente os ícones de `icons` e apaga o resto.
+	Lights exactly the icons in `icons` and hides the rest.
 
-	A ordem da lista vira `LayoutOrder`: os labels do asset nascem todos em 0, e com
-	empate o `UIListLayout` cai na ordem alfabética — que colocaria o dano depois do
-	cooldown. Escrever a ordem aqui faz a billboard sempre ler dano, alcance e
-	cooldown na mesma sequência, tenha a unidade um ícone ou três.
+	The list order becomes `LayoutOrder`: the asset's labels all start at 0, and on a
+	tie `UIListLayout` falls back to alphabetical order, which would put damage after
+	cooldown. Writing the order here makes the billboard always read damage, range,
+	and cooldown in the same sequence, whether the unit has one icon or three.
 ]=]
 function WeatherFeedbackController:setIcons(billboard : Instance, icons : { string })
 	local gui = billboard:FindFirstChildWhichIsA("BillboardGui")
@@ -218,14 +209,10 @@ function WeatherFeedbackController:setIcons(billboard : Instance, icons : { stri
 		end
 	end
 
-	-- Sobrou pedido sem label: o ícone ainda não foi desenhado no asset. A unidade
-	-- continua com o Highlight e com os outros ícones.
-	if not IS_STUDIO then return end
-
+	-- A request with no label left over: the icon has not been drawn in the asset yet.
+	-- The unit keeps the Highlight and the other icons.
 	for name in wanted do
-		if self.Warned[name] then continue end
-		self.Warned[name] = true
-		warn(string.format("[WeatherFeedbackController]: o asset '%s' nao tem o ImageLabel '%s'; esse icone nao vai aparecer.",
+		log:StudioWarnOnce(name, string.format("asset '%s' has no '%s' ImageLabel; that icon will not show.",
 			Config.Asset, name))
 	end
 end
@@ -241,15 +228,15 @@ end
 --[[ HIGHLIGHT ]]
 
 --[=[
-	Pinta o modelo com a cor do estado, criando o Highlight na primeira vez.
+	Paints the model with the state's color, creating the Highlight the first time.
 
-	Um Highlight só, recolorido nas trocas: destruir e recriar a cada clima piscaria
-	a unidade, e é o mesmo Highlight que passa de azul para vermelho quando o clima
-	troca de um que ajudava para um que atrapalha.
+	A single Highlight, recolored on changes: destroying and recreating it on every
+	weather would make the unit blink, and it is the same Highlight that goes from blue
+	to red when the weather changes from one that helped to one that hurts.
 ]=]
 function WeatherFeedbackController:setHighlight(unitModel : Model, kind : string)
-	-- `Preview` não é um estado da unidade, é a mira em cima dela: a cor vem do
-	-- `RoundCardConfig`, e não da paleta de buff/debuff do clima.
+	-- `Preview` is not a unit state, it is the aim over it: the color comes from
+	-- `RoundCardConfig`, not the weather's buff/debuff palette.
 	local color = if kind == "Preview" then PREVIEW_COLOR else Config.Highlight[kind]
 	if not color then return end
 
@@ -273,15 +260,15 @@ function WeatherFeedbackController:clearHighlight(unitModel : Model)
 	end
 end
 
---[[ A CONTA ]]
+--[[ THE MATH ]]
 
 --[=[
-	Tudo que a conta de uma unidade precisa, montado uma vez por varredura.
+	Everything a unit's math needs, built once per sweep.
 
-	O `world` (a lista de unidades do mapa e a vida da base) é caro de montar e é o
-	mesmo para todas elas, e a lista de cartas também. Montá-los por unidade seria
-	refazer o mapa inteiro uma vez por torre — que é exatamente o laço quadrático que
-	a prévia, rodando a cada quadro, não pode pagar.
+	The `world` (the map's unit list and base health) is expensive to build and the
+	same for all units, and so is the card list. Building them per unit would redo the
+	whole map once per tower, which is exactly the quadratic loop the preview, running
+	every frame, cannot afford.
 ]=]
 function WeatherFeedbackController:_context()
 	local weatherController = self.Controllers.WeatherController
@@ -296,29 +283,29 @@ function WeatherFeedbackController:_context()
 end
 
 --[=[
-	O que a billboard e o Highlight desta unidade deveriam mostrar: `Icons` e `Kind`,
-	ou `nil` quando nada a está afetando.
+	What this unit's billboard and Highlight should show: `Icons` and `Kind`, or `nil`
+	when nothing is affecting it.
 
-	O clima entra pela função dele, as cartas pela delas, e a prévia pela mesma
-	função das cartas -- as três por estatística, multiplicadas. Ver o cabeçalho.
+	Weather comes in through its function, cards through theirs, and the preview through
+	the same function as the cards: all three per stat, multiplied. See the header.
 
-	`Icons` sai na ordem de `Feedback.Stats`, que é a mesma ordem em que a billboard
-	os mostra. Só entram estatísticas cujo multiplicador líquido saiu de 1 -- um
-	clima que mexe só no alcance acende um ícone só.
+	`Icons` comes out in `Feedback.Stats` order, the same order the billboard shows them.
+	Only stats whose net multiplier moved off 1 enter: a weather that only changes
+	range lights a single icon.
 
-	`Kind` é **`Debuff` sempre que houver um debuff**, mesmo com buff junto: o buff o
-	jogador descobre no card, a perda ele precisa perceber de longe para reagir a
-	tempo. Uma unidade dentro do anel de um cajado é justamente o caso -- ela ganha
-	numa estatística e paga em outra.
+	`Kind` is **`Debuff` whenever there is a debuff**, even alongside a buff: the player
+	finds the buff on the card, but the loss they need to notice from afar to react in
+	time. A unit inside a staff's ring is exactly that case: it gains in one stat and
+	pays in another.
 ]=]
 function WeatherFeedbackController:_feedback(unitModel : Model, context)
 	local unitName = unitModel.Name
 	local weather = context.Weather
 
 	--[[
-		Unidade desligada pelo clima tem resposta própria, e curta: o que ela precisa
-		comunicar é "esta não está atacando". Carta nenhuma muda isso -- dobrar o dano
-		de uma torre parada continua dando zero --, então a conta para aqui.
+		A unit turned off by weather has its own short answer: what it needs to say is
+		"this one is not attacking". No card changes that (doubling a stopped tower's
+		damage is still zero), so the math stops here.
 	]]
 	if weather
 		and not WeatherConfig.IsImmune(weather, unitName)
@@ -336,9 +323,9 @@ function WeatherFeedbackController:_feedback(unitModel : Model, context)
 	local preview = context.Preview
 	local previewApplies = preview ~= nil and (preview.Unit == nil or preview.Unit == unitModel)
 
-	-- A torre que o ponteiro escolheu numa carta de alvo único: o realce dela é o
-	-- amarelo da mira, e não o azul/vermelho do que ela vai sentir. Ver o `Kind`
-	-- devolvido no fim.
+	-- The tower the pointer picked for a single-target card: its highlight is the
+	-- aiming yellow, not the blue/red of what it will feel. See the `Kind`
+	-- returned at the end.
 	local isPreviewTarget = preview ~= nil and preview.Unit == unitModel
 
 	local icons = {}
@@ -367,16 +354,16 @@ function WeatherFeedbackController:_feedback(unitModel : Model, context)
 	end
 
 	--[=[
-		A torre sob o ponteiro fica amarela mesmo sem ícone nenhum.
+		The tower under the pointer turns yellow even with no icon.
 
-		O amarelo aqui não é "o que ela está sentindo", é "é esta que a carta vai
-		pegar" -- e isso precisa aparecer antes de a carta ser usada, inclusive numa
-		carta que não mexa em nenhuma das estatísticas da billboard. Os ícones, quando
-		houver, continuam mostrando o que vem pela frente.
+		The yellow here is not "what it is feeling", it is "this is the one the card
+		will take", and that must show before the card is used, even for a card that
+		changes none of the billboard's stats. The icons, when there are any, still show
+		what is coming.
 
-		Um realce só na torre, e não dois: o `RoundCardShopController` não desenha o
-		dele quando a carta tem prévia, justamente para as duas cores não brigarem no
-		mesmo modelo.
+		A single highlight on the tower, not two: `RoundCardShopController` does not draw
+		its own when the card has a preview, precisely so the two colors do not fight
+		on the same model.
 	]=]
 	if isPreviewTarget then
 		return {
@@ -398,14 +385,14 @@ end
 --[[ API ]]
 
 --[=[
-	Põe (ou tira) o feedback de uma unidade.
+	Puts (or removes) a unit's feedback.
 
-	`context` vem do `Refresh` quando a varredura é do mapa inteiro; sem ele, é
-	montado aqui -- o caso de uma unidade só.
+	`context` comes from `Refresh` when the sweep covers the whole map; without it, it
+	is built here, the single-unit case.
 
-	A assinatura é comparada antes de qualquer escrita: reescrever a billboard com o
-	mesmo conteúdo não muda nada na tela e custa uma varredura de labels por unidade
-	por quadro enquanto a prévia estiver aberta.
+	The signature is compared before any write: rewriting the billboard with the same
+	content changes nothing on screen and costs a label sweep per unit per frame while
+	the preview is open.
 ]=]
 function WeatherFeedbackController:Apply(unitModel : Model, context)
 	if not unitModel or not unitModel.Parent then return end
@@ -437,15 +424,15 @@ function WeatherFeedbackController:Apply(unitModel : Model, context)
 end
 
 --[=[
-	Registra uma unidade recém-colocada e já a pinta.
+	Registers a just-placed unit and paints it right away.
 
-	Chamado pelo `UnitPlacementController` no fim de `replicatePlacedUnit` — quem
-	coloca uma unidade no meio da tempestade (ou dentro do anel de um cajado) tem que
-	vê-la afetada na hora, e não só na próxima troca de clima.
+	`UnitPlacementController` calls it at the end of `replicatePlacedUnit`: a player
+	placing a unit mid-storm (or inside a staff's ring) must see it affected
+	immediately, not only at the next weather change.
 
-	O mapa inteiro é repintado junto, e não só ela: duas cartas medem a **vizinhança**
-	(o Iceolated premia a torre sozinha, o Ice to Meet You castiga quem está perto do
-	gelo), então uma torre nova muda o que as vizinhas dela estão sentindo.
+	The whole map is repainted too, not just it: two cards measure the **neighborhood**
+	(Iceolated rewards the lone tower, Ice to Meet You punishes those near ice), so a
+	new tower changes what its neighbors are feeling.
 ]=]
 function WeatherFeedbackController:Register(unitModel : Model, unitId : string?)
 	if not unitModel then return end
@@ -457,11 +444,11 @@ function WeatherFeedbackController:Register(unitModel : Model, unitId : string?)
 end
 
 --[=[
-	Repinta o mapa inteiro. É o passo da troca de clima, da carta usada e de cada
-	quadro da prévia.
+	Repaints the whole map. It is the step for a weather change, a card used, and each
+	preview frame.
 
-	A varredura aproveita para soltar as unidades que já saíram do Workspace, que é
-	o que faz a venda e o recomeço de round não precisarem avisar nada.
+	The sweep also drops units that already left the Workspace, which is what keeps
+	selling and round restarts from needing to notify anything.
 ]=]
 function WeatherFeedbackController:Refresh()
 	local context = self:_context()
@@ -485,19 +472,19 @@ function WeatherFeedbackController:Refresh()
 end
 
 --[=[
-	Mostra nas unidades o que uma carta **ainda não usada** faria com elas.
+	Shows on the units what a card **not yet used** would do to them.
 
-	`records` são os modificadores que a carta criaria, com a zona já preenchida com
-	o ponto do mapa onde o cursor está; `unitModel` restringe a prévia a uma torre só,
-	que é o caso da carta de alvo único.
+	`records` are the modifiers the card would create, with the zone already filled with
+	the map point under the cursor; `unitModel` restricts the preview to a single tower,
+	the single-target card's case.
 
-	É o mesmo desenho do efeito de verdade, de propósito: o jogador arrasta o anel
-	pelo mapa e lê, nas cabeças das torres, exatamente o que vai acontecer com elas se
-	ele soltar ali. Um segundo desenho para "o que vai acontecer" o obrigaria a
-	aprender duas linguagens para a mesma informação.
+	It is the same drawing as the real effect, on purpose: the player drags the ring
+	across the map and reads, over the towers' heads, exactly what will happen to them if
+	they release there. A second drawing for "what will happen" would force them to
+	learn two languages for the same information.
 
-	Chamado a cada quadro enquanto a mira estiver aberta -- o `Apply` compara a
-	assinatura antes de escrever, então quadro que não muda nada não custa nada.
+	Called every frame while aiming is open: `Apply` compares the signature before
+	writing, so a frame that changes nothing costs nothing.
 ]=]
 function WeatherFeedbackController:SetPreview(records : { any }?, unitModel : Model?)
 	if not records or #records == 0 then
@@ -509,7 +496,7 @@ function WeatherFeedbackController:SetPreview(records : { any }?, unitModel : Mo
 	self:Refresh()
 end
 
---- Tira a prévia e devolve as unidades ao que elas de fato estão sentindo.
+--- Removes the preview and returns units to what they are actually feeling.
 function WeatherFeedbackController:ClearPreview()
 	if not self.Preview then return end
 
@@ -517,13 +504,13 @@ function WeatherFeedbackController:ClearPreview()
 	self:Refresh()
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function WeatherFeedbackController:construct()
 	--[[
-		O `WeatherController` também escuta este evento para guardar o clima atual, e
-		a ordem entre os dois não é garantida. Um passo de espera é o suficiente: o
-		`GetCurrent` já responde o clima novo quando o `Refresh` roda.
+		`WeatherController` also listens to this event to store the current weather, and
+		the order between the two is not guaranteed. One deferred step is enough:
+		`GetCurrent` already answers the new weather when `Refresh` runs.
 	]]
 	Framework:Listen("WeatherChanged", function()
 		task.defer(function()
@@ -532,9 +519,9 @@ function WeatherFeedbackController:construct()
 	end)
 
 	--[[
-		Uma carta entrou no campo, ou uma venceu. O `task.defer` é pelo mesmo motivo do
-		clima: o `CardModifierController` também escuta este evento para guardar a
-		lista, e a ordem entre os dois não é promessa de lugar nenhum.
+		A card entered the field, or one expired. `task.defer` for the same reason as
+		weather: `CardModifierController` also listens to this event to store the list,
+		and nothing promises the order between the two.
 	]]
 	Framework:Listen("RoundCardModifiers", function()
 		task.defer(function()
@@ -543,11 +530,12 @@ function WeatherFeedbackController:construct()
 	end)
 
 	--[[
-		A vida da base cruzou algum limite: o No Pain, No Gain só vale abaixo de 20%
-		dela, e é a única coisa que liga e desliga um buff sem ninguém clicar em nada.
+		Base health crossed some threshold: No Pain, No Gain only applies below 20%, and
+		it is the only thing that turns a buff on and off without anyone clicking
+		anything.
 
-		Sem filtro de "cruzou ou não": a base só muda quando um inimigo vaza, e o
-		`Apply` já sai fora sozinho quando o desenho não mudou.
+		No "crossed or not" filter: the base only changes when an enemy leaks, and
+		`Apply` already bails out on its own when the drawing did not change.
 	]]
 	Framework:Listen("UpdateBaseHealth", function()
 		task.defer(function()

@@ -21,22 +21,24 @@ local PointerUtil = require(Shared.Util.PointerUtil)
 local GameClock = require(Shared.Util.GameClock)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("MobController")
 
 local HIT_FLASH_COLOR = Color3.fromRGB(255, 50, 50)
 local HIT_FLASH_TIME = 0.12
 
 --[[
-	O realce de quem levou choque -- o raio do Electro.
+	The highlight for enemies that took a shock: the Electro's bolt.
 
-	Mesmo amarelo, mesmas transparencias e mesma ideia do realce de unidade atordoada
-	(`UnitPlacementController`): "este esta parado". Ele dura exatamente o tranco, que
-	e curto -- e o que faz o jogador ver que a fila travou, em vez de so ver o raio
-	passar e os inimigos continuarem andando.
+	The same yellow, the same transparencies, and the same idea as the stunned-unit
+	highlight (`UnitPlacementController`): "this one is stopped". It lasts exactly as
+	long as the jolt, which is short; it is what lets the player see the queue froze,
+	instead of just seeing the bolt go by and the enemies keep walking.
 
-	Nome proprio para nao brigar com o `HitFlash` vermelho, que pisca por cima dele a
-	cada golpe e some sozinho.
+	Its own name so it does not fight the red `HitFlash`, which flashes over it on
+	every hit and goes away on its own.
 ]]
 local SHOCK_HIGHLIGHT = "ShockHighlight"
 local SHOCK_COLOR = Color3.fromRGB(255, 200, 60)
@@ -67,18 +69,18 @@ local function shakeScreen()
 end
 
 --[=[
-	O modelo que este inimigo veste nesta partida.
+	The model this enemy wears in this match.
 
-	Duas perguntas em uma: **de que pasta** (o conjunto que o servidor mandou, ou o
-	padrao) e **com que nome** (o `ModelSets` traduz o nome da entidade para o do
-	modelo -- ver `SharedConfig.Mob`). O nome da entidade nao muda por dificuldade,
-	entao tudo o mais no cliente continua falando dele.
+	Two questions in one: **from which folder** (the set the server sent, or the
+	default) and **under which name** (`ModelSets` translates the entity name to the
+	model's; see `SharedConfig.Mob`). The entity name does not change by difficulty,
+	so everything else on the client keeps talking about it.
 
-	Desce a escada ate achar alguma coisa: conjunto pedido, conjunto padrao,
-	`EnemyRig`. Um conjunto incompleto e um erro de arte, e a resposta certa para ele
-	e o inimigo aparecer vestido de outro com um aviso no console -- e nao a partida
-	parar. Era exatamente isso que o `or Mobs.CourageBearer` antigo nao fazia: com os
-	modelos uma pasta abaixo, ele estourava no lugar de cair no fallback.
+	It walks down the ladder until it finds something: requested set, default set,
+	`EnemyRig`. An incomplete set is an art mistake, and the right answer to it is the
+	enemy showing up dressed as another with a warning in the console, not the match
+	stopping. A bare `or Mobs.CourageBearer` would not do that: with the models one
+	folder down, it errors instead of falling back.
 ]=]
 local function resolveMobModel(setName : string?, entityName : string) : Instance?
 	local requested = setName and MobSets:FindFirstChild(setName) or nil
@@ -88,7 +90,7 @@ local function resolveMobModel(setName : string?, entityName : string) : Instanc
 		local model = requested:FindFirstChild(MobConfig.GetModelName(requested.Name, entityName))
 		if model then return model end
 
-		warn(string.format("[MobController]: '%s' nao tem modelo no conjunto '%s'; usando o '%s'.",
+		log:StudioWarn(string.format("'%s' has no model in set '%s'; using '%s'.",
 			entityName, requested.Name, MobConfig.DefaultModelSet))
 	end
 
@@ -97,7 +99,7 @@ local function resolveMobModel(setName : string?, entityName : string) : Instanc
 		if model then return model end
 	end
 
-	warn(string.format("[MobController]: '%s' nao tem modelo em conjunto nenhum; usando o EnemyRig.", entityName))
+	log:StudioWarn(string.format("'%s' has no model in any set; using EnemyRig.", entityName))
 
 	return Mobs:FindFirstChild("EnemyRig")
 end
@@ -128,10 +130,10 @@ local function getHealthBillboard(mob)
 end
 
 local function updateHealthBar(mob, current, max, instant)
-	-- A vida vai junto para um atributo do modelo: e por ela que o
-	-- `TargetingController` acha o mob mais fraco ou mais forte do alcance sem ter
-	-- de perguntar nada ao MobController. Fica antes das saidas abaixo de
-	-- proposito -- mob sem barra de vida continua sendo alvo.
+	-- Health also goes to an attribute on the model: that is how
+	-- `TargetingController` finds the weakest or strongest enemy in range without
+	-- asking MobController anything. It sits before the exits below on
+	-- purpose: an enemy without a health bar is still a target.
 	mob:SetAttribute("Health", current)
 
 	local attachment = mob:FindFirstChild("HealthAttachment")
@@ -202,15 +204,16 @@ local function flashMob(mob)
 end
 
 --[=[
-	Pinta um inimigo de amarelo enquanto o tranco do choque durar.
+	Paints an enemy yellow while the shock's jolt lasts.
 
-	Um realce por inimigo: um choque em cima de outro troca o realce e recomeca o
-	prazo, em vez de empilhar dois Highlights brigando pelo mesmo modelo -- e e o
-	mesmo que o `MobService:StunMob` faz com o tranco em si, onde o prazo maior manda.
+	One highlight per enemy: a shock on top of another replaces the highlight and
+	restarts the timer, instead of stacking two Highlights fighting over the same
+	model, which is the same thing `MobService:StunMob` does with the jolt itself,
+	where the longer deadline wins.
 
-	A espera corre no relogio da **partida**, como a do `StunMob` do outro lado: no 3x
-	os 0,3s acabam em um decimo de segundo real, e o realce tem que apagar junto com
-	eles, senao ele sobreviveria ao proprio motivo.
+	The wait runs on the **match** clock, like `StunMob`'s on the other side: at 3x
+	the 0.3s end in a tenth of a real second, and the highlight must go off with them,
+	or it would outlive its own reason.
 ]=]
 local function shockMob(mob, duration : number)
 	local existing = mob:FindFirstChild(SHOCK_HIGHLIGHT)
@@ -358,15 +361,15 @@ local function checkIsOnGrid(position, size)
 end
 
 --[=[
-	Rotas do mapa atual, iguaizinhas as do servidor — os dois lados montam a
-	partir dos mesmos nodes replicados, entao o indice sorteado la vale aqui.
+	The current map's routes, identical to the server's: both sides build them from
+	the same replicated nodes, so the index drawn there is valid here.
 
-	Antes o caminho era reconstruido a cada spawn de mob; agora e uma vez so por
-	mapa, e o cache cai no restart do round.
+	Built once per map rather than on every enemy spawn; the cache drops on round
+	restart.
 
-	Yield: espera os nodes chegarem inteiros antes do primeiro build. Se nao
-	chegarem, monta o que der mas nao cacheia — assim o proximo mob tenta de novo
-	em vez de arrastar um caminho truncado pelo round todo.
+	Yields: waits for the nodes to arrive complete before the first build. If they do
+	not, it builds what it can but does not cache, so the next enemy tries again
+	instead of dragging a truncated path through the whole round.
 ]=]
 function MobController:getRoutes()
 	if not self.Routes then
@@ -374,7 +377,7 @@ function MobController:getRoutes()
 		local complete = PathUtil.WaitForNodes(nodesFolder)
 		local routes = PathUtil.BuildRoutes(nodesFolder)
 
-		print(string.format("[DEBUG/MobClient] montando rotas: completo=%s nodes=%d (esperado=%s) rotas=%d",
+		log:Debug(string.format("building routes: complete=%s nodes=%d (expected=%s) routes=%d",
 			tostring(complete), #nodesFolder:GetChildren(),
 			tostring(nodesFolder:GetAttribute("NodeCount") or nodesFolder:GetAttribute("Nodes") or "?"), #routes))
 
@@ -388,12 +391,12 @@ function MobController:getRoutes()
 end
 
 --[=[
-	Os nodes do caminho com a distancia de cada um ate o primeiro, para a
-	prioridade `Farthest` do `TargetingController`.
+	The path nodes with each one's distance to the first, for `TargetingController`'s
+	`Farthest` priority.
 
-	Sai das mesmas rotas do movimento, que e o que faz cliente e servidor medirem
-	o avanco do mob na mesma regua. Caminho incompleto nao e cacheado, pela mesma
-	razao do `getRoutes`: o proximo pedido tenta de novo.
+	They come from the same routes as movement, which is what makes client and server
+	measure an enemy's progress on the same ruler. An incomplete path is not cached,
+	for the same reason as `getRoutes`: the next request tries again.
 ]=]
 function MobController:getNodeDistances()
 	if not self.NodeDistances then
@@ -415,7 +418,7 @@ function MobController:createEntity(entityData)
 
 	local mobModel = resolveMobModel(entityData.ModelSet, mobName)
 	if not mobModel then
-		warn(string.format("[MobController]: sem modelo nenhum para '%s'; nao vou desenhar.", mobName))
+		log:StudioWarn(string.format("no model at all for '%s'; not drawing it.", mobName))
 		return
 	end
 
@@ -453,23 +456,23 @@ function MobController:createEntity(entityData)
 	self.MobHealth[mobId] = { current = entityData.Health or entityData.MaxHealth or 100, max = entityData.MaxHealth or 100 }
 	updateHealthBar(mobClone, self.MobHealth[mobId].current, self.MobHealth[mobId].max, true)
 
-	-- A rota vem do servidor: com bifurcacao, cliente e servidor precisam andar
-	-- exatamente pela mesma polilinha, senao as duas simulacoes divergem.
+	-- The route comes from the server: with a fork, client and server must walk
+	-- exactly the same polyline, or the two simulations diverge.
 	local routes = self:getRoutes()
 	local route = routes[entityData.Route or 1] or routes[1]
 
-	print(string.format("[DEBUG/MobClient] '%s': %d rota(s) montada(s), pedida a %s -> %s | nodes na pasta: %d",
-		mobName, #routes, tostring(entityData.Route), route and "achou" or "NAO ACHOU",
+	log:Debug(string.format("'%s': %d route(s) built, asked for %s -> %s | nodes in the folder: %d",
+		mobName, #routes, tostring(entityData.Route), route and "found" or "NOT FOUND",
 		#workspace.PathScriptable.Nodes:GetChildren()))
 
 	--[[
-		Sem rota não há por onde andar, e o que vinha depois (`route.smooth`)
-		estourava no meio da montagem: o modelo já estava clonado e no Workspace, mas
-		sem posição nem movimento — mob invisível para o jogador e vivo para o
-		servidor, que continuava mandando as torres atirarem nele.
+		Without a route there is nowhere to walk, and what came next (`route.smooth`)
+		would error mid-setup: the model already cloned and in the Workspace, but with
+		no position or movement: an enemy invisible to the player and alive for the
+		server, which kept telling towers to shoot at it.
 	]]
 	if not route then
-		warn(string.format("[MobController]: mob '%s' sem rota (%d montadas, %d nodes na pasta); nao vou desenhar.",
+		log:StudioWarn(string.format("mob '%s' has no route (%d built, %d nodes in the folder); not drawing it.",
 			mobName, #routes, #workspace.PathScriptable.Nodes:GetChildren()))
 
 		mobClone:Destroy()
@@ -490,11 +493,11 @@ function MobController:createEntity(entityData)
 	local verticalAdjustment = targetHeight - bottomOffset
 
 	--[[
-		Quanto o centro do modelo esta acima do caminho. O `TargetingController`
-		desconta isso antes de perguntar em que node o mob esta: o servidor mede a
-		partir do ponto do caminho, e sem o desconto os dois escolheriam nodes
-		diferentes perto da metade de cada trecho -- a torre olharia para um mob e o
-		dano iria para outro.
+		How far the model's center is above the path. `TargetingController` subtracts
+		this before asking which node the enemy is on: the server measures from the path
+		point, and without the offset the two would pick different nodes near the middle
+		of each segment: the tower would look at one enemy and the damage would go to
+		another.
 	]]
 	mobClone:SetAttribute("PathOffsetY", currentSize.Y / 2)
 
@@ -506,10 +509,10 @@ function MobController:createEntity(entityData)
 		speed = speed,
 		pointIndex = 2,
 		points = smooth.points,
-		-- Onde o mob esta no caminho, no chao. Ver o laco de movimento.
+		-- Where the enemy is on the path, on the ground. See the movement loop.
 		pathPos = startPosition,
-		-- O caminho inteiro, e nao so os pontos: o `MobTeleported` precisa das
-		-- distancias acumuladas para achar onde o mob reaparece.
+		-- The whole path, not just the points: `MobTeleported` needs the accumulated
+		-- distances to find where the enemy reappears.
 		smooth = smooth,
 		extentsSize = extentsSize,
 	}
@@ -517,13 +520,13 @@ function MobController:createEntity(entityData)
 	local slowWalk = mobModel:FindFirstChild("SlowWalk")
 	local fastWalk = mobModel:FindFirstChild("FastWalk")
 	--[[
-		A caminhada generica de `Assets.Entities.Walk` fecha a escada.
+		The generic walk from `Assets.Entities.Walk` closes the ladder.
 
-		Os rigs sao todos R6 com os mesmos nomes de parte, entao uma animacao serve
-		em qualquer um deles. O que ela evita e o pior desfecho possivel para um
-		modelo cuja animacao ainda nao foi publicada: o inimigo **deslizando** pelo
-		mapa em T-pose. Metade do elenco Astral esta nesse estado hoje -- tem o
-		`KeyframeSequence` no `AnimSaves` do Moon Animator e nenhum `Animation`.
+		The rigs are all R6 with the same part names, so one animation works on any of
+		them. What it avoids is the worst possible outcome for a model whose animation
+		has not been published yet: the enemy **sliding** across the map in a T-pose.
+		Half the Astral cast is in that state today: it has the `KeyframeSequence` in
+		Moon Animator's `AnimSaves` and no `Animation`.
 	]]
 	local walkAnim = mobModel:FindFirstChild("Walk") or Mobs:FindFirstChild("Walk")
 
@@ -562,16 +565,17 @@ function MobController:updateWalkAnimation(mobId)
 end
 
 --[=[
-	Toca uma animacao avulsa do modelo, pelo nome, por cima da caminhada.
+	Plays a one-off animation of the model, by name, on top of the walk.
 
-	Uma so por nome, guardada em `oneShotTracks` e recarregada nunca: quem pede duas
-	vezes toca a mesma faixa de novo, e nao duas faixas sobrepostas.
+	One per name, stored in `oneShotTracks` and never reloaded: asking twice plays the
+	same track again, not two overlapping tracks.
 
-	Modelo sem a animacao sai calado. E o caso normal, e nao um erro: o gimmick que
-	pede o `Rush` so vale no conjunto que tem a animacao (ver `Mob.GetGimmicks`), e
-	quem chega aqui sem ela ja e o caminho de quem misturou conjunto com gimmick. O
-	`IsA` esta ai porque o `FindFirstChild` casa por nome, e uma Part chamada `Rush`
-	passaria direto ate estourar no `LoadAnimation`.
+	A model without the animation leaves quietly. That is the normal case, not an
+	error: the gimmick that asks for `Rush` only applies to the set that has the
+	animation (see `Mob.GetGimmicks`), and reaching here without it is already the path
+	of someone who mixed a set with a gimmick. The `IsA` is there because
+	`FindFirstChild` matches by name, and a Part called `Rush` would pass straight
+	through until it errored in `LoadAnimation`.
 ]=]
 function MobController:playOneShotAnimation(mobId : string, animationName : string)
 	local movement = self.MobMovement[mobId]
@@ -603,11 +607,11 @@ function MobController:playAttackAnimation(mobId)
 end
 
 --[=[
-	Poe as animacoes dos mobs na velocidade da partida.
+	Puts enemy animations at the match speed.
 
-	Sem isto o boneco no 2x desliza: ele anda o dobro da distancia por segundo
-	com a caminhada tocando no ritmo de sempre. Vale para o ataque pelo mesmo
-	motivo -- o servidor bate duas vezes mais rapido.
+	Without this, the model slides at 2x: it walks twice the distance per second with
+	the walk playing at the usual pace. It applies to the attack for the same reason:
+	the server hits twice as fast.
 ]=]
 function MobController:applyTimeScale(scale : number)
 	for _, data in self.MobMovement do
@@ -618,9 +622,9 @@ function MobController:applyTimeScale(scale : number)
 			end
 		end
 
-		-- As avulsas entram aqui pelo mesmo motivo das de caminhada: o `Rush` dura
-		-- 3,25s de partida, e no 2x ele tem de caber em 1,6s de tela -- senao o
-		-- arranque que o servidor ja deu sai antes de a animacao chegar nele.
+		-- One-offs come in here for the same reason as walks: `Rush` lasts
+		-- 3.25s of match time, and at 2x it must fit in 1.6s of screen time, or the
+		-- burst the server already applied goes out before the animation reaches it.
 		for _, track in data.oneShotTracks or {} do
 			track:AdjustSpeed(scale)
 		end
@@ -630,9 +634,9 @@ end
 function MobController:startMovementLoop()
 	RunService.Heartbeat:Connect(function(dt)
 		--[[
-			A escala e lida do relogio a cada quadro em vez de empurrada pelo
-			`SpeedController`: sao duas comparacoes, e em troca este laco nao depende
-			da ordem em que os controllers ligam nem de quem avisou quem.
+			The scale is read from the clock every frame instead of pushed by
+			`SpeedController`: it is two comparisons, and in exchange this loop does not
+			depend on the order controllers start in or on who notified whom.
 		]]
 		local scale = GameClock.GetScale()
 		if scale ~= self.TimeScale then
@@ -667,22 +671,21 @@ function MobController:startMovementLoop()
 			end
 
 			--[[
-				O ponto do caminho onde o mob esta, guardado em vez de relido do modelo:
-				o boneco e so o desenho disso, e reconstruir a posicao a partir do pivot
-				a cada quadro acumularia o erro de arredondamento do `PivotTo`.
+				The path point where the enemy is, stored instead of reread from the model:
+				the model is only its drawing, and rebuilding the position from the pivot
+				every frame would accumulate `PivotTo`'s rounding error.
 			]]
 			local pos = data.pathPos or Vector3.new(currentPos.X, currentPos.Y - (extentsSize.Y / 2), currentPos.Z)
 
 			--[[
-				O mesmo `dt` acelerado que o `MobService` usa para somar a distancia
-				do lado dele, e a mesma regua: a distancia e gasta em 3D, ao longo dos
-				segmentos do caminho suavizado, que e como o `cumulative` do `PathUtil`
-				mede o `mob.Distance` do servidor.
+				The same sped-up `dt` `MobService` uses to add distance on its side, and the
+				same ruler: distance is spent in 3D, along the smoothed path's segments,
+				which is how `PathUtil`'s `cumulative` measures the server's `mob.Distance`.
 
-				Antes o gasto era so no plano, e numa rampa o boneco andava mais rapido
-				que o servidor. O erro nunca era corrigido: no Mountain, que sobe 17
-				studs, a tela chegava na base quase 5 studs a frente -- mais que o
-				alcance de uma unidade corpo a corpo.
+				Spending it only on the plane would make the model walk faster than the
+				server on a ramp, and the error is never corrected: on Mountain, which rises
+				17 studs, the screen would reach the base almost 5 studs ahead, more than a
+				melee unit's range.
 			]]
 			local remaining = data.speed * GameClock.Scaled(dt)
 			local lookTarget3D = nil
@@ -726,8 +729,8 @@ function MobController:startMovementLoop()
 end
 
 function MobController:startHoverLoop()
-	-- Sem mouse nao existe pairar sobre nada: no celular o loop so gastaria um
-	-- raycast a cada 0.05s para nunca encontrar mob nenhum.
+	-- Without a mouse there is no hovering over anything: on mobile the loop would only
+	-- spend a raycast every 0.05s to never find any enemy.
 	if PointerUtil.isTouchOnly() then return end
 
 	local accum = 0
@@ -775,16 +778,16 @@ end
 
 function MobController:construct()
 	Framework:Listen("SpawnClientMob", function(entityData)
-		print(string.format("[DEBUG/MobClient] recebi mob '%s' id=%s rota=%s",
+		log:Debug(string.format("received mob '%s' id=%s route=%s",
 			tostring(entityData and entityData.Name), tostring(entityData and entityData.Id), tostring(entityData and entityData.Route)))
 
 		self:createEntity(entityData)
 	end)
 
 	--[[
-		O Teleport do Archmage jogou o mob para tras no caminho. O servidor manda a
-		distancia nova, e daqui o boneco reaparece nela: o laco de movimento persegue
-		o `pointIndex`, entao ele passa a ser o primeiro ponto depois dessa distancia.
+		The Archmage's Teleport threw the enemy back on the path. The server sends the new
+		distance, and from here the model reappears there: the movement loop chases
+		`pointIndex`, so it becomes the first point after that distance.
 	]]
 	Framework:Listen("MobTeleported", function(mobId, distance)
 		local movement = self.MobMovement[mobId]
@@ -848,13 +851,13 @@ function MobController:construct()
 	end)
 
 	--[[
-		Dano que nao veio do golpe de uma unidade: os tiques de queimadura e de
-		sangramento (`MobService:applyDamageOverTime`) e a explosao de uma tripmine
+		Damage that did not come from a unit's hit: burn and bleed ticks
+		(`MobService:applyDamageOverTime`) and a tripmine explosion
 		(`UnitService:stepTripmines`).
 
-		O numero e a barra de vida, como um golpe do `AttackVisual` logo abaixo, mas sem
-		o flash -- ele piscaria por cima do Highlight do efeito a cada tique, e a mina ja
-		tem a explosao dela.
+		The number and the health bar, like an `AttackVisual` hit just below, but without
+		the flash: it would blink over the effect's Highlight on every tick, and the mine
+		already has its own explosion.
 	]]
 	Framework:Listen("MobDamageTick", function(mobId, damage)
 		local mob = self.SpawnedMobs[mobId]
@@ -902,13 +905,13 @@ function MobController:construct()
 	end)
 
 	--[[
-		O raio do Electro: o `VFXController` desenha o arco e daqui sai o realce dos
-		inimigos que ele tocou. Os dois escutam o mesmo evento de proposito -- e o
-		mesmo par do `UnitStunned`, onde o realce da unidade e o VFX do congelamento
-		tambem vem separados.
+		The Electro's bolt: `VFXController` draws the arc and the highlight of the enemies
+		it touched comes from here. Both listen to the same event on purpose: it is the
+		same pair as `UnitStunned`, where the unit highlight and the freeze VFX also come
+		separately.
 
-		Sem `stun` (a unidade nao para ninguem) nao ha realce: ele diz que o inimigo
-		esta travado, e nao que ele levou dano -- isso ja e o `HitFlash` vermelho.
+		Without `stun` (the unit stops nobody) there is no highlight: it says the enemy is
+		stuck, not that it took damage; that is already the red `HitFlash`.
 	]]
 	Framework:Listen("ChainLightning", function(arc)
 		if typeof(arc) ~= "table" or typeof(arc.targets) ~= "table" then return end
@@ -935,7 +938,7 @@ function MobController:construct()
 		self:clearAllMobs()
 	end)
 
-	-- O mapa pode ter mudado entre rounds; as rotas sao remontadas no proximo mob.
+	-- The map may have changed between rounds; the routes are rebuilt on the next enemy.
 	Framework:Listen("RoundRestarted", function()
 		self.Routes = nil
 		self.NodeDistances = nil

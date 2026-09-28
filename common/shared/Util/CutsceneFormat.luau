@@ -1,22 +1,23 @@
 --[[
-	Leitura e compressão dos arquivos de cutscene do Moon Animator.
+	Reading and compressing Moon Animator cutscene files.
 
-	O save do Moon Animator é uma árvore de Folders: cada key vira no mínimo três
-	instâncias, e uma cena passa fácil de 700. Isso replica pra todo cliente no
-	join. Este módulo lê essa árvore, empacota num blob de alguns KB e permite
-	apagar os Folders — a cena publicada fica só com as Parts vivas mais um
+	A Moon Animator save is a tree of Folders: each key becomes at least three
+	instances, and a scene easily passes 700, all replicated to every client on
+	join. This module reads that tree, packs it into a blob of a few KB, and lets
+	the Folders be deleted: the published scene keeps only the live Parts plus a
 	StringValue.
 
-	Uso no Studio, depois de exportar do Moon Animator:
+	Usage in Studio, after exporting from Moon Animator:
 
 		local CutsceneFormat = require(game.ReplicatedStorage.Shared.Util.CutsceneFormat)
 		print(CutsceneFormat.BakeAll(game.ReplicatedStorage.Shared.Assets.Cutscenes))
 
-	`Read` prefere o blob e cai nos Folders quando ele não existe, então cena
-	recém-exportada continua tocando sem bake.
+	`Read` prefers the blob and falls back to the Folders when there is none, so a
+	freshly exported scene still plays without baking.
 
-	O blob é base64 em vez de bytes crus: o custo é 33% de um número já pequeno, e
-	em troca não há risco de a serialização da place estragar byte não-imprimível.
+	The blob is base64 instead of raw bytes: it costs 33% of an already small
+	number, and in exchange the place serialization cannot corrupt a non-printable
+	byte.
 --]]
 
 local CutsceneFormat = {}
@@ -38,8 +39,8 @@ local EASE_DIRECTION = "Direction"
 
 --[[ BASE64 ]]
 
--- Tudo em buffer: concatenar string ou passar gsub em alguns KB custa mais que
--- o resto do decode inteiro.
+-- Everything in a buffer: concatenating strings or running gsub over a few KB
+-- costs more than the rest of the whole decode.
 local B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local B64_PAD = string.byte("=")
 local B64_BYTE = {}
@@ -123,7 +124,7 @@ local function fromBase64(encoded: string): buffer
 	return result
 end
 
---[[ LEITURA DOS FOLDERS ]]
+--[[ READING THE FOLDERS ]]
 
 local function easeName(ease: string?, direction: string?): string?
 	if not ease then return nil end
@@ -164,8 +165,8 @@ local function readTrack(track: Instance?)
 end
 
 --[[
-	Lê a árvore de Folders do Moon Animator. Devolve só dado puro: nomes e keys,
-	sem referência a instância, pra poder ser serializado.
+	Reads the Moon Animator Folder tree. Returns plain data only (names and keys,
+	no instance references) so it can be serialized.
 --]]
 function CutsceneFormat.ReadFolders(asset: Instance)
 	local scene = { camera = nil, fov = nil, rigs = {}, lastFrame = 0 }
@@ -215,18 +216,18 @@ end
 
 --[[ ENCODE / DECODE ]]
 
--- key de CFrame: frame u16 + ease u8 + os 12 componentes em f32.
+-- CFrame key: frame u16 + ease u8 + the 12 components as f32.
 --
--- Guardar posição + eixo/ângulo sairia menor (32 bytes contra 51), mas o eixo é
--- mal condicionado em rotação perto de 180 graus: medido, dava 0,078 stud de
--- desvio a 100 studs de distância. Os 12 componentes são exatos — CFrame já é
--- f32 por dentro — e ainda reconstroem 2,2x mais rápido, sem trigonometria.
+-- Storing position + axis/angle would be smaller (32 bytes against 51), but the axis
+-- is ill-conditioned for rotations near 180 degrees: measured, it drifted 0.078
+-- studs at 100 studs away. The 12 components are exact (CFrame is f32 inside)
+-- and rebuild 2.2x faster, with no trigonometry.
 local CFRAME_KEY_SIZE = 2 + 1 + 48
 local NUMBER_KEY_SIZE = 2 + 1 + 4
 
 local function measure(scene): number
-	local size = 1 + 2 + 1 -- versão, lastFrame, flags
-	size += 1 -- quantidade de easings
+	local size = 1 + 2 + 1 -- version, lastFrame, flags
+	size += 1 -- number of easings
 	size += 2 + #scene.camera * CFRAME_KEY_SIZE
 	if scene.fov then
 		size += 2 + #scene.fov * NUMBER_KEY_SIZE
@@ -242,9 +243,9 @@ local function measure(scene): number
 end
 
 --[[
-	Empacota a cena. Os nomes de easing viram uma tabelinha no cabeçalho e cada
-	key guarda só o índice, então qualquer easing do Moon Animator passa sem o
-	formato precisar conhecer a lista.
+	Packs the scene. Easing names become a small table in the header and each key
+	stores only the index, so any Moon Animator easing works without the format
+	knowing the list.
 --]]
 function CutsceneFormat.Encode(scene): string
 	local easeList = {}
@@ -412,8 +413,8 @@ function CutsceneFormat.Decode(encoded: string)
 end
 
 --[[
-	Lê a cena preferindo o blob. Devolve a cena e de onde ela veio, pra quem
-	chama poder avisar que ainda está no formato gordo.
+	Reads the scene, preferring the blob. Returns the scene and where it came from,
+	so the caller can warn that it is still in the heavy format.
 --]]
 function CutsceneFormat.Read(asset: Instance)
 	local stored = asset:FindFirstChild(CutsceneFormat.DATA_NAME)
@@ -438,21 +439,21 @@ local function countKeys(scene): number
 end
 
 --[[
-	Converte a cena e apaga os Folders de dado.
+	Converts the scene and deletes the data Folders.
 
-	Só apaga depois de decodificar o blob de volta e conferir que bate — nada de
-	destruir a fonte confiando no encode.
+	Only deletes after decoding the blob back and checking that it matches: never
+	destroy the source trusting the encode.
 --]]
 function CutsceneFormat.Bake(asset: Instance): (boolean, string)
 	local scene = CutsceneFormat.ReadFolders(asset)
 	if not scene then
-		return false, string.format("%s: sem faixas do Moon Animator pra converter", asset.Name)
+		return false, string.format("%s: no Moon Animator tracks to convert", asset.Name)
 	end
 
 	local encoded = CutsceneFormat.Encode(scene)
 	local check = CutsceneFormat.Decode(encoded)
 	if not check or countKeys(check) ~= countKeys(scene) or #check.rigs ~= #scene.rigs then
-		return false, string.format("%s: o blob nao confere com a fonte, nada foi apagado", asset.Name)
+		return false, string.format("%s: the blob does not match the source; nothing was deleted", asset.Name)
 	end
 
 	local before = #asset:GetDescendants()
@@ -473,7 +474,7 @@ function CutsceneFormat.Bake(asset: Instance): (boolean, string)
 
 	local after = #asset:GetDescendants()
 	return true, string.format(
-		"%s: %d -> %d instancias, blob de %.1f KB, %d keys",
+		"%s: %d -> %d instances, %.1f KB blob, %d keys",
 		asset.Name, before, after, #encoded / 1024, countKeys(scene)
 	)
 end
@@ -482,11 +483,11 @@ function CutsceneFormat.BakeAll(folder: Instance): string
 	local lines = {}
 	for _, asset in folder:GetChildren() do
 		local success, message = CutsceneFormat.Bake(asset)
-		table.insert(lines, (success and "ok    " or "FALHOU ") .. message)
+		table.insert(lines, (success and "ok     " or "FAILED ") .. message)
 	end
 
 	if #lines == 0 then
-		return "nenhuma cena encontrada"
+		return "no scenes found"
 	end
 
 	return table.concat(lines, "\n")

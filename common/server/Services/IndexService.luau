@@ -8,30 +8,32 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local IndexConfig = SharedConfig.IndexConfig
 
 local Framework = Me.new()
+local log = Log.new("IndexService")
 
 --[[
-	O Index do jogador: quem escreve.
+	The player's Index: the writer.
 
-	A estrutura e as regras estao no `SharedConfig.IndexConfig` -- aqui e so a
-	porta de escrita, e ela e uma so para as duas places. Cada gatilho chama de
-	onde a informacao existe:
+	The structure and rules are in `SharedConfig.IndexConfig`; this is only the write
+	door, and there is a single one for both places. Each trigger calls from where
+	the information exists:
 
-	  - unit obtida -> `CrateService` e `SummoningService` (Lobby)
-	  - mapa jogado -> `MapService` (Game), que e quem sabe qual mapa entrou
-	  - enemies     -> ainda ninguem; a categoria existe vazia de proposito
+	  - unit obtained -> `CrateService` and `SummoningService` (Lobby)
+	  - map played    -> `MapService` (Game), which knows which map loaded
+	  - enemies       -> nobody yet; the category exists empty on purpose
 
-	**Descobrir e para sempre.** Nada aqui apaga: uma unit vendida continua
-	descoberta, porque o Index e memoria do que o jogador ja viu, e nao inventario.
+	**Discovery is forever.** Nothing here deletes: a sold unit stays discovered,
+	because the Index is a memory of what the player has seen, not an inventory.
 
-	**O perfil que ja existia tambem conta.** Quando o perfil carrega, as units que
-	o jogador ja tem entram no Index de uma vez (`_syncOwnedUnits`). Sem isso, quem
-	jogava antes do Index existir comecaria com o catalogo vazio segurando um deck
-	cheio -- e cada unit dele so entraria no dia em que ele tirasse outra copia da
-	mesma numa caixa.
+	**A pre-existing profile counts too.** When the profile loads, the units the
+	player already owns enter the Index at once (`_syncOwnedUnits`). Without that,
+	someone who played before the Index existed would start with an empty catalog
+	while holding a full deck, and each of their units would only enter the day they
+	pulled another copy from a crate.
 ]]
 local IndexService = {
 	Services = {
@@ -41,7 +43,7 @@ local IndexService = {
 
 --[[ INTERNAL ]]
 
---- O perfil aberto do jogador, ou nil enquanto ele nao carregou.
+--- The player's open profile, or nil while it has not loaded.
 function IndexService:_profileOf(player : Player) : any
 	local dataService = self.Services.DataService
 	local profiles = dataService and dataService.Profiles
@@ -51,21 +53,21 @@ function IndexService:_profileOf(player : Player) : any
 end
 
 --[=[
-	Escreve as chaves novas de uma categoria numa passada so.
+	Writes a category's new keys in a single pass.
 
-	Uma escrita por chave custaria uma replicacao por chave, e o caso normal do
-	`_syncOwnedUnits` e justamente um punhado de uma vez. Devolve quantas eram
-	novas -- zero quer dizer que nada foi escrito, e nada foi replicado.
+	One write per key would cost one replication per key, and the normal
+	`_syncOwnedUnits` case is exactly a handful at once. Returns how many were new:
+	zero means nothing was written and nothing was replicated.
 ]=]
 function IndexService:_unlock(player : Player, category : string, keys : { string }) : number
 	if not IndexConfig.isCategory(category) then
-		warn(string.format("[IndexService]: %q nao e uma categoria do Index.", tostring(category)))
+		log:StudioWarn(string.format("%q is not an Index category.", tostring(category)))
 		return 0
 	end
 
 	local dataService = self.Services.DataService
 	if not dataService or not dataService.Update then
-		warn("[IndexService]: DataService nao esta pronto; descoberta ignorada.")
+		log:Warn("DataService is not ready; discovery dropped.")
 		return 0
 	end
 
@@ -74,8 +76,8 @@ function IndexService:_unlock(player : Player, category : string, keys : { strin
 		return 0
 	end
 
-	-- Filtra antes de escrever: `Update` replica a chave inteira, entao reescrever
-	-- o que ja estava la manda uma replicacao para dizer nada.
+	-- Filter before writing: `Update` replicates the whole key, so rewriting what
+	-- was already there sends a replication to say nothing.
 	local pending = {}
 	for _, key in keys do
 		if typeof(key) == "string" and key ~= "" and not IndexConfig.has(profile, category, key) then
@@ -107,11 +109,10 @@ function IndexService:_unlock(player : Player, category : string, keys : { strin
 end
 
 --[=[
-	As units que o jogador ja tem entram no Index quando o perfil carrega.
+	The units the player already owns enter the Index when the profile loads.
 
-	So conta copia de verdade (`amount > 0`): uma entrada zerada e uma unit que ele
-	teve e nao tem mais -- e essa ja teria sido descoberta no dia em que ele a
-	obteve.
+	Only real copies count (`amount > 0`): a zeroed entry is a unit they had and no
+	longer have, and it would already have been discovered the day they got it.
 ]=]
 function IndexService:_syncOwnedUnits(player : Player)
 	local profile = self:_profileOf(player)
@@ -132,39 +133,39 @@ end
 --[[ API ]]
 
 --[=[
-	Descobre uma chave numa categoria. Devolve `true` so quando ela era nova --
-	e por esse retorno que um "novo no index!" na tela sabe que tem o que anunciar.
+	Discovers a key in a category. Returns `true` only when it was new: that return
+	is how a "new in the index!" on screen knows it has something to announce.
 ]=]
 function IndexService:Unlock(player : Player, category : string, key : string) : boolean
 	return self:_unlock(player, category, { key }) > 0
 end
 
---- Varias chaves de uma vez, numa escrita so. Devolve quantas eram novas.
+--- Several keys at once, in a single write. Returns how many were new.
 function IndexService:UnlockMany(player : Player, category : string, keys : { string }) : number
 	return self:_unlock(player, category, keys)
 end
 
---- A unit obtida entrou no catalogo do jogador.
+--- The obtained unit entered the player's catalog.
 function IndexService:UnlockUnit(player : Player, unitName : string) : boolean
 	return self:Unlock(player, "Units", unitName)
 end
 
---- O mapa que o jogador acabou de jogar entrou no catalogo dele.
+--- The map the player just played entered their catalog.
 function IndexService:UnlockMap(player : Player, mapName : string) : boolean
 	return self:Unlock(player, "Maps", mapName)
 end
 
---- Se o jogador ja descobriu esta chave.
+--- Whether the player already discovered this key.
 function IndexService:Has(player : Player, category : string, key : string) : boolean
 	return IndexConfig.has(self:_profileOf(player), category, key)
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function IndexService:construct()
 	local dataService = self.Services.DataService
 	if not dataService then
-		warn("[IndexService]: sem DataService; o Index nao vai ser escrito.")
+		log:Warn("no DataService; the Index will not be written.")
 		return
 	end
 
@@ -172,7 +173,7 @@ function IndexService:construct()
 		self:_syncOwnedUnits(player)
 	end)
 
-	-- Quem ja estava dentro quando este service subiu: o sinal deles ja passou.
+	-- Players already in when this service started: their signal already fired.
 	for _, player in Players:GetPlayers() do
 		if self:_profileOf(player) then
 			self:_syncOwnedUnits(player)

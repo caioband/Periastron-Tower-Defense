@@ -9,6 +9,9 @@ local Promise = require(Packages.Promise)
 
 -- Replica Controller
 local ReplicaController = require(Vendor.ReplicaClient)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
+
+local log = Log.new("DataController")
 
 -- Services
 local Players = game:GetService("Players")
@@ -74,7 +77,7 @@ function DataController.init()
 		if (player) then
 			playerReplicas[player] = replica
 			DataController.ReplicaLoaded:Fire(player, replica)
-			print("test")
+			log:Debug("replica loaded for", player.Name)
 			if player == Players.LocalPlayer then
 				--self.LoadingController:DataLoaded()
 

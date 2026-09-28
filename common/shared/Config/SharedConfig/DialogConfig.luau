@@ -1,23 +1,24 @@
 --[[
-	A caixa de fala: `StarterGui.SharedUIs.DialogGUI.Container`.
+	The dialog box: `StarterGui.SharedUIs.DialogGUI.Container`.
 
-	Quem escreve nela é o `DialogController`, e quem desenha o texto é o
-	`RichTextController` — então a fala aceita a marcação de sempre:
+	`DialogController` writes to it and `RichTextController` draws the text, so a
+	dialog line accepts the usual markup:
 
-		"Bem-vindo ao [color=yellow]Periastron[/color].[pause=.6] Sente-se."
+		"Welcome to [color=yellow]Periastron[/color].[pause=.6] Take a seat."
 
-	`Gui` é o caminho por nome em vez de um `WaitForChild` escrito no controller: a
-	tela mora no place (o `StarterGui` não é sincronizado pelo Rojo), e renomear um
-	frame no Studio tem de ser uma linha aqui, não um erro em runtime.
+	`Gui` is a path by name instead of a `WaitForChild` written in the controller:
+	the screen lives in the place (Rojo does not sync `StarterGui`), and renaming a
+	frame in Studio must be one line here, not a runtime error.
 
-	Fica em `common/` porque as duas places têm a `SharedUIs`.
+	It lives in `common/` because both places have `SharedUIs`. See
+	docs/common/dialog.md.
 ]]
 
 local DialogConfig = {}
 
 --[[
-	Onde a caixa mora dentro da `PlayerGui`. `Folder` é a `SharedUIs`, que o
-	StarterGui copia inteira para cada jogador.
+	Where the box lives inside `PlayerGui`. `Folder` is `SharedUIs`, which
+	StarterGui copies whole to each player.
 ]]
 DialogConfig.Gui = {
 	Folder = "SharedUIs",
@@ -26,34 +27,34 @@ DialogConfig.Gui = {
 }
 
 --[[
-	As opções que vão para o `RichTextController` em toda fala. Quem chama o
-	`:Play()` pode passar por cima — o preset da fala, o ritmo, a fonte.
+	The options passed to `RichTextController` for every line. A `:Play()` caller
+	can override them (the preset, the pace, the font).
 ]]
 DialogConfig.Text = {
 	Preset = "Dialogue",
 }
 
 --[=[
-	O que acontece **atrás** da fala enquanto ela está na tela.
+	What happens **behind** the dialog while it is on screen.
 
-	Os três são pedidos a sistemas que já existem, e não invenção daqui:
+	All three are requests to systems that already exist:
 
-	  - `HideOtherUIs` usa o `InterfaceController` — o mesmo "some com o resto" do
-	    painel de mapas, da contagem do portal e da cutscene. `HideReason` é o nome
-	    do pedido; um `Show` com esse nome desfaz.
-	  - `Blur` usa o `UIBlur` compartilhado (`LightingUtil`), o mesmo borrão da loja
-	    e dos painéis de proximidade. Um só no Lighting: dois `BlurEffect` somariam.
-	  - `Duck` usa o `MusicController:Duck`, que abaixa a música sem mexer no volume
-	    que o jogador escolheu. Só a música: os SFX continuam no que estão, senão o
-	    próprio som de digitação da fala sairia abafado junto.
+	  - `HideOtherUIs` uses `InterfaceController`, the same "hide everything else" as
+	    the maps panel, the portal countdown, and the cutscene. `HideReason` is the
+	    request name; a `Show` with that name undoes it.
+	  - `Blur` uses the shared `UIBlur` (`LightingUtil`), the same blur as the shop
+	    and proximity panels. One in Lighting: two `BlurEffect`s would add up.
+	  - `Duck` uses `MusicController:Duck`, which lowers music without touching the
+	    player's volume. Music only: SFX stay as they are, or the dialog's own typing
+	    sound would be muffled too.
 
-	Cada um pode ser desligado por fala (`Blur = false` no `:Play()`), e o que está
-	aqui é o padrão de quando ninguém diz nada.
+	Each can be turned off per dialog (`Blur = false` in `:Play()`); these are the
+	defaults.
 
-	> O borrão é compartilhado de propósito, e isso tem um preço: fala que fecha
-	> enquanto um painel borrado está aberto leva o borrão dele junto. Na prática não
-	> acontece, porque a fala esconde os outros painéis — mas é bom saber antes de
-	> alguém desligar o `HideOtherUIs`.
+	> The blur is shared on purpose, at a cost: a dialog that closes while a blurred
+	> panel is open takes that panel's blur with it. In practice it does not happen,
+	> because the dialog hides other panels, but know it before turning off
+	> `HideOtherUIs`.
 ]=]
 DialogConfig.Background = {
 	HideOtherUIs = true,
@@ -62,8 +63,8 @@ DialogConfig.Background = {
 	Blur = {
 		Enabled = true,
 
-		-- O mesmo 24 do `ProximityPanel`: dois borrões diferentes para a mesma cara
-		-- de "tem painel na frente" só fariam a tela piscar entre um e outro.
+		-- The same 24 as `ProximityPanel`: two different blurs for the same "panel in
+		-- front" look would only make the screen flicker between them.
 		Size = 24,
 
 		TweenIn = 0.35,
@@ -75,8 +76,8 @@ DialogConfig.Background = {
 	Duck = {
 		Enabled = true,
 
-		-- Um quarto do volume: a música não some (a fala não é cutscene), só sai da
-		-- frente do que está sendo dito.
+		-- A quarter of the volume: the music does not vanish (a dialog is not a cutscene),
+		-- it just steps out of the way of what is being said.
 		Scale = 0.25,
 
 		FadeIn = 0.4,
@@ -85,18 +86,18 @@ DialogConfig.Background = {
 }
 
 --[[
-	Os dois botões que o designer deixou dentro do `Container`.
+	The two buttons the designer left inside `Container`.
 
-	`Names` é a ordem que o código usa: `Dialog:SetButton(1, ...)` mexe no primeiro
-	nome da lista. Na tela de hoje o `Button1` é o da **direita** e o `Button2` é o
-	da **esquerda** — a posição é do designer, e trocar a ordem aqui é como se
-	inverte isso sem mexer em quem chama.
+	`Names` is the order code uses: `Dialog:SetButton(1, ...)` changes the first
+	name in the list. On today's screen `Button1` is on the **right** and `Button2`
+	on the **left**; the position belongs to the designer, and swapping the order
+	here flips that without touching callers.
 
-	O texto vai num TextLabel que o controller cria dentro do botão na primeira vez
-	que ele é usado: o botão é um ImageButton, não tem texto próprio, e a alternativa
-	seria exigir que alguém lembrasse de autorar um label em cada botão novo.
-	`Label` é a aparência desse label; `MaxTextSize` existe porque `TextScaled` num
-	botão de 169x61 transformaria "OK" numa letra de cartaz.
+	The text goes in a TextLabel the controller creates inside the button the first
+	time it is used: the button is an ImageButton with no text of its own, and the
+	alternative would be remembering to author a label in every new button.
+	`Label` is that label's look; `MaxTextSize` exists because `TextScaled` on a
+	169x61 button would turn "OK" into poster lettering.
 ]]
 DialogConfig.Buttons = {
 	Names = { "Button1", "Button2" },
@@ -111,14 +112,14 @@ DialogConfig.Buttons = {
 }
 
 --[[
-	Como o jogador passa a fala.
+	How the player advances the dialog.
 
-	Clique, toque, `E`, espaço, enter e o A do controle — a fala é interrupção, e
-	tentar sair dela apertando a tecla errada é frustração barata de evitar.
+	Click, tap, `E`, space, enter, and the gamepad's A: a dialog is an interruption,
+	and trying to leave it with the wrong key is cheap frustration to avoid.
 
-	`Debounce` existe porque o mesmo clique que termina de escrever a linha chegaria
-	milissegundos depois para pular a próxima: sem ele, um clique fecharia a
-	conversa inteira.
+	`Debounce` exists because the click that finishes typing a line would arrive
+	milliseconds later to skip the next one: without it, one click would close the
+	whole conversation.
 ]]
 DialogConfig.Advance = {
 	Keys = {
@@ -134,29 +135,28 @@ DialogConfig.Advance = {
 }
 
 --[[
-	Fala em modo automático (`Auto = true` no `:Play()`), que é a que ninguém
-	precisa passar: quantos segundos a linha fica na tela depois de terminar de
-	escrever.
+	Automatic dialog (`Auto = true` in `:Play()`), which nobody needs to advance:
+	how many seconds a line stays after it finishes typing.
 ]]
 DialogConfig.AutoHold = 2.5
 
 --[=[
-	A volta da fala depois de o jogador morrer no meio dela.
+	How the dialog comes back after the player dies in the middle of it.
 
-	A `DialogGUI` tem `ResetOnSpawn`: morrer com a caixa aberta **destrói a caixa**, e
-	a tela nova vem limpa. A fala não pode simplesmente sumir — quem morre no meio de
-	uma instrução do tutorial fica sem a instrução, com o passo ainda aberto do lado
-	do servidor e nada na tela dizendo o que fazer.
+	`DialogGUI` has `ResetOnSpawn`: dying with the box open **destroys the box**, and
+	the new screen comes empty. The dialog cannot just vanish: a player who dies mid
+	tutorial instruction would lose the instruction, with the step still open on the
+	server and nothing on screen saying what to do.
 
-	Então ela volta, da linha em que estava (ver `DialogController:Play`). O que
-	sobra em `Lines` a partir do `Index` é reescrito na caixa nova, com as mesmas
-	opções — o mesmo fundo, os mesmos botões, o mesmo modo automático.
+	So it comes back from the line it was on (see `DialogController:Play`). What is
+	left in `Lines` from `Index` on is rewritten into the new box with the same
+	options (background, buttons, automatic mode).
 
-	`Timeout` é quanto se espera a caixa nova aparecer. Estourando, a fala é dada por
-	perdida e quem esperava o `:OnClosed()` **é avisado** — é isso que impede o passo
-	do tutorial de ficar esperando para sempre por uma fala que não volta mais.
+	`Timeout` is how long to wait for the new box. On timeout the dialog is
+	considered lost and whoever waits on `:OnClosed()` **is notified**, so a
+	tutorial step never waits forever for a dialog that will not return.
 
-	`Interval` é o compasso da espera: é gente renascendo, não animação.
+	`Interval` is the wait's cadence: a player respawning, not an animation.
 ]=]
 DialogConfig.Respawn = {
 	Timeout = 10,
@@ -164,22 +164,22 @@ DialogConfig.Respawn = {
 }
 
 --[[
-	O texto do comando `dialog` do Cmdr.
+	The text of the Cmdr `dialog` command.
 
-	Ele é fixo de propósito: serve para ver, numa tela de verdade, a máquina de
-	escrever, a cor, a pausa no meio da frase, a ondulação, o tremor e o `[event=]`
-	chegando no `OnEvent` — todos de uma vez. Cada entrada é uma linha da conversa.
+	It is fixed on purpose: it shows, on a real screen, the typewriter, color, a
+	pause mid-sentence, wiggle, shake, and `[event=]` reaching `OnEvent`, all at
+	once. Each entry is one line of the conversation.
 
-	A segunda linha começa com três pontos separados por `[pause=0.3]`: é a
-	reticência aparecendo no ritmo de quem hesita, e de quebra mostra que a pausa
-	vale no meio de uma palavra, não só entre frases.
+	The second line starts with three dots separated by `[pause=0.3]`: an ellipsis
+	appearing at the pace of someone hesitating, which also shows that a pause works
+	mid-word, not only between sentences.
 ]]
 --[=[
-	Os botões que o comando `dialog` acende junto com a fala de teste.
+	The buttons the `dialog` command lights along with the test line.
 
-	Só texto: callback não atravessa a rede (é função), então na demo os dois
-	funcionam como "continuar" — que é o que um botão sem callback faz. Botão com
-	comportamento próprio se monta no cliente, com `Dialog:SetButton`.
+	Text only: a callback cannot cross the network (it is a function), so in the
+	demo both act as "continue", which is what a button without a callback does. A
+	button with its own behavior is set up on the client with `Dialog:SetButton`.
 ]=]
 DialogConfig.DemoButtons = {
 	{ Text = "YES" },

@@ -24,8 +24,8 @@ return function(_context, weather : string, duration : number?)
 		return message
 	end
 
-	-- O nome nao e validado no cliente de proposito (ver o type), entao a lista de
-	-- opcoes so aparece aqui, que e onde da para saber a verdade.
+	-- The name is not validated on the client on purpose (see the type), so the list
+	-- of options only appears here, where the truth is known.
 	local available = WeatherService:GetNames()
 	if #available == 0 then
 		return string.format("Could not apply the weather: %s (and Assets.Weathers is empty).", message)

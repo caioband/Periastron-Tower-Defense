@@ -16,23 +16,23 @@ return {
 		[Keys.BASIC_DEFAULT_BANNER_KEY] = {
 			DisplayName = "Normal Banner",
 
-			-- Era 100. Com 1000 de caixa por partida no Médio isso dava dez
-			-- invocações por partida, e o banner sozinho entregava ~60x mais
-			-- lendárias que a loja de shards — a moeda cara comprava o pior
-			-- negócio. A 200, são cinco.
+			-- Not 100: with Medium's 1000 cash per match, that meant ten
+			-- summons per match, and the banner alone delivered ~60x more
+			-- Legendaries than the shards shop, so the expensive currency bought
+			-- the worse deal. At 200, it is five.
 			Cost = 200,
 			Currency = "Cash",
 		},
 	},
 
-	-- A raridade de cada unit não fica aqui: ela vem do `Rarity` do UnitStats, que é
-	-- a fonte única (os pools das crates leem de lá também). Aqui só o peso no banner.
+	-- Each unit's rarity does not live here: it comes from `UnitStats`' `Rarity`, the
+	-- single source (crate pools read it too). Here there is only the banner weight.
 	ITEMS = {
 		--[[
-			O banner é a rota barata: ele entrega Common e Rare em volume. As duas
-			lendárias caíram de 2% somados para 0,5%, porque quem quer lendária
-			deve ir pelas crates — que são a rota de shards, a moeda que só cai
-			para quem termina a partida.
+			The banner is the cheap route: it delivers Common and Rare in volume. The
+			two Legendaries dropped from 2% combined to 0.5%, because players who want
+			a Legendary should go through crates, the shards route, a currency that
+			only drops for players who finish the match.
 		]]
 		[Keys.BASIC_DEFAULT_BANNER_KEY] = {
 			{ Name = "Slasher", Weight = 50, UnlockedAsRobux = false },

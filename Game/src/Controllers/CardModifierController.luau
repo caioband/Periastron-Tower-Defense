@@ -11,36 +11,41 @@ local SharedConfig = require(Configs.SharedConfig)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("CardModifierController")
 
 local CardModifier = SharedConfig.CardModifier
 local RoundCardConfig = SharedConfig.RoundCardConfig
 local RINGS = RoundCardConfig.Rings
 
 --[=[
-	O lado do cliente das regras que as cartas de round deixaram no campo.
+	The client side of the rules round cards left on the field.
 
-	O servidor e quem manda: ele guarda a lista, poda o que venceu e cobra o dano
-	por ela. Este controller existe para as duas coisas que **so** aparecem na tela:
+	The server rules: it keeps the list, prunes what expired, and charges damage by it.
+	This controller exists for the two things that **only** show on screen:
 
-	1. **O anel no chao.** Uma carta de area deixa um circulo onde a regra dela vale,
-	   e o desenho e a arte daquela carta (`Assets.VFX.Rings`, escolhida pelo `Ring`
-	   dela no config). Sem ele, a decisao inteira da carta -- onde por o anel --
-	   viraria invisivel um segundo depois de tomada.
+	1. **The ring on the ground.** An area card leaves a circle where its rule applies,
+	   and the drawing is that card's art (`Assets.VFX.Rings`, picked by its `Ring` in
+	   the config). Without it, the card's whole decision (where to put the ring) would
+	   become invisible a second after it was made.
 
-	   O anel nasce onde o jogador clicou, com o **mesmo raio** que ele viu na mira, e
-	   vive o tempo do efeito: ate o fim do round nos cajados de zona, e os segundos
-	   da imunidade no Staff of Healing. Quem manda nos dois e a mesma zona replicada
-	   pelo servidor, entao quem entra no meio da partida ve o que ja esta no chao.
-	2. **O alcance de verdade.** O Staff of the Winds da 1.2x de alcance a quem tem
-	   o arco. O circulo que o jogador ve ao selecionar a torre e o numero no card
-	   saem do `UnitUpgradeConfig`, que nao sabe de carta nenhuma -- entao a
-	   multiplicacao passa por aqui, pela **mesma** funcao que o servidor usa
-	   (`CardModifier`), e nao por uma segunda conta que possa divergir dela.
+	   The ring appears where the player clicked, with the **same radius** they saw
+	   while aiming, and lives as long as the effect: until the end of the round for
+	   zone staffs, and the immunity seconds for the Staff of Healing. The same zone
+	   replicated by the server rules both, so a player joining mid-match sees what is
+	   already on the ground.
+	2. **The real range.** The Staff of the Winds gives 1.2x range to bow units. The
+	   circle the player sees when selecting the tower and the number on the card come
+	   from `UnitUpgradeConfig`, which knows nothing of cards, so the multiplication
+	   goes through here, through the **same** function the server uses
+	   (`CardModifier`), and not through a second computation that could diverge.
 
-	Ele nao decide nada. Uma lista que nao chegue (o jogador acabou de entrar) e uma
-	lista vazia: a tela mostra o alcance de tabela, que e o que ela sempre mostrou.
+	It decides nothing. A list that has not arrived (the player just joined) is an
+	empty list: the screen shows the table range, which is what it always showed.
+
+	See docs/game/round-cards.md.
 ]=]
 local CardModifierController = {
 	Controllers = {
@@ -49,23 +54,22 @@ local CardModifierController = {
 		BaseHealthController = {},
 	},
 
-	--- A lista que o servidor mandou por ultimo.
+	--- The list the server sent last.
 	Modifiers = {},
 }
 
 --[[ INTERNAL ]]
 
 --[=[
-	O campo como o `CardModifier` o enxerga, montado a partir do que o cliente tem:
-	os modelos de unidade que o `UnitPlacementController` desenhou.
+	The field as `CardModifier` sees it, built from what the client has: the unit
+	models `UnitPlacementController` drew.
 
-	Refeito a cada pergunta, e nao mantido: aqui nao ha estado para invalidar quando
-	uma torre entra, sai ou muda de lugar, e a lista e curta.
+	Rebuilt on every question, not maintained: there is no state here to invalidate
+	when a tower enters, leaves, or moves, and the list is short.
 
-	> Quem chama numa varredura -- o `WeatherFeedbackController`, que repinta todas as
-	> unidades de uma vez -- deve monta-lo **uma vez** e passar adiante. Ele e o mesmo
-	> para todas elas, e refaze-lo por torre transformaria a varredura num laco
-	> quadratico.
+	> Callers doing a sweep (`WeatherFeedbackController`, which repaints every unit at
+	> once) should build it **once** and pass it along. It is the same for all of them,
+	> and rebuilding it per tower would turn the sweep into a quadratic loop.
 ]=]
 function CardModifierController:GetWorld()
 	local placement = self.Controllers.UnitPlacementController
@@ -91,27 +95,27 @@ function CardModifierController:GetWorld()
 		Units = units,
 
 		--[[
-			A vida da base como fracao. O `No Pain, No Gain` depende dela, e o cliente
-			so a tem depois do primeiro `UpdateBaseHealth`; sem ela o `CardModifier`
-			deixa o modificador de fora, que e o lado certo de errar -- mostrar o numero
-			sem o bonus e melhor do que prometer um bonus que o servidor nao esta dando.
+			Base health as a fraction. `No Pain, No Gain` depends on it, and the client only
+			has it after the first `UpdateBaseHealth`; without it `CardModifier` leaves the
+			modifier out, which is the right side to err on: showing the number without
+			the bonus beats promising a bonus the server is not granting.
 		]]
 		BaseHealthRatio = base and base:GetHealthRatio() or nil,
 	}
 end
 
---[[ OS ANEIS NO CHAO ]]
+--[[ THE RINGS ON THE GROUND ]]
 
 --[=[
-	Onde os aneis moram no mundo: uma pasta propria no Workspace.
+	Where the rings live in the world: their own folder in the Workspace.
 
-	Nao na `workspace.CurrentCamera`, que e onde o resto dos desenhos de tela deste
-	jogo mora (o circulo de alcance, a linha pontilhada, a mina no ar). Aqueles vivem
-	segundos; o anel de um cajado vive o round inteiro, e a Camera nao e um lugar
-	seguro para isso -- ela e recriada em algumas situacoes e leva os filhos junto.
+	Not in `workspace.CurrentCamera`, which is where the rest of this game's screen
+	drawings live (the range circle, the dotted line, the mine in the air). Those live
+	for seconds; a staff's ring lives the whole round, and the Camera is not a safe
+	place for that: it is recreated in some situations and takes its children with it.
 
-	A pasta e local, e nao replicada: cada cliente desenha os seus a partir da lista
-	que o servidor manda. Ela nasce na primeira carta de area usada na partida.
+	The folder is local, not replicated: each client draws its own from the list the
+	server sends. It is created with the first area card used in the match.
 ]=]
 function CardModifierController:_ringContainer() : Instance
 	local existing = workspace:FindFirstChild(RINGS.Container)
@@ -127,10 +131,10 @@ function CardModifierController:_ringContainer() : Instance
 end
 
 --[=[
-	A pasta dos aneis de chao, achada uma vez.
+	The ground rings folder, found once.
 
-	`false` e "ja procurei e nao achei": sem isso a busca (e o aviso) se repetiriam a
-	cada carta usada.
+	`false` means "already looked and did not find it": without it the lookup (and the
+	warning) would repeat on every card used.
 ]=]
 function CardModifierController:_ringFolder() : Instance?
 	if self.RingFolder ~= nil then
@@ -143,7 +147,7 @@ function CardModifierController:_ringFolder() : Instance?
 	end
 
 	if not current then
-		warn(`[CardModifierController]: nao achei Assets.{table.concat(RINGS.Path, ".")}; as cartas de area ficam sem anel no chao.`)
+		log:StudioWarn(`could not find Assets.{table.concat(RINGS.Path, ".")}; area cards will have no ring on the ground.`)
 		self.RingFolder = false
 		return nil
 	end
@@ -153,11 +157,11 @@ function CardModifierController:_ringFolder() : Instance?
 end
 
 --[=[
-	O Model do anel desta carta, ou o padrao quando ela nao declara um.
+	This card's ring Model, or the default when it declares none.
 
-	Carta de area nova aparece no chao sem arte propria, e com um aviso so no Studio:
-	um anel generico e melhor do que zona nenhuma desenhada, porque a zona existe do
-	mesmo jeito e mexe nas torres que estiverem dentro dela.
+	A new area card shows up on the ground without its own art, with a Studio-only
+	warning: a generic ring beats no drawn zone at all, because the zone exists anyway
+	and affects the towers inside it.
 ]=]
 function CardModifierController:_ringTemplate(cardId : any) : Model?
 	local folder = self:_ringFolder()
@@ -171,7 +175,7 @@ function CardModifierController:_ringTemplate(cardId : any) : Model?
 	if not template or not template:IsA("Model") then
 		if not self.WarnedRings[name] then
 			self.WarnedRings[name] = true
-			warn(`[CardModifierController]: nao achei o anel '{name}' (nem o '{RINGS.Default}') em Assets.{table.concat(RINGS.Path, ".")}.`)
+			log:StudioWarn(`could not find ring '{name}' (nor '{RINGS.Default}') in Assets.{table.concat(RINGS.Path, ".")}.`)
 		end
 
 		return nil
@@ -181,11 +185,11 @@ function CardModifierController:_ringTemplate(cardId : any) : Model?
 end
 
 --[=[
-	A escala que poe este anel com o raio pedido.
+	The scale that gives this ring the requested radius.
 
-	A regua e a Part `<nome>_Ring` de dentro do Model, e nao a caixa dele: um Model de
-	VFX tem emissor e attachment espalhados, e medir a caixa inteira faria o anel
-	encolher so porque alguem arrastou uma faisca para fora dele.
+	The ruler is the `<name>_Ring` Part inside the Model, not its box: a VFX Model has
+	emitters and attachments scattered around, and measuring the whole box would shrink
+	the ring just because someone dragged a spark outside it.
 ]=]
 function CardModifierController:_ringScale(ring : Model, radius : number) : number
 	local part = ring:FindFirstChild(ring.Name .. RINGS.PartSuffix, true)
@@ -193,7 +197,7 @@ function CardModifierController:_ringScale(ring : Model, radius : number) : numb
 	if not part or not part:IsA("BasePart") or part.Size.X <= 0 then
 		if not self.WarnedRings[ring.Name] then
 			self.WarnedRings[ring.Name] = true
-			warn(`[CardModifierController]: o anel '{ring.Name}' nao tem a Part '{ring.Name}{RINGS.PartSuffix}'; o raio dele vai sair errado.`)
+			log:StudioWarn(`ring '{ring.Name}' has no '{ring.Name}{RINGS.PartSuffix}' Part; its radius will be wrong.`)
 		end
 
 		return ring:GetScale()
@@ -203,20 +207,20 @@ function CardModifierController:_ringScale(ring : Model, radius : number) : numb
 end
 
 --[=[
-	Desenha um anel no chao para cada zona da lista.
+	Draws a ring on the ground for each zone in the list.
 
-	Os aneis sao refeitos por inteiro a cada lista nova, e nao reconciliados um a um.
-	Sao poucos (uma partida cheia tem dois ou tres) e a lista chega inteira do
-	servidor: casar zona por zona daria um bookkeeping proprio para poupar um clone
-	que ninguem sente.
+	The rings are rebuilt entirely on each new list, not reconciled one by one. There
+	are few (a full match has two or three) and the list arrives whole from the server:
+	matching zone by zone would need its own bookkeeping to save a clone nobody
+	notices.
 
-	O anel cresce do nada ate o tamanho dele. E o mesmo gesto do circulo de alcance da
-	unidade selecionada, e serve para o mesmo: dizer que aquele desenho **acabou de**
-	aparecer, em vez de sempre ter estado ali.
+	The ring grows from nothing to its size. It is the same gesture as the selected
+	unit's range circle, and serves the same purpose: saying the drawing **just**
+	appeared, instead of always having been there.
 
-	O raio e o mesmo que o jogador viu na mira -- ele vem do `Zone.Radius` que o
-	servidor guardou, que e o `Params.Radius` da carta. O anel que ele mirou e o anel
-	que ficou.
+	The radius is the same the player saw while aiming: it comes from the
+	`Zone.Radius` the server stored, which is the card's `Params.Radius`. The ring they
+	aimed is the ring that stayed.
 ]=]
 function CardModifierController:_drawZones()
 	self.ZoneMaid:DoCleaning()
@@ -226,9 +230,9 @@ function CardModifierController:_drawZones()
 		if not zone or not zone.Position then continue end
 
 		--[[
-			Uma zona por carta usada, e nao por registro: os cajados criam dois
-			registros (quem eles favorecem e quem paga o pedagio) na **mesma** zona, e
-			dois aneis exatamente sobrepostos so pintariam a borda duas vezes.
+			One zone per card used, not per record: the staffs create two records (who
+			they favor and who pays the toll) in the **same** zone, and two exactly
+			overlapping rings would only paint the edge twice.
 		]]
 		if self.DrawnZones[modifier.Uid] then continue end
 		self.DrawnZones[modifier.Uid] = true
@@ -239,19 +243,19 @@ function CardModifierController:_drawZones()
 		local ring = template:Clone()
 
 		--[[
-			O anel e cenario, e precisa de tres coisas antes de entrar no mundo.
+			The ring is scenery, and needs three things before entering the world.
 
-			**`Anchored` e a que nao pode faltar.** Os Models de `Assets.VFX.Rings` vem
-			do Studio com as Parts soltas, e o Workspace simula tudo que esta dentro
-			dele -- inclusive o que esta pendurado na Camera. Uma Part solta cai, passa
-			do `FallenPartsDestroyHeight` uns dois segundos depois e a **Roblox destroi
-			o anel**: ele aparecia no lugar certo e sumia sozinho, sem erro nenhum no
-			log. Ancorar aqui, e nao no asset, e o que faz um anel novo desenhado por
-			outra pessoa nao trazer o problema de volta.
+			**`Anchored` is the one that must not be missing.** The Models in
+			`Assets.VFX.Rings` come from Studio with loose Parts, and the Workspace
+			simulates everything inside it, including what hangs from the Camera. A loose
+			Part falls, passes `FallenPartsDestroyHeight` about two seconds later, and
+			**Roblox destroys the ring**: it appears in the right place and vanishes on its
+			own, with no error in the log. Anchoring here, not in the asset, is what keeps
+			a new ring drawn by someone else from bringing the problem back.
 
-			As outras duas sao sobre nao atrapalhar: ele nao pode comer o raio que
-			procura o chao debaixo do cursor -- senao mirar a proxima carta em cima
-			dele acertaria o proprio anel -- nem empurrar nada.
+			The other two are about staying out of the way: it must not eat the ray that
+			looks for the ground under the cursor (or aiming the next card over it would
+			hit the ring itself), nor push anything.
 		]]
 		for _, descendant in ring:GetDescendants() do
 			if descendant:IsA("BasePart") then
@@ -297,13 +301,12 @@ end
 --[[ API ]]
 
 --[=[
-	O multiplicador de carta de uma estatistica para uma unidade, do jeito que o
-	servidor o calcula.
+	A stat's card multiplier for a unit, the way the server computes it.
 
-	`unitId` pode ser nil -- uma unidade que ainda nao replicou, o fantasma do
-	posicionamento --, e nesse caso so os modificadores que nao dependem de qual
-	unidade e (classe, zona, condicao) valem. E o que faz o fantasma ja nascer com o
-	alcance que a torre vai ter quando for colocada dentro do anel.
+	`unitId` can be nil (a unit that has not replicated yet, the placement ghost), and
+	in that case only modifiers that do not depend on which unit it is (class, zone,
+	condition) apply. That is what makes the ghost show, from the start, the range the
+	tower will have when placed inside the ring.
 ]=]
 function CardModifierController:Multiplier(stat : string, unitName : string?, position : Vector3?, unitId : string?) : number
 	if #self.Modifiers == 0 then return 1 end
@@ -314,17 +317,18 @@ function CardModifierController:Multiplier(stat : string, unitName : string?, po
 end
 
 --[=[
-	Uma area **deste** jogador que um anel de raio `radius` em `position` encostaria,
-	ou `nil` se o lugar esta livre.
+	An area of **this** player that a ring of radius `radius` at `position` would
+	touch, or `nil` if the spot is free.
 
-	E a mesma conta do `CardModifierService:FindZoneOverlap`, de proposito: o servidor
-	recusa o uso pela dele, e a mira pinta de vermelho pela daqui. As duas leem a mesma
-	lista replicada, entao o que o jogador ve antes de clicar e o que o servidor vai
-	responder -- se elas divergissem, existiria um lugar verde onde o clique nao vale.
+	It is the same math as `CardModifierService:FindZoneOverlap`, on purpose: the
+	server refuses the use by its math, and aiming paints red by this one. Both read the
+	same replicated list, so what the player sees before clicking is what the server
+	will answer; if they diverged, there would be a green spot where the click does not
+	count.
 
-	Aqui nao ha poda de prazo: quem vence a zona e o servidor, e a lista chega refeita
-	a cada mudanca. Uma zona vencida no ultimo quadro pinta de vermelho por um instante
-	a mais, e nunca o contrario -- o erro cai para o lado seguro.
+	There is no deadline pruning here: the server expires the zone, and the list
+	arrives rebuilt on every change. A zone that expired on the last frame paints red
+	for an extra instant, never the reverse: the error falls on the safe side.
 ]=]
 function CardModifierController:FindZoneOverlap(position : Vector3, radius : number)
 	if typeof(position) ~= "Vector3" or typeof(radius) ~= "number" then return nil end
@@ -346,7 +350,7 @@ function CardModifierController:FindZoneOverlap(position : Vector3, radius : num
 	return nil
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function CardModifierController:construct()
 	Framework:Listen("RoundCardModifiers", function(list)
@@ -356,9 +360,9 @@ function CardModifierController:construct()
 		self:_drawZones()
 
 		--[=[
-			O alcance mudou por baixo do jogador, e nem o circulo nem o card se
-			redesenham sozinhos -- e a mesma dupla que a troca de clima ja refazia
-			(ver o `WeatherChanged` no `UnitPlacementController`).
+			The range changed under the player, and neither the circle nor the card
+			redraws on its own: it is the same pair a weather change already redrew (see
+			`WeatherChanged` in `UnitPlacementController`).
 		]=]
 		local placement = self.Controllers.UnitPlacementController
 		if placement then
@@ -372,9 +376,9 @@ function CardModifierController:construct()
 	end)
 
 	--[[
-		O round recomecou: os aneis do round anterior nao podem continuar no chao. O
-		servidor manda a lista vazia junto, mas o `RoundRestarted` chega primeiro e
-		limpa a tela sem esperar a rede.
+		The round restarted: the previous round's rings must not stay on the ground. The
+		server sends the empty list too, but `RoundRestarted` arrives first and clears
+		the screen without waiting for the network.
 	]]
 	Framework:Listen("RoundRestarted", function()
 		self.Modifiers = {}
@@ -389,20 +393,20 @@ function CardModifierController:start()
 		self.Controllers[Controller] = Framework:Get(Controller, false, true)
 	end
 
-	-- O que ja estava no campo quando este cliente carregou. No `start`, e nao no
-	-- `construct`: o pedido so faz sentido depois de os `Listen` estarem de pe, e o
-	-- identificador dele nasce no servidor (ver o README da raiz).
+	-- What was already on the field when this client loaded. In `start`, not in
+	-- `construct`: the request only makes sense once the `Listen`s are up, and its
+	-- identifier is created on the server (see docs/architecture/me-framework.md).
 	Framework:Fire("RequestRoundCardModifiers")
 end
 
 function CardModifierController:init()
 	self.ZoneMaid = Maid.new()
 
-	-- Um anel por uso de carta. Ver `_drawZones`.
+	-- One ring per card use. See `_drawZones`.
 	self.DrawnZones = {}
 
-	-- Aviso de anel faltando, uma vez por nome: a lista e redesenhada a cada carta
-	-- usada, e sem isso um Model ausente entupiria o output.
+	-- Missing ring warning, once per name: the list is redrawn on every card used,
+	-- and without this a missing Model would clog the output.
 	self.WarnedRings = {}
 
 	self:construct()

@@ -1,7 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -11,42 +10,40 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("WeatherService")
 
 local Config = SharedConfig.WeatherConfig
 
--- Log da troca: só no Studio. Mesmo motivo do LightingService — encaixar a Part
--- num mapa sem `Terrain` produz um resultado legítimo mas surpreendente, e sem os
--- números não dá para saber qual caixa foi medida.
-local IS_STUDIO = RunService:IsStudio()
-
-local function weatherPrint(...)
-	if not IS_STUDIO then return end
-	print("[WeatherService]", ...)
-end
+-- Each apply is logged (Studio only) for the same reason as in LightingService:
+-- fitting a Part on a map without `Terrain` gives a legitimate but surprising
+-- result, and without the numbers you cannot tell which box was measured.
 
 --[[
-	Clima do mapa em jogo.
+	The weather on the map in play.
 
-	Um clima é um Model em `Assets.Weathers` com uma ou mais Parts de partículas e
-	uma pasta `Lighting`. Este service encaixa **cada Part** no mapa carregado, do
-	jeito que a tag dela pedir (`AreaWeather` ou `SkyWeather`), e entrega a pasta ao
-	`LightingService`, que é quem muda a iluminação — então o clima herda de graça a
-	transição interpolada de lá.
+	A weather is a Model in `Assets.Weathers` with one or more particle Parts and a
+	`Lighting` folder. This service fits **each Part** to the loaded map the way its
+	tag asks (`AreaWeather` or `SkyWeather`), and hands the folder to
+	`LightingService`, which changes the lighting, so weather gets its interpolated
+	transition for free.
 
-	Um clima pode ser dos dois tipos: a chuva tem uma camada de nuvem no céu e a
-	chuva caindo dentro da área jogável, e as duas medem caixas diferentes do mapa.
-	Ver `WeatherConfig.Tags`.
+	A weather can be both kinds: rain has a cloud layer in the sky and rain falling
+	inside the play area, and the two measure different boxes of the map. See
+	`WeatherConfig.Tags`.
 
 		local Weather = Framework:Get("WeatherService")
 
-		Weather:Apply("Snow")        -- transição no tempo padrão do Lighting
-		Weather:Apply("Thunder", 4)  -- em 4s
-		Weather:Clear()              -- tira, e devolve a iluminação de antes
+		Weather:Apply("Snow")        -- transition at Lighting's default time
+		Weather:Apply("Thunder", 4)  -- over 4s
+		Weather:Clear()              -- removes it and restores the previous lighting
 
-	Fica em `common/` porque o Weathers é compartilhado. Na prática só a Game tem
-	`workspace.Map`, e sem mapa o `Apply` recusa dizendo isso.
+	It lives in `common/` because Weathers is shared. In practice only Game has
+	`workspace.Map`, and without a map `Apply` refuses and says so.
+
+	See docs/common/weather.md.
 ]]
 
 local WeatherService = {
@@ -59,18 +56,18 @@ WeatherService.Current = nil :: string?
 WeatherService.Container = nil :: Folder?
 
 --[[
-	Preset de iluminação de antes do clima, para o `Clear` ter para onde voltar.
-	Só é gravado na primeira aplicação: trocar de clima não pode fazer o "antes"
-	virar o clima anterior.
+	The lighting preset from before the weather, so `Clear` has somewhere to return.
+	It is only recorded on the first apply: switching weathers must not turn the
+	"before" into the previous weather.
 ]]
 WeatherService.RestorePreset = nil :: string?
 
 --[[
-	Avisa os clientes de qual clima está no ar.
+	Tells clients which weather is active.
 
-	Quem escuta é o `WeatherController`, para o som de fundo entrar e sair junto —
-	as partículas e a iluminação chegam sozinhas (replicação e `LightingApplied`),
-	mas áudio é local de cada cliente.
+	`WeatherController` listens, so the background sound comes and goes with it:
+	particles and lighting arrive on their own (replication and `LightingApplied`),
+	but audio is local to each client.
 ]]
 local function broadcastWeather(name: string?)
 	for _, player in Players:GetPlayers() do
@@ -78,14 +75,14 @@ local function broadcastWeather(name: string?)
 	end
 end
 
---[[ CAIXA DO MAPA ]]
+--[[ MAP BOX ]]
 
 --[[
-	AABB de uma Part, respeitando a rotação dela.
+	A Part's AABB, respecting its rotation.
 
-	`Position ± Size/2` só valeria para Part alinhada aos eixos, e terreno girado é
-	comum. A meia-extensão do AABB de uma caixa girada é `|R| * meioTamanho`, que é
-	o que as linhas abaixo fazem.
+	`Position ± Size/2` would only hold for an axis-aligned Part, and rotated terrain
+	is common. The half-extent of a rotated box's AABB is `|R| * halfSize`, which is
+	what the lines below do.
 ]]
 local function partBounds(part: BasePart): (Vector3, Vector3)
 	local cf, size = part.CFrame, part.Size
@@ -103,8 +100,8 @@ local function partBounds(part: BasePart): (Vector3, Vector3)
 end
 
 --[[
-	Menor caixa que cobre as BaseParts de `sources`, descartando as maiores que
-	`maxFootprint` em X ou Z. Devolve também quantas foram descartadas.
+	The smallest box covering the BaseParts in `sources`, discarding those larger
+	than `maxFootprint` in X or Z. Also returns how many were discarded.
 ]]
 local function measureIn(sources: { Instance }, maxFootprint: number): (Vector3?, Vector3?, number)
 	local minV, maxV
@@ -129,26 +126,28 @@ local function measureIn(sources: { Instance }, maxFootprint: number): (Vector3?
 end
 
 --[=[
-	Caixa do mapa: centro, tamanho e uma etiqueta do que foi medido.
+	The map box: center, size, and a label for what was measured.
 
-	`wholeMap` escolhe o que conta, e a diferença é a própria semântica das tags:
+	`wholeMap` picks what counts, and the difference is the tags' own semantics:
 
-	- **Sky** mede o mapa inteiro, cenário de fundo incluído. A camada de céu cobre
-	  tudo que se vê, e o chão pintado até o horizonte faz parte disso — cobrir só a
-	  área jogável deixaria uma mancha de 93 studs sobre um mundo visível de 2048. O
-	  pico sai daqui também: é "o ponto mais alto do mapa carregado", sem recorte.
-	- **Area** mede só `BoundsFolders`, e ainda descarta as parts maiores que
-	  `MaxPartFootprint`. Neve e chuva acontecem onde se joga; medir o fundo daria uma
-	  caixa 20x maior e espalharia as partículas até sumirem.
+	- **Sky** measures the whole map, background scenery included. The sky layer
+	  covers everything visible, and ground painted to the horizon is part of that:
+	  covering only the play area would leave a 93-stud patch over a visible world of
+	  2048. The peak comes from here too: "the highest point of the loaded map", with
+	  no cropping.
+	- **Area** measures only `BoundsFolders`, and also discards parts larger than
+	  `MaxPartFootprint`. Snow and rain happen where the game is played; measuring the
+	  background would give a box 20x larger and spread the particles until they
+	  vanish.
 ]=]
 function WeatherService:GetMapBounds(target: Instance, wholeMap: boolean?): (Vector3?, Vector3?, string)
 	--[[
-		Caixa autorada no mapa manda, nos dois tipos de clima. Ela é exata, enquanto
-		medir o mapa depende de adivinhar o que é cenário de fundo — e as duas
-		heurísticas abaixo erram justamente nos mapas em que o fundo mora dentro do
-		`Terrain` (o `Volcano` calculado dá 500x500; a caixa dele tem 147x109).
+		A box authored in the map wins, for both weather kinds. It is exact, while
+		measuring the map depends on guessing what is background scenery, and both
+		heuristics below fail precisely on maps whose background lives inside
+		`Terrain` (the computed `Volcano` gives 500x500; its box is 147x109).
 
-		Rotação é ignorada: as caixas são alinhadas aos eixos.
+		Rotation is ignored: the boxes are axis-aligned.
 	]]
 	local authored = target:FindFirstChild(Config.BoundsPartName)
 	if authored and authored:IsA("BasePart") then
@@ -158,10 +157,10 @@ function WeatherService:GetMapBounds(target: Instance, wholeMap: boolean?): (Vec
 	if wholeMap then
 		local minV, maxV = measureIn({ target }, math.huge)
 		if not minV or not maxV then
-			return nil, nil, "mapa inteiro"
+			return nil, nil, "whole map"
 		end
 
-		return (minV + maxV) / 2, maxV - minV, "mapa inteiro"
+		return (minV + maxV) / 2, maxV - minV, "whole map"
 	end
 
 	local sources = {}
@@ -175,18 +174,18 @@ function WeatherService:GetMapBounds(target: Instance, wholeMap: boolean?): (Vec
 	local measured = table.concat(Config.BoundsFolders, "+")
 	if #sources == 0 then
 		sources = { target }
-		measured = target.Name .. " inteiro"
+		measured = "whole " .. target.Name
 	end
 
 	local minV, maxV, skipped = measureIn(sources, Config.MaxPartFootprint)
 
-	-- Nada de pé depois do corte: um mapa pequeno feito de uma part só ainda tem
-	-- que funcionar.
+	-- Nothing left standing after the cut: a small map made of a single part must
+	-- still work.
 	if not minV or not maxV then
 		minV, maxV = measureIn(sources, math.huge)
-		measured ..= " (sem corte de fundo)"
+		measured ..= " (no floor cut)"
 	elseif skipped > 0 then
-		measured ..= string.format(" (-%d fundo)", skipped)
+		measured ..= string.format(" (-%d floor)", skipped)
 	end
 
 	if not minV or not maxV then
@@ -196,15 +195,15 @@ function WeatherService:GetMapBounds(target: Instance, wholeMap: boolean?): (Vec
 	return (minV + maxV) / 2, maxV - minV, measured
 end
 
---[[ ENCAIXE ]]
+--[[ FITTING ]]
 
 --[=[
-	Em qual das duas caixas esta Part entra: `"Area"`, `"Sky"` ou `nil`.
+	Which of the two boxes this Part goes into: `"Area"`, `"Sky"`, or `nil`.
 
-	A tag da **Part** manda. Sem ela vale a do Model, e só quando ele diz uma coisa
-	só: num clima dos dois tipos não há como adivinhar de qual delas uma Part sem
-	tag é. É o que deixa os climas antigos (uma tag no Model, Parts sem nada)
-	continuarem funcionando sem serem reautorados.
+	The **Part's** tag wins. Without it the Model's applies, and only when the Model
+	says a single thing: in a two-kind weather there is no way to guess which one an
+	untagged Part belongs to. That is what lets single-tag weathers (one tag on the
+	Model, untagged Parts) keep working without being reauthored.
 ]=]
 function WeatherService:_partKind(model: Model, part: BasePart): string?
 	if CollectionService:HasTag(part, Config.Tags.Area) then
@@ -230,12 +229,12 @@ function WeatherService:_partKind(model: Model, part: BasePart): string?
 end
 
 --[=[
-	A caixa do mapa, medida no máximo uma vez por tipo.
+	The map box, measured at most once per kind.
 
-	Os dois tipos medem coisas diferentes (ver `GetMapBounds`), e um clima misto
-	precisa das duas — mas uma Part de céu e outra de área não podem sair de duas
-	medições diferentes do mesmo mapa, nem custar duas varreduras quando o clima é
-	de um tipo só.
+	The two kinds measure different things (see `GetMapBounds`), and a mixed weather
+	needs both, but a sky Part and an area Part must not come from two different
+	measurements of the same map, nor cost two sweeps when the weather is a single
+	kind.
 ]=]
 function WeatherService:_boundsReader(target: Instance)
 	local cache = {}
@@ -244,7 +243,7 @@ function WeatherService:_boundsReader(target: Instance)
 		local entry = cache[kind]
 
 		if not entry then
-			-- Sky mede o mapa inteiro, Area só a área jogável.
+			-- Sky measures the whole map, Area only the play area.
 			entry = table.pack(self:GetMapBounds(target, kind == "Sky"))
 			cache[kind] = entry
 		end
@@ -254,9 +253,9 @@ function WeatherService:_boundsReader(target: Instance)
 end
 
 --[=[
-	A Part vem do asset com `CanCollide = true`. Esticada para cobrir o mapa, ela
-	viraria uma parede invisível em cima da área jogável — e com `CanQuery` ligado o
-	raycast dos passos e a validação de posicionamento de unidade bateriam nela.
+	The Part comes from the asset with `CanCollide = true`. Stretched to cover the
+	map, it would become an invisible wall over the play area, and with `CanQuery`
+	on, the footstep raycast and unit placement validation would hit it.
 ]=]
 local function makeIntangible(instance: Instance)
 	for _, part in instance:GetDescendants() do
@@ -271,19 +270,19 @@ local function makeIntangible(instance: Instance)
 end
 
 --[=[
-	Encaixa **uma** Part na caixa que o tipo dela pede. Devolve a descrição do que
-	fez, para o log e para a resposta do comando.
+	Fits **one** Part to the box its kind asks for. Returns a description of what it
+	did, for the log and for the command's answer.
 ]=]
 function WeatherService:_fitPart(model: Model, part: BasePart, kind: string, center: Vector3, size: Vector3): string
 	if kind == "Area" then
 		part.Size = size
 		part.CFrame = CFrame.new(center)
 
-		return string.format("área %.0fx%.0fx%.0f em (%.0f, %.0f, %.0f)",
+		return string.format("area %.0fx%.0fx%.0f at (%.0f, %.0f, %.0f)",
 			size.X, size.Y, size.Z, center.X, center.Y, center.Z)
 	end
 
-	-- A espessura da camada é a autorada; o que acompanha o mapa é X e Z.
+	-- The layer's thickness is the authored one; what follows the map is X and Z.
 	local thickness = part.Size.Y
 	local offset = model:GetAttribute(Config.HeightOffsetAttribute) or Config.SkyHeightOffset
 	local peak = center.Y + size.Y / 2
@@ -291,23 +290,23 @@ function WeatherService:_fitPart(model: Model, part: BasePart, kind: string, cen
 	part.Size = Vector3.new(size.X, thickness, size.Z)
 	part.CFrame = CFrame.new(center.X, peak + offset, center.Z)
 
-	return string.format("céu %.0fx%.0f (espessura %.0f) em (%.0f, %.0f, %.0f) — centro do mapa, %.0f acima do pico %.0f",
+	return string.format("sky %.0fx%.0f (thickness %.0f) at (%.0f, %.0f, %.0f), map center, %.0f above the peak %.0f",
 		size.X, size.Z, thickness,
 		part.CFrame.Position.X, part.CFrame.Position.Y, part.CFrame.Position.Z,
 		offset, peak)
 end
 
 --[=[
-	Encaixa **todas** as Parts do clima, cada uma na caixa do tipo dela. Devolve a
-	descrição do que fez, ou `nil` mais o motivo quando não sobrou nada encaixado.
+	Fits **every** Part of the weather, each one in its kind's box. Returns a
+	description of what it did, or `nil` plus the reason when nothing ended up fitted.
 
-	Só os filhos diretos contam: os ParticleEmitters moram dentro das Parts, e uma
-	geometria decorativa aninhada não é uma camada de clima.
+	Only direct children count: the ParticleEmitters live inside the Parts, and a
+	nested decorative geometry is not a weather layer.
 
-	Part sozinha que não encaixa derruba o clima inteiro (é o caso do clima de uma
-	Part só, e o que o comando precisa reportar); com várias, a que falhar sai com
-	aviso e as outras entram — meio clima na tela é mais fácil de diagnosticar do
-	que nenhum, e o aviso diz qual faltou.
+	A lone Part that does not fit takes down the whole weather (the single-Part
+	weather case, which the command needs to report); with several, the one that
+	fails is left out with a warning and the others load. Half a weather on screen
+	is easier to diagnose than none, and the warning says which one is missing.
 ]=]
 function WeatherService:_fit(model: Model, bounds): (string?, string?)
 	local parts = {}
@@ -318,7 +317,7 @@ function WeatherService:_fit(model: Model, bounds): (string?, string?)
 	end
 
 	if #parts == 0 then
-		return nil, "não tem nenhuma BasePart para encaixar"
+		return nil, "has no BasePart to fit"
 	end
 
 	local fitted = {}
@@ -327,14 +326,14 @@ function WeatherService:_fit(model: Model, bounds): (string?, string?)
 	for _, part in parts do
 		local kind = self:_partKind(model, part)
 		if not kind then
-			table.insert(failures, string.format("%s não tem tag %s nem %s (o clima tem os dois tipos, então cada Part precisa dizer a sua)",
+			table.insert(failures, string.format("%s has neither the %s nor the %s tag (the weather has both kinds, so each Part must declare its own)",
 				part.Name, Config.Tags.Area, Config.Tags.Sky))
 			continue
 		end
 
 		local center, size, measured = bounds(kind)
 		if not center or not size then
-			table.insert(failures, string.format("%s (%s): o mapa não tem nenhuma BasePart em %s", part.Name, kind, measured))
+			table.insert(failures, string.format("%s (%s): the map has no BasePart in %s", part.Name, kind, measured))
 			continue
 		end
 
@@ -346,7 +345,7 @@ function WeatherService:_fit(model: Model, bounds): (string?, string?)
 	end
 
 	for _, failure in failures do
-		warn(`[WeatherService]: "{model.Name}": {failure}.`)
+		log:StudioWarn(`"{model.Name}": {failure}.`)
 	end
 
 	return table.concat(fitted, " + "), nil
@@ -418,48 +417,48 @@ function WeatherService:GetCurrent(): string?
 end
 
 --[=[
-	Liga o clima no mapa carregado.
+	Turns the weather on over the loaded map.
 
-	`transitionTime` é repassado ao LightingService; `0` corta seco. Devolve
-	`(ok, mensagem)` — a mensagem é o que o comando mostra.
+	`transitionTime` is passed to LightingService; `0` is a hard cut. Returns
+	`(ok, message)`; the message is what the command shows.
 ]=]
 function WeatherService:Apply(name: string, transitionTime: number?): (boolean, string)
 	local model = self:GetWeather(name)
 	if not model then
-		return false, string.format("o clima '%s' não existe em Assets.Weathers.", name)
+		return false, string.format("weather '%s' does not exist in Assets.Weathers.", name)
 	end
 
 	local isArea = CollectionService:HasTag(model, Config.Tags.Area)
 	local isSky = CollectionService:HasTag(model, Config.Tags.Sky)
 	if not isArea and not isSky then
-		return false, string.format("o clima '%s' não tem a tag %s nem %s.", name, Config.Tags.Area, Config.Tags.Sky)
+		return false, string.format("weather '%s' has neither the %s nor the %s tag.", name, Config.Tags.Area, Config.Tags.Sky)
 	end
 
 	local target = workspace:FindFirstChild(Config.TargetName)
 	if not target then
-		return false, string.format("não há nenhum '%s' no Workspace para encaixar o clima.", Config.TargetName)
+		return false, string.format("there is no '%s' in the Workspace to fit the weather to.", Config.TargetName)
 	end
 
 	local clone = model:Clone()
 	if not clone then
-		return false, string.format("o clima '%s' não é clonável (Archivable = false?).", name)
+		return false, string.format("weather '%s' cannot be cloned (Archivable = false?).", name)
 	end
 
 	local fitted, reason = self:_fit(clone, self:_boundsReader(target))
 	if not fitted then
 		clone:Destroy()
-		return false, string.format("o clima '%s' não encaixou: %s.", name, reason or "motivo desconhecido")
+		return false, string.format("weather '%s' did not fit: %s.", name, reason or "unknown reason")
 	end
 
 	makeIntangible(clone)
 
-	-- Um clima por vez: o anterior sai antes do novo entrar.
+	-- One weather at a time: the previous one leaves before the new one enters.
 	local container = self:GetContainer()
 	container:ClearAllChildren()
 	clone.Parent = container
 
-	-- A pasta Lighting é opcional: um clima pode ser só partícula.
-	local applied = "sem pasta Lighting"
+	-- The Lighting folder is optional: a weather can be particles only.
+	local applied = "no Lighting folder"
 	local lightingFolder = clone:FindFirstChild("Lighting")
 
 	if lightingFolder then
@@ -474,33 +473,33 @@ function WeatherService:Apply(name: string, transitionTime: number?): (boolean, 
 			if preset and LightingService:Apply(preset, transitionTime) then
 				applied = string.format("preset %s", preset)
 			else
-				applied = "a pasta Lighting falhou (ver o output)"
+				applied = "the Lighting folder failed (see the Output)"
 			end
 		else
-			applied = "LightingService indisponível"
+			applied = "LightingService unavailable"
 		end
 
-		-- O `Register` já guardou a cópia dela em `Assets.Lighting`. Efeito de
-		-- iluminação dentro de uma Folder no Workspace não faz nada — deixar a
-		-- original pendurada no clone só replicaria peso morto.
+		-- `Register` already stored its copy in `Assets.Lighting`. Lighting effects
+		-- inside a Folder in the Workspace do nothing, so leaving the original
+		-- hanging in the clone would only replicate dead weight.
 		lightingFolder:Destroy()
 	end
 
 	self.Current = name
 	broadcastWeather(name)
 
-	-- O `fitted` ja traz o tamanho e o centro de cada Part encaixada, uma por tipo.
-	weatherPrint(string.format("'%s' aplicado | %s | %s", name, fitted, applied))
+	-- `fitted` already carries the size and center of each fitted Part, one per kind.
+	log:Debug(string.format("'%s' applied | %s | %s", name, fitted, applied))
 
 	return true, string.format("Weather: %s | %s | %s.", name, fitted, applied)
 end
 
 --[=[
-	Tira o clima e devolve a iluminação que estava antes dele.
+	Removes the weather and restores the lighting from before it.
 ]=]
 function WeatherService:Clear(transitionTime: number?): (boolean, string)
 	if not self.Current then
-		return false, "não há clima ligado."
+		return false, "no weather is on."
 	end
 
 	local previous = self.Current
@@ -518,12 +517,12 @@ function WeatherService:Clear(transitionTime: number?): (boolean, string)
 		end
 	end
 
-	weatherPrint(string.format("'%s' removido | iluminação devolvida para %s", previous, restore or "(nada gravado)"))
+	log:Debug(string.format("'%s' removed | lighting restored to %s", previous, restore or "(nothing recorded)"))
 
-	return true, string.format("Weather off (era %s; iluminação voltou para %s).", previous, restore or "o que estava")
+	return true, string.format("Weather off (was %s; lighting restored to %s).", previous, restore or "what it was before")
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function WeatherService:construct()
 	Framework:Listen("RequestWeather", function(player: Player)

@@ -8,17 +8,19 @@ local Me = require(Vendor.Me)
 local Framework = Me.new()
 
 --[[
-	O lado servidor do holofote.
+	The server side of the spotlight.
 
-	O destaque é todo do cliente (`HighlightController`) — quem sabe onde um botão
-	está na tela é a tela. Este service existe para o servidor poder **pedir**: o
-	comando `highlight` do Cmdr entra por aqui, e é por aqui que um passo de
-	tutorial decidido no servidor vai apontar um botão quando existir.
+	The highlight is all client (`HighlightController`): the screen is what knows
+	where a button is on screen. This service exists so the server can **ask**: the
+	Cmdr `highlight` command enters here, and this is where a server-decided tutorial
+	step will point at a button when one exists.
 
-	O que atravessa a rede é um **caminho de nomes** (`"HUD.HUDLeft.Shop"`), e não
-	uma referência: instância de UI do cliente não existe no servidor.
+	What crosses the network is a **name path** (`"HUD.HUDLeft.Shop"`), not a
+	reference: a client UI instance does not exist on the server.
 
-	Fica em `common/` porque o Cmdr roda nas duas places.
+	It lives in `common/` because Cmdr runs in both places.
+
+	See docs/common/ui-guidance.md.
 ]]
 
 local HighlightService = {
@@ -34,7 +36,7 @@ export type ShowOptions = {
 }
 
 --[=[
-	Aponta, para cada jogador da lista, o GuiObject naquele caminho.
+	Points each player in the list at the GuiObject at that path.
 ]=]
 function HighlightService:Show(players : { Player }, path : string, options : ShowOptions?)
 	for _, player in players do
@@ -43,8 +45,8 @@ function HighlightService:Show(players : { Player }, path : string, options : Sh
 end
 
 --[=[
-	Apaga o destaque. É o mesmo evento sem caminho — o cliente entende a ausência
-	como "apague", e assim não existe um segundo evento para declarar e manter.
+	Clears the highlight. It is the same event without a path: the client reads the
+	absence as "clear", so there is no second event to declare and maintain.
 ]=]
 function HighlightService:Hide(players : { Player })
 	for _, player in players do
@@ -52,12 +54,12 @@ function HighlightService:Hide(players : { Player })
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function HighlightService:construct()
-	-- O identificador do evento nasce no servidor: sem este `Listen` vazio, o
-	-- `Listen` do cliente ficaria dez segundos esperando um evento que ninguém
-	-- registrou — e levaria junto o resto do `construct` dele.
+	-- The event identifier is created on the server: without this empty `Listen`,
+	-- the client's `Listen` would wait ten seconds for an event nobody registered,
+	-- and take the rest of its `construct` down with it.
 	Framework:Listen("HighlightShow", function() end)
 end
 

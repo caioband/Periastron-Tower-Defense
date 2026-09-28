@@ -14,70 +14,75 @@ local SharedConfig = require(Configs.SharedConfig)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("HighlightController")
 
 local Config = SharedConfig.HighlightConfig
 
 --[[
-	O holofote: a tela escurece menos um retângulo em volta de um GuiObject.
+	The spotlight: the screen darkens except for a rectangle around a GuiObject.
 
 		local Highlight = Framework:Get("HighlightController")
 
 		Highlight:Show(shopButton)
-		Highlight:Show(deckButton, { Padding = 16 })   -- escorrega do anterior
+		Highlight:Show(deckButton, { Padding = 16 })   -- slides from the previous one
 		Highlight:Hide()
 
-	**A técnica é o `UIStroke` gigante.** Um frame transparente com um `UIStroke` de
-	dez mil pixels pinta tudo o que está **fora** dele: o frame é o buraco, o stroke
-	é o escuro, o `UICorner` arredonda, e não existe imagem, máscara de quatro
-	partes nem `EditableImage` para manter alinhada. É a solução que o DevForum
-	converge para este efeito, e a mais barata de todas — uma instância.
+	**The technique is a giant `UIStroke`.** A transparent frame with a ten-thousand
+	pixel `UIStroke` paints everything **outside** it: the frame is the hole, the
+	stroke is the dark, `UICorner` rounds it, and there is no image, four-part mask,
+	or `EditableImage` to keep aligned. It is the solution the DevForum converges on
+	for this effect, and the cheapest of all: one instance.
 
-	**O clique é outro assunto, e por padrão o destaque não se mete nele.** Stroke não
-	recebe input (é contorno, não superfície), e o bloqueio — quatro frames `Active`
-	em volta do buraco, a técnica das quatro máscaras — só entra quando quem chama
-	pede: `Show(alvo, { BlockInput = true })`.
+	**Clicking is another matter, and by default the highlight stays out of it.** A
+	stroke receives no input (it is an outline, not a surface), and blocking (four
+	`Active` frames around the hole, the four-mask technique) only comes in when the
+	caller asks: `Show(target, { BlockInput = true })`.
 
-	O padrão é não bloquear porque destaque não é modal: apontar uma carta não pode
-	impedir o jogador de girar a câmera nem de clicar no chão. Bloquear só faz
-	sentido quando o alvo é a única coisa clicável do passo — um botão de UI, nunca
-	um lugar do mapa.
+	The default is not to block because a highlight is not modal: pointing at a card
+	must not stop the player from turning the camera or clicking the ground. Blocking
+	only makes sense when the target is the only clickable thing in the step: a UI
+	button, never a place on the map.
 
-	**Ele não some com o "esconda o resto".** A tela nasce com a marca
-	`IgnoreInterfaceHide`, que o `InterfaceController` respeita: painel de
-	proximidade e loja escondem o HUD ao abrir, e um destaque que sumisse junto
-	apontaria só o que já estava na tela — nunca o que está dentro do painel que
-	acabou de abrir.
+	**It does not disappear with "hide everything else".** The screen is created
+	with the `IgnoreInterfaceHide` mark, which `InterfaceController` respects:
+	proximity panels and the shop hide the HUD when opening, and a highlight that
+	vanished with it would only point at what was already on screen, never at what is
+	inside the panel that just opened.
 
-	**O alinhamento é medido, não calculado.** `AbsolutePosition` vive no espaço com
-	a inset da topbar: numa `ScreenGui` com `IgnoreGuiInset = true` — que é o caso
-	desta, para o escuro cobrir a faixa de cima —, um frame no canto superior
-	esquerdo reporta `(0, -36)`. É intencional da Roblox, por compatibilidade. Em
-	vez de somar 36 na mão (ou chamar `GuiService:GetGuiInset`, que devolve zero nos
-	primeiros quadros depois do boot — justo quando um tutorial roda), o controller
-	mantém um frame-sonda de tamanho zero na origem da própria tela e lê a posição
-	dele. A diferença entre a sonda e o alvo é a resposta, e ela continua certa em
-	qualquer aparelho, com ou sem inset, e mesmo que a regra mude.
+	**Alignment is measured, not computed.** `AbsolutePosition` lives in the space
+	with the top bar inset: in a `ScreenGui` with `IgnoreGuiInset = true` (this one's
+	case, so the dark covers the top strip), a frame at the top-left corner reports
+	`(0, -36)`. Roblox does this on purpose, for compatibility. Instead of adding 36
+	by hand (or calling `GuiService:GetGuiInset`, which returns zero in the first
+	frames after boot, exactly when a tutorial runs), the controller keeps a zero-size
+	probe frame at its own screen's origin and reads its position. The difference
+	between the probe and the target is the answer, and it stays right on any device,
+	with or without inset, even if the rule changes.
 
-	**Segue o alvo.** O destaque reage ao `AbsolutePosition` e ao `AbsoluteSize` do
-	alvo e ao tamanho do viewport, e não fica varrendo a tela a cada quadro: o
-	`RenderStepped` do exemplo de sempre desenha sessenta vezes por segundo para um
-	botão de HUD que não sai do lugar.
+	**It follows the target.** The highlight reacts to the target's `AbsolutePosition`
+	and `AbsoluteSize` and to the viewport size, and does not sweep the screen every
+	frame: the usual example's `RenderStepped` redraws sixty times a second for a HUD
+	button that does not move.
 
-	**Nada aqui é pixel cravado.** A posição e o tamanho são copiados do alvo, então
-	valem em qualquer resolução; a folga e o raio do canto são frações do menor lado
-	do alvo, com chão e teto, porque 8px de folga num botão de 200px é um detalhe e
-	no mesmo botão a 60px é uma moldura. Alvo dentro de algo que corta
-	(`ScrollingFrame`) tem o retângulo cortado junto, e sumindo de vista o destaque
-	**suspende** em vez de morrer: o alvo continua apontado e volta a brilhar quando
-	o jogador rolar de volta. Só alvo tirado da `PlayerGui` apaga de vez.
+	**Nothing here is hard-coded pixels.** Position and size are copied from the
+	target, so they hold at any resolution; padding and corner radius are fractions of
+	the target's smaller side, with a floor and ceiling, because 8px of padding on a
+	200px button is a detail and on the same button at 60px it is a frame. A target
+	inside something that clips (`ScrollingFrame`) has its rectangle clipped too, and
+	when it goes out of view the highlight **suspends** instead of dying: the target
+	stays pointed at and lights up again when the player scrolls back. Only a target
+	removed from `PlayerGui` clears it for good.
 
-	> O que não é coberto: alvo **rotacionado**. `AbsolutePosition`/`AbsoluteSize`
-	> descrevem a caixa sem rotação, então o buraco sairia torto — e o `UIStroke` não
-	> tem como recortar em diagonal. Rotação de UI aqui hoje não existe.
+	> Not covered: a **rotated** target. `AbsolutePosition`/`AbsoluteSize` describe
+	> the unrotated box, so the hole would come out crooked, and `UIStroke` cannot cut
+	> diagonally. UI rotation does not exist here today.
 
-	Fica em `common/` porque as duas places têm botão para apontar.
+	It lives in `common/` because both places have buttons to point at.
+
+	See docs/common/ui-guidance.md.
 ]]
 
 local HighlightController = {
@@ -94,25 +99,25 @@ HighlightController.Blockers = {} :: { Frame }
 HighlightController.Target = nil :: GuiObject?
 HighlightController.Options = nil :: any
 
--- O que está ligado ao alvo de agora. Trocar de alvo limpa tudo de uma vez.
+-- What is connected to the current target. Switching targets clears everything at once.
 HighlightController.TargetMaid = nil :: any
 
 HighlightController.FadeTween = nil :: Tween?
 HighlightController.MoveTween = nil :: Tween?
 
--- Alvo apontado que **agora** não está na tela: rolou para fora do ScrollingFrame,
--- ficou invisível. O destaque sai, o alvo continua sendo seguido, e ele volta
--- quando o alvo voltar. Ver `suspend`.
+-- A pointed-at target that is **currently** not on screen: scrolled out of the
+-- ScrollingFrame, or went invisible. The highlight leaves, the target is still
+-- followed, and it returns when the target does. See `suspend`.
 HighlightController.Suspended = false
 
 --[[
-	O caminho de nomes do alvo até a `PlayerGui`, para reencontrá-lo se a tela dele
-	for reclonada (respawn). Ver `pathOf` e `rebind`.
+	The name path from the target up to `PlayerGui`, to find it again if its screen
+	is recloned (respawn). See `pathOf` and `rebind`.
 ]]
 HighlightController.Path = nil :: { string }?
 
--- Sobe a cada `Show` e a cada `Hide`. Uma procura em curso confere o número antes
--- de apontar: alvo novo no meio dela ganha, e o `Hide` a cancela de vez.
+-- Goes up on every `Show` and every `Hide`. A search in progress checks the number
+-- before pointing: a new target during it wins, and `Hide` cancels it for good.
 HighlightController.RebindToken = 0
 
 --[[ INTERNAL ]]
@@ -132,7 +137,7 @@ local function create(className : string, properties : { [string] : any }, paren
 end
 
 --[=[
-	Monta a tela do destaque. Uma vez por sessão.
+	Builds the highlight screen. Once per session.
 ]=]
 function HighlightController:build()
 	if self.Gui and self.Gui.Parent then
@@ -149,20 +154,20 @@ function HighlightController:build()
 	}, PlayerGui)
 
 	--[[
-		O destaque não some com os pedidos de "esconda o resto".
+		The highlight does not disappear with "hide everything else" requests.
 
-		A loja e os painéis de proximidade fazem esse pedido ao abrir, e sem esta
-		marca o efeito ficava invertido: com a loja fechada o destaque aparecia, e
-		com ela aberta — a hora em que ele precisa apontar o botão de comprar —
-		sumia junto com o HUD.
+		The shop and proximity panels make that request when opening, and without this
+		mark the effect would be inverted: with the shop closed the highlight would
+		show, and with it open (exactly when it needs to point at the buy button) it
+		would vanish along with the HUD.
 	]]
 	if Config.Gui.IgnoreHideAttribute then
 		gui:SetAttribute(Config.Gui.IgnoreHideAttribute, true)
 	end
 
-	-- A sonda: tamanho zero, posição zero, invisível. Ela não desenha nada — existe
-	-- só para o `AbsolutePosition` dela dizer onde fica a origem desta tela no
-	-- mesmo espaço em que o alvo é medido.
+	-- The probe: zero size, zero position, invisible. It draws nothing; it exists
+	-- only so its `AbsolutePosition` tells where this screen's origin is in the
+	-- same space the target is measured in.
 	self.Origin = create("Frame", {
 		Name = "Origin",
 		Size = UDim2.fromOffset(0, 0),
@@ -187,7 +192,7 @@ function HighlightController:build()
 		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 	}, hole)
 
-	-- Os quatro que engolem o clique de fora. Invisíveis: quem escurece é o stroke.
+	-- The four that swallow clicks outside. Invisible: the stroke does the darkening.
 	self.Blockers = {}
 	for index = 1, 4 do
 		self.Blockers[index] = create("Frame", {
@@ -204,9 +209,9 @@ function HighlightController:build()
 end
 
 --[=[
-	Onde fica o canto superior esquerdo desta tela, no espaço em que os alvos são
-	medidos. Lido toda vez, e não guardado: a inset muda (topbar some numa cutscene,
-	aparece de volta) e o valor de boot não vale para sempre.
+	Where this screen's top-left corner is, in the space targets are measured in.
+	Read every time, not cached: the inset changes (the top bar hides during a
+	cutscene and comes back) and the boot value does not hold forever.
 ]=]
 function HighlightController:origin() : Vector2
 	local probe = self.Origin
@@ -215,8 +220,8 @@ function HighlightController:origin() : Vector2
 end
 
 --[=[
-	O retângulo do destaque agora, em coordenadas desta tela: a caixa do alvo mais a
-	folga.
+	The highlight rectangle now, in this screen's coordinates: the target's box plus
+	padding.
 ]=]
 function HighlightController:rect() : (Vector2?, Vector2?)
 	local target = self.Target
@@ -232,11 +237,11 @@ function HighlightController:rect() : (Vector2?, Vector2?)
 	local position = target.AbsolutePosition - Vector2.new(padding, padding)
 	local size = target.AbsoluteSize + Vector2.new(padding * 2, padding * 2)
 
-	-- Recorte pelos ancestrais que cortam. Alvo dentro de ScrollingFrame que rolou
-	-- para fora não pode ser apontado onde ele não está mais sendo desenhado: ou o
-	-- destaque acompanha o pedaço visível, ou some enquanto não houver pedaço
-	-- nenhum. Sem isto, rolar a lista deixaria um buraco no escuro apontando para
-	-- um botão que o jogador não vê.
+	-- Clip by ancestors that clip. A target inside a ScrollingFrame that scrolled
+	-- out must not be pointed at where it is no longer drawn: either the highlight
+	-- follows the visible part, or it goes away while there is no visible part at
+	-- all. Without this, scrolling the list would leave a hole in the dark pointing at
+	-- a button the player cannot see.
 	local ancestor = target.Parent
 	while ancestor and ancestor:IsA("GuiObject") do
 		if ancestor.ClipsDescendants then
@@ -263,11 +268,12 @@ function HighlightController:rect() : (Vector2?, Vector2?)
 end
 
 --[=[
-	Um número proporcional ao alvo, com chão e teto: a folga e o raio do buraco.
+	A number proportional to the target, with a floor and ceiling: the hole's padding
+	and radius.
 
-	A referência é o **menor lado** do alvo, e não a tela: o que precisa parecer
-	folga é a distância até a borda do botão, e um botão pequeno numa tela grande
-	continua sendo um botão pequeno.
+	The reference is the target's **smaller side**, not the screen: what needs to
+	look like padding is the distance to the button's edge, and a small button on a
+	large screen is still a small button.
 ]=]
 function HighlightController:measure(rule : { Fraction : number, Min : number, Max : number }, size : Vector2) : number
 	local reference = math.min(size.X, size.Y)
@@ -276,15 +282,15 @@ function HighlightController:measure(rule : { Fraction : number, Min : number, M
 end
 
 --[=[
-	Põe os quatro bloqueadores em volta do buraco.
+	Places the four blockers around the hole.
 
-	Eles cobrem a tela inteira menos o miolo: faixa de cima, faixa de baixo, e as
-	duas laterais na altura do buraco. Sobra sempre alguma sobreposição nas quinas,
-	e tudo bem — dois frames invisíveis empilhados engolem o mesmo clique uma vez.
+	They cover the whole screen except the middle: top strip, bottom strip, and the
+	two sides at the hole's height. There is always some overlap at the corners, and
+	that is fine: two stacked invisible frames swallow the same click once.
 
-	As faixas são propositalmente maiores que a tela (o `Size` em escala mais um
-	exagero em offset): uma tela que cresce entre um quadro e outro não pode deixar
-	uma fresta clicável na borda.
+	The strips are deliberately larger than the screen (scale `Size` plus an offset
+	exaggeration): a screen that grows between one frame and the next must not leave
+	a clickable gap at the edge.
 ]=]
 function HighlightController:layoutBlockers(position : Vector2, size : Vector2)
 	local blockers = self.Blockers
@@ -304,19 +310,19 @@ function HighlightController:layoutBlockers(position : Vector2, size : Vector2)
 
 	local far = 10000
 
-	-- Cima
+	-- Top
 	blockers[1].Position = UDim2.fromOffset(-far, position.Y - far)
 	blockers[1].Size = UDim2.fromOffset(far * 2, far)
 
-	-- Baixo
+	-- Bottom
 	blockers[2].Position = UDim2.fromOffset(-far, position.Y + size.Y)
 	blockers[2].Size = UDim2.fromOffset(far * 2, far)
 
-	-- Esquerda
+	-- Left
 	blockers[3].Position = UDim2.fromOffset(position.X - far, position.Y)
 	blockers[3].Size = UDim2.fromOffset(far, size.Y)
 
-	-- Direita
+	-- Right
 	blockers[4].Position = UDim2.fromOffset(position.X + size.X, position.Y)
 	blockers[4].Size = UDim2.fromOffset(far, size.Y)
 
@@ -326,15 +332,15 @@ function HighlightController:layoutBlockers(position : Vector2, size : Vector2)
 end
 
 --[=[
-	Tira (ou devolve) o destaque sem esquecer o alvo.
+	Removes (or restores) the highlight without forgetting the target.
 
-	É o estado de "o alvo existe, mas agora não está à vista": rolou para fora da
-	lista, ficou invisível, o painel dele fechou. Apagar de vez seria perder o
-	apontamento — o tutorial continua apontando o mesmo botão, e ele volta a brilhar
-	quando o jogador rolar de volta.
+	It is the "the target exists, but is not in view right now" state: scrolled out of
+	the list, went invisible, its panel closed. Clearing for good would lose the
+	pointing: the tutorial is still pointing at the same button, and it lights up again
+	when the player scrolls back.
 
-	O escurecimento sai rápido, e não no tempo da saída normal: aqui não é o fim de
-	um passo, é a tela mudando debaixo dele.
+	The darkening leaves quickly, not at the normal exit time: this is not the end of
+	a step, it is the screen changing under it.
 ]=]
 function HighlightController:suspend(suspended : boolean)
 	if self.Suspended == suspended then
@@ -358,12 +364,12 @@ function HighlightController:suspend(suspended : boolean)
 end
 
 --[=[
-	Cola o buraco no alvo.
+	Sticks the hole to the target.
 
-	`animate` é para a troca de alvo: aí o buraco escorrega de um para o outro em
-	vez de saltar. Qualquer mexida do alvo no meio do caminho cancela o tween e
-	passa a valer a posição de verdade — perseguir o alvo ganha de terminar a
-	animação bonita.
+	`animate` is for a target switch: then the hole slides from one to the other
+	instead of jumping. Any movement of the target midway cancels the tween and the
+	real position takes over: chasing the target beats finishing the pretty
+	animation.
 ]=]
 function HighlightController:refresh(animate : boolean?)
 	local hole = self.Hole
@@ -378,9 +384,9 @@ function HighlightController:refresh(animate : boolean?)
 
 	self:suspend(false)
 
-	-- O raio acompanha o tamanho do buraco pelo mesmo motivo da folga: 12px de canto
-	-- arredondado num ícone de 40px é quase um círculo, e num painel inteiro não se
-	-- vê.
+	-- The radius follows the hole's size for the same reason as the padding: a 12px
+	-- rounded corner on a 40px icon is almost a circle, and on a whole panel it is
+	-- invisible.
 	local corner = self.Corner
 	if corner then
 		corner.CornerRadius = UDim.new(0, self:measure(Config.Hole.Radius, size))
@@ -411,19 +417,20 @@ function HighlightController:refresh(animate : boolean?)
 end
 
 --[=[
-	Liga o destaque ao alvo: ele segue o que o alvo fizer e some com ele.
+	Binds the highlight to the target: it follows whatever the target does and goes
+	away with it.
 
-	São avisos, e não uma varredura por quadro. Botão de HUD não anda; ficar
-	recalculando sessenta vezes por segundo um retângulo que não muda é o custo que
-	o `RenderStepped` do exemplo mais comum cobra sem precisar.
+	These are notifications, not a per-frame sweep. A HUD button does not move;
+	recomputing sixty times a second a rectangle that does not change is the cost the
+	most common example's `RenderStepped` charges needlessly.
 ]=]
 --[=[
-	O caminho de nomes de um alvo até a `PlayerGui`, ou `nil` se ele não estiver lá.
+	The name path from a target up to `PlayerGui`, or `nil` if it is not there.
 
-	É a mesma linguagem do `:Find()` — e é de propósito: o que se guarda para
-	reencontrar o alvo tem de ser exatamente o que a busca sabe seguir. Nome é também
-	a única coisa que sobrevive a um `ResetOnSpawn`, que destrói a instância e clona
-	outra igual da `StarterGui`.
+	It is the same language as `:Find()`, on purpose: what is saved to find the target
+	again must be exactly what the lookup knows how to follow. A name is also the only
+	thing that survives `ResetOnSpawn`, which destroys the instance and clones an
+	identical one from `StarterGui`.
 ]=]
 function HighlightController:pathOf(target : Instance) : { string }?
 	local names = {}
@@ -442,15 +449,16 @@ function HighlightController:pathOf(target : Instance) : { string }?
 end
 
 --[=[
-	O alvo morreu debaixo do destaque: procura o equivalente na tela nova.
+	The target died under the highlight: looks for its equivalent on the new screen.
 
-	É o caso do respawn — quase toda `ScreenGui` tem `ResetOnSpawn`, e a tela inteira
-	é reclonada. A instância antiga é lixo, mas o caminho de nomes continua valendo,
-	e é por ele que o destaque reencontra o que estava apontando.
+	It is the respawn case: almost every `ScreenGui` has `ResetOnSpawn`, and the whole
+	screen is recloned. The old instance is garbage, but the name path still holds,
+	and it is how the highlight finds what it was pointing at again.
 
-	Não achando dentro do prazo (`Rebind.Timeout`), sai de vez e **calado**: quem
-	pediu o destaque é quem sabe se ainda há passo pedindo aquele botão, e um aviso
-	aqui apareceria também no caso legítimo de a tela ter sido fechada de vez.
+	If it is not found within the timeout (`Rebind.Timeout`), it leaves for good and
+	**quietly**: whoever asked for the highlight knows whether a step still needs that
+	button, and a warning here would also show in the legitimate case of the screen
+	having been closed for good.
 ]=]
 function HighlightController:rebind()
 	local path = self.Path
@@ -465,9 +473,9 @@ function HighlightController:rebind()
 	self.RebindToken += 1
 	local token = self.RebindToken
 
-	-- O escuro sai enquanto não há o que apontar: holofote em cima de nada é pior
-	-- que holofote nenhum. É `suspend`, e não `Hide`, porque o alvo não foi
-	-- esquecido — ele está sendo reencontrado.
+	-- The dark leaves while there is nothing to point at: a spotlight on nothing is
+	-- worse than no spotlight. It is `suspend`, not `Hide`, because the target was not
+	-- forgotten: it is being found again.
 	self:suspend(true)
 
 	local rebind = Config.Rebind or {}
@@ -481,12 +489,13 @@ function HighlightController:rebind()
 			local found = self:Find(path)
 
 			--[[
-				O `Show` recusa alvo invisível, e o alvo da tela nova costuma nascer assim:
-				o botão de Ready só aparece quando a contagem começa, a caixa da mochila só
-				quando ela abre. Recusa não é desistência — a procura continua, e é por isso
-				que ela olha o resultado do `Show` em vez de dar o alvo por apontado.
+				`Show` refuses an invisible target, and the new screen's target is often
+				born that way: the Ready button only appears when the countdown starts, the
+				backpack crate only when it opens. A refusal is not giving up: the search
+				continues, which is why it checks `Show`'s result instead of assuming the
+				target is pointed at.
 
-				O `Show` que dá certo sobe o token, e é ele quem encerra esta thread.
+				A successful `Show` bumps the token, and that is what ends this thread.
 			]]
 			if found and found:IsDescendantOf(PlayerGui) then
 				if self.RebindToken ~= token then return end
@@ -516,27 +525,28 @@ function HighlightController:track(target : GuiObject)
 	maid:GiveTask(target:GetPropertyChangedSignal("AbsolutePosition"):Connect(onMoved))
 	maid:GiveTask(target:GetPropertyChangedSignal("AbsoluteSize"):Connect(onMoved))
 
-	-- Tela que muda de tamanho (janela, rotação do celular) move tudo junto, e a
-	-- sonda da origem muda com ela.
+	-- A screen that changes size (window, phone rotation) moves everything together,
+	-- and the origin probe moves with it.
 	local camera = workspace.CurrentCamera
 	if camera then
 		maid:GiveTask(camera:GetPropertyChangedSignal("ViewportSize"):Connect(onMoved))
 	end
 
-	-- Alvo que fica invisível tira o destaque da tela, mas não o esquece: painel que
-	-- fecha e reabre é o caso normal de um tutorial, e o passo continua sendo o
-	-- mesmo.
+	-- A target that goes invisible takes the highlight off screen, but is not forgotten:
+	-- a panel closing and reopening is the normal case in a tutorial, and the step is
+	-- still the same.
 	maid:GiveTask(target:GetPropertyChangedSignal("Visible"):Connect(function()
 		self:refresh(false)
 	end))
 
 	--[[
-		Alvo tirado da `PlayerGui` pode ser o fim dele — ou pode ser a tela inteira
-		sendo reclonada por um respawn, que é o caso mais comum de todos, porque quase
-		toda `ScreenGui` tem `ResetOnSpawn`.
+		A target removed from `PlayerGui` may be its end, or it may be the whole screen
+		being recloned by a respawn, which is the most common case of all, because
+		almost every `ScreenGui` has `ResetOnSpawn`.
 
-		Os dois são o mesmo evento visto daqui, então o destaque não decide: ele
-		procura o mesmo caminho na tela nova e desiste se não achar (ver `rebind`).
+		Both are the same event from here, so the highlight does not decide: it looks
+		for the same path on the new screen and gives up if it is not found (see
+		`rebind`).
 	]]
 	maid:GiveTask(target.AncestryChanged:Connect(function()
 		if not target:IsDescendantOf(PlayerGui) then
@@ -546,7 +556,7 @@ function HighlightController:track(target : GuiObject)
 end
 
 --[=[
-	Leva o escurecimento a uma transparência.
+	Takes the darkening to a transparency.
 ]=]
 function HighlightController:fade(transparency : number, duration : number)
 	local stroke = self.Stroke
@@ -566,25 +576,25 @@ end
 --[[ API ]]
 
 export type Options = {
-	-- Folga em pixels de cada lado do alvo.
+	-- Padding in pixels on each side of the target.
 	Padding : number?,
 
-	-- Quanto do jogo continua aparecendo no escuro (0 preto, 1 invisível).
+	-- How much of the game still shows through the dark (0 black, 1 invisible).
 	Transparency : number?,
 
-	-- `false` deixa o jogador clicar no que está escurecido.
+	-- `false` lets the player click what is darkened.
 	BlockInput : boolean?,
 }
 
 --[=[
-	Aponta um GuiObject: a tela escurece, menos ele.
+	Points at a GuiObject: the screen darkens except for it.
 
-	Chamar com o destaque já no ar troca o alvo escorregando de um para o outro —
-	nenhum piscar no meio de um tutorial.
+	Calling with the highlight already up switches the target by sliding from one to
+	the other: no blinking in the middle of a tutorial.
 
-	Devolve `false` para alvo que não está na tela (destruído, invisível, fora da
-	`PlayerGui`): não há o que apontar, e ligar o escuro por cima de nada só tiraria
-	o jogo do jogador.
+	Returns `false` for a target that is not on screen (destroyed, invisible, outside
+	`PlayerGui`): there is nothing to point at, and darkening over nothing would only
+	take the game away from the player.
 ]=]
 function HighlightController:Show(target : GuiObject, options : Options?) : boolean
 	if not target or not target:IsDescendantOf(PlayerGui) or not target.Visible then
@@ -605,14 +615,14 @@ function HighlightController:Show(target : GuiObject, options : Options?) : bool
 	self.Suspended = false
 
 	--[[
-		O caminho de nomes fica guardado junto com o alvo: é por ele que o destaque
-		reencontra o botão quando a tela dele for reclonada por um respawn (ver
-		`rebind`). Alvo sem caminho — o que não está sob a `PlayerGui` — simplesmente
-		não volta, e isso é honesto: não há onde procurá-lo.
+		The name path is saved with the target: it is how the highlight finds the
+		button again when its screen is recloned by a respawn (see `rebind`). A target
+		without a path (not under `PlayerGui`) simply does not come back, and that is
+		honest: there is nowhere to look for it.
 	]]
 	self.Path = self:pathOf(target)
 
-	-- Alvo novo cancela a procura do anterior.
+	-- A new target cancels the previous one's search.
 	self.RebindToken += 1
 
 	local gui = self.Gui
@@ -637,7 +647,7 @@ function HighlightController:Show(target : GuiObject, options : Options?) : bool
 end
 
 --[=[
-	Apaga o destaque. Idempotente: apagar o que já está apagado não faz nada.
+	Clears the highlight. Idempotent: clearing what is already cleared does nothing.
 ]=]
 function HighlightController:Hide()
 	if not self:IsShown() then
@@ -653,8 +663,8 @@ function HighlightController:Hide()
 	self.Options = nil
 	self.Suspended = false
 
-	-- Esquecer o caminho é o que separa "sair" de "estar voltando": depois de um
-	-- `Hide` não há o que reencontrar, e uma procura em curso morre aqui.
+	-- Forgetting the path is what separates "leaving" from "coming back": after a
+	-- `Hide` there is nothing to find again, and a search in progress dies here.
 	self.Path = nil
 	self.RebindToken += 1
 
@@ -664,8 +674,8 @@ function HighlightController:Hide()
 
 	self:fade(1, Config.Tween.FadeOut)
 
-	-- A tela só é desligada no fim da saída: desligar junto com o tween cortaria o
-	-- escuro pela metade.
+	-- The screen is only disabled at the end of the exit: disabling it with the tween
+	-- would cut the dark halfway.
 	local gui = self.Gui
 	task.delay(Config.Tween.FadeOut, function()
 		if self.Target then return end
@@ -684,16 +694,16 @@ function HighlightController:GetTarget() : GuiObject?
 end
 
 --[=[
-	O alvo por caminho de nomes a partir da `PlayerGui` — `"HUD.HUDLeft.Shop"`.
+	The target by name path from `PlayerGui`: `"HUD.HUDLeft.Shop"`.
 
-	É o que permite apontar um botão de fora do código que o conhece: o comando
-	`highlight` do Cmdr e o passo de tutorial que vier escrito em config, sem
-	nenhum dos dois precisar de uma referência à instância.
+	It is what allows pointing at a button from outside the code that knows it: Cmdr's
+	`highlight` command and a tutorial step written in config, neither needing a
+	reference to the instance.
 
-	Aceita a lista de nomes já partida, para quem a tem na mão — é o caso do `rebind`,
-	que guardou a cadeia do alvo e não pode juntá-la com pontos para partir de novo:
-	nome com ponto dentro (`"1.5x"`, que é o tipo de nome que uma arte ganha) viraria
-	dois degraus e o alvo não seria achado nunca mais.
+	It accepts the already-split list of names, for callers that have it: that is the
+	case of `rebind`, which saved the target's chain and cannot join it with dots to
+	split again: a name with a dot in it (`"1.5x"`, the kind of name art gets) would
+	become two steps and the target would never be found again.
 ]=]
 function HighlightController:Find(path : string | { string }) : GuiObject?
 	local names = {}
@@ -707,12 +717,12 @@ function HighlightController:Find(path : string | { string }) : GuiObject?
 	end
 
 	--[[
-		Busca em profundidade, e não um `FindFirstChild` por degrau.
+		Depth-first search, not one `FindFirstChild` per step.
 
-		O HUD tem **vários** irmãos chamados `Wrapper`, um por botão: pegar o primeiro
-		e seguir dali acharia o wrapper da mochila e desistiria no `Shop`. Tentando
-		cada irmão de mesmo nome até o resto do caminho fechar, `HUDFrame.Wrapper.Shop`
-		encontra o wrapper que de fato tem o Shop dentro.
+		The HUD has **several** siblings named `Wrapper`, one per button: taking the
+		first and continuing from there would find the backpack's wrapper and give up
+		at `Shop`. By trying each same-name sibling until the rest of the path closes,
+		`HUDFrame.Wrapper.Shop` finds the wrapper that actually contains Shop.
 	]]
 	local function walk(parent : Instance, index : number) : Instance?
 		local name = names[index]
@@ -738,7 +748,7 @@ function HighlightController:Find(path : string | { string }) : GuiObject?
 	return if found and found:IsA("GuiObject") then found else nil
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function HighlightController:construct()
 	Framework:Listen("HighlightShow", function(path : any, options : any)
@@ -750,7 +760,7 @@ function HighlightController:construct()
 
 		local target = self:Find(path)
 		if not target then
-			warn(`[HighlightController]: nao achei "{path}" na PlayerGui.`)
+			log:StudioWarn(`could not find "{path}" in PlayerGui.`)
 
 			return
 		end

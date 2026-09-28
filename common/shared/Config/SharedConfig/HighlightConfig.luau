@@ -1,29 +1,29 @@
 --[[
-	O destaque: escurece a tela inteira menos um retângulo em volta de um GuiObject.
+	The highlight: darkens the whole screen except a rectangle around a GuiObject.
 
-	A técnica é a do `UIStroke` gigante, que é a que o DevForum converge: um frame
-	transparente com um `UIStroke` de espessura absurda pinta **tudo o que está
-	fora** dele. O frame vira o buraco do holofote, o `UICorner` arredonda a borda
-	de graça, e não há imagem nem quatro máscaras para manter alinhadas.
+	The technique is the giant `UIStroke`, where the DevForum converges: a
+	transparent frame with an absurdly thick `UIStroke` paints **everything
+	outside** it. The frame becomes the spotlight's hole, a `UICorner` rounds the
+	edge for free, and there is no image or four-part mask to keep aligned.
 
-	Quem desenha é o `HighlightController`. Aqui ficam os números.
+	`HighlightController` draws it; the numbers are here. See
+	docs/common/ui-guidance.md.
 ]]
 
 local HighlightConfig = {}
 
 --[[
-	A tela do destaque, criada em código pelo controller.
+	The highlight screen, created in code by the controller.
 
-	`DisplayOrder` precisa passar das telas do jogo (todas em 0 hoje) e **ficar
-	abaixo** de qualquer tela que deva aparecer por cima do escurecimento — a caixa
-	de fala, por exemplo, se um passo de tutorial quiser explicar o que está
-	destacado. A `DialogGUI` está em 0 hoje; querendo ela por cima, é o
-	`DisplayOrder` dela que sobe, não este que desce (senão o destaque volta para
-	trás do HUD).
+	`DisplayOrder` must be above the game's screens (all at 0 today) and **below**
+	any screen that should appear over the dark, such as the dialog box when a
+	tutorial step explains what is highlighted. `DialogGUI` is at 0 today; to put
+	it on top, raise its `DisplayOrder`, not lower this one (or the highlight goes
+	behind the HUD).
 
-	`IgnoreGuiInset` é `true` para o escurecimento cobrir também a faixa da topbar.
-	Isso desalinha o `AbsolutePosition` em 36px — o controller resolve isso medindo,
-	não compensando na mão; ver `HighlightController:origin`.
+	`IgnoreGuiInset` is `true` so the dark also covers the top bar strip. That
+	offsets `AbsolutePosition` by 36 px, which the controller solves by measuring,
+	not by compensating by hand; see `HighlightController:origin`.
 ]]
 HighlightConfig.Gui = {
 	Name = "Highlight",
@@ -31,44 +31,41 @@ HighlightConfig.Gui = {
 	IgnoreGuiInset = true,
 
 	--[[
-		O atributo que o `InterfaceController` lê para **nunca** esconder uma tela.
+		The attribute `InterfaceController` reads to **never** hide a screen.
 
-		Sem ele o destaque some justamente quando é mais necessário: a loja e os
-		painéis de proximidade pedem "some com o resto" ao abrir, e o resto inclui
-		esta tela. O efeito era exatamente invertido — loja fechada, destaque na
-		tela; loja aberta, destaque nenhum.
+		Without it, the highlight disappears exactly when it is needed most: the shop
+		and the proximity panels ask to hide everything else when they open, and
+		"everything else" includes this screen.
 
-		O nome é o mesmo que o `InterfaceController` declara; ele mora aqui para
-		quem lê o config saber que a marca existe.
+		The name is the one `InterfaceController` declares; it lives here so whoever
+		reads the config knows the mark exists.
 	]]
 	IgnoreHideAttribute = "IgnoreInterfaceHide",
 }
 
 --[=[
-	O buraco.
+	The hole.
 
-	`Padding` é a folga de cada lado do alvo (destaque colado no botão parece erro
-	de alinhamento) e `Radius` é o `UICorner` — os dois **proporcionais ao alvo**,
-	não em pixels fixos.
+	`Padding` is the gap on each side of the target (a highlight hugging the button
+	looks misaligned) and `Radius` is the `UICorner`, both **proportional to the
+	target**, not fixed pixels.
 
-	O motivo é que pixel não é medida de tamanho aparente: 8px de folga num botão de
-	200px no monitor é um detalhe, e no mesmo botão a 60px num celular é um quadro
-	em volta dele. `Fraction` é a fração do menor lado do alvo, e `Min`/`Max` são o
-	chão e o teto em pixels, para folga nem sumir num ícone minúsculo nem virar
-	moldura num painel inteiro.
+	Pixels do not measure apparent size: 8 px of padding on a 200 px button on a
+	monitor is a detail, and on the same button at 60 px on a phone it is a frame.
+	`Fraction` is the fraction of the target's shorter side, and `Min`/`Max` are the
+	floor and ceiling in pixels, so padding neither vanishes on a tiny icon nor
+	becomes a frame around a whole panel.
 
-	Quem passa `Padding = 16` no `:Show()` continua mandando pixel cravado — é a
-	saída para o caso em que o proporcional não serve.
+	Passing `Padding = 16` to `:Show()` still sets exact pixels, for when the
+	proportional value does not fit.
 
-	`Thickness` é a espessura do `UIStroke`, em pixels: ele precisa passar da maior
-	tela em que o jogo roda, porque é ele que pinta o resto. Dez mil cobre qualquer
-	monitor de hoje com folga e não custa nada — a espessura não vira geometria, é
-	um contorno.
+	`Thickness` is the `UIStroke` thickness in pixels: it must exceed the largest
+	screen the game runs on, since it paints everything else. Ten thousand covers
+	any current monitor and costs nothing; the thickness is an outline, not geometry.
 
-	`Transparency` é o quanto do jogo continua aparecendo por baixo do escuro: 0 é
-	preto sólido, 1 é invisível. Medido na tela do jogo: 0.45 escurece de leve
-	demais para um passo de tutorial — o olho não é puxado. 0.35 separa sem apagar o
-	cenário, e é o número a mexer se você quiser mais ou menos drama.
+	`Transparency` is how much of the game shows through the dark: 0 is solid
+	black, 1 is invisible. Measured in game, 0.45 dims too lightly for a tutorial
+	step; 0.35 separates without erasing the scene.
 ]=]
 HighlightConfig.Hole = {
 	Padding = { Fraction = 0.15, Min = 6, Max = 22 },
@@ -80,12 +77,12 @@ HighlightConfig.Hole = {
 }
 
 --[=[
-	As animações.
+	Animations.
 
-	`FadeIn`/`FadeOut` são do escurecimento (a transparência do stroke). `Move` é o
-	tempo de o buraco escorregar de um alvo para outro quando o destaque troca de
-	alvo sem sair da tela — trocar de estalo faria o jogador perder de vista o que
-	está sendo apontado.
+	`FadeIn`/`FadeOut` are for the dark (the stroke's transparency). `Move` is how
+	long the hole slides from one target to another when the highlight changes
+	target without leaving; an instant swap would make the player lose track of
+	what is being pointed at.
 ]=]
 HighlightConfig.Tween = {
 	FadeIn = 0.25,
@@ -97,41 +94,42 @@ HighlightConfig.Tween = {
 }
 
 --[=[
-	O bloqueio de clique. **Desligado por padrão**, e isso é a parte importante.
+	Click blocking. **Off by default**, and that is the important part.
 
-	O `UIStroke` não recebe input — ele é contorno, não superfície. Quem bloqueia,
-	quando se pede bloqueio, são quatro frames invisíveis e `Active` que o controller
-	monta em volta do buraco: eles engolem o clique de fora e deixam o miolo livre.
+	The `UIStroke` receives no input (it is an outline, not a surface). When blocking
+	is requested, four invisible `Active` frames around the hole swallow outside
+	clicks and leave the middle free.
 
-	O padrão é `false` porque destaque não é modal. Um retângulo de luz em cima de
-	uma carta não deveria impedir o jogador de **girar a câmera** nem de clicar no
-	chão — e foi exatamente o que aconteceu quando o padrão era `true`: o passo que
-	manda colocar a unidade bloqueava o clique no mundo que ele mesmo pedia.
+	The default is `false` because a highlight is not modal. A spotlight on a card
+	should not stop the player from **turning the camera** or clicking the ground,
+	which is exactly what happened when the default was `true`: the "place a unit"
+	step blocked the world click it asked for.
 
-	Quem quer o bloqueio pede por chamada — `Highlight:Show(alvo, { BlockInput = true })`
-	—, e isso só faz sentido quando o alvo é a **única** coisa clicável do passo: um
-	botão de UI, e nunca um lugar do mapa.
+	Ask per call with `Highlight:Show(target, { BlockInput = true })`, and only when
+	the target is the **only** clickable thing in the step: a UI button, never a
+	spot on the map.
 ]=]
 HighlightConfig.BlockInput = false
 
 --[=[
-	A volta do destaque quando o alvo é destruído debaixo dele.
+	How the highlight comes back when its target is destroyed under it.
 
-	Quase toda `ScreenGui` tem `ResetOnSpawn`, então **morrer apaga o que estava
-	apontado**: a tela é reclonada da `StarterGui` e a instância que o destaque
-	segurava vira lixo. Sem isto o holofote saía e não voltava, e um passo de tutorial
-	ficava pedindo um clique num botão que ninguém mais destaca.
+	Almost every `ScreenGui` has `ResetOnSpawn`, so **dying erases what was pointed
+	at**: the screen is recloned from `StarterGui` and the held instance is gone.
+	Without this, the spotlight left and never returned, and a tutorial step kept
+	asking for a click on a button nobody highlights.
 
-	O destaque guarda o **caminho de nomes** do alvo até a `PlayerGui` (ver
-	`HighlightController:Show`) e procura o equivalente na tela nova. Nome é o que
-	sobrevive à reclonagem: o botão autorado volta com o mesmo, e a peça clonada em
-	runtime — a carta da hotbar, a caixa da mochila — é remontada com o mesmo também.
+	The highlight stores the target's **name path** to `PlayerGui` (see
+	`HighlightController:Show`) and looks up the equivalent on the new screen.
+	Names survive recloning: the authored button returns with the same one, and
+	runtime clones (the hotbar card, the backpack crate) are rebuilt with it too.
 
-	`Timeout` é quanto se espera. A tela nova não chega no mesmo quadro: o
-	`ResetOnSpawn` só reclona quando o personagem novo entra. Estourando, o destaque
-	sai de vez, calado — quem o pediu é quem sabe se ainda faz sentido apontar.
+	`Timeout` is how long to wait. The new screen does not arrive in the same frame:
+	`ResetOnSpawn` only reclones when the new character enters. On timeout the
+	highlight leaves for good, silently; whoever asked knows whether pointing still
+	makes sense.
 
-	`Interval` é o compasso da procura.
+	`Interval` is the search cadence.
 ]=]
 HighlightConfig.Rebind = {
 	Timeout = 10,

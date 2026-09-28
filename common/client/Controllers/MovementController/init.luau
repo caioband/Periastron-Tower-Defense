@@ -18,8 +18,10 @@ local Maid = require(Vendor.Maid)
 local Promise = require(Packages.Promise)
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("MovementController")
 
 local ExampleController = {
 	Controllers = {},
@@ -56,7 +58,7 @@ function ExampleController:loadAnimations(humanoid : Humanoid)
 		end
 	end
 
-	print("MovementController {Started}")
+	log:Debug("started")
 
 	return true
 end
@@ -71,7 +73,7 @@ function ExampleController:destroyComponents()
 		end
 	end
 
-	print("MovementController {Destroyed}")
+	log:Debug("destroyed")
 end
 
 function ExampleController:construct()

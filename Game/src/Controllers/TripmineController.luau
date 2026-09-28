@@ -10,16 +10,16 @@ local GameClock = require(Shared:WaitForChild("Util"):WaitForChild("GameClock"))
 local Me = require(Vendor.Me)
 local Framework = Me.new()
 
--- Usado so quando o servidor nao mandar a duracao (versao antiga do evento).
+-- Only used when the server does not send the duration (an old version of the event).
 local THROW_DURATION = 0.35
 local THROW_HEIGHT = 4
 
 --[[
-	Quanto o modelo estourado fica no mapa antes de sumir.
+	How long the exploded model stays on the map before disappearing.
 
-	Tempo real de proposito, e o unico do arquivo: o que resta na tela sao
-	`ParticleEmitter`s, e particula nao anda no relogio da partida -- acelerar a
-	limpeza deles cortaria a fumaca pela metade no 3x.
+	Real time on purpose, the only real time in the file: what remains on screen is
+	`ParticleEmitter`s, and particles do not run on the match clock; speeding up
+	their cleanup would cut the smoke in half at 3x.
 ]]
 local EXPLOSION_LIFETIME = 5
 
@@ -32,26 +32,26 @@ local TripmineController = {
 	MinesByUnit = {},
 
 	--[[
-		Os arremessos em andamento: `[mineId] = { conn, endCF }`. Uma entrada so
-		existe enquanto a mina esta no ar.
+		The throws in progress: `[mineId] = { conn, endCF }`. An entry only exists while
+		the mine is in the air.
 	]]
 	Arcs = {},
 }
 
 --[=[
-	Encerra o arremesso de uma mina, se ele ainda estiver correndo, e poe o modelo
-	no lugar de descanso dela.
+	Ends a mine's throw, if it is still running, and puts the model at its resting
+	place.
 
-	Existe por causa da corrida entre o voo e a explosao. O servidor arma a mina
-	quando ela pousa e o cliente gasta o mesmo `throwTime` desenhando o arco, entao
-	no caso normal o voo ja acabou quando o `TripmineTriggered` chega. Mas os dois
-	relogios nao viram ao mesmo tempo: trocar a velocidade da partida com uma mina
-	no ar so chega neste cliente uma viagem de rede depois, e nesse intervalo o arco
-	dele anda mais devagar que o cronometro do servidor.
+	It exists because of the race between the flight and the explosion. The server
+	arms the mine when it lands and the client spends the same `throwTime` drawing
+	the arc, so normally the flight is over when `TripmineTriggered` arrives. But the
+	two clocks do not switch at the same time: changing the match speed with a mine in
+	the air only reaches this client one network trip later, and during that gap its
+	arc runs slower than the server's timer.
 
-	Sem isto, a explosao dessa mina sairia **no meio do ar**, no ponto onde o arco
-	estivesse -- e as particulas ficam onde foram emitidas. Acertar a posicao antes
-	de emitir custa uma linha e tira a rede da conta.
+	Without this, that mine's explosion would happen **in mid-air**, wherever the arc
+	was, and particles stay where they were emitted. Fixing the position before
+	emitting costs one line and takes the network out of the equation.
 ]=]
 function TripmineController:endArc(mineId, snap : boolean?)
 	local arc = self.Arcs[mineId]
@@ -86,7 +86,7 @@ function TripmineController:getUnitModel(unitId)
 end
 
 function TripmineController:playTriggerSound(parent)
-	-- A Key faz o papel do ActiveSound antigo: só uma mina soando por vez.
+	-- The Key plays the role of the old ActiveSound: only one mine sounding at a time.
 	self.Controllers.MusicController:PlaySFX("SubspaceTripmineSFX", {
 		Parent = parent,
 		Key = "SubspaceTripmine",
@@ -94,19 +94,19 @@ function TripmineController:playTriggerSound(parent)
 end
 
 --[=[
-	O arco da mina, do arremesso ate o chao.
+	The mine's arc, from the throw to the ground.
 
-	O relogio e o da **partida**, e nao `os.clock()`: o servidor arma a mina
-	`throwTime` de tempo de partida depois de solta-la, e este voo tem que terminar
-	no mesmo instante. Com o relogio de tela, no 3x o windup e a animacao do
-	arremesso encolhiam para um terco enquanto a mina continuava levando os mesmos
-	0,35s reais no ar -- ela ficava boiando enquanto o resto da partida corria, e
-	o gatilho ligava com o modelo ainda a caminho.
+	The clock is the **match** clock, not `os.clock()`: the server arms the mine
+	`throwTime` of match time after releasing it, and this flight must end at the same
+	instant. With the screen clock, at 3x the windup and throw animation would shrink
+	to a third while the mine still took the same 0.35 real seconds in the air: it
+	would float while the rest of the match raced, and the trigger would arm with the
+	model still on its way.
 
-	Ler o relogio a cada quadro (em vez de converter para segundos reais na
-	chamada) e o que faz a troca de velocidade **no meio do voo** valer: acelerar a
-	partida com uma mina no ar encurta o que falta dela, do mesmo jeito que o
-	`GameClock.Wait` faz do lado do servidor.
+	Reading the clock every frame (instead of converting to real seconds at call time)
+	is what makes a speed change **mid-flight** count: speeding up the match with a
+	mine in the air shortens what is left of it, the same way `GameClock.Wait` does on
+	the server side.
 ]=]
 function TripmineController:throwMine(mineId, mineModel, startCF, endCF, throwTime)
 	mineModel:PivotTo(startCF)
@@ -156,8 +156,8 @@ function TripmineController:spawnMine(unitId, mineId, mineCF, throwTime)
 end
 
 function TripmineController:triggerMine(unitId, mineId)
-	-- A mina explode no chao, e nao onde o arco estiver: se ele ainda corria, ele
-	-- termina aqui e o modelo vai para o lugar de descanso antes de emitir.
+	-- The mine explodes on the ground, not wherever the arc is: if it was still
+	-- running, it ends here and the model goes to its resting place before emitting.
 	self:endArc(mineId, true)
 
 	local mine = self.Mines[mineId]
@@ -193,7 +193,7 @@ function TripmineController:clearUnitMines(unitId)
 	local mines = self.MinesByUnit[unitId]
 	if not mines then return end
 	for mineId in mines do
-		-- Sem `snap`: o modelo esta indo embora, nao ha lugar de descanso para ele.
+		-- No `snap`: the model is going away, there is no resting place for it.
 		self:endArc(mineId)
 
 		local mine = self.Mines[mineId]
@@ -206,16 +206,16 @@ function TripmineController:clearUnitMines(unitId)
 end
 
 --[=[
-	Derruba toda mina do mapa: o fim do round.
+	Removes every mine from the map: the end of the round.
 
-	As minas moram na `CurrentCamera`, que sobrevive ao round, e nenhum dos dois
-	caminhos que as destroem passa pelo fim da partida: mina em que ninguem pisou
-	nunca recebe `TripmineTriggered`, e o `RemoveUnit` de cada torre so chega no
-	`ResetRound`, que e o round **seguinte** comecando. No meio dos dois -- a tela
-	de resultado -- as minas do round que acabou ficavam armadas na Camera.
+	Mines live in `CurrentCamera`, which survives the round, and neither path that
+	destroys them goes through the match end: a mine nobody stepped on never receives
+	`TripmineTriggered`, and each tower's `RemoveUnit` only arrives at `ResetRound`,
+	which is the **next** round starting. In between (the results screen) the finished
+	round's mines would stay armed in the Camera.
 
-	Nao substitui o `clearUnitMines`: aquele e uma torre saindo, este e o round
-	inteiro.
+	It does not replace `clearUnitMines`: that one is a tower leaving, this one is the
+	whole round.
 ]=]
 function TripmineController:clearAllMines()
 	for mineId, mine in self.Mines do
@@ -230,8 +230,8 @@ function TripmineController:clearAllMines()
 	table.clear(self.MinesByUnit)
 
 	--[[
-		Arco cuja mina ja saiu da tabela por outro caminho: o laco acima nao passou
-		por ele, e o voo dele continuaria conectado ao `RenderStepped`.
+		An arc whose mine already left the table by another path: the loop above did
+		not go through it, and its flight would stay connected to `RenderStepped`.
 	]]
 	for mineId in self.Arcs do
 		self:endArc(mineId)
@@ -252,9 +252,9 @@ function TripmineController:construct()
 	end)
 
 	--[[
-		O fim do round pelos dois lados: `GameOver` e a base caindo
-		(`MobService:onGameOver`) e `Win` e a ultima wave limpa. Nenhum dos dois
-		deixa mina no mapa.
+		The round's end from both sides: `GameOver` is the base falling
+		(`MobService:onGameOver`) and `Win` is the last wave cleared. Neither leaves a
+		mine on the map.
 	]]
 	Framework:Listen("GameOver", function()
 		self:clearAllMines()

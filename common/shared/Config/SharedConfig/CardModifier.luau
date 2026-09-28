@@ -1,79 +1,77 @@
 --[[
-	Os buffs e debuffs que as cartas de round deixam no campo.
+	The buffs and debuffs round cards leave on the field.
 
-	Uma carta de round quase nunca faz uma coisa e acaba: ela **deixa uma regra
-	valendo**. O Trumpet acelera todo mundo em 15%, o Overcharge separa Electric do
-	resto, os cajados desenham um anel no chão onde a regra vale só lá dentro, e o
-	Bloxy Cola vale para uma torre só, por dez segundos.
+	A round card rarely does one thing and ends: it **leaves a rule in effect**.
+	Trumpet speeds everyone up 15%, Overcharge splits Electric from the rest, the
+	staffs draw a ring on the ground where the rule applies only inside, and Bloxy
+	Cola applies to one tower for ten seconds.
 
-	Este módulo é a gramática dessas regras. Ele não guarda estado nenhum: quem tem
-	a lista viva é o `CardModifierService` (servidor) e o `CardModifierController`
-	(cliente, para desenhar o anel e mostrar o alcance certo no card). Aqui só mora
-	a conta — dado um modificador, uma unidade e o resto do campo, ele vale? E
-	quanto?
+	This module is the grammar of those rules. It holds no state: `CardModifierService`
+	(server) and `CardModifierController` (client, to draw the ring and show the
+	right range on the card) keep the live list. Only the math lives here: given a
+	modifier, a unit, and the rest of the field, does it apply? How much?
 
-	Ele é compartilhado porque as duas pontas **precisam** dar a mesma resposta: o
-	servidor cobra o dano com o multiplicador, e o círculo de alcance que o jogador
-	vê na tela sai da mesma função. Duas contas em dois lugares foi exatamente o
-	desencontro que o `UnitUpgradeConfig` já existe para evitar.
+	It is shared because both sides **must** give the same answer: the server
+	applies damage with the multiplier, and the range circle the player sees comes
+	from the same function.
 
-	## O que é um modificador
+	## What a modifier is
 
-	Um registro plano (ele trafega na rede, então nada de função nem de metatable):
+	A flat record (it crosses the network, so no functions or metatables):
 
-	| Campo | O que é |
+	| Field | What it is |
 	| --- | --- |
-	| `Uid` | quem criou; é o `uid` da carta usada, e é por ele que a expiração o tira |
-	| `Card` | o `Id` da carta, para log e para a cor do anel |
-	| `Stats` | os multiplicadores: `{ Damage = 1.25 }` |
-	| `Flags` | o que não é número: hoje só `Cleave` |
-	| `Classes` | as classes que ele pega; sem isso, pega todas |
-	| `Exclude` | inverte o `Classes`: vale para quem **não** é daquelas classes |
-	| `Farm` | `true` só para unidade de renda, `false` só para quem não é |
-	| `UnitId` | só aquela unidade |
-	| `Zone` | `{ Position, Radius }` — só quem está dentro do anel |
-	| `Condition` | uma pergunta sobre a **vizinhança** da unidade (ver abaixo) |
-	| `Scaling` | multiplicador que cresce com quantas unidades de uma classe estão no mapa |
-	| `BaseHealthBelow` | só vale enquanto a vida da base estiver abaixo desta fração |
-	| `ExpiresAt` | o instante do `GameClock` em que ele morre; sem isso, dura o round |
+	| `Uid` | who created it: the `uid` of the used card, which expiry removes it by |
+	| `Card` | the card `Id`, for logs and the ring color |
+	| `Stats` | the multipliers: `{ Damage = 1.25 }` |
+	| `Flags` | what is not a number: today only `Cleave` |
+	| `Classes` | the classes it affects; without it, all |
+	| `Exclude` | inverts `Classes`: applies to units **not** of those classes |
+	| `Farm` | `true` only for income units, `false` only for the rest |
+	| `UnitId` | only that unit |
+	| `Zone` | `{ Position, Radius }`: only units inside the ring |
+	| `Condition` | a question about the unit's **neighborhood** (see below) |
+	| `Scaling` | a multiplier that grows with how many units of a class are on the map |
+	| `BaseHealthBelow` | only applies while base health is below this fraction |
+	| `ExpiresAt` | the `GameClock` instant it dies; without it, it lasts the round |
 
-	Uma carta pode criar **vários** registros, e é assim que ela faz duas coisas
-	opostas de uma vez: o Overcharge é um `{ Classes = {"Electric"}, Damage = 1.25 }`
-	mais um `{ Classes = {"Electric"}, Exclude = true, Damage = 0.89 }`. Escrever os
-	dois lados como registros separados é o que permite que a mesma função responda
-	pelos dois sem conhecer carta nenhuma.
+	A card can create **several** records, which is how it does two opposite things
+	at once: Overcharge is `{ Classes = {"Electric"}, Damage = 1.25 }` plus
+	`{ Classes = {"Electric"}, Exclude = true, Damage = 0.89 }`. Separate records
+	let the same function answer for both without knowing any card.
 
-	## As estatísticas
+	## Stats
 
-	Tudo é **multiplicador**, como no clima: 1.25 é "+25%", 0.8 é "-20%".
+	Everything is a **multiplier**, as with weather: 1.25 is "+25%", 0.8 is "-20%".
 
-	| Stat | Onde entra |
+	| Stat | Where it applies |
 	| --- | --- |
-	| `Damage` | dano por golpe (`UnitService:getDamage`) |
-	| `AttackSpeed` | acima de 1 é bater mais rápido; divide o cooldown |
-	| `Range` | alcance, e junto com ele o círculo que o jogador vê |
-	| `Income` | a renda da farm (`payFarmUnits`) |
-	| `HitIncome` | o caixa que o dano e a morte pagam |
-	| `Slow` | quanto a lentidão de uma unidade de gelo pesa |
-	| `Burn` | quanto a queimadura cobra por tique |
+	| `Damage` | damage per hit (`UnitService:getDamage`) |
+	| `AttackSpeed` | above 1 hits faster; divides the cooldown |
+	| `Range` | range, and with it the circle the player sees |
+	| `Income` | farm income (`payFarmUnits`) |
+	| `HitIncome` | the cash that damage and kills pay |
+	| `Slow` | how much an ice unit's slow weighs |
+	| `Burn` | how much a burn charges per tick |
 
-	`Slow` e `Burn` são globais: eles não descrevem a torre, e sim o estado que ela
-	deixou no inimigo. Quem os lê é o `MobService`, pelo `Global`.
+	`Slow` and `Burn` are global: they describe the state the tower left on the
+	enemy, not the tower. `MobService` reads them through `Global`.
 
-	## As condições
+	## Conditions
 
-	`Condition` é o que não dá para responder olhando só a unidade — ela precisa do
-	resto do campo, que chega no `world`:
+	`Condition` is what cannot be answered by looking at the unit alone; it needs
+	the rest of the field, which arrives in `world`:
 
-	- `Isolated`: nenhuma outra unidade dentro de `ConditionRadius`. É o Iceolated,
-	  que premia a torre de gelo que ficou sozinha.
-	- `NearClass`: existe pelo menos uma unidade da classe `ConditionClass` dentro
-	  de `ConditionRadius`. É o outro lado do Ice to Meet You — quem está perto de
-	  um gelo trabalha mais devagar.
+	- `Isolated`: no other unit within `ConditionRadius` (Iceolated, rewarding a
+	  lone ice tower).
+	- `NearClass`: at least one unit of class `ConditionClass` within
+	  `ConditionRadius` (the other side of Ice to Meet You: units near an ice tower
+	  work slower).
 
-	As duas medem no plano, ignorando o Y: duas torres em alturas diferentes do
-	mesmo pedaço de mapa são vizinhas, e o degrau entre elas não é distância que o
-	jogador enxergue.
+	Both measure on the horizontal plane: two towers at different heights in the
+	same area are neighbors.
+
+	See docs/game/round-cards.md.
 ]]
 
 local UnitStats = require(script.Parent.UnitStats)
@@ -82,10 +80,9 @@ local WeatherConfig = require(script.Parent.WeatherConfig)
 local CardModifier = {}
 
 --[[
-	Os nomes das estatísticas, num lugar só. Quem escreve carta no `RoundCardConfig`
-	e quem lê multiplicador no service usam estas chaves — errar o nome de uma
-	estatística é uma carta que não faz nada, e é o tipo de erro que não aparece no
-	log.
+	Stat names, in one place. Whoever writes a card in `RoundCardConfig` and whoever
+	reads a multiplier in the service use these keys: a misspelled stat is a card
+	that does nothing, the kind of mistake that never shows in the log.
 ]]
 CardModifier.Stats = {
 	Damage = "Damage",
@@ -97,7 +94,7 @@ CardModifier.Stats = {
 	Burn = "Burn",
 }
 
---- O que não é número. Ver `CardModifier.Enabled`.
+--- What is not a number. See `CardModifier.Enabled`.
 CardModifier.Flags = {
 	Cleave = "Cleave",
 }
@@ -119,7 +116,7 @@ local function hasAnyClass(unitName : string?, classes : { string }) : boolean
 	return false
 end
 
---- Unidade de renda (o Entrepreneur e quem vier depois dele).
+--- Income unit (the Entrepreneur and any that follow).
 local function isFarm(unitName : string?) : boolean
 	local stats = unitName and UnitStats[unitName]
 
@@ -127,8 +124,8 @@ local function isFarm(unitName : string?) : boolean
 end
 
 --[[
-	Distância no plano. O Y fica de fora de propósito: o anel do cajado é um círculo
-	desenhado no chão, e uma torre em cima de uma pedra dentro dele está dentro dele.
+	Distance on the horizontal plane. Y is left out on purpose: the staff's ring is a
+	circle drawn on the ground, and a tower on a rock inside it is inside it.
 ]]
 local function flatDistance(a : Vector3, b : Vector3) : number
 	return (Vector3.new(a.X, 0, a.Z) - Vector3.new(b.X, 0, b.Z)).Magnitude
@@ -137,12 +134,12 @@ end
 --[[ API ]]
 
 --[=[
-	Quantas unidades do campo estão a até `radius` de `unit`, sem contar ela mesma.
+	How many field units are within `radius` of `unit`, not counting itself.
 
-	`className` restringe a contagem a uma classe; sem ele, conta qualquer unidade.
-	`world.Units` é a lista de descritores (`{ UnitId, UnitName, Position }`) — sem
-	ela não há vizinhança para medir e a resposta é zero, que é o que faz uma
-	condição de proximidade simplesmente não valer em vez de estourar.
+	`className` restricts the count to a class; without it, any unit counts.
+	`world.Units` is the list of descriptors (`{ UnitId, UnitName, Position }`);
+	without it there is no neighborhood and the answer is zero, so a proximity
+	condition simply does not apply instead of erroring.
 ]=]
 function CardModifier.CountNear(world, unit, radius : number, className : string?) : number
 	local units = world and world.Units
@@ -169,7 +166,7 @@ function CardModifier.CountNear(world, unit, radius : number, className : string
 	return count
 end
 
---- Quantas unidades da classe existem no mapa. É o que o Abrakadabra conta.
+--- How many units of the class are on the map. What Abrakadabra counts.
 function CardModifier.CountClass(world, className : string?) : number
 	local units = world and world.Units
 	if not units then
@@ -188,15 +185,15 @@ function CardModifier.CountClass(world, className : string?) : number
 end
 
 --[=[
-	Este modificador vale para esta unidade?
+	Does this modifier apply to this unit?
 
-	Os filtros são cumulativos e a ordem é do mais barato para o mais caro: comparar
-	um id não custa nada, e varrer a vizinhança inteira custa — não há por que medir
-	distância de uma unidade que já foi recusada pela classe.
+	Filters are cumulative and ordered from cheapest to most expensive: comparing an
+	id costs nothing, scanning the whole neighborhood does, so there is no reason to
+	measure distance for a unit already rejected by class.
 
-	`ExpiresAt` **não** é conferido aqui. Quem tem relógio é o service, e ele poda a
-	lista; conferir de novo por unidade e por estatística seria a mesma pergunta
-	repetida algumas centenas de vezes por quadro.
+	`ExpiresAt` is **not** checked here. The service has the clock and prunes the
+	list; checking again per unit and stat would repeat the same question hundreds of
+	times per frame.
 ]=]
 function CardModifier.Applies(modifier, unit, world) : boolean
 	if modifier.UnitId and modifier.UnitId ~= unit.UnitId then
@@ -225,10 +222,10 @@ function CardModifier.Applies(modifier, unit, world) : boolean
 	end
 
 	--[[
-		A vida da base é uma fração de 0 a 1. Sem ela na mão (um cliente que ainda
-		não recebeu o primeiro `UpdateBaseHealth`) o modificador fica de fora: é
-		melhor mostrar o número sem o bônus por um instante do que prometer um bônus
-		que o servidor não está dando.
+		Base health is a fraction from 0 to 1. Without it (a client that has not
+		received the first `UpdateBaseHealth`) the modifier stays out: better to show
+		the number without the bonus for a moment than promise a bonus the server is
+		not giving.
 	]]
 	if modifier.BaseHealthBelow then
 		local ratio = world and world.BaseHealthRatio
@@ -253,16 +250,14 @@ function CardModifier.Applies(modifier, unit, world) : boolean
 end
 
 --[=[
-	O multiplicador de uma estatística para uma unidade: o produto de tudo que se
-	aplica a ela.
+	A stat's multiplier for a unit: the product of everything that applies to it.
 
-	Produto, e não substituição como no clima. São duas coisas diferentes: o clima é
-	um só e escreve o número final por classe, enquanto as cartas são compradas uma
-	a uma e **empilham** de propósito — quem gastou dois usos no mesmo tipo de torre
-	tem que ver os dois valendo.
+	A product, not a replacement as with weather. Weather is one and writes the
+	final number per class, while cards are bought one by one and **stack** on
+	purpose: a player who spent two uses on the same tower type must see both apply.
 
-	`Scaling` entra aqui também, e é o que dá o Abrakadabra: em vez de um número
-	fixo, o multiplicador é `1 + (unidades da classe) * Amount`.
+	`Scaling` enters here too, which is what gives Abrakadabra: instead of a fixed
+	number, the multiplier is `1 + (units of the class) * Amount`.
 ]=]
 function CardModifier.Multiplier(modifiers, stat : string, unit, world) : number
 	if not modifiers then return 1 end
@@ -289,29 +284,26 @@ function CardModifier.Multiplier(modifiers, stat : string, unit, world) : number
 end
 
 --[=[
-	Um `Flags` ligado para esta unidade.
+	Whether a `Flags` entry is on for this unit.
 
-	Existe separado do `Multiplier` porque nem tudo que uma carta faz é um número.
-	"O corpo a corpo passa a acertar quem está atrás" não tem meio termo: ou o golpe
-	pega o de trás ou não pega, e escrever isso como um multiplicador 1.0 seria uma
-	mentira que a próxima pessoa a ler tentaria multiplicar.
+	Separate from `Multiplier` because not everything a card does is a number.
+	"Melee also hits the one behind" has no middle ground, and writing it as a 1.0
+	multiplier would be a lie the next reader would try to multiply.
 ]=]
 function CardModifier.Enabled(modifiers, flag : string, unit, world) : boolean
 	return CardModifier.FlagValue(modifiers, flag, unit, world) ~= nil
 end
 
 --[=[
-	O **valor** de um `Flags` ligado para esta unidade, ou `nil`.
+	The **value** of a `Flags` entry on for this unit, or `nil`.
 
-	O valor costuma ser a tabela de números que aquele comportamento precisa — o
-	Cleave carrega quantos corpos o golpe pega, quanto o segundo perde e a largura
-	do risco. Eles moram no modificador, e não numa constante do `UnitService`,
-	porque quem os escolhe é a carta: uma segunda carta de corte com números
-	próprios não devia ter que mexer no combate para existir.
+	The value is usually the numbers that behavior needs: Cleave carries how many
+	bodies the swing hits, how much the second loses, and the width of the line.
+	They live in the modifier, not a `UnitService` constant, because the card picks
+	them: a second cleave card with its own numbers should not need combat changes.
 
-	O **primeiro** que se aplica manda. Duas cartas de corte ao mesmo tempo é um
-	caso que não existe hoje, e somar os números de duas seria inventar um terceiro
-	comportamento que ninguém pediu.
+	The **first** that applies wins. Two cleave cards at once does not happen today,
+	and adding their numbers would invent a third behavior nobody asked for.
 ]=]
 function CardModifier.FlagValue(modifiers, flag : string, unit, world)
 	if not modifiers then return nil end
@@ -328,13 +320,12 @@ function CardModifier.FlagValue(modifiers, flag : string, unit, world)
 end
 
 --[=[
-	O multiplicador de uma estatística que **não** é de nenhuma unidade em
-	particular: a queimadura que já está no inimigo, a lentidão que já foi aplicada.
+	A stat multiplier that belongs to **no** unit in particular: the burn already on
+	an enemy, the slow already applied.
 
-	Só entram os modificadores sem filtro nenhum. Um modificador de zona ou de
-	classe descreve torres, e a queimadura no inimigo não sabe de qual torre ela
-	veio — deixá-lo contar aqui faria um anel desenhado num canto do mapa mexer numa
-	queimadura do outro.
+	Only unfiltered modifiers count. A zone or class modifier describes towers, and
+	the burn on an enemy does not know which tower it came from; counting it here
+	would let a ring drawn in one corner change a burn in another.
 ]=]
 function CardModifier.Global(modifiers, stat : string) : number
 	if not modifiers then return 1 end

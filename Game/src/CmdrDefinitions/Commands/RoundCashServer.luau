@@ -7,16 +7,16 @@ local Me = require(Vendor:WaitForChild("Me"))
 local Framework = Me.new()
 
 --[[
-	O dinheiro da partida, que é outra coisa do `cash`.
+	Match money, which is not `cash`.
 
-	Este vive no `MobService.SessionCash`: nasce com o `StartingCash` da dificuldade,
-	é o que paga as torres e morre com o round, sem nunca passar pelo perfil. Por isso
-	o comando mora na Game — o `MobService` não existe no Lobby, e no Lobby o
-	`Framework:Get` com yield esperaria para sempre.
+	This one lives in `MobService.SessionCash`: it starts with the difficulty's
+	`StartingCash`, pays for towers, and dies with the round, never touching the
+	profile. That is why the command lives in Game: `MobService` does not exist in the
+	Lobby, and there a yielding `Framework:Get` would wait forever.
 
-	A conta passa pelo `addCash`/`spendCash` do service, e não por uma escrita direta
-	na tabela, porque são eles que disparam o `UpdateCash` para o cliente: sem isso o
-	contador na tela continuaria mostrando o valor antigo até a próxima kill.
+	The math goes through the service's `addCash`/`spendCash`, not a direct table
+	write, because they fire `UpdateCash` to the client: without it the on-screen
+	counter would keep showing the old value until the next kill.
 ]]
 return function(_context, action : string, players : { Player }, amount : number)
 	local MobService = Framework:Get("MobService", false, true)

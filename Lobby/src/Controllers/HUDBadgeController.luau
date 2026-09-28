@@ -14,8 +14,10 @@ local UIUtil = require(Util.UIUtil)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("HUDBadgeController")
 
 local ContractConfig = SharedConfig.ContractConfig
 local RoundCardShopConfig = SharedConfig.RoundCardShopConfig
@@ -24,31 +26,31 @@ local RoundCardShopConfig = SharedConfig.RoundCardShopConfig
 
 local HUD_UI_NAME = "HUD"
 
--- O nome da label dentro de cada botão. É a mesma em todos: quem desenha um botão
--- novo com selo só precisa repetir o nome.
+-- The label name inside each button. It is the same on all: whoever draws a new
+-- button with a badge only needs to repeat the name.
 local BADGE_NAME = "New"
 
 local WAIT_TIMEOUT = 10
 
 --[[
-	Quanto tempo depois de a loja de Robux ser aberta o selo dela volta.
+	How long after the Robux shop is opened its badge comes back.
 
-	É o único selo que não responde a um fato do perfil: ele é um lembrete, e o que o
-	traz de volta é o relógio.
+	It is the only badge that does not respond to a profile fact: it is a reminder, and the
+	clock brings it back.
 ]]
 local ROBUX_SECONDS = 300
 
--- De quanto em quanto tempo o bloco da loja de cartas é conferido. O bloco dura
--- quatro horas, então cinco segundos de atraso não são vistos por ninguém.
+-- How often the card shop block is checked. The block lasts
+-- four hours, so five seconds of delay are noticed by nobody.
 local ROTATION_INTERVAL = 5
 
 --[=[
-	Os cinco botões que têm selo, e em qual coluna cada um mora. O `Key` é o nome do
-	botão **e** a chave do selo — é o que o `NoteSeen` recebe.
+	The five buttons that have a badge, and which column each lives in. `Key` is the
+	button's name **and** the badge key: it is what `NoteSeen` receives.
 
-	**O `HUDFrame.Shop` não está aqui de propósito**: a loja de caixas não tem
-	novidade a anunciar (a prateleira dela é a mesma sempre), e por isso o botão dela
-	nem tem a label `New` desenhada.
+	**`HUDFrame.Shop` is not here on purpose**: the crate shop has no news to announce
+	(its shelf is always the same), which is why its button does not even have the `New`
+	label drawn.
 ]=]
 local BADGES = {
 	{ Key = "Contracts", Column = "HUDLeft" },
@@ -59,42 +61,42 @@ local BADGES = {
 }
 
 --[=[
-	Os selos `New` dos botões das duas colunas do `StarterGui.HUD`.
+	The `New` badges on the buttons in both `StarterGui.HUD` columns.
 
-	Cada botão tem uma label `New` dentro dele, e este controller é o único que
-	escreve no `Visible` dela. Uma regra por botão:
+	Each button has a `New` label inside it, and this controller is the only one that
+	writes its `Visible`. One rule per button:
 
-	  - **Contracts** — algum contrato pronto para ser claimado, **ou** os contratos
-	    resetaram (o `Period` de um dos períodos virou). O claim pendente é estado, e
-	    não novidade: o selo insiste até o contrato ser claimado, mesmo que o jogador
-	    já tenha aberto o quadro. O "resetou" apaga quando o quadro abre;
-	  - **RobuxShop** — volta a cada cinco minutos depois de cada abertura, e está
-	    aceso desde a chegada de quem ainda não abriu a loja nesta visita;
-	  - **Backpack** — alguma caixa nova entrou no inventário. Apaga quando a mochila
-	    é aberta;
-	  - **Deck** — alguma unit que o jogador não tinha entrou no perfil. Apaga quando
-	    o loadout é aberto;
-	  - **CardShop** — o bloco de quatro horas da vitrine virou. Apaga quando a loja
-	    abre.
+	  - **Contracts**: some contract ready to claim, **or** the contracts reset (one of the
+	    periods' `Period` turned over). A pending claim is state, not news: the badge
+	    insists until the contract is claimed, even if the player already opened the
+	    board. The "reset" clears when the board opens;
+	  - **RobuxShop**: comes back five minutes after each opening, and is lit from arrival
+	    for a player who has not opened the shop this visit;
+	  - **Backpack**: some new crate entered the inventory. Clears when the backpack opens;
+	  - **Deck**: some unit the player did not have entered the profile. Clears when the
+	    loadout opens;
+	  - **CardShop**: the storefront's four-hour block turned over. Clears when the shop
+	    opens.
 
-	**O que apaga quase todos os selos é abrir o painel** (`NoteSeen`, chamado por
-	cada painel no instante em que ele entra): ali a abertura já aconteceu, e o
-	jogador já viu o que havia de novo — a caixa na prateleira, a carta no loadout, o
-	quadro sorteado de novo, a vitrine trocada. O que chegar **depois** da olhada
-	acende outra vez, pelo mesmo `OnChange`.
+	**Opening the panel clears almost every badge** (`NoteSeen`, called by each panel the
+	instant it comes in): the opening has happened, and the player has seen what was new:
+	the crate on the shelf, the card in the loadout, the board redrawn, the storefront
+	changed. Whatever arrives **after** the look lights up again, through the same
+	`OnChange`.
 
-	A exceção é o claim pendente dos contratos: aquele é estado, e não novidade. Ele
-	insiste até o contrato ser claimado, mesmo com o quadro já aberto, e quem o apaga
-	é o perfil.
+	The exception is the contracts' pending claim: that is state, not news. It insists
+	until the contract is claimed, even with the board already opened, and the profile
+	clears it.
 
-	**O estado é da visita ao lobby**, e mora só aqui: nada disso vai para o perfil.
-	Voltar de uma partida é uma visita nova, e o que ainda valer acende de novo — o
-	que não é perda, porque as três fontes de novidade de verdade (caixa comprada,
-	caixa aberta, contrato claimado) acontecem **dentro** do lobby, na frente do
-	jogador.
+	**The state belongs to the Lobby visit** and lives only here: none of it goes to the
+	profile. Returning from a match is a new visit, and whatever still applies lights up
+	again, which is no loss, because the three real sources of news (crate bought, crate
+	opened, contract claimed) happen **inside** the Lobby, in front of the player.
 
-	A HUD é `ResetOnSpawn`, então a engine a troca a cada respawn: o bind roda de novo
-	na cópia nova e o estado é reescrito nela.
+	The HUD is `ResetOnSpawn`, so the engine replaces it on every respawn: the bind runs
+	again on the new copy and the state is rewritten on it.
+
+	See docs/lobby/hud.md.
 ]=]
 local HUDBadgeController = {
 	Controllers = {
@@ -102,12 +104,12 @@ local HUDBadgeController = {
 	},
 }
 
--- `[Key] = a label New daquele botão`, na cópia de agora da HUD.
+-- `[Key] = that button's New label`, in the current HUD copy.
 HUDBadgeController.Labels = {}
 
 --[[ INTERNAL ]]
 
---- As contagens de uma tabela do perfil (`{ [chave] = número }`), copiadas.
+--- The counts of a profile table (`{ [key] = number }`), copied.
 local function countsOf(source : any) : { [string] : number }
 	local counts = {}
 
@@ -126,7 +128,7 @@ local function countsOf(source : any) : { [string] : number }
 	return counts
 end
 
---- O `Period` de cada tipo de contrato, `{ Hourly|Daily|Weekly = número }`.
+--- Each contract type's `Period`, `{ Hourly|Daily|Weekly = number }`.
 local function periodsOf(source : any) : { [string] : number }
 	local periods = {}
 
@@ -145,7 +147,7 @@ local function periodsOf(source : any) : { [string] : number }
 	return periods
 end
 
---- O `Data` da replica, ou nil enquanto ela não chegou.
+--- The replica's `Data`, or nil until it arrives.
 function HUDBadgeController:_data() : any
 	local replica = self.Replica
 
@@ -153,10 +155,10 @@ function HUDBadgeController:_data() : any
 end
 
 --[=[
-	Algum contrato pronto para ser claimado?
+	Is some contract ready to claim?
 
-	Lido do perfil a cada refresh, e não guardado: é estado, e o claim o desfaz pelo
-	mesmo `OnChange` que traria qualquer outra mudança.
+	Read from the profile on every refresh, not stored: it is state, and the claim undoes
+	it through the same `OnChange` that would bring any other change.
 ]=]
 function HUDBadgeController:_hasClaimable() : boolean
 	local data = self:_data()
@@ -185,7 +187,7 @@ function HUDBadgeController:_hasClaimable() : boolean
 	return false
 end
 
---- O selo deste botão tem de estar aceso agora?
+--- Must this button's badge be lit now?
 function HUDBadgeController:_isOn(key : string) : boolean
 	if key == "Contracts" then
 		return self.ContractsReset or self:_hasClaimable()
@@ -202,7 +204,7 @@ function HUDBadgeController:_isOn(key : string) : boolean
 	return false
 end
 
---- Escreve o estado nas labels da cópia de agora da HUD.
+--- Writes the state into the current HUD copy's labels.
 function HUDBadgeController:_refresh()
 	for key, label in self.Labels do
 		label.Visible = self:_isOn(key)
@@ -210,17 +212,17 @@ function HUDBadgeController:_refresh()
 end
 
 --[=[
-	Liga a uma cópia da HUD: acha as cinco labels e escreve o estado nelas.
+	Binds to a HUD copy: finds the five labels and writes the state into them.
 
-	Um botão que não esteja nessa cópia só fica de fora; os outros continuam
-	funcionando. O aviso é por chave, e não por cópia: a HUD nasce de novo a cada
-	respawn e o output encheria.
+	A button missing from that copy is just left out; the others keep working. The warning
+	is per key, not per copy: the HUD is born again on every respawn and the output would
+	fill up.
 ]=]
 function HUDBadgeController:_bindHud(screenGui : ScreenGui)
 	--[[
-		A cópia da vez. As buscas abaixo esperam, e o respawn pode trocar a HUD no meio
-		delas: a que voltar de uma cópia velha confere o número antes de escrever, em vez
-		de guardar uma label que já foi para o lixo.
+		The current copy. The lookups below wait, and respawn may replace the HUD in the
+		middle of them: one returning from an old copy checks the number before writing,
+		instead of storing a label that already went to the garbage.
 	]]
 	self.HudToken += 1
 	local token = self.HudToken
@@ -231,27 +233,27 @@ function HUDBadgeController:_bindHud(screenGui : ScreenGui)
 		task.spawn(function()
 			local column = screenGui:WaitForChild(entry.Column, WAIT_TIMEOUT)
 			if not column then
-				self:_warnOnce(entry.Key, `não achei {HUD_UI_NAME}.{entry.Column}`)
+				self:_warnOnce(entry.Key, `could not find {HUD_UI_NAME}.{entry.Column}`)
 
 				return
 			end
 
 			--[[
-				O botão está dentro de um `Wrapper`, e o `WaitForChild` só olha filhos
-				diretos: é o mesmo `waitForDescendant` que os controllers dos painéis usam
-				para achar o botão deles, e pelo mesmo motivo — mexer nos wrappers no Studio
-				não pode quebrar o bind.
+				The button is inside a `Wrapper`, and `WaitForChild` only looks at direct
+				children: it is the same `waitForDescendant` the panel controllers use to find
+				their button, and for the same reason: changing the wrappers in Studio must not
+				break the bind.
 			]]
 			local button = UIUtil.waitForDescendant(column, entry.Key, WAIT_TIMEOUT)
 			if not button or not button:IsA("GuiButton") then
-				self:_warnOnce(entry.Key, `não achei o botão {entry.Key} em {entry.Column}`)
+				self:_warnOnce(entry.Key, `could not find button {entry.Key} in {entry.Column}`)
 
 				return
 			end
 
 			local label = button:WaitForChild(BADGE_NAME, WAIT_TIMEOUT)
 			if not label or not label:IsA("GuiObject") then
-				self:_warnOnce(entry.Key, `o botão {entry.Key} não tem a label {BADGE_NAME}`)
+				self:_warnOnce(entry.Key, `button {entry.Key} has no {BADGE_NAME} label`)
 
 				return
 			end
@@ -268,7 +270,7 @@ function HUDBadgeController:_warnOnce(key : string, message : string)
 	if self.Warned[key] then return end
 
 	self.Warned[key] = true
-	warn(`[HUDBadgeController]: {message}; esse selo não vai acender.`)
+	log:StudioWarn(`{message}; that badge will not light up.`)
 end
 
 function HUDBadgeController:_observeUI()
@@ -288,11 +290,11 @@ function HUDBadgeController:_observeUI()
 end
 
 --[=[
-	O retrato do perfil na chegada.
+	The profile snapshot on arrival.
 
-	**Nada do que o jogador já tem é novidade**: o selo é sobre o que mudou enquanto
-	ele está aqui. Por isso o retrato é tirado antes de o primeiro `OnChange` chegar, e
-	as comparações são sempre contra ele.
+	**Nothing the player already has is news**: the badge is about what changed while they
+	are here. That is why the snapshot is taken before the first `OnChange` arrives, and
+	comparisons are always against it.
 ]=]
 function HUDBadgeController:_snapshot()
 	local data = self:_data()
@@ -303,24 +305,24 @@ function HUDBadgeController:_snapshot()
 end
 
 --[=[
-	O perfil mudou: o que subiu acende um selo, o que foi gasto apaga.
+	The profile changed: what went up lights a badge, what was spent clears it.
 
-	Uma passada só, e nenhuma pergunta sobre **qual** caminho mudou: o `OnChange` da
-	replica chega para qualquer escrita, e comparar o perfil inteiro com o retrato é
-	mais barato que acertar um caminho por fonte — e não erra a escrita que vem por
-	outro caminho que o esperado.
+	A single pass, and no question about **which** path changed: the replica's `OnChange`
+	arrives for any write, and comparing the whole profile with the snapshot is cheaper
+	than matching a path per source, and does not miss a write that comes by a path other
+	than the expected one.
 ]=]
 function HUDBadgeController:_onProfileChanged()
 	local data = self:_data()
 	if not data then return end
 
 	--[[
-		Caixa que entrou é novidade; caixa daquela raridade que acabou sai da conta,
-		senão o selo insistiria por uma caixa que não está mais lá. As duas coisas saem
-		da mesma comparação porque são a mesma conta em direções opostas.
+		A crate that came in is news; a rarity's crate that ran out leaves the count, or the
+		badge would insist on a crate that is no longer there. Both come from the same
+		comparison because they are the same math in opposite directions.
 
-		Quem apaga o selo de verdade é a mochila ser aberta (`NoteSeen`); isto aqui é só
-		não deixar novidade órfã para trás.
+		What really clears the badge is the backpack opening (`NoteSeen`); this only avoids
+		leaving orphaned news behind.
 	]]
 	local crates = countsOf(data.Inventory and data.Inventory.Crates)
 	for rarity, amount in crates do
@@ -335,8 +337,8 @@ function HUDBadgeController:_onProfileChanged()
 	self.Crates = crates
 
 	--[[
-		Só unit que ele **não tinha** conta: a terceira Slasher de uma caixa não muda
-		nada no loadout que ele já conhece.
+		Only a unit they **did not have** counts: the third Slasher from a crate changes
+		nothing in the loadout they already know.
 	]]
 	local units = countsOf(data.Units)
 	for name, amount in units do
@@ -347,10 +349,10 @@ function HUDBadgeController:_onProfileChanged()
 	self.Units = units
 
 	--[[
-		O período dos contratos virou: o quadro tem contrato novo. É o `Period` do
-		perfil, e não o relógio, porque o que interessa é o sorteio **já gravado** —
-		selo aceso em quadro que ainda não trocou mandaria o jogador para um quadro
-		igual ao que ele viu.
+		The contracts' period turned over: the board has new contracts. It is the profile's
+		`Period`, not the clock, because what matters is the draw **already saved**: a badge
+		lit on a board that has not changed yet would send the player to a board identical to
+		the one they saw.
 	]]
 	local periods = periodsOf(data.Contracts)
 	for kind, period in periods do
@@ -384,11 +386,11 @@ function HUDBadgeController:_watchProfile()
 end
 
 --[=[
-	A virada do bloco da vitrine de cartas.
+	The card storefront block turning over.
 
-	O bloco é conta de relógio (`RoundCardShopConfig.rotationIndex`), então conferir o
-	número aqui dispensa depender do estoque que o servidor manda: o selo é sobre a
-	vitrine ter trocado, e ela troca na mesma hora para todo mundo.
+	The block is clock math (`RoundCardShopConfig.rotationIndex`), so checking the number
+	here avoids depending on the stock the server sends: the badge is about the storefront
+	having changed, and it changes at the same time for everyone.
 ]=]
 function HUDBadgeController:_watchRotation()
 	self.Rotation = RoundCardShopConfig.rotationIndex()
@@ -414,21 +416,21 @@ end
 --[[ EXTERNAL ]]
 
 --[=[
-	O painel deste botão foi aberto.
+	This button's panel was opened.
 
-	Quem chama é o painel de cada um dos cinco, no instante em que ele abre — o
-	`BeforeOpen` nos três que são `ProximityPanel`, o `_setOpen` na mochila e no
-	loadout, que abrem pelo próprio botão. Abrir é o que apaga o selo: o jogador já
-	viu a novidade, e insistir depois disso só ensina a ignorar o ponto vermelho.
+	Each of the five panels calls it the instant it opens: `BeforeOpen` in the three that
+	are `ProximityPanel`s, `_setOpen` in the backpack and the loadout, which open through
+	their own button. Opening is what clears the badge: the player already saw the news,
+	and insisting after that only teaches them to ignore the red dot.
 
-	O que **entrar depois** da olhada acende de novo sozinho — as novidades da mochila
-	e do loadout são zeradas aqui, e não desligadas, então a próxima caixa ou a
-	próxima unit repõe o selo pelo mesmo `OnChange` que o acendeu da primeira vez.
+	Whatever **comes in after** the look lights up again on its own: the backpack and
+	loadout news are reset here, not turned off, so the next crate or the next unit
+	restores the badge through the same `OnChange` that lit it the first time.
 ]=]
 function HUDBadgeController:NoteSeen(key : string)
 	if key == "Contracts" then
-		-- O claim pendente não é apagado por ter sido visto: ele sai quando o contrato
-		-- for claimado, pelo próprio perfil.
+		-- A pending claim is not cleared by being seen: it goes away when the contract
+		-- is claimed, through the profile itself.
 		self.ContractsReset = false
 	elseif key == "Backpack" then
 		table.clear(self.NewCrates)
@@ -439,8 +441,8 @@ function HUDBadgeController:NoteSeen(key : string)
 	elseif key == "RobuxShop" then
 		self.RobuxDue = false
 
-		-- O token mata o prazo da abertura anterior: quem abre duas vezes em um minuto
-		-- espera cinco minutos da **última**, e não vê o selo voltar no meio.
+		-- The token kills the previous opening's deadline: someone who opens twice in a minute
+		-- waits five minutes from the **last** one, and does not see the badge come back midway.
 		self.RobuxToken += 1
 		local token = self.RobuxToken
 
@@ -471,30 +473,30 @@ end
 function HUDBadgeController:init()
 	self.Maid = Maid.new()
 
-	-- Sobe a cada cópia da HUD. Ver `_bindHud`.
+	-- Goes up on every HUD copy. See `_bindHud`.
 	self.HudToken = 0
 
 	self.Replica = nil
 
-	-- O retrato do perfil na chegada: nada do que já está aqui é novidade.
+	-- The profile snapshot on arrival: nothing already here is news.
 	self.Crates = {}
 	self.Units = {}
 	self.Periods = {}
 
-	-- As novidades de agora, por raridade e por unit.
+	-- The current news, by rarity and by unit.
 	self.NewCrates = {}
 	self.NewUnits = {}
 
 	self.ContractsReset = false
 	self.CardShopReset = false
 
-	-- A loja de Robux começa acesa: quem acabou de chegar não a abriu nesta visita.
+	-- The Robux shop starts lit: someone who just arrived has not opened it this visit.
 	self.RobuxDue = true
 	self.RobuxToken = 0
 
 	self.Rotation = nil
 
-	-- O aviso de peça que falta é por chave, e não por cópia da HUD.
+	-- The missing-piece warning is per key, not per HUD copy.
 	self.Warned = {}
 end
 

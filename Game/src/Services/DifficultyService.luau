@@ -11,6 +11,7 @@ local ServerConfigs = ServerScriptService:WaitForChild("Config")
 local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local SharedConfig = require(Configs.SharedConfig)
 
@@ -18,19 +19,20 @@ local DifficultyConfig = ServerConfig.Difficulty
 local UnlockConfig = SharedConfig.DifficultyUnlockConfig
 
 local Framework = Me.new()
+local log = Log.new("DifficultyService")
 
 local ALL_VOTED_GRACE = 2
 
--- Ate quando vale a pena esperar o cliente de quem acabou de entrar avisar que
--- carregou. Passou disso, ele nao vai mais avisar.
+-- How long it is worth waiting for a newly joined player's client to report that
+-- it loaded. Past that, it will not report anymore.
 local CLIENT_READY_TIMEOUT = 60
 
 local DifficultyService = {
 	Services = {
 		MobService = {},
 
-		-- De onde saem as vitorias por dificuldade e o XP que destravam os presets de
-		-- cima. Ver `isUnlockedFor`.
+		-- Where the per-difficulty wins and the XP that unlock the higher presets come
+		-- from. See `isUnlockedFor`.
 		DataService = {}
 	},
 	Votes = {},
@@ -43,17 +45,18 @@ function DifficultyService:GetSelected()
 end
 
 --[=[
-	Se este jogador ja pode votar nesta dificuldade.
+	Whether this player can already vote for this difficulty.
 
-	E a mesma conta que o `DifficultyController` usa para desenhar o cadeado, com o
-	mesmo config -- e aqui ela vale de verdade: o voto e um nome, e um nome e o que
-	qualquer cliente pode mandar. Sem esta linha, o Nightmare abriria para quem nunca
-	ganhou uma partida, e bastaria **um** desses votos para arrastar a sala inteira
-	para la.
+	It is the same math `DifficultyController` uses to draw the lock, with the same
+	config, and here it actually counts: the vote is a name, and a name is something
+	any client can send. Without this line, Nightmare would open to someone who never
+	won a match, and **one** such vote would be enough to drag the whole room there.
 
-	Perfil que ainda nao carregou conta como zero vitoria e nivel 1: aparece trancado,
-	que e o lado seguro, e a tela do jogador esta mostrando a mesma coisa pela mesma
-	conta.
+	A profile that has not loaded counts as zero wins and level 1: it shows locked,
+	which is the safe side, and the player's screen shows the same thing by the same
+	math.
+
+	See docs/game/difficulty-vote.md.
 ]=]
 function DifficultyService:isUnlockedFor(player : Player, difficultyName : string?) : boolean
 	local dataService = self.Services.DataService
@@ -113,9 +116,9 @@ function DifficultyService:winner()
 end
 
 --[=[
-	O estado como este jogador o ve: o voto e de cada um, o resto e do servidor.
-	`locked` e o que diz se a partida ja comecou — enquanto for `nil` ninguem
-	escolheu dificuldade nenhuma.
+	The state as this player sees it: the vote is each player's own, the rest is the
+	server's. `locked` says whether the match has started; while it is `nil` nobody
+	has chosen any difficulty.
 ]=]
 function DifficultyService:stateFor(player : Player, timeLeft : number?, counts : { [string] : number }?)
 	return {
@@ -136,13 +139,13 @@ function DifficultyService:broadcastSelectionState(timeLeft)
 end
 
 --[=[
-	Manda o estado atual para quem acabou de entrar. A votacao so fala enquanto
-	esta aberta, entao sem isto quem cai num round que ja comecou nunca receberia
-	um `DifficultySelection` — e a hotbar dele, que so aparece com a dificuldade
-	decidida, ficaria escondida a partida inteira.
+	Sends the current state to a player who just joined. The vote only speaks while it
+	is open, so without this a player who lands in a round that already started would
+	never receive a `DifficultySelection`, and their hotbar, which only appears once
+	the difficulty is decided, would stay hidden the whole match.
 
-	Espera a tag `ClientReady` que o `DataService` poe quando o cliente avisa que
-	carregou: antes dela o controller do outro lado ainda nem esta escutando.
+	It waits for the `ClientReady` tag `DataService` sets when the client reports it
+	loaded: before that, the controller on the other side is not even listening.
 ]=]
 function DifficultyService:syncPlayer(player : Player)
 	local deadline = os.clock() + CLIENT_READY_TIMEOUT
@@ -158,15 +161,16 @@ function DifficultyService:syncPlayer(player : Player)
 end
 
 --[=[
-	Impõe uma dificuldade sem votação e anuncia como decidida.
+	Imposes a difficulty without a vote and announces it as decided.
 
-	É o que o tutorial usa. O anúncio não é detalhe: o `locked` deste estado é o que
-	faz a **hotbar aparecer** no cliente (`DifficultyController:setHotbarVisible`) —
-	sem partida decidida não há onde pôr carta, e a hotbar nasce escondida. Pulando a
-	votação sem dizer isto a ninguém, a tela ficava sem cartas a partida inteira.
+	It is what the tutorial uses. The announcement is not a detail: this state's
+	`locked` is what makes the **hotbar appear** on the client
+	(`DifficultyController:setHotbarVisible`); without a decided match there is
+	nowhere to put cards, and the hotbar starts hidden. Skipping the vote without
+	telling anyone would leave the screen with no cards the whole match.
 
-	Quem entrar depois recebe o mesmo estado pelo `syncPlayer`, que já existe para
-	quem cai num round começado.
+	Players who join later receive the same state through `syncPlayer`, which already
+	exists for players landing in a started round.
 ]=]
 function DifficultyService:Force(name : string)
 	self.Selected = name
@@ -218,8 +222,8 @@ function DifficultyService:RunSelection(duration)
 end
 
 --[=[
-	Devolve o service ao estado de antes da votacao. A dificuldade escolhida cai
-	junto: o proximo round vota de novo.
+	Returns the service to its pre-vote state. The chosen difficulty goes too: the
+	next round votes again.
 ]=]
 function DifficultyService:ResetRound()
 	table.clear(self.Votes)
@@ -236,8 +240,8 @@ function DifficultyService:construct()
 		if not DifficultyConfig.Exists(difficultyName) then return end
 
 		if not self:isUnlockedFor(player, difficultyName) then
-			warn(string.format(
-				"[DifficultyService]: %s votou em %s, que ainda esta trancada para ele.",
+			log:StudioWarn(string.format(
+				"%s voted for %s, which is still locked for them.",
 				player.Name, difficultyName))
 			return
 		end

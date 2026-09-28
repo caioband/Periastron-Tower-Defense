@@ -5,23 +5,26 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("PlaytimeService")
 
 --[[
-	O tempo de jogo no perfil (`Stats.TimePlayed`, em segundos), nas duas places.
+	Playtime on the profile (`Stats.TimePlayed`, in seconds), in both places.
 
-	Conta do perfil carregado ate a sessao fechar -- antes disso nao ha onde
-	escrever, e a diferenca sao segundos. O teleporte entre Lobby e Game fecha a
-	sessao numa place e abre na outra, entao o tempo das duas soma no mesmo numero.
+	It counts from profile load until the session closes; before that there is
+	nowhere to write, and the difference is seconds. Teleporting between Lobby and
+	Game closes the session in one place and opens it in the other, so time in both
+	adds to the same number.
 
-	**Por que escreve de minuto em minuto, e nao so na saida.** A leaderboard le o
-	perfil de quem esta no servidor; guardando so na saida, quem fica horas no
-	lobby nao se mexeria nela ate ir embora. E um servidor que cai leva no maximo o
-	ultimo minuto.
+	**Why it writes every minute and not only on leave.** The leaderboard reads the
+	profiles of players on the server; saving only on leave, someone who stays hours
+	in the Lobby would not move on it until they left. And a server that crashes
+	loses at most the last minute.
 
-	O resto fracionario nao se perde: `Since` anda so os segundos inteiros que
-	foram escritos, e a fracao entra no proximo minuto.
+	The fractional remainder is not lost: `Since` advances only by the whole seconds
+	written, and the fraction goes into the next minute.
 ]]
 
 local FLUSH_INTERVAL = 60
@@ -31,7 +34,7 @@ local PlaytimeService = {
 		DataService = {},
 	},
 
-	-- [Player] = `os.clock()` do ultimo segundo ja escrito.
+	-- [Player] = `os.clock()` of the last second already written.
 	Since = {},
 }
 
@@ -50,7 +53,7 @@ function PlaytimeService:_track(player : Player)
 	end
 end
 
---- Escreve no perfil os segundos inteiros desde a ultima escrita.
+--- Writes the whole seconds since the last write to the profile.
 function PlaytimeService:_flush(player : Player)
 	local since = self.Since[player]
 	if not since or not self:_hasProfile(player) then return end
@@ -66,12 +69,12 @@ function PlaytimeService:_flush(player : Player)
 	end)
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function PlaytimeService:construct()
 	local dataService = self.Services.DataService
 	if not dataService then
-		warn("[PlaytimeService]: sem DataService; o tempo de jogo nao vai ser contado.")
+		log:Warn("no DataService; playtime will not be counted.")
 		return
 	end
 
@@ -79,14 +82,14 @@ function PlaytimeService:construct()
 		self:_track(player)
 	end)
 
-	-- Quem carregou antes deste service subir: o sinal deles ja passou.
+	-- Players who loaded before this service started: their signal already fired.
 	for _, player in Players:GetPlayers() do
 		if self:_hasProfile(player) then
 			self:_track(player)
 		end
 	end
 
-	-- O ultimo pedaco entra com o perfil ainda aberto, nos dois caminhos de saida.
+	-- The last chunk goes in with the profile still open, on both exit paths.
 	if dataService.OnBeforeRelease then
 		dataService:OnBeforeRelease(function(player : Player)
 			self:_flush(player)
@@ -94,7 +97,7 @@ function PlaytimeService:construct()
 		end)
 	end
 
-	-- Limpeza para quem saiu sem perfil aberto (o gancho acima nem roda).
+	-- Cleanup for players who left without an open profile (the hook above does not even run).
 	Players.PlayerRemoving:Connect(function(player : Player)
 		task.defer(function()
 			self.Since[player] = nil

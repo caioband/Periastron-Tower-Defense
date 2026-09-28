@@ -1,57 +1,57 @@
 --[[
-	Regras de permissão do Cmdr (admin console) — SOMENTE SERVIDOR.
+	Cmdr (admin console) permission rules: SERVER ONLY.
 
-	Esta lista nunca chega ao cliente. O `CmdrService:IsAdmin()` é a única fonte
-	de verdade: ele roda no hook `BeforeRun` de todo comando e também responde ao
-	evento `RequestCmdrAccess` que o `CmdrController` dispara só para decidir se
-	mostra o console (cosmético).
+	This list never reaches the client. `CmdrService:IsAdmin()` is the single source
+	of truth: it runs in every command's `BeforeRun` hook and also answers the
+	`RequestCmdrAccess` event, which `CmdrController` fires only to decide whether to
+	show the console (cosmetic).
 
-	As configurações que o cliente precisa (tecla de ativação e nome da place)
-	ficam em `ReplicatedStorage.Shared.Config.SharedConfig.Cmdr`.
+	The settings the client needs (activation key and place name) live in
+	`ReplicatedStorage.Shared.Config.SharedConfig.Cmdr`.
+
+	See docs/common/admin-commands.md.
 ]]
 
 return {
 	--[[
-		[UserId] = true. É a lista que manda: quem está aqui roda comando em
-		qualquer servidor, publicado ou não.
+		[UserId] = true. This list rules: anyone here runs commands on any server,
+		published or not.
 
-		Os outros caminhos abaixo são atalhos, e nenhum deles vale sozinho num jogo
-		publicado — `ALLOW_IN_STUDIO` só existe no Studio, e o dono é reconhecido pelo
-		bloco de `CreatorType` do `CmdrService:IsAdmin`.
+		The other paths below are shortcuts, and none of them holds on its own in a
+		published game: `ALLOW_IN_STUDIO` only exists in Studio, and the owner is
+		recognized by the `CreatorType` block in `CmdrService:IsAdmin`.
 	]]
 	ADMIN_USER_IDS = {
 		[46871391] = true,   -- caioband
 	},
 
 	--[[
-		Rank mínimo no grupo **dono da place** para valer como dono.
+		Minimum rank in the group **that owns the place** to count as the owner.
 
-		Esta place pertence a um grupo, e não a uma pessoa: sem isto o
-		`game.CreatorId` é o id do grupo, nunca o de um jogador, e o teste de dono não
-		passava para ninguém — era por isso que os comandos não funcionavam em jogo,
-		só no Studio.
+		This place belongs to a group, not a person: without this, `game.CreatorId` is
+		the group id, never a player's, and the owner check passed for nobody. That is
+		why commands worked only in Studio and not in the live game.
 
-		255 é o dono do grupo e mais ninguém. Baixe para o rank dos seus admins se
-		quiser que a diretoria do grupo também rode comando.
+		255 is the group owner and no one else. Lower it to your admins' rank if you
+		want the group leadership to run commands too.
 	]]
 	CREATOR_GROUP_MIN_RANK = 255,
 
-	-- Grupo extra, sem relação com o dono da place. Deixe GROUP_ID nil para desligar.
+	-- An extra group, unrelated to the place owner. Leave GROUP_ID nil to turn it off.
 	GROUP_ID = nil :: number?,
 	GROUP_MIN_RANK = 200,
 
 	--[[
-		Comandos liberados para quem NÃO é admin, por cargo num grupo.
+		Commands allowed for non-admins, by rank in a group.
 
-		**Vazia de propósito: hoje só admin roda comando.** Os testers tinham `units`,
-		`help` e `richtext` pelo cargo 3 do grupo 660345753, e essas três linhas saíram
-		— sem nenhum comando acessível o `GetAccessibleCommands` devolve lista vazia e o
-		console nem aparece para eles (ver `CmdrService`).
+		**Empty on purpose: today only admins run commands.** With no command
+		accessible, `GetAccessibleCommands` returns an empty list and the console does
+		not even appear for them (see `CmdrService`).
 
-		O mecanismo continua de pé para quando for preciso de novo: a chave é o `Name`
-		do comando (não o alias nem o `Group`) — o `units` divide o grupo "Currency" com
-		`cash` e `shards`, e só ele seria liberado. Quem passa aqui roda aquele comando e
-		mais nenhum; admin continua rodando tudo.
+		The mechanism stays in place for when it is needed again: the key is the
+		command's `Name` (not the alias or the `Group`). `units` shares the "Currency"
+		group with `cash` and `shards`, and only it would be allowed. Anyone matching
+		here runs that command and no other; admins still run everything.
 	]]
 	COMMAND_PERMISSIONS = {} :: { [string]: { groupId: number, minRank: number } },
 

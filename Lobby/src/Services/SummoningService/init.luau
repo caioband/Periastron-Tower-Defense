@@ -58,7 +58,7 @@ function SummoningService:summonUnit(Player : Player, bannerName : string)
 			return units
 		end)
 
-		-- Mesmo gatilho da caixa: obter a unit e o que a descobre no Index.
+		-- The same trigger as crates: obtaining the unit is what discovers it in the Index.
 		if self.Services.IndexService then
 			self.Services.IndexService:UnlockUnit(Player, rolledUnit.Name)
 		end
@@ -67,7 +67,7 @@ function SummoningService:summonUnit(Player : Player, bannerName : string)
 			Success = true,
 			Banner = bannerName,
 			Unit = rolledUnit.Name,
-			-- O banner só define o peso; a raridade é a da própria unit.
+			-- The banner only sets the weight; the rarity is the unit's own.
 			Rarity = SharedConfig.UnitStats[rolledUnit.Name].Rarity,
 		})
 	end)

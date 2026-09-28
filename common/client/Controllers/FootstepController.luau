@@ -1,6 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local ContentProvider = game:GetService("ContentProvider")
 
@@ -12,48 +11,45 @@ local SharedConfig = require(Configs.SharedConfig)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("FootstepController")
 local Player = Players.LocalPlayer
 
 --[[
-	Passos do jogador, inteiramente no cliente.
+	Player footsteps, entirely on the client.
 
-	Quem dá o compasso é a animação, não um timer: as animações de Walk e Run
-	carregam um Animation Event (KeyframeMarker) chamado "Step", e cada disparo
-	dele vira um passo. Assim o som cai junto com o pé na tela em qualquer
-	velocidade, e uma animação nova entra no sistema só por ter o marcador — não
-	há lista de animações aqui pra manter.
+	The animation keeps the beat, not a timer: the Walk and Run animations carry an
+	Animation Event (KeyframeMarker) called "Step", and each firing becomes a step.
+	That way the sound lands with the foot on screen at any speed, and a new
+	animation joins the system just by having the marker: there is no animation list
+	to maintain here.
 
-	O marcador pode trazer um valor dizendo o pé ("Left" / "Right"); sem valor, o
-	controller alterna sozinho.
+	The marker can carry a value naming the foot ("Left" / "Right"); without a value,
+	the controller alternates on its own.
 
-	A superfície não vem do Material (o jogo é stud, o Material não significa
-	nada): vem do atributo `Surface` da Part que o raio embaixo do pé acertar,
-	procurado também nos pais dela — dá pra marcar um modelo inteiro de uma vez.
-	Os ids de cada superfície ficam em SharedConfig.FootstepConfig.
+	The surface does not come from Material (the game is studs, and Material means
+	nothing): it comes from the `Surface` attribute of the Part the ray under the
+	foot hits, also searched in its ancestors, so a whole model can be tagged at
+	once. Each surface's ids live in SharedConfig.FootstepConfig.
 
-	Fica em common/ porque o Me varre Controllers.Common nas duas places.
+	It lives in common/ because Me scans Controllers.Common in both places.
+
+	See docs/common/footsteps.md.
 ]]
 
 local Config = SharedConfig.FootstepConfig
 
 local MARKER = "Step"
 
--- Nomes de pé, em ordem de preferência: R15 primeiro, R6 depois, e o tronco
--- como último recurso (rig custom que não tenha nenhum dos dois).
+-- Foot names, in order of preference: R15 first, R6 next, and the torso as a
+-- last resort (a custom rig with neither).
 local FOOT_PARTS = {
 	Left = { "LeftFoot", "LeftLowerLeg", "Left Leg", "HumanoidRootPart" },
 	Right = { "RightFoot", "RightLowerLeg", "Right Leg", "HumanoidRootPart" },
 }
 
--- Log do marcador: só no Studio, para não poluir o console de produção.
-local IS_STUDIO = RunService:IsStudio()
-
-local function stepPrint(...)
-	if not IS_STUDIO then return end
-	print("[Footstep]", ...)
-end
 
 local FootstepController = {
 	Controllers = {},
@@ -65,56 +61,54 @@ FootstepController._humanoid = nil :: Humanoid?
 FootstepController._nextFoot = "Right"
 FootstepController._lastStep = 0
 FootstepController._lastJump = 0
-FootstepController._lastId = {} :: { [string]: string } -- última variação por superfície
+FootstepController._lastId = {} :: { [string]: string } -- last variation per surface
 FootstepController._warned = {} :: { [string]: boolean }
 
 --[[
-	Sons prontos, um por (pé, id). O passo em si não cria nada: só escolhe a
-	variação, ajusta pitch/volume e dá Play. Ver `_buildPool`.
+	Ready sounds, one per (foot, id). The step itself creates nothing: it only picks
+	the variation, adjusts pitch/volume, and plays. See `_buildPool`.
 ]]
 FootstepController._pool = {} :: { [string]: { [string]: Sound } }
 
--- Instâncias que existem só pra segurar os assets no cache do cliente.
+-- Instances that exist only to hold the assets in the client cache.
 FootstepController._warmFolder = nil :: Folder?
 
 --[[
-	Tracks que já têm escuta. O Animate padrão carrega a track uma vez e a toca de
-	novo a cada vez que o jogador começa a andar, e `AnimationPlayed` dispara em
-	toda tocada — sem isto, parar e andar de novo penduraria outra conexão na
-	mesma track, e o marcador acabaria disparando N vezes por passo.
+	Tracks that already have a listener. The default Animate loads the track once and
+	plays it again every time the player starts walking, and `AnimationPlayed` fires
+	on every play: without this, stopping and walking again would hang another
+	connection on the same track, and the marker would end up firing N times per step.
 ]]
 FootstepController._boundTracks = setmetatable({}, { __mode = "k" }) :: any
 
 --[[
-	Quem pode mandar passo, e desde quando.
+	Who may send steps, and since when.
 
-	Andar e correr tocam ao mesmo tempo: o `Animate` padrão mantém a walk no ar
-	enquanto o Run do MovementController entra por cima (ele nunca para a walk).
-	Se as duas animações têm o marcador, cada passo vira dois — em fases
-	diferentes, porque as animações têm durações diferentes, então nem o intervalo
-	mínimo segura.
+	Walking and running play at the same time: the default `Animate` keeps walk
+	playing while MovementController's Run plays on top (it never stops walk). If both
+	animations have the marker, each step becomes two, in different phases because
+	the animations have different lengths, so not even the minimum interval stops it.
 
-	A regra: manda quem começou por último entre as tracks que têm marcador e
-	ainda estão tocando. Assim o Run assume ao começar a correr e a walk retoma
-	sozinha quando o Run para.
+	The rule: the last one to start wins, among tracks that have the marker and are
+	still playing. So Run takes over when running starts and walk resumes on its own
+	when Run stops.
 ]]
 FootstepController._markerTracks = setmetatable({}, { __mode = "k" }) :: any
 FootstepController._trackStarted = setmetatable({}, { __mode = "k" }) :: any
 
---[[ AVISOS ]]
+--[[ WARNINGS ]]
 
--- Um aviso por superfície por sessão: um passo repete demais pra avisar sempre.
+-- One warning per surface per session: steps repeat too often to warn every time.
 function FootstepController:_warnOnce(key: string, message: string)
-	if self._warned[key] then return end
-	self._warned[key] = true
-	warn(`[FootstepController]: {message}`)
+	log:StudioWarnOnce(key, message)
 end
 
---[[ SUPERFÍCIE ]]
+--[[ SURFACE ]]
 
 --[[
-	Acha o pé pedido no rig. R15 tem LeftFoot/RightFoot, R6 tem "Left Leg"/"Right
-	Leg"; se nada disso existir, o passo ainda sai, mas no meio do personagem.
+	Finds the requested foot on the rig. R15 has LeftFoot/RightFoot, R6 has "Left
+	Leg"/"Right Leg"; if neither exists, the step still plays, but from the middle of
+	the character.
 ]]
 function FootstepController:_getFoot(character: Model, side: string): BasePart?
 	for _, name in FOOT_PARTS[side] or {} do
@@ -128,8 +122,8 @@ function FootstepController:_getFoot(character: Model, side: string): BasePart?
 end
 
 --[[
-	Sobe a hierarquia atrás do atributo. Marcar a Part é o caso normal, mas
-	marcar o Model/Folder que a contém vale pra um cenário inteiro de uma vez.
+	Walks up the hierarchy looking for the attribute. Tagging the Part is the normal
+	case, but tagging the Model/Folder that contains it covers a whole scene at once.
 ]]
 function FootstepController:_readSurface(instance: Instance?): string?
 	local current = instance
@@ -145,13 +139,13 @@ function FootstepController:_readSurface(instance: Instance?): string?
 	return nil
 end
 
--- Raio curto pra baixo, a partir do pé, ignorando o próprio personagem.
+-- A short ray down from the foot, ignoring the character itself.
 function FootstepController:_surfaceUnder(footPart: BasePart, character: Model): (string?, BasePart?)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { character }
-	-- Chão é o que dá pra pisar: part sem colisão (preview, AOE, decoração) não
-	-- deve responder pelo som.
+	-- Ground is what can be stepped on: a part without collision (preview, AOE,
+	-- decoration) must not answer for the sound.
 	params.RespectCanCollide = true
 
 	local result = workspace:Raycast(footPart.Position, Vector3.new(0, -Config.RayLength, 0), params)
@@ -164,8 +158,8 @@ end
 
 --[[ CACHE ]]
 
--- Todos os ids configurados, sem repetir (a mesma variação pode servir a duas
--- superfícies). O pulo entra aqui junto: ele usa o mesmo pool e o mesmo cache.
+-- Every configured id, without repeats (the same variation may serve two
+-- surfaces). The jump goes in here too: it uses the same pool and the same cache.
 function FootstepController:_allIds(): { string }
 	local seen, list = {}, {}
 
@@ -187,11 +181,11 @@ function FootstepController:_allIds(): { string }
 end
 
 --[[
-	Puxa os assets para o cache do cliente uma vez, na entrada.
+	Pulls the assets into the client cache once, on join.
 
-	As instâncias daqui nunca tocam: elas existem só para que o download já tenha
-	acontecido quando o primeiro passo pedir o som — inclusive depois de morrer,
-	já que o pool dos pés é refeito a cada personagem e o cache não.
+	These instances never play: they exist only so the download has already
+	happened when the first step asks for the sound, including after dying, since
+	the feet pool is rebuilt per character and the cache is not.
 ]]
 function FootstepController:_warmCache()
 	if self._warmFolder then
@@ -218,31 +212,31 @@ function FootstepController:_warmCache()
 		table.insert(sounds, sound)
 	end
 
-	-- Yield: fica fora da thread do init.
+	-- Yields: stays off the init thread.
 	task.spawn(function()
 		local ok, err = pcall(function()
 			ContentProvider:PreloadAsync(sounds)
 		end)
 
 		if not ok then
-			warn(`[FootstepController]: falha ao pré-carregar os passos: {err}`)
+			log:StudioWarn(`failed to preload the footsteps: {err}`)
 			return
 		end
 
 		for _, sound in sounds do
 			if not sound.IsLoaded then
-				self:_warnOnce(`preload:{sound.SoundId}`, `{sound.SoundId} não carregou; passos com essa variação vão sair mudos ou atrasados.`)
+				self:_warnOnce(`preload:{sound.SoundId}`, `{sound.SoundId} did not load; steps using this variation will be silent or late.`)
 			end
 		end
 	end)
 end
 
 --[[
-	Um Sound pronto por (pé, id), pendurado no próprio pé.
+	One ready Sound per (foot, id), hung on the foot itself.
 
-	Pendurado no pé porque o som é 3D e tem que acompanhar o personagem; um por
-	id porque trocar o SoundId de uma instância na hora do passo traria de volta
-	a espera de carregamento que este pool existe para eliminar.
+	Hung on the foot because the sound is 3D and must follow the character; one per
+	id because changing an instance's SoundId at step time would bring back the
+	loading wait this pool exists to eliminate.
 ]]
 function FootstepController:_buildPool(character: Model)
 	self._pool = {}
@@ -273,8 +267,8 @@ function FootstepController:_buildPool(character: Model)
 		end
 	end
 
-	-- Os assets já vieram no `_warmCache`, então isto resolve do cache e serve só
-	-- para garantir que estas instâncias estejam prontas antes do primeiro passo.
+	-- The assets already came in through `_warmCache`, so this resolves from the cache
+	-- and only makes sure these instances are ready before the first step.
 	task.spawn(function()
 		pcall(function()
 			ContentProvider:PreloadAsync(created)
@@ -282,9 +276,9 @@ function FootstepController:_buildPool(character: Model)
 	end)
 end
 
---[[ SOM ]]
+--[[ SOUND ]]
 
--- Sorteia uma variação evitando repetir a anterior daquela superfície.
+-- Picks a variation, avoiding the surface's previous one.
 function FootstepController:_pickId(surfaceName: string, ids: { string }): string?
 	if #ids == 0 then
 		return nil
@@ -295,8 +289,8 @@ function FootstepController:_pickId(surfaceName: string, ids: { string }): strin
 
 	local chosen = ids[math.random(#ids)]
 	if chosen == self._lastId[surfaceName] then
-		-- Uma re-tentativa basta: com N >= 2 ela já cai em outra na prática, e
-		-- não vale travar num loop por causa de um passo.
+		-- One retry is enough: with N >= 2 it lands on another in practice, and it is
+		-- not worth looping over a footstep.
 		chosen = ids[math.random(#ids)]
 	end
 
@@ -305,31 +299,30 @@ function FootstepController:_pickId(surfaceName: string, ids: { string }): strin
 end
 
 --[[
-	Toca o passo numa instância que já existe e já está carregada.
+	Plays the step on an instance that already exists and is already loaded.
 
-	Criar o Sound na hora do passo era o que tirava o som do lugar: um SoundId
-	recém-atribuído carrega de forma assíncrona, então o `:Play()` não soa quando
-	é chamado, e sim quando o asset termina de chegar. Enquanto o primeiro
-	carregava, os passos seguintes iam se acumulando — e todos soavam juntos no
-	instante em que o carregamento terminava. Daí o atraso em relação ao print e
-	os passos empilhados.
+	Creating the Sound at step time put the sound out of place: a freshly assigned
+	SoundId loads asynchronously, so `:Play()` does not sound when called, but when
+	the asset finishes arriving. While the first one loaded, the next steps piled
+	up, and all of them sounded together the instant loading finished: delayed and
+	stacked steps.
 ]]
 --[[
-	Toca uma entrada de config (superfície ou pulo) numa instância do pool.
+	Plays a config entry (surface or jump) on a pool instance.
 
-	`key` é só a identidade da entrada: serve para a memória de "qual variação saiu
-	da última vez" e para os avisos não se misturarem.
+	`key` is only the entry's identity: it serves the "which variation played last
+	time" memory and keeps warnings from mixing.
 ]]
 function FootstepController:_playFrom(entry, key: string, side: string)
 	local id = self:_pickId(key, entry.Ids or {})
 	if not id then
-		self:_warnOnce(`ids:{key}`, `"{key}" não tem nenhum id configurado.`)
+		self:_warnOnce(`ids:{key}`, `"{key}" has no id configured.`)
 		return
 	end
 
 	local sound = self._pool[side] and self._pool[side][id]
 	if not sound or not sound.Parent then
-		self:_warnOnce(`pool:{id}`, `sem som pronto para {id} no pé {side}; não tocou.`)
+		self:_warnOnce(`pool:{id}`, `no sound ready for {id} on the {side} foot; did not play.`)
 		return
 	end
 
@@ -337,32 +330,32 @@ function FootstepController:_playFrom(entry, key: string, side: string)
 	sound.Volume = (entry.Volume or 1) * Config.Volume
 	sound.PlaybackSpeed = range[1] + math.random() * (range[2] - range[1])
 
-	-- Mesma instância podendo ser repedida antes de acabar: volta pro começo em
-	-- vez de ignorar o Play. Como os pés alternam e as variações não repetem, na
-	-- prática cada instância só é reusada muito depois do clipe ter acabado.
+	-- The same instance may be requested again before it ends: it goes back to the
+	-- start instead of ignoring Play. Since feet alternate and variations do not
+	-- repeat, in practice each instance is only reused long after the clip ended.
 	sound.TimePosition = 0
 	sound:Play()
 
-	if IS_STUDIO and not sound.IsLoaded then
-		self:_warnOnce(`notloaded:{id}`, `{id} ainda não estava carregado; o som pode sair atrasado.`)
+	if not sound.IsLoaded then
+		self:_warnOnce(`notloaded:{id}`, `{id} was not loaded yet; the sound may play late.`)
 	end
 end
 
 function FootstepController:_playStep(surfaceName: string, side: string)
 	local surface = Config.Surfaces[surfaceName]
 	if not surface then
-		self:_warnOnce(`surface:{surfaceName}`, `superfície "{surfaceName}" não existe em SharedConfig.FootstepConfig.Surfaces.`)
+		self:_warnOnce(`surface:{surfaceName}`, `surface "{surfaceName}" does not exist in SharedConfig.FootstepConfig.Surfaces.`)
 		return
 	end
 
 	self:_playFrom(surface, surfaceName, side)
 end
 
---[[ PASSO ]]
+--[[ STEP ]]
 
 --[[
-	Toca o passo do chão que estiver embaixo do pé pedido. Caminho comum do
-	marcador de animação e da aterrissagem.
+	Plays the step for the ground under the requested foot. The shared path for the
+	animation marker and landing.
 ]]
 function FootstepController:_stepOnSurface(side: string)
 	local character = self._character
@@ -377,10 +370,10 @@ function FootstepController:_stepOnSurface(side: string)
 
 	local surfaceName, hitPart = self:_surfaceUnder(footPart, character)
 	if not surfaceName then
-		if IS_STUDIO and hitPart then
+		if hitPart then
 			self:_warnOnce(
 				`untagged:{hitPart:GetFullName()}`,
-				`{hitPart:GetFullName()} não tem o atributo "{Config.Attribute}"; passo silencioso.`
+				`{hitPart:GetFullName()} has no "{Config.Attribute}" attribute; silent step.`
 			)
 		end
 		return
@@ -389,7 +382,7 @@ function FootstepController:_stepOnSurface(side: string)
 	self:_playStep(surfaceName, side)
 end
 
--- Consome o próximo pé da alternância.
+-- Consumes the next foot in the alternation.
 function FootstepController:_takeFoot(preferred: string?): string
 	local side = preferred
 	if side ~= "Left" and side ~= "Right" then
@@ -401,17 +394,17 @@ function FootstepController:_takeFoot(preferred: string?): string
 end
 
 --[[
-	Trava compartilhada por marcador e aterrissagem: sem ela, cair já andando
-	tocaria o passo da aterrissagem e o do marcador seguinte quase juntos.
+	A lock shared by the marker and landing: without it, landing while already
+	walking would play the landing step and the next marker's step almost together.
 ]]
 function FootstepController:_canStep(): boolean
 	local now = os.clock()
 	local sinceLast = now - self._lastStep
 
 	if sinceLast < Config.MinInterval then
-		-- Vale saber: se aparecer muito, é marcador duplicado na animação (ou duas
-		-- tracks tocando a mesma animação), não problema de som.
-		stepPrint(string.format("passo ignorado: %.0fms desde o anterior, mínimo é %.0fms",
+		-- Worth knowing: if this shows up a lot, it is a duplicated marker in the
+		-- animation (or two tracks playing the same animation), not a sound problem.
+		log:Debug(string.format("step skipped: %.0fms since the previous one, minimum is %.0fms",
 			sinceLast * 1000, Config.MinInterval * 1000))
 		return false
 	end
@@ -421,11 +414,11 @@ function FootstepController:_canStep(): boolean
 end
 
 --[[
-	Um disparo do marcador "Step".
+	A "Step" marker firing.
 
-	`markerValue` é o valor que o marcador carrega na animação, se tiver: "Left"
-	ou "Right" fixam o pé. Sem valor, alterna — o que já cobre uma caminhada
-	normal, onde os marcadores vêm um de cada lado.
+	`markerValue` is the value the marker carries in the animation, if any: "Left"
+	or "Right" pins the foot. Without a value it alternates, which already covers a
+	normal walk, where markers come one per side.
 ]]
 function FootstepController:_onStep(markerValue: string?)
 	local character = self._character
@@ -434,7 +427,7 @@ function FootstepController:_onStep(markerValue: string?)
 		return
 	end
 
-	-- No ar não há passo: pulo e queda podem cruzar o fim de uma caminhada.
+	-- No steps in the air: a jump or fall may cross the end of a walk cycle.
 	if humanoid.FloorMaterial == Enum.Material.Air then
 		return
 	end
@@ -447,11 +440,11 @@ function FootstepController:_onStep(markerValue: string?)
 end
 
 --[[
-	Aterrissagem: o mesmo som de passo, do chão em que caiu.
+	Landing: the same step sound, for the ground landed on.
 
-	Não passa pela checagem de `FloorMaterial`: no quadro em que o `Landed`
-	dispara ela ainda pode estar em `Air`, e aí o som da queda sumiria. Quem diz
-	onde pisou é o raio embaixo do pé, que a essa altura já alcança o chão.
+	It skips the `FloorMaterial` check: on the frame `Landed` fires it may still be
+	`Air`, and then the fall's sound would vanish. The ray under the foot, which by
+	then already reaches the ground, says where they stepped.
 ]]
 function FootstepController:_onLanded()
 	local character = self._character
@@ -464,19 +457,19 @@ function FootstepController:_onLanded()
 	end
 
 	local side = self:_takeFoot(nil)
-	stepPrint("aterrissou | pé", side)
+	log:Debug("landed | foot", side)
 	self:_stepOnSurface(side)
 end
 
 --[[
-	Pulo.
+	Jump.
 
-	Fora da trava dos passos de propósito: quem pula andando acabou de dar um
-	passo, e a trava comeria o som do salto. A trava daqui é só contra o estado
-	`Jumping` ser reentrado no mesmo salto.
+	Outside the step lock on purpose: someone jumping while walking just took a step,
+	and the lock would eat the jump sound. The lock here only guards against the
+	`Jumping` state being re-entered within the same jump.
 
-	Também não consome a alternância dos pés — pular não é pisar — e não olha a
-	superfície: o som do salto é o mesmo em qualquer chão.
+	It also does not consume the foot alternation (jumping is not stepping) and does
+	not look at the surface: the jump sound is the same on any ground.
 ]]
 function FootstepController:_onJumped()
 	local character = self._character
@@ -494,15 +487,16 @@ function FootstepController:_onJumped()
 	end
 	self._lastJump = now
 
-	stepPrint("pulou")
+	log:Debug("jumped")
 	self:_playFrom(Config.Jump, "Jump", self._nextFoot)
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 --[[
-	Se esta track é a que manda no passo agora: a última a começar, entre as que
-	têm marcador e continuam tocando. Sem nenhuma tocando, ela mesma assume.
+	Whether this track is the one driving steps now: the last to start, among those
+	that have the marker and are still playing. With none playing, it takes over
+	itself.
 ]]
 function FootstepController:_ownsSteps(track: AnimationTrack): boolean
 	local owner, startedAt = nil, -math.huge
@@ -523,8 +517,8 @@ function FootstepController:_bindTrack(track: AnimationTrack)
 	local maid = self._maid
 	if not maid then return end
 
-	-- Antes do dedupe: `AnimationPlayed` dispara a cada tocada da mesma track, e
-	-- é justamente isso que marca o "começou agora".
+	-- Before the dedupe: `AnimationPlayed` fires on every play of the same track, and
+	-- that is exactly what marks "just started".
 	self._trackStarted[track] = os.clock()
 
 	if self._boundTracks[track] then return end
@@ -532,18 +526,18 @@ function FootstepController:_bindTrack(track: AnimationTrack)
 
 	local animationId = track.Animation and track.Animation.AnimationId or "?"
 
-	-- Track sem o marcador simplesmente nunca dispara: não custa nada conectar
-	-- em todas e deixar a própria animação dizer se tem passo ou não.
+	-- A track without the marker simply never fires: connecting to all of them costs
+	-- nothing and lets the animation itself say whether it has steps.
 	maid:GiveTask(track:GetMarkerReachedSignal(MARKER):Connect(function(value: string?)
 		self._markerTracks[track] = true
 
 		if not self:_ownsSteps(track) then
-			stepPrint(string.format("marcador de %s ignorado: outra animação com marcador começou depois e está tocando", track.Name))
+			log:Debug(string.format("marker from %s skipped: another animation with a marker started later and is playing", track.Name))
 			return
 		end
 
-		stepPrint(string.format(`marcador "{MARKER}" disparou | animação %s (%s) | valor %s | %.0fms desde o anterior`,
-			track.Name, animationId, value or "(sem valor)", (os.clock() - self._lastStep) * 1000))
+		log:Debug(string.format(`marker "{MARKER}" fired | animation %s (%s) | value %s | %.0fms since the previous one`,
+			track.Name, animationId, value or "(no value)", (os.clock() - self._lastStep) * 1000))
 		self:_onStep(value)
 	end))
 end
@@ -555,7 +549,7 @@ function FootstepController:_bindCharacter(character: Model)
 
 	local maid = Maid.new()
 	self._maid = maid
-	-- Personagem novo, tracks novas: as antigas morreram com o Animator anterior.
+	-- New character, new tracks: the old ones died with the previous Animator.
 	self._boundTracks = setmetatable({}, { __mode = "k" }) :: any
 	self._markerTracks = setmetatable({}, { __mode = "k" }) :: any
 	self._trackStarted = setmetatable({}, { __mode = "k" }) :: any
@@ -574,22 +568,22 @@ function FootstepController:_bindCharacter(character: Model)
 	self._humanoid = humanoid
 	self._nextFoot = "Right"
 
-	-- Antes de ligar as escutas: quando o primeiro marcador disparar, o som já
-	-- tem que estar pendurado no pé e pronto.
+	-- Before hooking up the listeners: when the first marker fires, the sound must
+	-- already be hung on the foot and ready.
 	self:_buildPool(character)
 
-	-- O Walk vem do Animate padrão e o Run vem do MovementController: os dois
-	-- passam pelo mesmo Animator, então uma escuta só cobre ambos.
+	-- Walk comes from the default Animate and Run from MovementController: both go
+	-- through the same Animator, so a single listener covers both.
 	maid:GiveTask(animator.AnimationPlayed:Connect(function(track)
 		self:_bindTrack(track)
 	end))
 
-	-- Quem já estava tocando quando o personagem apareceu.
+	-- Tracks already playing when the character appeared.
 	for _, track in animator:GetPlayingAnimationTracks() do
 		self:_bindTrack(track)
 	end
 
-	-- Cair também é pisar; e o salto tem som próprio.
+	-- Falling is stepping too; and the jump has its own sound.
 	maid:GiveTask(humanoid.StateChanged:Connect(function(_, newState)
 		if newState == Enum.HumanoidStateType.Landed then
 			self:_onLanded()
@@ -598,8 +592,8 @@ function FootstepController:_bindCharacter(character: Model)
 		end
 	end))
 
-	-- O pool morre junto com os pés; a tabela é que precisa ser largada, senão
-	-- ficaria apontando para Sounds de um personagem que não existe mais.
+	-- The pool dies with the feet; the table is what must be released, or it would
+	-- keep pointing at Sounds of a character that no longer exists.
 	maid:GiveTask(function()
 		self._character = nil
 		self._humanoid = nil
@@ -608,8 +602,8 @@ function FootstepController:_bindCharacter(character: Model)
 end
 
 function FootstepController:construct()
-	-- Uma vez por sessão, e antes do primeiro personagem: o cache do cliente
-	-- sobrevive a morte e respawn, o pool dos pés não.
+	-- Once per session, and before the first character: the client cache survives
+	-- death and respawn, the feet pool does not.
 	self:_warmCache()
 
 	local function onCharacter(character: Model)

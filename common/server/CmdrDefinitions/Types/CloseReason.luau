@@ -1,11 +1,11 @@
 --[[
 	cmdr type "closeReason".
 
-	Os nomes de `Enum.CloseReason`, que é o que `game.ServerRestartScheduled` manda
-	junto do horário. Existe para o `restartwarning` poder ensaiar cada motivo sem
-	ninguém ter que digitar o nome exato de cabeça.
+	The names of `Enum.CloseReason`, which is what `game.ServerRestartScheduled` sends
+	along with the time. It exists so `restartwarning` can rehearse each reason
+	without anyone typing the exact name from memory.
 
-	Enum novo entra sozinho: a lista é lida da própria engine.
+	New enum items show up on their own: the list is read from the engine.
 ]]
 
 local function getNames() : { string }
@@ -52,8 +52,8 @@ return function(registry)
 			return matches
 		end,
 
-		-- Devolve o nome com a caixa da engine, e não a que foi digitada: é a chave
-		-- de `WarningConfig.Restart.Sources`.
+		-- Returns the name in the engine's casing, not the typed one: it is the key
+		-- into `WarningConfig.Restart.Sources`.
 		Parse = function(text : string)
 			for _, name in getNames() do
 				if string.lower(name) == string.lower(text) then

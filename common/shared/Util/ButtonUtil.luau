@@ -7,25 +7,23 @@ local Vendor = Shared:WaitForChild("Vendor")
 local Maid = require(Vendor.Maid)
 
 --[[
-	O peso de um botão de loja: ele cresce com o ponteiro em cima e afunda enquanto
-	está apertado, no `UIScale` autorado dentro dele.
+	A shop button's weight: it grows with the pointer over it and sinks while
+	pressed, on the `UIScale` authored inside it.
 
-	Mora aqui porque as **duas** lojas do lobby têm o mesmo botão de comprar — a de
-	caixas e a de cartas — e o toque delas tem de ser o mesmo gesto. Uma segunda
-	cópia dos tempos e das curvas daria dois botões que se parecem e não se sentem
-	iguais, e ninguém descobriria por qual dos dois arquivos passar quando a curva
-	mudasse.
+	It lives here because **both** Lobby shops (crates and cards) have the same
+	buy button, and it must feel the same. A second copy of the timings and curves
+	would give two buttons that look alike and do not feel alike.
 
-	Os tempos e a curva são os mesmos dos botões da HUD (ver o `HUDButtonController`):
-	a entrada é circular, e a volta é um `Back` que passa um pouco do ponto e volta —
-	é o que faz o botão parecer que tem peso em vez de só mudar de tamanho.
+	Timings and curves match the HUD buttons (see `HUDButtonController`): a
+	circular entrance, and a `Back` return that overshoots slightly, which makes
+	the button feel weighted instead of just resizing.
 ]]
 local ButtonUtil = {}
 
 --[=[
-	O aperto é mais suave que o `0.9` da HUD de propósito. Lá o botão é um ícone
-	quadrado e pequeno, e nas lojas ele é uma barra larga: o mesmo fator moveria as
-	duas bordas muito mais longe, e a barra pareceria saltar em vez de afundar.
+	The press is softer than the HUD's `0.9` on purpose. There the button is a
+	small square icon; in the shops it is a wide bar, and the same factor would
+	move both edges much farther, so the bar would seem to jump instead of sink.
 ]=]
 ButtonUtil.HOVER_SCALE = 1.05
 ButtonUtil.PRESS_SCALE = 0.93
@@ -35,17 +33,17 @@ ButtonUtil.PRESS_INFO = TweenInfo.new(0.08, Enum.EasingStyle.Circular, Enum.Easi
 ButtonUtil.RELEASE_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
 --[=[
-	Leva o `UIScale` para o tamanho que o estado do botão pede, cancelando o tween
-	anterior.
+	Moves the `UIScale` to the size the button's state asks for, canceling the
+	previous tween.
 
-	O alvo sai do estado inteiro, e não do evento que acabou de chegar: apertado vence
-	pousado, que vence parado. Sem isso, soltar o clique com o mouse ainda em cima
-	devolveria o botão ao tamanho normal em vez do tamanho de hover, e a próxima saída
-	do mouse não teria nada para desfazer.
+	The target comes from the whole state, not the latest event: pressed beats
+	hovered, which beats idle. Otherwise, releasing the click with the mouse still
+	over it would return to normal size instead of hover size, and the next mouse
+	exit would have nothing to undo.
 
-	`Tween:Cancel()` para o tween sem devolver a propriedade — a escala fica onde
-	chegou e o tween novo parte dali, que é o que faz duas animações emendarem em vez
-	de saltarem.
+	`Tween:Cancel()` stops the tween without restoring the property; the scale
+	stays where it got and the new tween starts from there, so animations chain
+	instead of jumping.
 ]=]
 local function applyScale(maid, scale : UIScale, state, style)
 	maid:DoCleaning()
@@ -70,28 +68,26 @@ local function applyScale(maid, scale : UIScale, state, style)
 end
 
 --[=[
-	Liga o crescer e o afundar de um botão. `maid` é quem desfaz tudo — o do bind do
-	container ou da carta, para um `_render` novo desconectar o que ficou e cancelar o
-	tween que estiver no meio.
+	Wires a button's grow and sink. `maid` undoes everything (the container's or
+	card's bind maid, so a new `_render` disconnects leftovers and cancels any
+	tween in progress).
 
-	Sem `UIScale` autorado dentro do botão não há o que animar, e a função simplesmente
-	não faz nada: um botão sem a peça continua clicável, e a loja não deixa de vender
-	por causa de um detalhe de tato.
+	Without an authored `UIScale` inside the button there is nothing to animate and
+	the function does nothing: the button stays clickable.
 
-	O aperto e o soltar são `InputBegan`/`InputEnded`, e não `MouseButton1Down/Up`,
-	porque a loja é jogada no celular também: filtrando `MouseButton1` **e** `Touch`, o
-	mesmo par de eventos cobre o clique e o toque. Nenhum dos dois consome o input,
-	então o `Activated` que faz a compra continua saindo normalmente.
+	Press and release are `InputBegan`/`InputEnded`, not `MouseButton1Down/Up`,
+	because the shop is played on phones too: filtering `MouseButton1` **and**
+	`Touch`, the same pair covers clicks and taps. Neither consumes input, so the
+	`Activated` that buys still fires.
 
-	Duas coisas que o par de eventos sozinho não cobre:
+	Two things the pair alone does not cover:
 
-	* **Soltar fora do botão.** Arrastar para fora e soltar lá não dispara o
-	  `InputEnded` daqui, e a escala ficaria presa no apertado para sempre — por isso o
-	  `MouseLeave` também desfaz o aperto.
-	* **Toque não tem hover.** A Roblox manda `MouseEnter` no toque como se fosse um
-	  mouse, então soltar o dedo devolveria o botão ao tamanho de hover por um quadro
-	  antes do `MouseLeave` chegar. Um toque que termina limpa os dois estados de uma
-	  vez.
+	* **Releasing outside the button.** Dragging out and releasing there does not
+	  fire this `InputEnded`, and the scale would stay pressed forever, so
+	  `MouseLeave` also undoes the press.
+	* **Touch has no hover.** Roblox sends `MouseEnter` on touch as if it were a
+	  mouse, so lifting the finger would return the button to hover size for a
+	  frame before `MouseLeave` arrives. A finished touch clears both states.
 ]=]
 function ButtonUtil.bindFeedback(button : GuiButton, maid, options : { [string] : any }?)
 	local scale = button:FindFirstChildWhichIsA("UIScale")
@@ -152,8 +148,8 @@ function ButtonUtil.bindFeedback(button : GuiButton, maid, options : { [string] 
 		refresh()
 	end))
 
-	-- A escala autorada é a de parado. Um botão que ficou grande porque o painel fechou
-	-- com o mouse em cima dele volta ao normal no bind seguinte.
+	-- The authored scale is the idle one. A button left large because the panel closed
+	-- with the mouse over it returns to normal on the next bind.
 	scale.Scale = 1
 end
 

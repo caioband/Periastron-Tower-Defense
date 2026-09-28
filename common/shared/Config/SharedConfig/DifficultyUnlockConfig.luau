@@ -1,37 +1,36 @@
 --[[
-	O cadeado das dificuldades: quem pode votar em que.
+	The difficulty locks: who may vote for what.
 
-	Facil e Medio nao aparecem na tabela -- **dificuldade sem entrada aqui e livre**,
-	e e por onde todo jogador novo comeca. As tres de cima pedem uma de duas coisas,
-	e basta **uma**:
+	Easy and Medium are not in the table: **a difficulty without an entry is
+	open**, and that is where every new player starts. The top three require one
+	of two things, and **one** is enough:
 
-		| Dificuldade | Vitorias            | ou Nivel |
-		| Hard        | 4 no Medium         |        3 |
-		| Impossible  | 4 no Hard           |        6 |
-		| Nightmare   | 6 no Impossible     |       12 |
+		| Difficulty | Wins                | or Level |
+		| Hard       | 4 on Medium         |        3 |
+		| Impossible | 4 on Hard           |        6 |
+		| Nightmare  | 6 on Impossible     |       12 |
 
-	As duas fontes existem porque medem coisas diferentes. As vitorias na dificuldade
-	de baixo dizem que o jogador **da conta** dela -- e o caminho curto de quem esta
-	jogando bem. O nivel e a rede: quem perde muito mas joga muito tambem chega,
-	porque XP cai em derrota e em run abandonada (ver `WaveService.computeReward`), e
-	so vitoria travaria o jogador ruim no Medium para sempre.
+	The two sources measure different things. Wins on the difficulty below say the
+	player **can handle** it: the short path for players doing well. Level is the
+	safety net: XP is earned on losses and abandoned runs too (see
+	`WaveService.computeReward`), and wins alone would keep a struggling player on
+	Medium forever.
 
-	`Wins` conta a **dificuldade de baixo**, e nao a que esta sendo destravada: nao ha
-	como ganhar no Nightmare antes de ele abrir. Isso tambem faz a escada ser
-	sequencial pelo lado das vitorias -- para as 6 do Impossible o jogador precisou
-	antes destravar o Impossible -- enquanto o lado do nivel pode saltar degraus.
+	`Wins` counts the **difficulty below**, not the one being unlocked (there is no
+	winning on Nightmare before it opens), so the wins path is sequential while the
+	level path can skip steps.
 
-	As vitorias por dificuldade moram em `Stats.DifficultyWins` no perfil
-	(`{ [dificuldade] = quantas }`), escrito so pelo `WaveService` no fim de uma run
-	vencida. O nivel nao e guardado: sai do `Stats.XP` pelo `LevelConfig:Resolve`,
-	igual ao HUD do lobby.
+	Wins per difficulty live in the profile's `Stats.DifficultyWins`
+	(`{ [difficulty] = count }`), written only by `WaveService` at the end of a won
+	run. Level is not stored: it comes from `Stats.XP` through `LevelConfig:Resolve`,
+	as in the Lobby HUD.
 
-	Nada aqui e sigiloso, e por isso este arquivo esta no config compartilhado e nao
-	junto dos presets (`ServerScriptService.Config.Difficulty`, onde estao as tabelas
-	de escala das waves). E a mesma conta nas duas pontas, como nos mapas: o
-	`DifficultyController` desenha o `Locked` com ela e o `DifficultyService` recusa o
-	voto com ela. O cliente calcular junto e so o cadeado aparecer antes de perguntar
-	nada ao servidor.
+	Nothing here is secret, so this file is in the shared config and not with the
+	presets (`ServerScriptService.Config.Difficulty`). Both sides run the same math,
+	as with maps: `DifficultyController` draws `Locked` with it and
+	`DifficultyService` refuses the vote with it.
+
+	See docs/game/difficulty-vote.md.
 ]]
 
 local LevelConfig = require(script.Parent.LevelConfig)
@@ -39,8 +38,8 @@ local LevelConfig = require(script.Parent.LevelConfig)
 local module = {}
 
 --[=[
-	A chave do perfil onde as vitorias por dificuldade ficam. Escrita aqui para o
-	`WaveService` e a leitura deste modulo nao poderem se desencontrar.
+	The profile key where wins per difficulty live. Written here so `WaveService`
+	and this module's reads cannot drift apart.
 ]=]
 module.WINS_KEY = "DifficultyWins"
 
@@ -59,7 +58,7 @@ module.REQUIREMENTS = {
 --[[ API ]]
 
 --[=[
-	O que a dificuldade pede, ou nil quando ela e livre.
+	What the difficulty requires, or nil when it is open.
 ]=]
 function module.getRequirement(difficultyName : string?) : Requirement?
 	if typeof(difficultyName) ~= "string" then
@@ -70,11 +69,10 @@ function module.getRequirement(difficultyName : string?) : Requirement?
 end
 
 --[=[
-	Quantas vitorias o jogador tem **naquela** dificuldade.
+	How many wins the player has **on that** difficulty.
 
-	Perfil que ainda nao chegou, ou chave que ainda nao existe, valem zero -- o
-	mesmo chute dos mapas: com ele so o que e livre aparece livre, e nunca o
-	contrario.
+	A profile not loaded yet, or a key that does not exist yet, counts as zero:
+	the same guess as maps, so only what is open shows open, never the reverse.
 ]=]
 function module.winsIn(stats : { [string] : any }?, difficultyName : string?) : number
 	if typeof(stats) ~= "table" or typeof(difficultyName) ~= "string" then
@@ -90,7 +88,7 @@ function module.winsIn(stats : { [string] : any }?, difficultyName : string?) : 
 end
 
 --[=[
-	O nivel do perfil, derivado do XP acumulado. Sem perfil, nivel 1.
+	The profile's level, derived from accumulated XP. Without a profile, level 1.
 ]=]
 function module.levelOf(stats : { [string] : any }?) : number
 	local xp = typeof(stats) == "table" and stats.XP or 0
@@ -99,12 +97,12 @@ function module.levelOf(stats : { [string] : any }?) : number
 end
 
 --[=[
-	Se este jogador ja pode escolher a dificuldade.
+	Whether this player may already pick the difficulty.
 
-	Basta uma das duas exigencias. Dificuldade sem exigencia nenhuma esta sempre
-	aberta, e nome desconhecido tambem passa: quem chama ja tratou o nome invalido
-	(o `DifficultyConfig.Exists` do servidor), e trancar aqui esconderia botao por
-	engano.
+	Either requirement is enough. A difficulty with no requirement is always open,
+	and an unknown name passes too: the caller already handled invalid names (the
+	server's `DifficultyConfig.Exists`), and locking here would hide a button by
+	mistake.
 ]=]
 function module.isUnlocked(difficultyName : string?, stats : { [string] : any }?) : boolean
 	local requirement = module.getRequirement(difficultyName)
@@ -120,8 +118,8 @@ function module.isUnlocked(difficultyName : string?, stats : { [string] : any }?
 end
 
 --[=[
-	Quantas vitorias ainda faltam pelo caminho das vitorias, ou zero quando a
-	dificuldade ja abriu. E o numero que o texto do cadeado escreve.
+	How many wins are still missing on the wins path, or zero when the difficulty
+	is open. The number the padlock text writes.
 ]=]
 function module.winsMissing(difficultyName : string?, stats : { [string] : any }?) : number
 	local requirement = module.getRequirement(difficultyName)
@@ -133,11 +131,11 @@ function module.winsMissing(difficultyName : string?, stats : { [string] : any }
 end
 
 --[=[
-	O texto do `Locked`: "4 more wins in Medium or Level 3".
+	The `Locked` text: "4 more wins in Medium or Level 3".
 
-	Sai vazio para dificuldade livre ou ja destravada -- nesses casos o frame nem
-	esta na tela. Os dois caminhos aparecem juntos de proposito: o jogador precisa
-	ver que existe uma saida que nao depende de vencer.
+	Empty for an open or unlocked difficulty (the frame is not even on screen then).
+	Both paths appear together on purpose: the player must see there is a way out
+	that does not depend on winning.
 ]=]
 function module.lockText(difficultyName : string?, stats : { [string] : any }?) : string
 	local requirement = module.getRequirement(difficultyName)

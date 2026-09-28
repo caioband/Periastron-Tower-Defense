@@ -1,69 +1,65 @@
 --[[
 	Single source of truth for the lobby shop.
 
-	O `ShopController` le isto para preencher a `ShopUI`. **Ele nao cria container
-	nenhum**: cada caixa tem o container dela autorado na `ScrollingFrame`, com a
-	arte propria, e o codigo so acha o container pelo nome e escreve o que muda --
-	o nome, o preco e a lista de raridades. Um item sem container autorado nao
-	aparece (e avisa uma vez), e um container sem item na tabela fica escondido.
+	`ShopController` reads this to fill `ShopUI`. **It creates no containers**: each
+	crate has its container authored in the `ScrollingFrame`, with its own art, and
+	the code only finds the container by name and writes what changes (name, price,
+	and rarity list). An item without an authored container does not appear (and
+	warns once), and a container without an item in the table stays hidden.
 
-	Foi uma troca de dono: antes existia um `ShopItemWrapper` autorado que o
-	controller clonava por item. Nao serve mais -- cada caixa tem ilustracao,
-	moldura e cor de linha diferentes, e clonar um template so daria tres caixas com
-	a cara da primeira.
-
-	Crate rows carry only the crate name: o nome, o icone e o **nome do container**
-	saem do `CrateConfig`, entao a loja nunca repete o que a caixa ja sabe.
+	Crate rows carry only the crate name: the name, the icon, and the **container
+	name** come from `CrateConfig`, so the shop never repeats what the crate knows.
 
 	Nothing here is secret. Granting the item is server side -- the client only
-	asks, and ServerScriptService validates the price against the profile. As
-	**chances** de cada caixa tambem sao do servidor: elas chegam pelo evento
-	`CrateOdds`, e nao desta tabela.
+	asks, and ServerScriptService validates the price against the profile. Each
+	crate's **odds** are also server side: they arrive through the `CrateOdds`
+	event, not this table.
+
+	See docs/lobby/shop.md.
 ]]
 
+local Log = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Util"):WaitForChild("Log"))
 local CrateConfig = require(script.Parent.CrateConfig)
 local GamepassConfig = require(script.Parent.GamepassConfig)
+
+local log = Log.new("ShopConfig")
 
 local module = {}
 
 --[[ ANIMATION ]]
 
 --[=[
-	Module name inside ReplicatedStorage.CascadeAnimations. `OpenShop` anima duas
-	faixas: o `Scale` de um `UIScale` filho e o `ImageTransparency` do painel.
+	Module name inside ReplicatedStorage.CascadeAnimations. `OpenShop` animates two
+	tracks: a child `UIScale`'s `Scale` and the panel's `ImageTransparency`.
 
-	O `UIScale` e criado pelo controller quando o painel nao tem um autorado --
-	sem ele a faixa nao tem onde escrever e a loja so apareceria por fade.
-
-	A animacao de item (`ShopItemContainerShow`) saiu junto com o template: ela
-	movia `Position.X.Scale`, e os containers de hoje estao sob um `UIListLayout`,
-	que e quem manda na posicao deles. A faixa nao teria efeito nenhum.
+	The controller creates the `UIScale` when the panel has none authored; without
+	it the track has nowhere to write and the shop would only fade in.
 ]=]
 module.OPEN_ANIMATION = "OpenShop"
 
 --[[ PROXIMITY ]]
 
 -- The shop opens when the player walks up to this part and closes when they leave.
--- It lives somewhere under Workspace.<REFERENCE_PARENT_NAME>, at any depth: hoje os
--- dois marcadores estao agrupados no modelo da loja, e o controller desce a arvore
--- pelo nome em vez de exigir que eles fiquem soltos na raiz do mapa.
+-- It lives somewhere under Workspace.<REFERENCE_PARENT_NAME>, at any depth: both
+-- markers are grouped in the shop's model, and the controller walks the tree by
+-- name instead of requiring them loose at the map root.
 module.REFERENCE_PARENT_NAME = "Map"
 module.REFERENCE_PART_NAME = "ShopPartReference"
 
 --[[
 	Studs from the part, measured against the HumanoidRootPart.
 
-	Cinco studs e o balcao: a loja abre quando o jogador chega **na** vendedora, e
-	nao quando ele passa perto dela. Este raio ja foi 20, que pegava meio patio --
-	quem so atravessava a praca abria e fechava a loja sem ter pedido nada.
+	Five studs is the counter: the shop opens when the player reaches **the**
+	shopkeeper, not when they walk past. A wider radius caught half the plaza, and
+	players just crossing it opened and closed the shop without asking.
 
-	O raio largo nao sumiu, ele mudou de dono: quem responde a 20 studs agora e o
-	vendedor (`KEEPER_APPROACH_RADIUS`), que levanta ao ver o jogador chegando. Sao
-	dois momentos de proposito -- ele te ve de longe, a loja abre no balcao.
+	The wide radius now belongs to the shopkeeper (`KEEPER_APPROACH_RADIUS`), who gets
+	up on seeing the player approach. Two moments on purpose: they see you from afar,
+	the shop opens at the counter.
 
-	**O `ShopPartTeleport` fica a 14.85 studs daqui, portanto fora deste raio.** O
-	botao da HUD nao depende mais da proximidade para abrir: ele abre a loja na mao e
-	marca a entrada, para que andar embora feche do mesmo jeito. Ver
+	**`ShopPartTeleport` is 14.85 studs from here, outside this radius.** The HUD
+	button does not rely on proximity to open: it opens the shop by hand and marks
+	the entry, so walking away closes it the same way. See
 	`ShopController:TeleportToShop`.
 ]]
 module.OPEN_RADIUS = 5
@@ -75,8 +71,8 @@ module.PROXIMITY_INTERVAL = 0.2
 --[[ TELEPORT ]]
 
 -- Where the HUD shop button drops the player: a marker part next to the shop,
--- procurado sob Workspace.<REFERENCE_PARENT_NAME> do mesmo jeito que o de cima. It
--- sits inside the open radius above, so landing there opens the shop on its own.
+-- searched under Workspace.<REFERENCE_PARENT_NAME> like the one above. It sits
+-- outside the open radius, so `TeleportToShop` opens the shop by hand.
 module.TELEPORT_PART_NAME = "ShopPartTeleport"
 
 -- Studs above the top of the marker, so the character lands standing on it instead
@@ -86,37 +82,37 @@ module.TELEPORT_HEIGHT_OFFSET = 3
 --[[ SHOPKEEPER ]]
 
 --[=[
-	O vendedor da loja, procurado sob Workspace.<REFERENCE_PARENT_NAME> pelo nome,
-	do mesmo jeito que os marcadores.
+	The shopkeeper, found by name under Workspace.<REFERENCE_PARENT_NAME>, like the
+	markers.
 
-	Ele nao tem `Humanoid`: as animacoes tocam pelo `Animator` do
-	`AnimationController` dele. Quem toca e o **cliente**, e nao o servidor -- assim
-	o vendedor reage a quem chegou, e nao a "alguem chegou". Dois jogadores no lobby
-	veem o vendedor atendendo cada um deles, o que e o que a cena quer dizer.
+	It has no `Humanoid`: animations play through its `AnimationController`'s
+	`Animator`. The **client** plays them, not the server, so the shopkeeper reacts
+	to whoever arrived, not to "someone arrived". Two players in the Lobby each see
+	the shopkeeper serving them.
 ]=]
 module.KEEPER_MODEL_NAME = "Entrepreneur"
 
 --[=[
-	Studs do `REFERENCE_PART_NAME` -- o mesmo centro que a loja usa, e nao o corpo do
-	vendedor -- em que ele larga o descanso e levanta para atender.
+	Studs from `REFERENCE_PART_NAME` (the same center the shop uses, not the
+	shopkeeper's body) at which it leaves its rest and gets up to serve.
 
-	Tem de ser **maior** que o `OPEN_RADIUS`, e por uma margem que de tempo de ver a
-	animacao: o jogador cruza estes 20 studs andando, o `GetUp` roda no caminho, e
-	quando ele chega no balcao o vendedor ja esta de pe. Igualar os dois faria o
-	vendedor levantar junto com a loja abrindo, que e tarde demais para ser um gesto.
+	It must be **larger** than `OPEN_RADIUS`, with enough margin to see the
+	animation: the player crosses these 20 studs walking, `GetUp` plays on the way,
+	and by the time they reach the counter the shopkeeper is standing. Equal radii
+	would make it stand up as the shop opens, too late to be a gesture.
 ]=]
 module.KEEPER_APPROACH_RADIUS = 20
 
 --[=[
-	As animacoes do vendedor, pelo nome do `Animation` filho do modelo.
+	The shopkeeper's animations, by the name of the model's `Animation` child.
 
-	Cada uma e um momento da visita, e nao um passo de codigo: `IDLE` e o que ele faz
-	sozinho o dia todo, `GET_UP` e o levantar, `ATTEND` e o esperar no balcao, e as
-	duas despedidas dependem de o jogador ter levado alguma coisa.
+	Each is a moment of the visit, not a code step: `IDLE` is what it does alone all
+	day, `GET_UP` is standing up, `ATTEND` is waiting at the counter, and the two
+	goodbyes depend on whether the player bought something.
 
-	**A despedida azeda nao e um erro.** Sair sem comprar toca `FAREWELL_EMPTY`
-	(`ByeByeEvil`); sair depois de uma compra toca `FAREWELL_SOLD`. E a unica coisa
-	que a loja lembra da visita, e ela e zerada quando o jogador entra no raio.
+	**The sour goodbye is not a bug.** Leaving without buying plays `FAREWELL_EMPTY`
+	(`ByeByeEvil`); leaving after a purchase plays `FAREWELL_SOLD`. It is the only
+	thing the shop remembers about the visit, reset when the player enters the radius.
 ]=]
 module.KEEPER_IDLE_ANIMATION = "Idle"
 module.KEEPER_GET_UP_ANIMATION = "GetUp"
@@ -124,37 +120,35 @@ module.KEEPER_ATTEND_ANIMATION = "IdleBench"
 module.KEEPER_FAREWELL_SOLD_ANIMATION = "ByeBye"
 module.KEEPER_FAREWELL_EMPTY_ANIMATION = "ByeByeEvil"
 
--- Crossfade entre uma animacao e a seguinte. Curto porque as transicoes dele sao
--- gestos (levantar, acenar) e nao poses: meio segundo de mistura borraria o comeco
--- do aceno com o fim do idle.
+-- Crossfade between one animation and the next. Short because its transitions are
+-- gestures (standing up, waving), not poses: half a second of blending would smear
+-- the start of the wave with the end of the idle.
 module.KEEPER_FADE_TIME = 0.2
 
 --[=[
-	Teto de quanto um gesto pode levar antes de o vendedor cair na pose seguinte de
-	qualquer jeito.
+	The longest a gesture may take before the shopkeeper falls into the next pose
+	anyway.
 
-	E rede de seguranca, e nao ritmo: quem manda no fim do `GetUp` e do aceno e o
-	`Stopped` do proprio track. So que um `Animation` cujo asset nao carrega **nunca
-	toca**, e entao esse `Stopped` nunca chega -- sem este teto o vendedor ficaria
-	congelado no meio do gesto para sempre, porque a recuperacao automatica so cuida
-	das duas poses de descanso.
+	A safety net, not pacing: the track's own `Stopped` ends `GetUp` and the wave.
+	But an `Animation` whose asset does not load **never plays**, so `Stopped` never
+	arrives; without this cap the shopkeeper would freeze mid-gesture forever, since
+	automatic recovery only covers the two resting poses.
 
-	Dez segundos e folgado de proposito: ele nao pode cortar um gesto real, e um
-	vendedor travado por dez segundos ainda volta ao normal sozinho.
+	Ten seconds is generous on purpose: it must not cut a real gesture, and a
+	shopkeeper stuck for ten seconds still recovers on its own.
 ]=]
 module.KEEPER_GESTURE_TIMEOUT = 10
 
 --[[ ITEMS ]]
 
 --[[
-	O preco no label do botao `Buy`: `50`, `1,800`.
+	The price on the `Buy` button label: `50`, `1,800`.
 
-	So o numero. A moeda nao vem escrita: o botao carrega o icone dela ao lado (ver
-	`CURRENCIES`), e repetir a palavra so roubava largura do numero, que e a unica
-	parte que muda de caixa para caixa.
+	Just the number. The currency is not written: the button carries its icon (see
+	`CURRENCIES`), and repeating the word only stole width from the number, the only
+	part that changes between crates.
 
-	O numero entra pelo `UIUtil.formatCommas`, entao a lendaria le `1,800` e nao
-	`1800`.
+	The number goes through `UIUtil.formatCommas`, so the legendary reads `1,800`.
 ]]
 module.PRICE_FORMAT = "%s"
 
@@ -163,23 +157,22 @@ module.DEFAULT_BUTTON_TEXT = "BUY"
 --[[ CURRENCIES ]]
 
 --[=[
-	As moedas que a loja aceita, pela chave que elas tem em `Data.Stats`.
+	The currencies the shop accepts, by their key in `Data.Stats`.
 
-	**O nome da chave e o nome no perfil, e nao o nome na tela**: o jogador le
-	"Coins" e o perfil guarda `Cash` desde sempre (ver o `LeaderstatsService`).
-	Escrever aqui a palavra da tela criaria um `Stats.Coins` fantasma no dia em que
-	o servidor cobrasse por ela.
+	**The key is the profile name, not the screen name**: players read "Coins" and
+	the profile has always stored `Cash` (see `LeaderstatsService`). Writing the
+	screen word here would create a ghost `Stats.Coins` the day the server charged it.
 
-	Quem pinta o botao com a cor e o icone de cada moeda e o `ShopController` -- isto
-	aqui e so o que o servidor precisa saber para cobrar.
+	`ShopController` paints each currency's color and icon on the button; this is
+	only what the server needs to charge.
 ]=]
 module.CURRENCIES = {
 	Shards = "Shards",
 	Cash = "Cash",
 }
 
--- Item sem `Currency` cobra em Shards, que era a unica moeda da loja antes de a
--- caixa comum e a de natureza passarem a custar Coins.
+-- An item without `Currency` charges Shards, the shop's only currency before the
+-- common and nature crates started costing Coins.
 module.DEFAULT_CURRENCY = "Shards"
 
 --[=[
@@ -197,23 +190,21 @@ module.DEFAULT_CURRENCY = "Shards"
 ]=]
 
 --[[
-	**A loja cobra em duas moedas, e nao mais so em shards.**
+	**The shop charges in two currencies.**
 
-	As duas primeiras caixas passaram a custar Coins (`Stats.Cash`), que e o que o
-	jogador acumula jogando, e as duas de baixo continuam em Shards. E o degrau que
-	faltava: com tudo em shards, a caixa comum concorria com a lendária pela mesma
-	carteira, e quem quisesse a lendária nao tinha razao nenhuma para comprar as
-	outras.
+	The first two crates cost Coins (`Stats.Cash`), what the player earns by playing,
+	and the other two stay in Shards. With everything in shards, the common crate
+	competed with the legendary for the same wallet.
 
-	Os precos sao contra o que uma run **completa** paga hoje (ver `WinCash` e
-	`WinShards` em `Config.Difficulty`): 100 coins e 1 shard no Facil, 900 coins e 5
-	shards no Nightmare. Nessa escala, a Crate Of Beginnings sai a cada meia run no
-	Facil e a Fragmented Crate a cada run no Nightmare.
+	Prices are set against what a **complete** run pays today (see `WinCash` and
+	`WinShards` in `Config.Difficulty`): 100 coins and 1 shard on Easy, 900 coins and
+	5 shards on Nightmare. At that scale, a Crate of Beginnings every half run on Easy
+	and a Fragmented Crate every run on Nightmare.
 
-	**A lendária esta fora de escala.** Os 1800 shards dela sao de quando uma run
-	pagava 60 shards no Médio; com 5 no Nightmare, sao 360 partidas. Ela nao aparece
-	na loja hoje (nao ha container `LegendaryCrate` autorado), entao o numero nao
-	chega a nenhum jogador -- mas ele precisa ser repreçado antes de ela voltar.
+	**The legendary is out of scale.** Its 1,800 shards date from when a run paid 60
+	shards on Medium; at 5 on Nightmare, that is 360 matches. It does not appear in
+	the shop today (no `LegendaryCrate` container is authored), so no player sees the
+	number, but it must be repriced before it returns.
 ]]
 module.ITEMS = {
 	{
@@ -241,13 +232,13 @@ module.ITEMS = {
 	},
 
 	--[[
-		A lendaria continua a venda na tabela e **fica de fora da tela**: a
-		`ScrollingFrame` so tem container autorado para as tres de cima, e o
-		controller so desenha caixa que tem container.
+		The legendary is still for sale in the table and **stays off screen**: the
+		`ScrollingFrame` only has containers for the top three, and the controller only
+		draws crates with a container.
 
-		Ela nao foi removida daqui de proposito -- ela existe no inventario, no drop e
-		no unboxing, e o dia em que um container `LegendaryCrate` for autorado ela
-		volta a aparecer sem ninguem mexer em codigo.
+		It was not removed on purpose: it exists in the inventory, drops, and unboxing,
+		and the day a `LegendaryCrate` container is authored it returns with no code
+		change.
 	]]
 	{
 		Id = "LegendaryCrate",
@@ -272,16 +263,16 @@ export type ShopItem = {
 }
 
 --[=[
-	O que este perfil paga por um item, com o desconto das gamepasses ja dentro.
+	What this profile pays for an item, with game pass discounts included.
 
-	**Arredonda ao mais proximo, com piso de 1.** Nao e para cima: a Fragmented Crate
-	custa 4 shards, e 20% dela e 0,8 -- arredondando para cima o VIP pagaria os mesmos
-	4 e veria a pass nao funcionar justamente na caixa do meio da loja. O piso existe
-	porque desconto que zera o preco da a caixa de graca.
+	**Rounds to the nearest value, with a floor of 1.** Not up: the Fragmented Crate
+	costs 4 shards, 20% of that is 0.8, and rounding up would charge VIP players the
+	same 4. The floor exists because a discount that zeroes the price gives the crate
+	away.
 
-	Os dois lados chamam esta mesma funcao: o `ShopService` para cobrar e o
-	`ShopController` para escrever no botao. O preco na tela e o preco cobrado porque
-	e a mesma conta, e nao porque alguem lembrou de atualizar as duas.
+	Both sides call this function: `ShopService` to charge and `ShopController` to
+	write the button. The price on screen is the price charged because it is the same
+	math.
 ]=]
 function module.priceFor(item, profile) : number
 	local price = typeof(item) == "table" and item.Price or 0
@@ -295,11 +286,11 @@ function module.priceFor(item, profile) : number
 end
 
 --[=[
-	A moeda que o item cobra, ja como chave de `Data.Stats`.
+	The currency the item charges, as a `Data.Stats` key.
 
-	Uma moeda que a tabela nao conhece cai no padrao com um aviso, em vez de virar
-	`stats[nil]` no servidor: um erro de digitacao aqui cobraria de um campo que o
-	perfil nao tem, e a caixa sairia de graca.
+	An unknown currency falls back to the default with a warning instead of becoming
+	`stats[nil]` on the server: a typo here would charge a field the profile lacks,
+	and the crate would be free.
 ]=]
 local function resolveCurrency(item): string
 	local currency = item.Currency
@@ -308,7 +299,7 @@ local function resolveCurrency(item): string
 	end
 
 	if not module.CURRENCIES[currency] then
-		warn(`[ShopConfig]: item '{item.Id}' prices in unknown currency '{currency}', falling back to {module.DEFAULT_CURRENCY}.`)
+		log:StudioWarn(`item '{item.Id}' prices in unknown currency '{currency}', falling back to {module.DEFAULT_CURRENCY}.`)
 		return module.DEFAULT_CURRENCY
 	end
 
@@ -329,7 +320,7 @@ local function resolveItem(item): ShopItem?
 	if item.Crate then
 		crate = CrateConfig.resolveRarity(item.Crate)
 		if not crate then
-			warn(`[ShopConfig]: item '{item.Id}' points at unknown crate '{item.Crate}'.`)
+			log:StudioWarn(`item '{item.Id}' points at unknown crate '{item.Crate}'.`)
 			return nil
 		end
 
@@ -337,8 +328,8 @@ local function resolveItem(item): ShopItem?
 		displayName = displayName or crateInfo.DisplayName
 		image = image or crateInfo.Image
 
-		-- O container e o `Key` da caixa: um nome so para o modelo, para o container
-		-- e para o `Id` daqui. Ver o comentario de `CRATES` no `CrateConfig`.
+		-- The container is the crate's `Key`: one name for the model, the container, and
+		-- the `Id` here. See `CRATES` in `CrateConfig`.
 		container = container or crateInfo.Key
 	end
 

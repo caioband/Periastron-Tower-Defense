@@ -12,11 +12,13 @@ local SharedConfig = require(Configs.SharedConfig)
 local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 local Signal = require(Packages.Signal)
 
 local ShopConfig = SharedConfig.ShopConfig
 
 local Framework = Me.new()
+local log = Log.new("ShopService")
 
 --[=[
 	Sells what ShopConfig lists.
@@ -50,16 +52,16 @@ function ShopService:_grantItem(Player : Player, item) : boolean
 		return self.Services.CrateService:GiveCrates(Player, item.Crate, item.Amount) ~= nil
 	end
 
-	warn(string.format("[ShopService]: item %q grants nothing -- give it a Crate in ShopConfig.", tostring(item.Id)))
+	log:StudioWarn(string.format("item %q grants nothing -- give it a Crate in ShopConfig.", tostring(item.Id)))
 	return false
 end
 
 --[=[
-	Devolve o que foi cobrado, na moeda em que foi cobrado.
+	Returns what was charged, in the currency it was charged in.
 
-	`currency` e sempre uma chave de `ShopConfig.CURRENCIES` -- o `resolveItem` ja
-	troca uma moeda desconhecida pelo padrao antes de o item chegar aqui, entao o
-	refund nao tem como criar um campo que o perfil nao tem.
+	`currency` is always a `ShopConfig.CURRENCIES` key: `resolveItem` already replaces an
+	unknown currency with the default before the item gets here, so the refund cannot
+	create a field the profile does not have.
 ]=]
 function ShopService:_refund(Player : Player, currency : string, amount : number)
 	self.Services.DataService:Update(Player, "Stats", function(stats)
@@ -73,16 +75,16 @@ end
 --[[ EXTERNAL ]]
 
 --[=[
-	As chances que a loja publica, por caixa: `{ [Id do item] = { [raridade] = % } }`.
+	The chances the shop publishes, per crate: `{ [item Id] = { [rarity] = % } }`.
 
-	Sai daqui e nao de um config compartilhado porque as odds sao **do servidor**
-	(`ServerScriptService.Config.Crate`) -- o cliente recebe o resultado da conta,
-	e nao a tabela que a produz. O que ele recebe ja e a chance real, com a evolucao
-	da caixa dentro; ver `Crate.GetDisplayOdds`.
+	It comes from here and not a shared config because the odds belong to the **server**
+	(`ServerScriptService.Config.Crate`): the client receives the math's result, not the
+	table that produces it. What it receives is already the real chance, with the crate's
+	upgrade included; see `Crate.GetDisplayOdds`.
 
-	Item que nao entrega caixa nenhuma fica de fora do mapa, e nao com um mapa vazio:
-	quem le sabe distinguir "esta caixa nao tem chance nenhuma" (impossivel) de "este
-	item nao e uma caixa".
+	An item that delivers no crate is left out of the map, not given an empty map: readers
+	can tell "this crate has no chance of anything" (impossible) from "this item is not a
+	crate".
 ]=]
 function ShopService:GetCrateOdds() : { [string]: { [string]: number } }
 	if self.CrateOdds then
@@ -100,17 +102,17 @@ function ShopService:GetCrateOdds() : { [string]: { [string]: number } }
 		end
 	end
 
-	-- Nada aqui muda em tempo de execucao: e config vezes config, e a mesma resposta
-	-- vale para todo mundo pelo resto do servidor.
+	-- Nothing here changes at runtime: it is config times config, and the same answer
+	-- holds for everyone for the rest of the server's life.
 	self.CrateOdds = odds
 	return odds
 end
 
 --[=[
-	Quanto o jogador tem de uma moeda, direto do perfil carregado. `currency` e uma
-	chave de `ShopConfig.CURRENCIES`; sem ela, a moeda padrao da loja.
+	How much of a currency the player has, straight from the loaded profile. `currency` is
+	a `ShopConfig.CURRENCIES` key; without it, the shop's default currency.
 
-	Devolve nil quando o perfil ainda nao carregou -- que e diferente de zero.
+	Returns nil when the profile has not loaded yet, which is different from zero.
 ]=]
 function ShopService:PeekBalance(Player : Player, currency : string?) : number?
 	local profiles = self.Services.DataService.Profiles
@@ -137,7 +139,7 @@ end
 function ShopService:Purchase(Player : Player, itemId : string?) : (boolean, string?)
 	local item = ShopConfig.getItem(itemId)
 	if not item then
-		warn(string.format("[ShopService]: %s asked for %q, which the shop does not sell.", Player.Name, tostring(itemId)))
+		log:StudioWarn(string.format("%s asked for %q, which the shop does not sell.", Player.Name, tostring(itemId)))
 		return false, "UnknownItem"
 	end
 
@@ -145,20 +147,20 @@ function ShopService:Purchase(Player : Player, itemId : string?) : (boolean, str
 	local profiles = DataService.Profiles
 
 	if not DataService.Update or not profiles or not profiles[Player] then
-		warn(string.format("[ShopService]: %s has no profile loaded, ignoring the purchase.", Player.Name))
+		log:StudioWarn(string.format("%s has no profile loaded, ignoring the purchase.", Player.Name))
 		return false, "NotLoaded"
 	end
 
-	-- Ja e a chave de `Data.Stats`: uma caixa em Coins cobra de `Cash`, que e como o
-	-- perfil chama a moeda que a tela chama de Coins.
+	-- It is already the `Data.Stats` key: a crate priced in Coins charges `Cash`, which is
+	-- what the profile calls the currency the screen calls Coins.
 	local currency = item.Currency
 
 	--[[
-		O preco **deste** jogador, com o desconto do VIP ja dentro (`ShopConfig.priceFor`).
+		**This** player's price, with the VIP discount already applied (`ShopConfig.priceFor`).
 
-		Lido aqui e nao dentro do `Update`: o preco sai de `Data.Gamepasses`, que o
-		`Update` de `Stats` nao entrega -- e a mesma conta que o cliente fez para
-		escrever o numero no botao, entao o que ele leu e o que ele paga.
+		Read here and not inside `Update`: the price comes from `Data.Gamepasses`, which the
+		`Stats` `Update` does not provide; it is the same math the client did to write the
+		number on the button, so what it read is what it pays.
 	]]
 	local price = ShopConfig.priceFor(item, profiles[Player].Profile.Data)
 
@@ -203,10 +205,10 @@ function ShopService:construct()
 	end)
 
 	--[[
-		O cliente pede as chances quando liga a loja, em vez de o servidor mandar no
-		join: a `ShopUI` e `ResetOnSpawn`, entao o painel e reconstruido a cada
-		respawn, e um envio unico no join se perderia na primeira morte. O pedido
-		tambem cobre o jogador que entrou antes de o service subir.
+		The client asks for the chances when it hooks up the shop, instead of the server
+		sending them on join: `ShopUI` is `ResetOnSpawn`, so the panel is rebuilt on every
+		respawn, and a single send on join would be lost at the first death. The request
+		also covers a player who joined before the service started.
 	]]
 	Framework:Listen("RequestCrateOdds", function(Player : Player)
 		Framework:Fire("CrateOdds", Player, self:GetCrateOdds())

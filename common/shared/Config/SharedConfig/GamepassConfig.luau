@@ -1,34 +1,34 @@
 --[[
-	As gamepasses: o id de cada uma e o que ela muda no jogo.
+	The game passes: each one's id and what it changes in the game.
 
-	Fonte unica dos dois lados. O servidor pergunta a Roblox quem tem o que e grava
-	no perfil (`MonetizationService:RecalibratePasses`); dai em diante **ninguem mais
-	pergunta a Roblox**, e as duas pontas leem a mesma chave `Gamepasses` do perfil
-	pelas funcoes daqui de baixo.
+	A single source for both sides. The server asks Roblox who owns what and saves
+	it in the profile (`MonetizationService:RecalibratePasses`); from then on
+	**nobody asks Roblox again**, and both sides read the profile's `Gamepasses`
+	key through the functions below.
 
-	Nada aqui e sigiloso -- os numeros estao escritos na propria pagina da pass, e o
-	cliente precisa deles para desenhar o preco com desconto e o teto do deck antes de
-	perguntar nada. O que continua sigiloso e o que ja era: as odds das caixas moram
-	em `ServerScriptService.Config.Crate`, e a sorte daqui multiplica **aquelas**
-	tabelas do lado de la, e nao aqui.
+	Nothing here is secret (the numbers are on each pass page, and the client needs
+	them to draw discounted prices and the deck cap). Crate odds stay in
+	`ServerScriptService.Config.Crate`, and luck multiplies **those** tables on the
+	server, not here.
 
-	## Como o perfil guarda
+	## How the profile stores it
 
-	`Data.Gamepasses` e `{ [chave] = true }` -- a **chave** desta tabela, e nao o id
-	numerico. O id e uma coisa da Roblox e muda quando uma pass e recriada; a chave e
-	do jogo. Um id trocado e uma linha aqui, e nao uma migracao de perfil.
+	`Data.Gamepasses` is `{ [key] = true }`, keyed by this table's **key**, not the
+	numeric id. The id belongs to Roblox and changes if a pass is recreated; the key
+	belongs to the game. A changed id is one line here, not a profile migration.
 
-	Uma pass **nao** e guardada para sempre: o `RecalibratePasses` reescreve a tabela
-	inteira a cada entrada, entao um reembolso tira o beneficio no proximo login. E
-	por isso que nada aqui e credito -- as passes sao multiplicadores lidos na hora,
-	nunca moeda depositada.
+	A pass is **not** stored forever: `RecalibratePasses` rewrites the whole table on
+	every join, so a refund removes the benefit on the next login. That is why
+	nothing here is a credit: passes are multipliers read on demand, never currency
+	deposited.
 
-	## Como os numeros se combinam
+	## How numbers combine
 
-	Cada beneficio e um **multiplicador**, e passes que mexem no mesmo numero se
-	multiplicam entre si. Hoje ha uma por beneficio, entao a conta e sempre uma
-	multiplicacao so -- mas uma segunda pass de coins amanha entra sem mexer em quem
-	le, o que nao aconteceria com um `if` por pass espalhado pelos services.
+	Each benefit is a **multiplier**, and passes touching the same number multiply.
+	Today there is one pass per benefit, but a second coins pass tomorrow works
+	without touching any reader, unlike an `if` per pass spread across services.
+
+	See docs/common/gamepasses.md.
 ]]
 
 local RarityConfig = require(script.Parent.RarityConfig)
@@ -36,28 +36,26 @@ local RarityConfig = require(script.Parent.RarityConfig)
 local module = {}
 
 --[=[
-	Uma pass por linha. `Id` e o `GamePassId` da Roblox; o resto e o que ela faz.
+	One pass per line. `Id` is the Roblox `GamePassId`; the rest is what it does.
 
-	| Campo | O que e |
+	| Field | What it is |
 	| --- | --- |
-	| `Id` | o `GamePassId`, o que o `MarketplaceService` pergunta |
-	| `DisplayName` | o que o jogador le |
-	| `CardBonus` | quantas cartas a mais cabem no deck |
-	| `CoinMultiplier` | multiplica os coins da recompensa de fim de partida |
-	| `ShardMultiplier` | idem, para shards |
-	| `XpMultiplier` | idem, para XP |
-	| `CratePriceMultiplier` | multiplica o preco das caixas na loja (0.8 e 20% off) |
-	| `LuckMultiplier` | multiplica o peso das raridades boas no sorteio da caixa |
-	| `ChatTag` | o rotulo que aparece antes do nome no chat |
+	| `Id` | the `GamePassId` that `MarketplaceService` checks |
+	| `DisplayName` | what the player reads |
+	| `CardBonus` | how many extra cards fit in the deck |
+	| `CoinMultiplier` | multiplies end-of-match reward coins |
+	| `ShardMultiplier` | same, for shards |
+	| `XpMultiplier` | same, for XP |
+	| `CratePriceMultiplier` | multiplies crate prices in the shop (0.8 is 20% off) |
+	| `LuckMultiplier` | multiplies the weight of good rarities in the crate draw |
+	| `ChatTag` | the tag shown before the name in chat |
 
-	A `Speed` nao tem campo nenhum de beneficio: o que ela libera e um degrau do
-	`SpeedConfig`, e quem aponta para ela e o proprio degrau (`Gamepass = "Speed"`).
-	Uma pass que so destranca conteudo e assim -- id e nome aqui, a regra onde o
-	conteudo mora.
+	`Speed` has no benefit field: it unlocks a `SpeedConfig` step, and the step
+	points at it (`Gamepass = "Speed"`). A pass that only unlocks content works this
+	way: id and name here, the rule where the content lives.
 
-	Campo ausente e "esta pass nao mexe nisso" -- as funcoes abaixo tratam a falta
-	como neutro (1 para multiplicador, 0 para bonus). Uma pass nova que so mexa em
-	uma coisa e uma linha com um campo.
+	A missing field means "this pass does not touch that"; the functions below
+	treat it as neutral (1 for multipliers, 0 for bonuses).
 ]=]
 module.PASSES = {
 	CardSlots = {
@@ -99,34 +97,34 @@ module.PASSES = {
 }
 
 --[=[
-	A raridade mais baixa que a sorte levanta.
+	The lowest rarity luck lifts.
 
-	"Units melhores" e desta para cima: a `Luck` multiplica o peso de Epic, Legendary
-	e Cosmic no pool da caixa, e deixa Common e Rare como estao. Como o sorteio
-	normaliza pela soma dos pesos, levantar as de cima ja empurra as de baixo para
-	baixo -- nao ha um segundo numero para manter em sincronia.
+	"Better units" means this and above: `Luck` multiplies the weight of Epic,
+	Legendary, and Cosmic in the crate pool and leaves Common and Rare alone. Since
+	the draw normalizes by the sum of weights, lifting the top already pushes the
+	bottom down; there is no second number to keep in sync.
 ]=]
 module.LUCK_MIN_RARITY = "Epic"
 
 --[=[
-	O atributo que o servidor escreve no `Player` para cada pass que tem `ChatTag`.
+	The attribute the server writes on the `Player` for each pass with a `ChatTag`.
 
-	O perfil so replica para o dono dele, entao ele nao serve para o chat: o rotulo do
-	VIP tem de aparecer na mensagem **dos outros**, na tela de todo mundo. Atributo de
-	`Player` replica para a sala inteira, e continua sendo o servidor quem escreve.
+	The profile only replicates to its owner, so it cannot drive chat: the VIP tag
+	must appear on **other players'** screens. `Player` attributes replicate to the
+	whole room, and the server still does the writing.
 ]=]
 module.TAG_ATTRIBUTE_PREFIX = "Pass_"
 
 --[=[
-	O nome do atributo de uma pass. `VIP` vira `Pass_VIP`.
+	A pass's attribute name. `VIP` becomes `Pass_VIP`.
 ]=]
 function module.attributeName(key : string) : string
 	return module.TAG_ATTRIBUTE_PREFIX .. key
 end
 
 --[=[
-	A pass de um id, ou nil. E como o `MonetizationService` volta do
-	`PromptGamePassPurchaseFinished`, que so diz o numero.
+	The pass for an id, or nil. That is how `MonetizationService` comes back from
+	`PromptGamePassPurchaseFinished`, which only gives the number.
 ]=]
 function module.keyOfId(gamePassId : number?) : string?
 	for key, pass in module.PASSES do
@@ -139,11 +137,11 @@ function module.keyOfId(gamePassId : number?) : string?
 end
 
 --[=[
-	As passes que o perfil declara: `{ [chave] = true }`.
+	The passes the profile declares: `{ [key] = true }`.
 
-	Perfil que ainda nao carregou (ou que e de antes da chave) vale como "nenhuma", e
-	nao como erro: sem pass o jogador joga o jogo base, que e o comportamento certo
-	enquanto o dado nao chegou.
+	A profile not loaded yet (or older than the key) counts as "none", not an error:
+	without passes the player plays the base game, which is right until the data
+	arrives.
 ]=]
 function module.ownedOf(profile : any) : { [string]: boolean }
 	local owned = typeof(profile) == "table" and profile.Gamepasses
@@ -152,17 +150,17 @@ function module.ownedOf(profile : any) : { [string]: boolean }
 end
 
 --[=[
-	Se este perfil tem a pass.
+	Whether this profile has the pass.
 ]=]
 function module.owns(profile : any, key : string) : boolean
 	return module.ownedOf(profile)[key] == true
 end
 
 --[=[
-	O produto de um campo multiplicador entre as passes que o perfil tem.
+	The product of a multiplier field across the profile's passes.
 
-	E o motor de todos os multiplicadores abaixo: campo ausente vale 1, entao uma pass
-	que nao mexe naquele numero nao entra na conta, e duas que mexem se multiplicam.
+	The engine behind every multiplier below: a missing field counts as 1, so a pass
+	that does not touch the number stays out, and two that do multiply.
 ]=]
 local function product(profile : any, field : string) : number
 	local owned = module.ownedOf(profile)
@@ -180,8 +178,8 @@ local function product(profile : any, field : string) : number
 end
 
 --[=[
-	A soma de um campo de bonus entre as passes que o perfil tem. Campo ausente vale
-	zero -- bonus se somam, multiplicadores se multiplicam.
+	The sum of a bonus field across the profile's passes. A missing field counts as
+	zero: bonuses add, multipliers multiply.
 ]=]
 local function sum(profile : any, field : string) : number
 	local owned = module.ownedOf(profile)
@@ -199,45 +197,45 @@ local function sum(profile : any, field : string) : number
 end
 
 --[=[
-	Quantas cartas a mais este perfil pode equipar. Ver `DeckConfig.limitFor`.
+	How many extra cards this profile may equip. See `DeckConfig.limitFor`.
 ]=]
 function module.cardBonus(profile : any) : number
 	return math.floor(sum(profile, "CardBonus"))
 end
 
---- Multiplica os coins da recompensa de fim de partida.
+--- Multiplies end-of-match reward coins.
 function module.coinMultiplier(profile : any) : number
 	return product(profile, "CoinMultiplier")
 end
 
---- Multiplica os shards da recompensa de fim de partida.
+--- Multiplies end-of-match reward shards.
 function module.shardMultiplier(profile : any) : number
 	return product(profile, "ShardMultiplier")
 end
 
---- Multiplica o XP da recompensa de fim de partida.
+--- Multiplies end-of-match reward XP.
 function module.xpMultiplier(profile : any) : number
 	return product(profile, "XpMultiplier")
 end
 
---- Multiplica o preco das caixas na loja. 0.8 e "20% de desconto".
+--- Multiplies crate prices in the shop. 0.8 is "20% off".
 function module.cratePriceMultiplier(profile : any) : number
 	return product(profile, "CratePriceMultiplier")
 end
 
 --[=[
-	Multiplica o peso das raridades a partir de `LUCK_MIN_RARITY` no sorteio da caixa.
-	Sem a pass, 1 -- e o sorteio sai exatamente como sairia sem este arquivo existir.
+	Multiplies the weight of rarities from `LUCK_MIN_RARITY` up in the crate draw.
+	Without the pass, 1, and the draw comes out exactly as if this file did not exist.
 ]=]
 function module.luckMultiplier(profile : any) : number
 	return product(profile, "LuckMultiplier")
 end
 
 --[=[
-	Se a sorte levanta esta raridade.
+	Whether luck lifts this rarity.
 
-	Raridade que o `RarityConfig` nao conhece nao e levantada: e mais seguro pagar o
-	peso normal do que multiplicar um tier que ninguem sabe o que e.
+	A rarity `RarityConfig` does not know is not lifted: paying the normal weight is
+	safer than multiplying a tier nobody understands.
 ]=]
 function module.isLuckyRarity(rarity : string?) : boolean
 	local order = RarityConfig.getOrder(rarity)
@@ -247,10 +245,10 @@ function module.isLuckyRarity(rarity : string?) : boolean
 end
 
 --[=[
-	O rotulo de chat deste perfil, ou nil quando ele nao tem nenhuma pass com rotulo.
+	This profile's chat tag, or nil when it has no pass with a tag.
 
-	Com mais de uma, ganha a **primeira em ordem alfabetica de chave** -- e so para a
-	escolha ser estavel; hoje so o VIP tem rotulo.
+	With more than one, the **first by key in alphabetical order** wins, only so the
+	choice is stable; today only VIP has a tag.
 ]=]
 function module.chatTagOf(owned : { [string]: boolean }?) : string?
 	local passes = typeof(owned) == "table" and owned or {}

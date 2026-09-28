@@ -14,24 +14,24 @@
 	key -- which is not. `Image` is what the map template in `ChooseMaps` and the
 	portal billboard show.
 
-	`Music` e o nome da faixa em `SoundService.SharedSounds.Musics`, e so precisa
-	existir quando ela **nao** se chama igual a chave. O `MapService` manda este
-	nome para o `MusicController`, que procura o Sound por nome exato -- e era ai
-	que o `SnowyCastle` ficava mudo: a faixa dele se chama "Snowy Castle", com
-	espaco. Sem o campo, vale a chave.
+	`Music` is the track name in `SoundService.SharedSounds.Musics`, and it is only
+	needed when the track is **not** named like the key. `MapService` sends this
+	name to `MusicController`, which looks the Sound up by exact name (the
+	`SnowyCastle` track is "Snowy Castle", with a space). Without the field, the key
+	is used.
 
-	`WinsRequired` e quantas vitorias o jogador precisa ter para escolher o mapa, e
-	ele faz **duas** coisas: tranca o mapa e ordena a lista. Nao ha campo de ordem
-	separado de proposito -- a lista e crescente por exigencia, e um campo a parte
-	seria a mesma regra escrita duas vezes, esperando para se desencontrar. Mapa novo
-	com 7 vitorias entra sozinho entre a Cave e o Volcano, sem renumerar nada.
+	`WinsRequired` is how many wins the player needs to pick the map, and it does
+	**two** things: it locks the map and orders the list. There is no separate
+	order field on purpose: the list ascends by requirement, and a separate field
+	would be the same rule written twice. A new 7-win map slots between Cave and
+	Volcano by itself.
 
-	Zero (ou sem o campo) e um mapa livre: o Farm e o unico hoje, e e por onde todo
-	jogador novo comeca.
+	Zero (or no field) is an open map: Farm is the only one today, where every new
+	player starts.
 
-	Nada aqui e sigiloso. O cliente le para desenhar o cadeado antes de perguntar
-	nada, e o `PortalService` confere a mesma coisa com o mesmo config quando o grupo
-	e aberto -- ver `isUnlocked`.
+	Nothing here is secret. The client reads it to draw the padlock, and
+	`PortalService` checks the same thing with the same config when the group
+	opens; see `isUnlocked` and docs/lobby/maps-panel.md.
 ]]
 
 local module = {}
@@ -43,9 +43,9 @@ module.MAPS = {
 		Image = "rbxassetid://91827512669644",
 	},
 
-	-- A pasta em `ServerStorage.Maps` se chama "Desert", com um S so, e a chave tem
-	-- de bater com ela -- era "Dessert" e por isso este mapa nunca era sorteado nem
-	-- carregado. O `DisplayName` continua sendo coisa a parte.
+	-- The folder in `ServerStorage.Maps` is "Desert", with one S, and the key must
+	-- match it -- it used to be "Dessert", so this map was never drawn or loaded.
+	-- `DisplayName` is a separate matter.
 	["Desert"] = {
 		DisplayName = "Dessert",
 		WinsRequired = 2,
@@ -60,15 +60,15 @@ module.MAPS = {
 
 	["SnowyCastle"] = {
 		DisplayName = "Snowy Castle",
-		-- A faixa no Package tem espaco no nome; a chave e a pasta do mapa, nao.
+		-- The track in the Package has a space in its name; the key is the map folder, not.
 		Music = "Snowy Castle",
 		WinsRequired = 4,
 		Image = "rbxassetid://82438762834917",
 	},
 
-	-- A pasta em `ServerStorage.Maps` se chama "Mountain", no singular, e a chave
-	-- tem de bater com ela ou o `LoadMap` nao acha o mapa. O plural fica so no
-	-- nome que o jogador ve.
+	-- The folder in `ServerStorage.Maps` is "Mountain", singular, and the key must
+	-- match it or `LoadMap` cannot find the map. The plural is only in the name the
+	-- player sees.
 	["Mountain"] = {
 		DisplayName = "Mountains",
 		WinsRequired = 5,
@@ -87,8 +87,8 @@ module.MAPS = {
 		Image = "rbxassetid://102911300807811",
 	},
 
-	-- Beach, Swamp e Pale Garden estao sem faixa em `SharedSounds.Musics` por
-	-- enquanto: a partida fica sem musica ate ela existir.
+	-- Beach, Swamp, and Pale Garden have no track in `SharedSounds.Musics` yet: the
+	-- match has no music until one exists.
 	["Beach"] = {
 		DisplayName = "Beach",
 		WinsRequired = 11,
@@ -101,7 +101,7 @@ module.MAPS = {
 		Image = "rbxassetid://115839585540675",
 	},
 
-	-- A pasta em `ServerStorage.Maps` tem espaco no nome, e a chave tambem.
+	-- The folder in `ServerStorage.Maps` has a space in its name, and so does the key.
 	["Pale Garden"] = {
 		DisplayName = "Pale Garden",
 		WinsRequired = 16,
@@ -110,26 +110,26 @@ module.MAPS = {
 }
 
 --[=[
-	A Part que cada pasta de mapa traz na raiz com o billboard da vida da base, e o
-	nome do TextLabel de dentro dela onde o numero e escrito.
+	The Part each map folder carries at its root with the base health billboard,
+	and the name of the TextLabel inside it where the number is written.
 
-	Os dois nomes moram aqui porque os dois lados precisam do mesmo: o `MapService`
-	clona a Part para dentro de `workspace.Map` (sem isso o cliente nao a veria, ja
-	que os mapas nao replicam) e o `BaseHealthController` acha o label la para
-	escrever a vida a cada `UpdateBaseHealth`.
+	Both names live here because both sides need them: `MapService` clones the Part
+	into `workspace.Map` (otherwise the client would not see it, since maps do not
+	replicate) and `BaseHealthController` finds the label there to write health on
+	each `UpdateBaseHealth`.
 ]=]
 module.BASE_HEALTH_PART = "BaseHP"
 module.BASE_HEALTH_LABEL = "Value"
 
 --[=[
-	Fallback de spawn do `MapService`: quando o personagem nasce (ou o mapa carrega
-	com ele já em jogo) longe da primeira `SpawnLocation` da pasta do mapa, ele é
-	levado até ela.
+	`MapService`'s spawn fallback: when a character spawns (or the map loads with it
+	already in game) far from the map folder's first `SpawnLocation`, it is moved
+	there.
 
-	  - `SPAWN_HEIGHT_OFFSET` -- quantos studs acima do centro da SpawnLocation o
-	    personagem aparece. Folga para não nascer enterrado no chão.
-	  - `SPAWN_FALLBACK_RADIUS` -- até esta distância (em studs, no plano) o
-	    personagem é considerado "no spawn" e fica onde a Roblox o pôs.
+	  - `SPAWN_HEIGHT_OFFSET` -- studs above the SpawnLocation center where the
+	    character appears, so it does not spawn buried.
+	  - `SPAWN_FALLBACK_RADIUS` -- up to this distance (in studs, on the horizontal
+	    plane) the character counts as "at the spawn" and stays where Roblox put it.
 ]=]
 module.SPAWN_HEIGHT_OFFSET = 5
 module.SPAWN_FALLBACK_RADIUS = 25
@@ -170,8 +170,9 @@ function module.getImage(mapName : string?) : string
 end
 
 --[=[
-	Quantas vitorias o mapa pede. Mapa que nao existe pede zero: quem chama ja tratou
-	o nome invalido, e devolver um numero alto aqui trancaria a lista por engano.
+	How many wins the map requires. An unknown map requires zero: the caller
+	already handled the invalid name, and a high number here would lock the list by
+	mistake.
 ]=]
 function module.getWinsRequired(mapName : string?) : number
 	local resolvedMap = module.resolveMap(mapName)
@@ -185,11 +186,11 @@ function module.getWinsRequired(mapName : string?) : number
 end
 
 --[=[
-	Se este jogador ja pode escolher o mapa.
+	Whether this player may already pick the map.
 
-	E a mesma conta nas duas pontas: o `ChooseMapsController` desenha o cadeado com
-	ela e o `PortalService` recusa o grupo com ela. Sem `wins` (perfil ainda
-	carregando) vale zero -- so o que e livre aparece livre, e nunca o contrario.
+	The same math on both sides: `ChooseMapsController` draws the padlock with it
+	and `PortalService` refuses the group with it. Without `wins` (profile still
+	loading) it counts as zero: only what is open shows open, never the reverse.
 ]=]
 function module.isUnlocked(mapName : string?, wins : number?) : boolean
 	local owned = typeof(wins) == "number" and math.floor(wins) or 0
@@ -198,8 +199,8 @@ function module.isUnlocked(mapName : string?, wins : number?) : boolean
 end
 
 --[=[
-	Quantas vitorias ainda faltam para o mapa abrir, ou zero quando ele ja esta
-	aberto. E o numero que o texto do cadeado escreve.
+	How many wins are still missing for the map to open, or zero when it is open.
+	The number the padlock text writes.
 ]=]
 function module.winsMissing(mapName : string?, wins : number?) : number
 	local owned = typeof(wins) == "number" and math.floor(wins) or 0
@@ -208,18 +209,18 @@ function module.winsMissing(mapName : string?, wins : number?) : number
 end
 
 --[=[
-	Map names for UI iteration, in the order the picker shows them: crescente por
-	`WinsRequired`, e alfabetica pela chave entre mapas que pedem o mesmo.
+	Map names for UI iteration, in the order the picker shows them: ascending by
+	`WinsRequired`, and alphabetical by key among maps with the same requirement.
 
-	O desempate existe so para a ordem ser **estavel** -- duas telas montadas a partir
-	do mesmo config listam igual, e a lista nao muda de uma abertura para a outra.
+	The tiebreak only exists to keep the order **stable**: two screens built from
+	the same config list the same way, and the list does not change between openings.
 ]=]
 --[=[
-	A faixa do mapa em `SoundService.SharedSounds.Musics`.
+	The map's track in `SoundService.SharedSounds.Musics`.
 
-	Cai na propria chave quando o mapa nao declara `Music` -- que e o caso da
-	maioria, onde os dois nomes ja batem. Mapa desconhecido devolve nil, e o
-	`MusicController` nao tem o que tocar.
+	Falls back to the key when the map declares no `Music` (most maps, where both
+	names already match). An unknown map returns nil, and `MusicController` has
+	nothing to play.
 ]=]
 function module.getMusic(mapName : string?) : string?
 	local resolved = module.resolveMap(mapName)

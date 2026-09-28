@@ -1,20 +1,17 @@
 --[=[
-	O ponteiro do jogador, sem assumir que existe um mouse.
+	The player's pointer, without assuming a mouse exists.
 
-	Tudo que mira no mundo -- o fantasma da unidade, a selecao de uma torre ja
-	colocada, o hover de mob -- lia `UserInputService:GetMouseLocation()` direto e
-	so aceitava `Enum.UserInputType.MouseButton1`. Num celular nenhum dos dois
-	existe: sem mouse aquela chamada nao acompanha nada (fica em (0,0) ou congelada
-	no ultimo ponto tocado) e o toque chega como `Enum.UserInputType.Touch`, entao
-	o clique simplesmente nunca acontecia.
+	`UserInputService:GetMouseLocation()` and `Enum.UserInputType.MouseButton1` do
+	nothing useful on a phone: there is no mouse to follow, and a touch arrives as
+	`Enum.UserInputType.Touch`, so a click never happened.
 
-	Aqui os dois aparelhos ficam atras da mesma porta:
-	  - `getScreenPosition()` devolve o mouse no PC e o ultimo toque no celular;
-	  - `onPointerAction()` chama de volta no clique (PC) ou no toque curto
-	    (celular), sempre com a posicao na tela.
+	Here both devices sit behind the same API:
+	  - `getScreenPosition()` returns the mouse on PC and the last touch on a phone;
+	  - `onPointerAction()` calls back on a click (PC) or a short tap (phone),
+	    always with the screen position.
 
-	Modulo de cliente: no servidor `UserInputService` nem existe, e por isso todo
-	acesso a ele passa pela guarda de `RunService:IsClient()`.
+	Client module: `UserInputService` does not exist on the server, so every access
+	goes through a `RunService:IsClient()` guard. See docs/common/controls.md.
 ]=]
 
 local Players = game:GetService("Players")
@@ -26,22 +23,21 @@ local GuiService = RunService:IsClient() and game:GetService("GuiService") or ni
 local PointerUtil = {}
 
 --[[
-	`InputObject.Position` e `Camera:ViewportPointToRay` nao contam a altura do
-	mesmo lugar.
+	`InputObject.Position` and `Camera:ViewportPointToRay` do not measure height
+	from the same place.
 
-	A posicao de uma entrada vem no espaco da interface, que comeca embaixo da
-	barra superior do Roblox. O raio da camera comeca no topo real da janela --
-	o 3D e desenhado por tras da barra tambem. Entre os dois ha a GuiInset, uns
-	36px de diferenca vertical, e e por isso que o toque cai perto mas nao em cima
-	do dedo. `GetMouseLocation()` ja vem no espaco do raio, e por isso o mouse
-	sempre foi exato.
+	An input position is in GUI space, which starts below the Roblox top bar. The
+	camera ray starts at the real top of the window (3D is drawn behind the bar
+	too). Between them is the GuiInset, about 36 px vertically, which is why a tap
+	landed near but not on the finger. `GetMouseLocation()` is already in ray space,
+	which is why the mouse was always exact.
 
-	Em vez de somar 36 na mao (o valor muda com a barra escondida, com tela cheia e
-	entre aparelhos) a diferenca e medida: uma moldura de tamanho zero num ScreenGui
-	com `IgnoreGuiInset` fica, por definicao, no canto de cima da janela inteira.
-	Onde quer que o Roblox diga que ela esta, aquilo e a origem do espaco do raio --
-	subtrair isso de uma posicao de entrada da a coordenada certa, sem depender de
-	qual das duas convencoes a engine usa hoje.
+	Instead of adding 36 by hand (it changes with the bar hidden, full screen, and
+	between devices), the difference is measured: a zero-size frame in a ScreenGui
+	with `IgnoreGuiInset` sits, by definition, at the top corner of the whole
+	window. Wherever Roblox says it is, that is the origin of ray space, and
+	subtracting it from an input position gives the right coordinate regardless of
+	the engine's current convention.
 ]]
 local viewportOrigin : Frame? = nil
 
@@ -64,7 +60,7 @@ local function getViewportOriginOffset() : Vector2
 		marker.Position = UDim2.fromOffset(0, 0)
 		marker.BackgroundTransparency = 1
 		marker.BorderSizePixel = 0
-		-- Nao intercepta nada: e uma regua, nao um elemento de interface.
+		-- It intercepts nothing: it is a ruler, not an interface element.
 		marker.Active = false
 		marker.Parent = screenGui
 
@@ -76,33 +72,32 @@ local function getViewportOriginOffset() : Vector2
 end
 
 --[=[
-	Leva a posicao de um `InputObject` para a coordenada que o raio da camera
-	espera. Sem isso o toque mira acima de onde o dedo encostou.
+	Converts an `InputObject` position to the coordinate the camera ray expects.
+	Without it, a tap aims above where the finger touched.
 ]=]
 local function toViewportPoint(position : Vector2) : Vector2
 	return position - getViewportOriginOffset()
 end
 
 --[=[
-	A posicao de um `InputObject` no espaco que o raio da camera espera.
+	An `InputObject` position in the space the camera ray expects.
 
-	Publica porque nem todo mundo consome toque pelo `onPointerAction`: o
-	posicionamento no celular escuta o toque cru pelo `ContextActionService` (ele
-	precisa do arrasto, e nao so do tap) e precisa da mesma conversao para mirar no
-	lugar certo.
+	Public because not everyone consumes touches through `onPointerAction`: mobile
+	placement listens to raw touches through `ContextActionService` (it needs the
+	drag, not just the tap) and needs the same conversion.
 
-	Cuidado ao misturar os dois espacos: `Camera:WorldToViewportPoint` responde
-	**neste** espaco, e `PlayerGui:GetGuiObjectsAtPosition` responde no **outro**, o
-	da interface -- que e o de `InputObject.Position`, antes desta conversao.
+	Careful mixing the two spaces: `Camera:WorldToViewportPoint` answers in **this**
+	space, and `PlayerGui:GetGuiObjectsAtPosition` answers in the **other** one, GUI
+	space, which is `InputObject.Position` before this conversion.
 ]=]
 function PointerUtil.toViewportPoint(position : Vector2) : Vector2
 	return toViewportPoint(position)
 end
 
 --[[
-	Um toque so vira "acao" se o dedo mal andou e saiu rapido. Arrastar a tela e
-	como o jogador gira a camera no celular, e um arrasto nao pode virar um clique
-	no mundo -- senao toda vez que ele olhasse em volta a unidade pularia de lugar.
+	A touch only becomes an "action" if the finger barely moved and lifted quickly.
+	Dragging is how a phone player turns the camera, and a drag must not become a
+	world click, or the unit would jump every time they looked around.
 ]]
 local TAP_MAX_MOVEMENT = 20
 local TAP_MAX_DURATION = 0.6
@@ -115,23 +110,22 @@ local function trackTouch(input : InputObject)
 end
 
 if UserInputService then
-	-- A regua e montada aqui, no boot do cliente, e nao no primeiro toque: uma
-	-- moldura recem-criada so ganha AbsolutePosition depois que a interface e
-	-- desenhada, e nesse frame a medida sairia zerada.
+	-- The ruler is built here, at client boot, not on the first touch: a new frame
+	-- only gets an AbsolutePosition after the interface is drawn, and on that frame
+	-- the measurement would come out zero.
 	getViewportOriginOffset()
 
-	-- Sem filtrar por `gameProcessedEvent`: aqui e so "onde o dedo esta", e quem
-	-- consome a posicao e que decide se aquele toque valia alguma coisa.
+	-- No `gameProcessedEvent` filter: this is only "where the finger is", and whoever
+	-- consumes the position decides whether the touch counted.
 	UserInputService.InputBegan:Connect(trackTouch)
 	UserInputService.InputChanged:Connect(trackTouch)
 end
 
 --[=[
-	Verdadeiro num aparelho que so tem toque.
+	True on a touch-only device.
 
-	Um PC de tela sensivel ao toque continua contando como PC: o mouse dele
-	funciona e e o que o jogador tem na mao, entao nao ha motivo para trocar a
-	interface debaixo dele.
+	A touchscreen PC still counts as a PC: its mouse works and is what the player
+	holds, so there is no reason to swap the interface under them.
 ]=]
 function PointerUtil.isTouchOnly() : boolean
 	if not UserInputService then return false end
@@ -139,17 +133,15 @@ function PointerUtil.isTouchOnly() : boolean
 end
 
 --[=[
-	Verdadeiro so num PC: teclado e mouse de verdade, e nao um console.
+	True only on a PC: a real keyboard and mouse, not a console.
 
-	E o teste que decide se vale anunciar um atalho de teclado na interface, e por
-	isso ele e feito pelo lado positivo. Perguntar `not isTouchOnly()` nao serve:
-	num console nao ha toque nem mouse, entao aquela pergunta responde "nao e so
-	toque" -- e o jogador de controle acabaria lendo um "[E]" que ele nao tem como
-	apertar.
+	This decides whether a keyboard shortcut is worth showing, which is why it tests
+	the positive side. `not isTouchOnly()` does not work: a console has neither
+	touch nor mouse, so it answers "not touch only", and a gamepad player would read
+	an "[E]" they cannot press.
 
-	Tablet com teclado bluetooth tambem fica de fora. A tecla ate funcionaria la,
-	mas a interface daquele aparelho e a de toque, e nao e no meio de um botao
-	`TextScaled` que se descobre a excecao.
+	A tablet with a Bluetooth keyboard is left out too: the key would work, but that
+	device's interface is the touch one.
 ]=]
 function PointerUtil.isPC() : boolean
 	if not UserInputService then return false end
@@ -159,13 +151,12 @@ function PointerUtil.isPC() : boolean
 end
 
 --[=[
-	Onde o ponteiro esta na tela, na mesma coordenada que
-	`Camera:ViewportPointToRay` espera.
+	Where the pointer is on screen, in the coordinate `Camera:ViewportPointToRay`
+	expects.
 
-	No celular devolve `nil` enquanto o jogador nao tiver encostado na tela nenhuma
-	vez: antes do primeiro toque nao existe "onde o dedo esta", e quem chama precisa
-	decidir o que fazer com esse vazio em vez de mirar em (0,0) -- que e o canto da
-	tela e daria um raycast valido, so que no lugar errado.
+	On a phone it returns `nil` until the player has touched the screen once: before
+	the first touch there is no "where the finger is", and the caller must decide
+	what to do instead of aiming at (0,0), a valid raycast in the wrong place.
 ]=]
 function PointerUtil.getScreenPosition() : Vector2?
 	if not UserInputService then return nil end
@@ -178,20 +169,20 @@ function PointerUtil.getScreenPosition() : Vector2?
 end
 
 --[=[
-	Chama `callback(screenPosition)` quando o jogador aponta para o mundo.
+	Calls `callback(screenPosition)` when the player points at the world.
 
-	No PC e o botao esquerdo descendo, exatamente como era antes -- inclusive a
-	posicao vem de `GetMouseLocation()`, e nao de `input.Position`, para nao trocar
-	a coordenada que o resto do codigo ja usava.
+	On PC it is the left button going down, and the position comes from
+	`GetMouseLocation()`, not `input.Position`, to keep the coordinate the rest of
+	the code already used.
 
-	No celular e um toque curto e parado, medido por TAP_MAX_MOVEMENT e
-	TAP_MAX_DURATION. Arrastar nao chama nada, e o jogador continua podendo girar a
-	camera com a unidade em mao.
+	On a phone it is a short, still tap, measured by TAP_MAX_MOVEMENT and
+	TAP_MAX_DURATION. Dragging calls nothing, so the player can still turn the
+	camera with a unit in hand.
 
-	Toques que a interface ja consumiu sao ignorados nos dois casos, entao apertar
-	um botao da HUD nao dispara tambem o que estiver no mundo atras dele.
+	Input the interface already consumed is ignored in both cases, so pressing a HUD
+	button does not also trigger what is in the world behind it.
 
-	Devolve a funcao que desliga tudo, pronta para entregar ao Maid.
+	Returns the function that disconnects everything, ready for a Maid.
 ]=]
 function PointerUtil.onPointerAction(callback : (Vector2) -> ()) : () -> ()
 	if not UserInputService then
@@ -216,8 +207,8 @@ function PointerUtil.onPointerAction(callback : (Vector2) -> ()) : () -> ()
 	table.insert(connections, UserInputService.InputEnded:Connect(function(input, processed)
 		if input.UserInputType ~= Enum.UserInputType.Touch then return end
 
-		-- Limpo antes de qualquer saida: um toque que nao virou acao nao pode
-		-- deixar a posicao inicial para tras e ser aproveitado pelo proximo.
+		-- Cleared before any exit: a touch that did not become an action must not leave
+		-- its start position behind for the next one.
 		local startPosition = touchStartPosition
 		touchStartPosition = nil
 

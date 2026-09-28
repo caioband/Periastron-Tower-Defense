@@ -9,6 +9,9 @@ local Utils = Shared:WaitForChild("Util")
 local Spring = require(Vendor.Spring)
 local Observers = require(Vendor.Observers)
 local PointerUtil = require(Utils.PointerUtil)
+local Log = require(Utils:WaitForChild("Log"))
+
+local log = Log.new("UILibraryController")
 
 local Camera = workspace.CurrentCamera
 
@@ -26,7 +29,7 @@ function UILibraryController:closeFrame(FrameName : string)
 	local FrameData = self.Frames[FrameName]
 
 	if not FrameData then
-		warn("Frame not found", FrameName)
+		log:StudioWarn("frame not found:", FrameName)
 		return
 	end
 
@@ -83,7 +86,7 @@ function UILibraryController:doComponent(name : string, func : string, ...)
 	local component = script.Components:FindFirstChild(name)
 
 	if not component then
-		print("did not find any component with name", name)
+		log:StudioWarn("did not find any component named", name)
 		return
 	end
 
@@ -134,10 +137,10 @@ function UILibraryController.addHoverAnimation(Button : GuiButton)
 	local conn = {}
 
 	--[[
-		Hover nao existe no toque: o dedo ou esta apertando ou nao esta na tela, nao
-		ha um estado "pairando por cima". Pior, o Roblox as vezes dispara o MouseEnter
-		no comeco do toque sem o MouseLeave correspondente, e o botao ficaria crescido
-		para sempre. No celular o botao simplesmente nao reage a hover.
+		Hover does not exist on touch: the finger is either pressing or not on the
+		screen; there is no "hovering over" state. Worse, Roblox sometimes fires
+		MouseEnter at the start of a touch with no matching MouseLeave, and the button
+		would stay enlarged forever. On mobile the button simply does not react to hover.
 	]]
 	if PointerUtil.isTouchOnly() then
 		return conn
@@ -185,7 +188,7 @@ function UILibraryController.addHoverAnimation(Button : GuiButton)
 
 		end
 
-	--	require(Vendor.Me).new():Get("MusicController"):PlaySFX("UIHover")   -- falta o UIHover em SharedSounds.SFX
+	--	require(Vendor.Me).new():Get("MusicController"):PlaySFX("UIHover")   -- UIHover is missing from SharedSounds.SFX
 	end))
 	table.insert(conn, Button.MouseLeave:Connect(function()
 		Spring.target(UIScale, .65, 4, {
@@ -245,12 +248,12 @@ function UILibraryController.addClickAnimation(Button : GuiButton, clickCallback
 	end
 
 	--[[
-		O botao afunda no aperto e volta no soltar, mas soltar nem sempre passa pelo
-		botao: no toque, se o dedo escorrega para fora antes de sair, o
-		`MouseButton1Up` nunca chega e o botao ficaria encolhido para sempre.
+		The button sinks on press and returns on release, but release does not always
+		go through the button: on touch, if the finger slides off before lifting,
+		`MouseButton1Up` never arrives and the button would stay shrunk forever.
 
-		Por isso a volta e vigiada pelo UserInputService, que ve o dedo sair de
-		qualquer lugar da tela.
+		So the return is watched through UserInputService, which sees the finger leave
+		from anywhere on the screen.
 	]]
 	local releaseWatcher : RBXScriptConnection? = nil
 
@@ -277,9 +280,9 @@ function UILibraryController.addClickAnimation(Button : GuiButton, clickCallback
 	end))
 
 	--[[
-		A acao sai do `Activated`, que e o unico evento que o Roblox garante tanto no
-		clique quanto no toque -- e so quando o dedo/cursor sai de fato em cima do
-		botao, entao arrastar para fora continua sendo desistir.
+		The action comes from `Activated`, the only event Roblox guarantees for both
+		click and touch, and only when the finger/cursor actually releases over the
+		button, so dragging off is still backing out.
 	]]
 	table.insert(conn, Button.Activated:Connect(function()
 		stopWatchingRelease()
@@ -289,11 +292,11 @@ function UILibraryController.addClickAnimation(Button : GuiButton, clickCallback
 			clickCallback()
 		end
 
-		--require(Vendor.Me).new():Get("MusicController"):PlaySFX("UIClick")   -- falta o UIClick em SharedSounds.SFX
+		--require(Vendor.Me).new():Get("MusicController"):PlaySFX("UIClick")   -- UIClick is missing from SharedSounds.SFX
 	end))
 
-	-- Quem recebe essa lista desliga tudo chamando `:Disconnect()` em cada item, e
-	-- o vigia de soltura pode estar vivo na hora em que o botao morre.
+	-- Whoever receives this list disconnects everything by calling `:Disconnect()` on
+	-- each item, and the release watcher may be alive when the button dies.
 	table.insert(conn, { Disconnect = stopWatchingRelease })
 
 	return conn
@@ -413,7 +416,7 @@ function UILibraryController:openFrame(FrameName : string)
 	local FrameData = self.Frames[FrameName]
 
 	if not FrameData then
-		warn("Frame not found", FrameName)
+		log:StudioWarn("frame not found:", FrameName)
 		return
 	end
 

@@ -9,33 +9,36 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 local Signal = require(Packages.Signal)
 
 local DeckConfig = SharedConfig.DeckConfig
 local GamepassConfig = SharedConfig.GamepassConfig
 
 local Framework = Me.new()
+local log = Log.new("DeckService")
 
 --[=[
-	Quem escreve o deck do jogador (`EquippedUnits` no perfil).
+	Writes the player's deck (`EquippedUnits` on the profile).
 
-	O deck é um array de slots (ver `SharedConfig.DeckConfig`): o slot de cada
-	unidade é fixo, e tirar a última carta de uma esvazia o slot dela sem mexer nos
-	outros.
+	The deck is an array of slots (see `SharedConfig.DeckConfig`): each unit's slot is
+	fixed, and removing a unit's last card empties its slot without touching the others.
 
-	O cliente só manda um nome de unidade e diz "equipa uma" ou "tira uma"; quem
-	decide se a carta pode entrar — se a unidade existe, se sobrou cópia no
-	inventário, se ainda há slot **destravado** livre, se o `CardLimit` deixa — é
-	aqui, contra o perfil. O `DeckController` desenha a partir da replica, então o
-	que ele mostra é sempre o que este service gravou.
+	The client only sends a unit name and says "equip one" or "remove one"; whether the
+	card can go in (whether the unit exists, whether a copy is left in the inventory,
+	whether there is a free **unlocked** slot, whether `CardLimit` allows it) is decided
+	here, against the profile. `DeckController` draws from the replica, so what it shows
+	is always what this service wrote.
 
-	Os três slots de cima são de todo mundo; o quarto, o quinto e o sexto abrem por
-	nível (`DeckConfig.SLOT_UNLOCK_LEVELS`). O nível sai do `Stats.XP` do próprio
-	perfil, então não há nada a receber do cliente: ele calcula o mesmo número com o
-	mesmo config só para desenhar antes da resposta.
+	The top three slots belong to everyone; the fourth, fifth, and sixth open by level
+	(`DeckConfig.SLOT_UNLOCK_LEVELS`). The level comes from the profile's own `Stats.XP`,
+	so there is nothing to receive from the client: it computes the same number with the
+	same config only to draw before the answer.
 
-	A leitura, a decisão e a escrita acontecem dentro de um `:Update` só, que não
-	cede a thread: dois cliques colados não passam do limite.
+	Reading, deciding, and writing happen inside a single `:Update`, which does not yield:
+	two back-to-back clicks do not pass the limit.
+
+	See docs/lobby/deck.md.
 ]=]
 local DeckService = {
 	Services = {
@@ -51,7 +54,7 @@ local DeckService = {
 --[[ INTERNAL ]]
 
 --[=[
-	O perfil carregado do jogador, ou `nil` enquanto ele não chegou.
+	The player's loaded profile, or `nil` while it has not arrived.
 ]=]
 function DeckService:_getData(Player : Player)
 	local profiles = self.Services.DataService.Profiles
@@ -61,15 +64,15 @@ function DeckService:_getData(Player : Player)
 end
 
 --[=[
-	O caminho comum de equipar e desequipar: valida o que dá para validar fora da
-	escrita, roda `decide` dentro do `:Update` e avisa quem escuta.
+	The shared path for equipping and unequipping: validates what can be validated outside
+	the write, runs `decide` inside `:Update`, and notifies listeners.
 
-	`decide(deck, data)` recebe o deck já limpo e devolve `nil` quando a carta entrou
-	(ou saiu), ou o motivo da recusa. Mexer nos slots é com ele.
+	`decide(deck, data)` receives the already cleaned deck and returns `nil` when the card
+	went in (or out), or the refusal reason. Touching the slots is its job.
 ]=]
 function DeckService:_write(Player : Player, unitName : string?, decide) : (boolean, string?)
 	if not DeckConfig.exists(unitName) then
-		warn(string.format("[DeckService]: %s pediu %q, que não é uma unidade.", Player.Name, tostring(unitName)))
+		log:StudioWarn(string.format("%s asked for %q, which is not a unit.", Player.Name, tostring(unitName)))
 		return false, "UnknownUnit"
 	end
 
@@ -77,7 +80,7 @@ function DeckService:_write(Player : Player, unitName : string?, decide) : (bool
 	local data = self:_getData(Player)
 
 	if not data or not DataService.Update then
-		warn(string.format("[DeckService]: %s ainda não tem perfil carregado.", Player.Name))
+		log:StudioWarn(string.format("%s has no profile loaded yet.", Player.Name))
 		return false, "NotLoaded"
 	end
 
@@ -86,9 +89,9 @@ function DeckService:_write(Player : Player, unitName : string?, decide) : (bool
 	DataService:Update(Player, "EquippedUnits", function(current)
 		local deck = DeckConfig.sanitize(current, data.Units, DeckConfig.limitFor(data), DeckConfig.unlockedFor(data))
 
-		-- Mesmo recusando, o que a limpeza tirou vale a escrita: é a chance de o
-		-- perfil velho se acertar com o UnitStats de hoje (e de virar slots, se ele
-		-- ainda estiver no formato antigo).
+		-- Even when refusing, what the cleanup removed is worth writing: it is the chance for
+		-- an old profile to catch up with today's UnitStats (and to become slots, if it is
+		-- still in the old format).
 		reason = decide(deck, data)
 
 		return deck
@@ -106,7 +109,7 @@ end
 --[[ EXTERNAL ]]
 
 --[=[
-	Quantas cartas cabem no deck deste jogador, gamepass incluida (`limitFor`).
+	How many cards fit in this player's deck, gamepass included (`limitFor`).
 ]=]
 function DeckService:GetLimit(Player : Player) : number
 	local data = self:_getData(Player)
@@ -115,7 +118,7 @@ function DeckService:GetLimit(Player : Player) : number
 end
 
 --[=[
-	O deck do jogador, já limpo. `nil` enquanto o perfil não carregou.
+	The player's deck, already cleaned. `nil` while the profile has not loaded.
 ]=]
 function DeckService:GetEquipped(Player : Player) : DeckConfig.Deck?
 	local data = self:_getData(Player)
@@ -127,8 +130,8 @@ function DeckService:GetEquipped(Player : Player) : DeckConfig.Deck?
 end
 
 --[=[
-	Quantos slots o jogador tem hoje, dos `DeckConfig.MAX_SLOTS`. Zero quando o
-	perfil ainda não carregou -- que é diferente dos três de partida.
+	How many slots the player has today, out of `DeckConfig.MAX_SLOTS`. Zero when the
+	profile has not loaded yet, which is different from the starting three.
 ]=]
 function DeckService:GetUnlockedSlots(Player : Player) : number
 	local data = self:_getData(Player)
@@ -137,12 +140,12 @@ function DeckService:GetUnlockedSlots(Player : Player) : number
 end
 
 --[=[
-	Põe **uma** carta da unidade no deck.
+	Puts **one** card of the unit in the deck.
 
-	Recusa com "NoCopies" (todas as que ele tem já estão equipadas), "LimitReached"
-	(o `CardLimit` estourou) ou "NoSlot" (não sobrou slot destravado, seja porque o
-	jogador já tem uma unidade diferente em cada um ou porque os que faltam ainda
-	pedem nível).
+	Refuses with "NoCopies" (every copy they own is already equipped), "LimitReached"
+	(`CardLimit` exceeded), or "NoSlot" (no unlocked slot left, either because the player
+	already has a different unit in each one or because the remaining ones still require
+	a level).
 ]=]
 function DeckService:Equip(Player : Player, unitName : string?) : (boolean, string?)
 	return self:_write(Player, unitName, function(deck, data)
@@ -159,9 +162,9 @@ function DeckService:Equip(Player : Player, unitName : string?) : (boolean, stri
 			return "LimitReached"
 		end
 
-		-- Falha só quando a unidade é nova no deck e não há slot destravado livre:
-		-- cópia de quem já está lá vai para o slot dele, travado ou não -- e o slot
-		-- dela nunca é travado, porque o `sanitize` acima já tirou de lá.
+		-- It only fails when the unit is new to the deck and there is no free unlocked slot:
+		-- a copy of a unit already there goes to its slot, locked or not, and its slot
+		-- is never locked, because the `sanitize` above already removed it from there.
 		if not DeckConfig.addCard(deck, unitName, DeckConfig.unlockedFor(data)) then
 			return "NoSlot"
 		end
@@ -171,11 +174,11 @@ function DeckService:Equip(Player : Player, unitName : string?) : (boolean, stri
 end
 
 --[=[
-	Tira **uma** carta da unidade do deck. Recusa com "NotEquipped".
+	Removes **one** card of the unit from the deck. Refuses with "NotEquipped".
 ]=]
 function DeckService:Unequip(Player : Player, unitName : string?) : (boolean, string?)
 	return self:_write(Player, unitName, function(deck)
-		-- O slot só é liberado quando a última carta sai, e os outros não se mexem.
+		-- The slot is only freed when the last card leaves, and the others do not move.
 		if not DeckConfig.removeCard(deck, unitName) then
 			return "NotEquipped"
 		end
@@ -185,9 +188,8 @@ function DeckService:Unequip(Player : Player, unitName : string?) : (boolean, st
 end
 
 --[=[
-	Muda quantas cartas cabem no deck. É por aqui que uma recompensa ou um comando
-	sobe o teto -- o deck é limpo em seguida, para um teto menor não deixar carta
-	sobrando.
+	Changes how many cards fit in the deck. This is how a reward or a command raises the
+	cap; the deck is cleaned right after, so a lower cap does not leave extra cards.
 ]=]
 function DeckService:SetLimit(Player : Player, limit : number) : boolean
 	local DataService = self.Services.DataService
@@ -198,12 +200,12 @@ function DeckService:SetLimit(Player : Player, limit : number) : boolean
 	end
 
 	--[[
-		O que e gravado e o teto **do jogo**, sem gamepass: a pass soma na leitura
-		(`limitFor`), e escreve-la aqui a transformaria em credito -- um reembolso
-		deixaria os +5 no perfil para sempre.
+		What is saved is the **game's** cap, without the gamepass: the pass adds on read
+		(`limitFor`), and writing it here would turn it into a credit: a refund would leave
+		the +5 on the profile forever.
 
-		A limpeza logo abaixo, essa sim, usa o teto de verdade: cortar o deck pelo
-		numero sem a pass tiraria cartas que o jogador tem direito de manter.
+		The cleanup just below does use the real cap: cutting the deck by the number
+		without the pass would remove cards the player is entitled to keep.
 	]]
 	local resolved = DeckConfig.resolveLimit(limit)
 
@@ -245,9 +247,9 @@ function DeckService:start()
 end
 
 function DeckService:init()
-	-- O cliente escuta este evento no próprio init, e o identificador do Warp
-	-- nasce no servidor: sem este Listen vazio ele espera dez segundos e o resto
-	-- do controller para junto (ver README, "Evento novo do servidor...").
+	-- The client listens to this event in its own init, and the Warp identifier
+	-- is created on the server: without this empty Listen it waits ten seconds and the rest
+	-- of the controller stops with it (see docs/architecture/me-framework.md).
 	Framework:Listen("DeckCardResult", function() end)
 end
 

@@ -18,32 +18,34 @@ local Framework = Me.new()
 local Config = SharedConfig.RichTextConfig
 
 --[[
-	A bancada do texto rico: escreva a marcação, aperte DISPLAY, veja.
+	The rich text workbench: write the markup, press DISPLAY, look.
 
-	Abre pelo Cmdr (`richtext`) e serve para uma coisa só — experimentar marcação
-	sem editar config, sem dar Play de novo e sem inventar um NPC para falar. É
-	onde se descobre que `amp=.3` no wiggle sacode demais antes de o efeito ir
-	parar numa tela do jogo.
+	It opens through Cmdr (`richtext`) and serves a single purpose: trying markup
+	without editing config, without pressing Play again, and without inventing an
+	NPC to speak. It is where you find out that `amp=.3` on wiggle shakes too much
+	before the effect ends up on a game screen.
 
-	Três partes, que é o que a bancada precisa ter:
+	Three parts, which is what the workbench needs:
 
-		PREVIEW   o container onde o texto é desenhado (é ele que vai ao
-		          `RichTextController:Bind`, igual a qualquer tela do jogo)
-		INPUT     a caixa onde se escreve a marcação
-		DISPLAY   o botão que manda desenhar; CLEAR apaga e PRESET troca o preset
+		PREVIEW   the container where text is drawn (it goes to
+		          `RichTextController:Bind`, like any game screen)
+		INPUT     the box where markup is written
+		DISPLAY   the button that draws; CLEAR erases and PRESET switches the preset
 
-	**A tela é feita em código, de propósito.** O `StarterGui` não é sincronizado
-	pelo Rojo — uma tela autorada no Studio não estaria no git, e uma ferramenta de
-	dev que depende de alguém ter o place aberto na versão certa não serve para
-	nada. Aqui ela nasce do arquivo, igual nas duas places.
+	**The screen is built in code, on purpose.** `StarterGui` is not synced by Rojo:
+	a screen authored in Studio would not be in git, and a dev tool that depends on
+	someone having the place open at the right version is useless. Here it is born
+	from the file, the same in both places.
 
-	**Trocar de preset recria o handle** em vez de só reajustar o que existe. As
-	opções de um handle se acumulam (é o contrato do `RichTextController`: o que
-	você pede continua valendo), e numa bancada isso mentiria — o contorno do
-	`Warning` sobreviveria ao `Instant` e você estaria olhando para uma mistura que
-	nenhuma tela do jogo teria.
+	**Switching presets recreates the handle** instead of just adjusting the existing
+	one. A handle's options accumulate (that is `RichTextController`'s contract: what
+	you request keeps applying), and in a workbench that would lie: the `Warning`
+	outline would survive into `Instant`, and you would be looking at a mix no game
+	screen would have.
 
-	Fica em `common/` porque marcação é a mesma coisa nas duas places.
+	It lives in `common/` because markup is the same in both places.
+
+	See docs/common/rich-text.md.
 ]]
 
 local RichTextLabController = {
@@ -58,7 +60,7 @@ RichTextLabController.Input = nil :: TextBox?
 RichTextLabController.PresetButton = nil :: TextButton?
 RichTextLabController.Handle = nil :: any
 
--- Índice em `Presets`, a lista de nomes que o botão PRESET percorre.
+-- Index into `Presets`, the list of names the PRESET button cycles through.
 RichTextLabController.Presets = {}
 RichTextLabController.PresetIndex = 1
 
@@ -73,13 +75,14 @@ local COLORS = {
 	Faded = Color3.fromRGB(150, 150, 165),
 }
 
-local PLACEHOLDER = "[color=yellow]texto[/color] com [shake]efeito[/shake][pause=0.5] e [wiggle]onda[/wiggle]"
+local PLACEHOLDER = "[color=yellow]text[/color] with [shake]effect[/shake][pause=0.5] and [wiggle]wave[/wiggle]"
 
 --[[ INTERNAL ]]
 
 --[=[
-	`Instance.new` com propriedades e pai numa chamada só. A tela inteira é feita
-	daqui para baixo, e sem isso ela seria três vezes mais linhas de atribuição.
+	`Instance.new` with properties and parent in a single call. The whole screen is
+	built from here down, and without it there would be three times as many
+	assignment lines.
 ]=]
 local function create(className : string, properties : { [string] : any }, parent : Instance?) : any
 	local instance = Instance.new(className)
@@ -96,7 +99,7 @@ local function create(className : string, properties : { [string] : any }, paren
 end
 
 --[=[
-	Um botão da barra de baixo.
+	A button in the bottom bar.
 ]=]
 local function createButton(text : string, color : Color3, layoutOrder : number, parent : Instance) : TextButton
 	local button = create("TextButton", {
@@ -123,7 +126,7 @@ local function createButton(text : string, color : Color3, layoutOrder : number,
 end
 
 --[=[
-	Monta a tela. Uma vez por sessão: fechar só esconde.
+	Builds the screen. Once per session: closing only hides it.
 ]=]
 function RichTextLabController:build()
 	if self.Gui and self.Gui.Parent then
@@ -161,7 +164,7 @@ function RichTextLabController:build()
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}, panel)
 
-	--[[ TÍTULO ]]
+	--[[ TITLE ]]
 
 	local header = create("Frame", {
 		Name = "Header",
@@ -195,7 +198,7 @@ function RichTextLabController:build()
 
 	create("UICorner", { CornerRadius = UDim.new(0, 6) }, close)
 
-	--[[ PREVIEW — o container do render ]]
+	--[[ PREVIEW: the render container ]]
 
 	local preview = create("Frame", {
 		Name = "Preview",
@@ -237,7 +240,7 @@ function RichTextLabController:build()
 		PaddingRight = UDim.new(0, 10),
 	}, input)
 
-	--[[ BOTÕES ]]
+	--[[ BUTTONS ]]
 
 	local bar = create("Frame", {
 		Name = "Actions",
@@ -282,12 +285,12 @@ function RichTextLabController:build()
 end
 
 --[=[
-	A lista de presets que o botão percorre: os do config mais o `Defaults`
-	sozinho, que é o que uma tela sem preset nenhum recebe — e por isso também
-	precisa ser testável aqui.
+	The list of presets the button cycles through: the config's, plus `Defaults`
+	alone, which is what a screen with no preset gets, so it must be testable here
+	too.
 
-	Ordenada por nome para o botão não trocar de ordem entre sessões: a ordem de um
-	`pairs` sobre o config não é a mesma duas vezes.
+	Sorted by name so the button does not change order between sessions: the order
+	of a `pairs` over the config is not the same twice.
 ]=]
 function RichTextLabController:buildPresetList()
 	local names = { "Defaults" }
@@ -320,7 +323,7 @@ function RichTextLabController:refreshPresetButton()
 end
 
 --[=[
-	O handle do preview, criado com o preset em uso.
+	The preview handle, created with the current preset.
 ]=]
 function RichTextLabController:getHandle() : any
 	if self.Handle then
@@ -342,7 +345,7 @@ end
 --[[ API ]]
 
 --[=[
-	Desenha o que estiver na caixa.
+	Draws whatever is in the box.
 ]=]
 function RichTextLabController:Display()
 	local input = self.Input
@@ -353,7 +356,7 @@ function RichTextLabController:Display()
 end
 
 --[=[
-	Apaga o preview sem fechar a bancada.
+	Clears the preview without closing the workbench.
 ]=]
 function RichTextLabController:Clear()
 	local handle = self.Handle
@@ -363,11 +366,11 @@ function RichTextLabController:Clear()
 end
 
 --[=[
-	Próximo preset da lista.
+	The next preset in the list.
 
-	Solta o handle antigo em vez de reaproveitá-lo: preset novo tem de chegar numa
-	configuração limpa, senão o que o preset anterior pediu continuaria valendo por
-	baixo (ver o cabeçalho).
+	It releases the old handle instead of reusing it: a new preset must arrive at a
+	clean configuration, or what the previous preset requested would keep applying
+	underneath (see the header).
 ]=]
 function RichTextLabController:CyclePreset()
 	self.PresetIndex += 1
@@ -422,14 +425,14 @@ function RichTextLabController:IsOpen() : boolean
 	return gui ~= nil and gui.Enabled
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function RichTextLabController:construct()
 	self:buildPresetList()
 
-	-- Quem abre é o comando `richtext` do Cmdr, pelo servidor: a permissão de rodar
-	-- comando é de lá, e uma bancada que o cliente abrisse sozinho seria uma tela
-	-- de dev na mão de qualquer jogador.
+	-- Cmdr's `richtext` command opens it, through the server: permission to run
+	-- commands lives there, and a workbench the client opened on its own would be a
+	-- dev screen in any player's hands.
 	Framework:Listen("RichTextLabToggle", function()
 		self:Toggle()
 	end)

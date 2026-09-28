@@ -1,132 +1,136 @@
 --[[
-	Os numeros de cada unidade.
+	Each unit's numbers.
 
-	Duas regras seguram esta tabela, e vale conferi-las antes de mexer:
+	Two rules hold this table together, and they are worth checking before any change:
 
-	1. Dano por segundo dividido pelo custo. E o que decide se uma unidade vale a
-	   pena, e o teto e 15 por 100 de caixa. O Slasher ficava em 26,7 — quase tres
-	   vezes o segundo colocado — e por isso encher o mapa de Slasher era a jogada
-	   otima em qualquer dificuldade. A escada por raridade nao vale mais: Slasher
-	   6,5 e Slingshot 4,2 contra Sword 8,8, Epic ~11 e Legendary 11 a 14.
+	1. Damage per second divided by cost. It decides whether a unit is worth
+	   buying, and the cap is 15 per 100 cash. The rule exists because a Slasher
+	   once sat at 26.7, almost three times the runner-up, and filling the map with
+	   Slashers was the optimal play on every difficulty. Rarity is not a ladder
+	   here: a Common can beat a Legendary per cash, and what separates units is
+	   range and role (see each unit's note).
 
-	2. Alcance como eixo de diferenciacao. Cinco das sete unidades tinham alcance
-	   3, o que tornava posicionamento irrelevante — todas precisavam colar no
-	   caminho. As faixas agora sao curto (4 a 6), medio (10) e longo (12), e o
-	   alcance longo e do Slingshot, que nao tem area nem dano alto.
+	2. Range as the axis of difference. When most units had range 3, placement did
+	   not matter: every one of them had to hug the path. The bands are now short
+	   (4 to 7), medium (10), and long (12 and up), and long range belongs to units
+	   with no high single-target damage.
 
 	DPS = Damage * Hits / Cooldown.
 
-	`RangeStats` e como o alcance cresce com o upgrade, e aceita duas formas. A reta
-	e `{ Increment, Max }`: soma `Increment` por nivel ate o teto. A outra e
-	`{ Levels = { ... } }`, um alcance por nivel (indice = nivel + 1), para as
-	unidades cujo alcance sobe em degraus desiguais -- o Sword fica em 4 ate o nivel
-	3 e so entao vai a 5, e isso nao cabe num incremento fixo. Com `Levels`, o
-	`Range` acima tem que ser o primeiro item da lista: e ele que o resto do codigo
-	le como alcance de nivel 0. Quem faz a conta e o `UnitUpgradeConfig:GetRange`.
+	`RangeStats` is how range grows with upgrades, in one of two shapes. The linear
+	one is `{ Increment, Max }`: add `Increment` per level up to the cap. The other is
+	`{ Levels = { ... } }`, one range per level (index = level + 1), for units whose
+	range rises in uneven steps: the Sword stays at 4 until level 3 and only then goes
+	to 5, which no fixed increment can express. With `Levels`, the `Range` above must
+	be the first item of the list, since that is what the rest of the code reads as
+	the level 0 range. `UnitUpgradeConfig:GetRange` does the math.
 
-	`Class` e o tipo da unidade para efeito de clima: "Melee", "Ranged", "Magic",
-	"Fire", "Ice" ou "Electric" (a lista vive em `WeatherConfig.ClassList`). Aceita
-	uma lista quando a unidade for de dois tipos — `Class = {"Melee", "Fire"}`. E o
-	unico lugar onde a classe e escrita; quem le e o `WeatherConfig`.
+	`Class` is the unit type for weather effects: "Melee", "Ranged", "Magic",
+	"Fire", "Ice", or "Electric" (the list lives in `WeatherConfig.ClassList`). It
+	accepts a list when a unit has two types: `Class = {"Melee", "Fire"}`. This is
+	the only place the class is written; `WeatherConfig` reads it.
 
-	`Projectile` e a unidade que atira em vez de bater. Ele e lido pelas duas pontas
-	— o cliente desenha o voo, o servidor resolve quem levou dano —, e por isso mora
-	aqui e nao num config de tela:
+	`Projectile` marks a unit that shoots instead of striking. Both sides read it
+	(the client draws the flight, the server resolves who took damage), so it lives
+	here and not in a screen config:
 
-	| Campo | O que e |
+	| Field | What it is |
 	| --- | --- |
-	| `Asset` | o nome do modelo em `Assets.Projectiles` |
-	| `Speed` | studs por segundo do voo |
-	| `Subtype` | `"Piercing"` faz a flecha atravessar; sem ele, o tiro para no alvo |
-	| `PierceWidth` | studs de folga da linha que acerta; sem ele, 2 |
-	| `PierceFalloff` | quanto do dano a flecha perde a cada corpo furado, de 0 a 1 |
-	| `PierceRange` | ate onde o desenho segue depois do disparo; sem ele, 24 |
+	| `Asset` | the model name in `Assets.Projectiles` |
+	| `Speed` | flight speed in studs per second |
+	| `Subtype` | `"Piercing"` makes the arrow pass through; without it, the shot stops at the target |
+	| `PierceWidth` | studs of slack around the hit line; without it, 2 |
+	| `PierceFalloff` | how much damage the arrow loses per body pierced, from 0 to 1 |
+	| `PierceRange` | how far the drawing continues after the shot; without it, 24 |
 
-	**Atravessar muda o alvo do golpe, e nao o numero dele.** Um `Piercing` acerta
-	cada inimigo na linha que sai da unidade e vai ate o alcance dela, inclusive quem
-	esta atras do alvo. `PierceWidth` e a unica coisa entre "pega quem a linha corta
-	de raspao" e "limpa a fileira do lado".
+	**Piercing changes who the hit reaches, not how hard it hits.** A `Piercing` shot
+	hits every enemy on the line from the unit to the end of its range, including
+	those behind the target. `PierceWidth` is the only thing between "catches whoever
+	the line grazes" and "clears the next lane over".
 
-	`Slow`, `Stun`, `Burn`, `Bleed` e `Frost` sao o que o golpe **deixa** no inimigo,
-	alem do dano. Hoje deixam o Electro (o tranco do choque), o Frostione (os acumulos
-	de gelo), o Pyre (a queimadura) e o Slasher (o sangramento):
+	`Slow`, `Stun`, `Burn`, `Bleed`, and `Frost` are what the hit **leaves** on the
+	enemy besides damage. Today they come from the Electro (the shock jolt), the
+	Frostione (frost stacks), the Pyre (burn), and the Slasher and Berserker (bleed):
 
-	| Campo | O que e |
+	| Field | What it is |
 	| --- | --- |
-	| `Slow` | `{ Amount, Duration }` -- `Amount` e a fracao de velocidade tirada (0.3 e "anda 30% mais devagar") |
-	| `Stun` | `{ Duration }` -- o inimigo para **de vez** por tantos segundos |
-	| `Burn` | `{ Damage, Ticks, Interval }` -- tantos tiques de tanto dano, de tantos em tantos segundos. Nao acumula: acerto em quem ja queima nao soma dano nem renova o prazo |
-	| `Bleed` | `{ Damage, Ticks, Interval, Vulnerability }` -- igual ao `Burn`, com prazo proprio (sangrar e queimar convivem no mesmo alvo) e sem a carta de fogo. `Vulnerability` e o quanto **todo** dano que entrar no alvo vale a mais enquanto ele sangra (1.3 e "+30%"), de qualquer fonte; sem o campo, 1 |
-	| `Frost` | `{ Slow, Duration, FreezeStacks, FreezeDuration, FreezeImmunity, Radius, MaxRadius }` -- um acumulo por acerto, contado **por unidade**; com qualquer acumulo o inimigo fica `Slow` mais lento, o acerto de uma unidade renova so o prazo dos dela, e `FreezeStacks` de uma mesma unidade o congelam por `FreezeDuration` e zeram a conta de todas. Descongelado, ele ainda passa `FreezeImmunity` segundos sem aceitar acumulo nenhum. `Radius` (ate `MaxRadius` no nivel maximo) da o mesmo acumulo, sem dano, a quem estiver em volta do alvo |
+	| `Slow` | `{ Amount, Duration }`: `Amount` is the fraction of speed removed (0.3 is "walks 30% slower") |
+	| `Stun` | `{ Duration }`: the enemy stops **completely** for that many seconds |
+	| `Burn` | `{ Damage, Ticks, Interval }`: that many ticks of that much damage, every that many seconds. Does not stack: a hit on an enemy already burning neither adds damage nor refreshes the timer |
+	| `Bleed` | `{ Damage, Ticks, Interval, Vulnerability }`: like `Burn`, with its own timer (bleeding and burning coexist on the same target) and without the fire card. `Vulnerability` is how much more **all** damage to the target is worth while it bleeds (1.3 is "+30%"), from any source; without the field, 1 |
+	| `Frost` | `{ Slow, Duration, FreezeStacks, FreezeDuration, FreezeImmunity, Radius, MaxRadius }`: one stack per hit, counted **per unit**; with any stack the enemy is `Slow` slower, a unit's hit refreshes only its own stacks' timer, and `FreezeStacks` from the same unit freeze the enemy for `FreezeDuration` and reset every unit's count. Once thawed, it spends `FreezeImmunity` more seconds accepting no stacks. `Radius` (up to `MaxRadius` at max level) gives the same stack, without damage, to enemies around the target |
 
-	`Slow` e `Stun` nao sao a mesma coisa em intensidades diferentes: a lentidao mexe
-	na velocidade do inimigo, o tranco tira ele do laco de movimento. Os dois cabem no
-	mesmo golpe (nenhuma unidade de hoje declara os dois), e e por serem coisas
-	diferentes que o tranco pode ser tao curto: parado e parado, e um terco de segundo
-	disso ja e um pedaco de caminho que o inimigo nao andou.
+	`Slow` and `Stun` are not the same thing at different strengths: slow changes the
+	enemy's speed, and stun takes it out of the movement loop. Both fit on the same hit
+	(no current unit declares both), and because they are different things the stun
+	can be this short: stopped is stopped, and a third of a second of it is a stretch
+	of path the enemy did not walk.
 
-	Quem os executa e o `MobService` (`ApplySlow`, `StunMob`, `ApplyBurn`, `ApplyBleed`), que e o
-	dono do estado do inimigo; quem os dispara e o `UnitService:creditDamage`, depois
-	de o dano ter entrado. As cartas de round Chill Out e Fire Hazard multiplicam
-	exatamente estes numeros.
+	`MobService` runs them (`ApplySlow`, `StunMob`, `ApplyBurn`, `ApplyBleed`), since
+	it owns enemy state; `UnitService:creditDamage` triggers them after the damage
+	lands. The Chill Out and Fire Hazard round cards multiply exactly these numbers.
 
-	`Chain` e o golpe que **salta** de inimigo para inimigo. Ele nao usa o alvo como
-	area nem como linha: o primeiro e o alvo mirado, e da fica pulando para o vizinho
-	mais proximo que ainda nao foi tocado, ate `Targets` inimigos.
+	`Chain` is the hit that **jumps** from enemy to enemy. It uses the target neither as
+	an area nor as a line: the first is the aimed target, and from there it keeps
+	jumping to the nearest enemy not yet touched, up to `Targets` enemies.
 
-	| Campo | O que e |
+	| Field | What it is |
 	| --- | --- |
-	| `Targets` | quantos inimigos o raio toca no total, contando o primeiro |
-	| `Radius` | studs que o salto alcanca **a partir de cada inimigo**, e nao da unidade |
+	| `Targets` | how many enemies the bolt touches in total, counting the first |
+	| `Radius` | studs a jump reaches **from each enemy**, not from the unit |
 
-	O `Radius` sair de cada inimigo e o que separa o salto da area: um raio de 4 saltos
-	acompanha a fila do caminho e chega bem alem do alcance da unidade, enquanto uma
-	area do mesmo tamanho so pegaria quem esta amontoado. Quem enfileira melhor os
-	inimigos ganha mais com a unidade, que e a mesma ideia do `Piercing` -- so que sem
-	linha reta, entao a curva do caminho nao corta o golpe pela metade.
+	`Radius` starting from each enemy is what separates a chain from an area: a
+	4-stud jump follows the queue along the path and reaches well past the unit's
+	range, while an area of the same size would only catch enemies bunched together.
+	Whoever lines up enemies better gets more out of the unit, the same idea as
+	`Piercing`, but without a straight line, so a path bend does not cut the hit in
+	half.
 
-	**Nao ha queda por inimigo**, ao contrario do `PierceFalloff`: o quarto inimigo da
-	corrente leva o mesmo que o primeiro. Isso e de proposito e e caro, entao o preco
-	esta no `Targets` e no `Cooldown` -- e la que se mexe se a unidade ficar forte
-	demais, e nao numa queda que ela nao tem.
+	**There is no per-enemy falloff**, unlike `PierceFalloff`: the fourth enemy in the
+	chain takes the same as the first. That is deliberate and expensive, so the price
+	sits in `Targets` and `Cooldown`; that is where to adjust if the unit gets too
+	strong, not in a falloff it does not have.
 
-	`HitFalloff` e a mesma ideia da queda da flecha, so que entre os **golpes** de um
-	ataque so, e nao entre os alvos de um golpe: ele e a perda de um golpe para o
-	**seguinte**, e nao contra o dano cheio. Com 0.1, o combo vale 100%, 90%, 81% e
-	72,9%. Vale para qualquer unidade de varios `Hits` (hoje so o Berserker
-	declara), e independe de como os golpes sao espacados -- `HitInterval` ou
-	`HitTimes`. Composto e com piso de 1, como o `PierceFalloff`; sem o campo, todos
-	os golpes do ciclo valem igual.
+	`HitFalloff` is the same idea as the arrow's falloff, but between the **hits** of a
+	single attack instead of between the targets of one hit: it is the loss from one
+	hit to the **next**, not against full damage. With 0.1, the combo is worth 100%,
+	90%, 81%, and 72.9%. It applies to any unit with several `Hits` (only the Berserker
+	declares it today), regardless of how the hits are spaced (`HitInterval` or
+	`HitTimes`). Compounded and floored at 1, like `PierceFalloff`; without the field,
+	every hit in the cycle is worth the same.
 
-	`PierceFalloff` e o que impede que atravessar seja de graca. Ele e **composto**:
-	com 0.1, o segundo inimigo leva 90% do primeiro, o terceiro 90% do segundo. Nunca
-	chega a zero de proposito -- uma flecha que furou dez corpos ainda machuca um
-	pouco -- e o resultado e arredondado com piso de 1, para o fim da fila nao virar
-	um "0" flutuando na tela. Sem o campo, a flecha atravessa sem perder nada.
+	`PierceFalloff` is what keeps piercing from being free. It **compounds**: with
+	0.1, the second enemy takes 90% of the first, the third 90% of the second. It
+	never reaches zero on purpose (an arrow that pierced ten bodies still hurts a
+	little), and the result is rounded with a floor of 1, so the end of the queue does
+	not show a floating "0". Without the field, the arrow pierces without losing anything.
+
+	See docs/game/units.md.
 ]]
 
 local UnitStats = {
 	--[[ COSMIC ]]
 
 	--[=[
-		Tres ataques em sequencia, e so depois o cooldown: `Meteor`, `Lightning` e
-		`Teleport`, na ordem do `AttackSequence` do `UnitAttackConfig`, que liga o
-		encadeamento com `ChainSequence`. Entre o comeco de um passo e o do seguinte a
-		espera e o `ChainDelay` de la (5s); o `Cooldown` conta depois da animacao do
-		ultimo. Sem inimigo no alcance, a sequencia espera no passo em que parou.
+		Three attacks in sequence, and only then the cooldown: `Meteor`, `Lightning`,
+		and `Teleport`, in the order of `UnitAttackConfig`'s `AttackSequence`, which
+		turns chaining on with `ChainSequence`. Between the start of one step and the
+		next, the wait is that config's `ChainDelay` (5s); `Cooldown` counts after the
+		last step's animation. With no enemy in range, the sequence waits at the step
+		where it stopped.
 
-		`Damage` e o do meteoro, e e o que o card mostra. O raio usa o dele
-		(`Combo.Lightning.Damage`), e os dois crescem com o mesmo multiplicador de
-		upgrade, carta e carga (`UnitService:getDamage`).
+		`Damage` is the meteor's, and it is what the card shows. The lightning uses its
+		own (`Combo.Lightning.Damage`), and both grow with the same upgrade, card, and
+		charge multiplier (`UnitService:getDamage`).
 
-		| Campo | O que e |
+		| Field | What it is |
 		| --- | --- |
-		| `Combo.Meteor` | `{ Damage, Radius, MaxRadius, FallTime, Height }` -- nasce `Height` studs acima da unidade no `HitTime` do passo, cai em `FallTime` segundos ate onde o alvo estava quando o passo comecou, e explode em `Radius` (ate `MaxRadius` no nivel maximo) |
-		| `Combo.Lightning` | `{ Damage, Interval, Width }` -- linha reta ate o alcance, travada na direcao do alvo no `HitTime`; quem estiver nela leva `Damage` a cada `Interval` segundos ate o `HitEnd` do passo |
-		| `Combo.Teleport` | `{}` -- o alvo volta para o node anterior do caminho, ou para o comeco se ainda nao passou do primeiro (`MobService:TeleportMobBack`) |
+		| `Combo.Meteor` | `{ Damage, Radius, MaxRadius, FallTime, Height }`: spawns `Height` studs above the unit at the step's `HitTime`, falls in `FallTime` seconds to where the target was when the step began, and explodes in `Radius` (up to `MaxRadius` at max level) |
+		| `Combo.Lightning` | `{ Damage, Interval, Width }`: a straight line to the end of range, locked toward the target at `HitTime`; anyone on it takes `Damage` every `Interval` seconds until the step's `HitEnd` |
+		| `Combo.Teleport` | `{}`: the target goes back to the previous path node, or to the start if it has not passed the first (`MobService:TeleportMobBack`) |
 
-		O DPS do card sai de `Damage / Cooldown` e nao conta o raio nem a sequencia: e
-		so uma referencia.
+		The card's DPS comes from `Damage / Cooldown` and counts neither the lightning
+		nor the sequence: it is only a reference.
 	]=]
 	["Archmage"] = {
 		Rarity = "Cosmic",
@@ -147,12 +151,12 @@ local UnitStats = {
 
 	--[[ LEGENDARY ]]
 
-	-- A mais forte em dano bruto, e de alcance curto: quatro golpes por ciclo, mas
-	-- so contra quem chega perto.
+	-- The strongest in raw damage, with short range: four hits per cycle, but
+	-- only against enemies that come close.
 	["Azure"] = {
 		Rarity = "Legendary",
-		-- Sem `Class` de proposito: ela ainda nao foi classificada. Assim ela leva
-		-- so o que o clima faz com `All` e nao entra em nenhuma regra por tipo.
+		-- No `Class` on purpose: it has not been classified yet. So it only takes
+		-- what weather does to `All` and falls under no per-type rule.
 
 		Cost = 250,
 		Damage = 17,
@@ -168,35 +172,35 @@ local UnitStats = {
 	},
 
 	--[=[
-		O raio que salta: um golpe a cada 2,5s que toca quatro inimigos e para cada um
-		deles no lugar por um instante.
+		The jumping bolt: one hit every 2.5s that touches four enemies and stops each
+		of them in place for an instant.
 
-		**Ela vende alcance de golpe, e nao dano por alvo.** 4 x 18 sao 72 de dano por
-		ciclo, ou 28,8 de DPS com a corrente cheia -- 8,2 por 100 de caixa, dentro do
-		teto da regra 1. Contra um alvo sozinho sao 7,2 de DPS, 2,1 por 100: ai ela e
-		das piores da tabela -- e esta certo, porque sozinha ela nao faz nada do que faz.
+		**It sells hit reach, not per-target damage.** 4 x 18 is 72 damage per cycle,
+		or 28.8 DPS with a full chain: 8.2 per 100 cash, within rule 1's cap. Against a
+		lone target it is 7.2 DPS, 2.1 per 100: there it is among the worst in the
+		table, and that is correct, because alone it does none of what it does.
 
-		Em cima disso vem o tranco: 0,3s parado num ciclo de 2,5s no nivel 0 (12% do
-		caminho que os quatro andariam), subindo ate 0,5s no maximo (20%). Ela nao
-		deixa lentidao nenhuma: o inimigo para e volta a andar no ritmo de sempre.
+		On top of that comes the stun: 0.3s stopped in a 2.5s cycle at level 0 (12% of
+		the path the four would walk), rising to 0.5s at max (20%). It leaves no slow:
+		the enemy stops and then walks again at its usual pace.
 
-		Os numeros que importam sao o `Targets` e o `Cooldown`, e o `Stun.Duration` e o
-		que os separa de um controle: subir o tranco para perto do ciclo inteiro vira
-		"a fila anda quando o Electro deixa", que e outra unidade -- quem para inimigo
-		de verdade e o Time Stop, que custa uma carta.
+		The numbers that matter are `Targets` and `Cooldown`, and `Stun.Duration` is
+		what keeps it from being crowd control: raising the stun close to the whole
+		cycle turns it into "the queue moves when the Electro lets it", which is a
+		different unit. Real stopping belongs to Time Stop, which costs a card.
 
-		**O cooldown e fixo; o upgrade compra dano, alcance e tranco.** Sem
-		`CooldownMultiplier` no `UnitUpgradeConfig`, os 2,5s valem em todo nivel, e o
-		tranco sobe em linha reta:
+		**The cooldown is fixed; upgrades buy damage, range, and stun.** With no
+		`CooldownMultiplier` in `UnitUpgradeConfig`, the 2.5s holds at every level, and
+		the stun rises linearly:
 
-		| Nivel  | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Tranco | 0,30 | 0,34 | 0,38 | 0,42 | 0,46 | 0,50 |
+		| Level | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Stun  | 0.30 | 0.34 | 0.38 | 0.42 | 0.46 | 0.50 |
 
-		Os 2,5s ainda cabem na animacao `Attack`, que dura 1,67s.
+		The 2.5s still fits the `Attack` animation, which lasts 1.67s.
 
-		Alcance medio (10), como o Subspace Tripminer: ela precisa alcancar a fila para
-		o salto ter de onde sair, mas o salto ja e o que a leva mais longe -- somar
-		alcance longo por cima seria pagar duas vezes pela mesma coisa.
+		Medium range (10), like the Subspace Tripminer: it must reach the queue for the
+		jump to have somewhere to start, but the jump is already what takes it farther;
+		adding long range on top would be paying twice for the same thing.
 	]=]
 	["Electro"] = {
 		Rarity = "Legendary",
@@ -209,24 +213,23 @@ local UnitStats = {
 		HitInterval = 0,
 		Hits = 1,
 
-		-- Quatro inimigos no total (o alvo e mais tres saltos), sem perda de dano
-		-- entre eles. Ver o `Chain` no cabecalho.
+		-- Four enemies in total (the target plus three jumps), with no damage loss
+		-- between them. See `Chain` in the header.
 		Chain = { Targets = 4, Radius = 8 },
 
 		--[[
-			O tranco do choque, e a unica coisa que o golpe deixa: cada elo da corrente
-			para de vez por um instante e depois volta a andar no ritmo de sempre.
+			The shock's jolt, and the only thing the hit leaves: each link in the chain
+			stops completely for an instant and then walks again at its usual pace.
 
-			O tranco cresce com o upgrade: `Duration` no nivel 0 (0,3s) ate
-			`MaxDuration` no nivel maximo (0,5s), em linha reta -- ver
-			`UnitUpgradeConfig:GetStunDuration`. Unidade sem `MaxDuration` para sempre
-			o mesmo tanto.
+			The stun grows with upgrades: `Duration` at level 0 (0.3s) up to
+			`MaxDuration` at max level (0.5s), linearly; see
+			`UnitUpgradeConfig:GetStunDuration`. A unit without `MaxDuration` always
+			stuns the same amount.
 
-			**Sem `Slow` de proposito.** Ela nao e uma unidade de controle, e o campo
-			existe (ver o `Stun` e o `Slow` no cabecalho) justamente para os dois nao
-			serem confundidos: lentidao mexe na velocidade, tranco tira o inimigo do
-			laco. Quem executa e o `MobService:StunMob`, o mesmo `StunnedUntil` do Time
-			Stop.
+			**No `Slow` on purpose.** It is not a crowd-control unit, and the fields
+			exist (see `Stun` and `Slow` in the header) precisely so the two are not
+			confused: slow changes speed, stun takes the enemy out of the loop.
+			`MobService:StunMob` runs it, with the same `StunnedUntil` as Time Stop.
 		]]
 		Stun = { Duration = 0.3, MaxDuration = 0.5 },
 
@@ -237,14 +240,14 @@ local UnitStats = {
 	},
 
 	--[[
-		Area em alcance longo: o raio da explosao cabe folgado dentro do alcance, que
-		ja foi 3 e fazia a unidade explodir uma area que ela nao enxergava.
+		Area at long range: the explosion radius fits comfortably inside the range. At
+		range 3 the unit exploded an area it could not see.
 
-		Ela passou a dividir a faixa longa (12) com o Slingshot e o Archer, e isso e
-		de proposito: os tres alcancam o mesmo tanto e se separam pelo que fazem la --
-		o Slingshot cutuca barato, o Archer bate mais forte e mais devagar, e este
-		explode. Vale reler a regra 2 la de cima antes de mexer nos tres juntos: o
-		alcance so diferencia enquanto as faixas continuarem distintas.
+		It shares the long band (12) with the Slingshot and the Archer on purpose: all
+		three reach the same distance and differ in what they do there. The Slingshot
+		pokes cheaply, the Archer hits harder and slower, and this one explodes. Reread
+		rule 2 at the top before changing the three together: range only
+		differentiates while the bands stay distinct.
 	]]
 	["Rocket"] = {
 		Rarity = "Epic",
@@ -266,64 +269,65 @@ local UnitStats = {
 	},
 
 	--[=[
-		O combo em quatro tempos: o unico golpe da tabela cujos acertos nao sao
-		espacados por `HitInterval`.
+		The four-beat combo: the only attack in the table whose hits are not spaced by
+		`HitInterval`.
 
-		Os quatro acertos saem nos marcadores `Hit` da animacao `Attack` (0,4333s,
-		1,2667s, 2,3833s e 2,5667s), que estao escritos no `UnitAttackConfig` como
-		`HitTimes` -- os intervalos entre eles sao desiguais de proposito (0,83s,
-		1,12s e 0,18s), e e a coreografia da animacao que manda: os dois ultimos quase
-		se encostam, e sao o par rapido que fecha o combo. **O `Hits = 4` daqui tem
-		que continuar batendo com o tamanho daquela lista**: quem cobra o dano conta
-		pela lista, mas o DPS do card sai deste numero.
+		The four hits come out at the `Hit` markers of the `Attack` animation
+		(0.4333s, 1.2667s, 2.3833s, and 2.5667s), written in `UnitAttackConfig` as
+		`HitTimes`. The gaps between them are uneven on purpose (0.83s, 1.12s, and
+		0.18s), and the animation's choreography rules: the last two almost touch and
+		are the quick pair that closes the combo. **`Hits = 4` here must keep matching
+		the length of that list**: the damage code counts from the list, but the
+		card's DPS comes from this number.
 
-		**`Cooldown = 6` e a animacao mais a recuperacao**: 2,9s de gesto e 3,1s
-		parado depois dele. O cooldown desta tabela sempre contou do inicio de um
-		golpe ao inicio do seguinte, entao "parado depois de terminar a animacao" e a
-		soma dos dois -- nao ha um campo de recuperacao separado, e a janela de 6s e
-		a mesma que o `swingWindow` manda para o cliente encaixar a animacao. Mexeu a
-		animacao, o 2,9 muda aqui e o `Duration` muda la. O `Cooldowns` do
-		`UnitUpgradeConfig` desce ate 4,8s no nivel maximo, e mesmo la sobra quase o
-		dobro da animacao.
+		**`Cooldown = 6` is the animation plus the recovery**: 2.9s of gesture and 3.1s
+		idle after it. This table's cooldown always counted from the start of one attack
+		to the start of the next, so "idle after the animation ends" is the sum of the
+		two. There is no separate recovery field, and the 6s window is the same one
+		`swingWindow` sends to the client to fit the animation. If the animation
+		changes, 2.9 changes here and `Duration` changes there. `UnitUpgradeConfig`'s
+		`Cooldowns` goes down to 4.8s at max level, and even there it leaves almost
+		twice the animation.
 
-		**Cada acerto e uma area de raio 3, e cada um bate menos que o anterior**
-		(`HitFalloff = 0.1`): 39, 35, 32 e 28 de dano. A queda e por golpe e nao por
-		alvo -- quem esta na area do segundo golpe leva os mesmos 35 que todo mundo
-		que estiver la --, e e o que impede que quatro areas seguidas sejam
-		simplesmente quatro vezes o golpe: o combo vale 3,44 golpes cheios, e nao 4.
+		**Each hit is a radius-3 area, and each hits less than the one before**
+		(`HitFalloff = 0.1`): 39, 35, 32, and 28 damage. The falloff is per hit, not
+		per target (everyone in the second hit's area takes the same 35), and it keeps
+		four areas in a row from being simply four times the hit: the combo is worth
+		3.44 full hits, not 4.
 
-		O raio 3 e menor que o alcance dela (7), de proposito, e maior que o do
-		Rocket (2): o Rocket explode a 12 de alcance e este precisa de um inimigo a 7
-		para bater. A area e o que o alcance curto compra.
+		Radius 3 is smaller than its range (7) on purpose, and larger than the
+		Rocket's (2): the Rocket explodes at range 12, and this one needs an enemy at 7
+		to strike. The area is what the short range buys.
 
-		**O `Damage` desta tabela e por golpe, e nao por ciclo.** Os quatro acertos
-		somam 134 de dano, ou 22,3 de DPS -- 5,6 por 100 de caixa contra um alvo so,
-		que e de longe o pior da tabela e esta certo: e a mesma casa do Rocket (4,4),
-		a outra lendaria de area, e pela mesma razao. A regra 1 la de cima mede alvo
-		unico e nao mede area, entao ela cobra das duas o preco de uma coisa que elas
-		nao vendem. O numero que vale para esta unidade e o de grupo: tres inimigos
-		dentro do raio sao 16,7 por 100, no teto de 15 -- ela paga o custo cheio
-		quando acerta a roda inteira, e e ruim contra um alvo sozinho.
+		**`Damage` in this table is per hit, not per cycle.** The four hits add up to
+		134 damage, or 22.3 DPS: 5.6 per 100 cash against a single target, well below
+		most of the table, and that is correct. It sits next to the Rocket (4.4), the
+		other area Legendary, for the same reason: rule 1 measures a single target and
+		not an area, so it charges both for something they do not sell. The number that
+		matters for this unit is the group one: three enemies inside the radius make
+		16.7 per 100, right at the cap of 15. It pays full price when it hits the whole
+		cluster and is weak against a lone target.
 
-		O que ela vende nao e o DPS medio: sao 134 de dano em area concentrados em
-		2,9s e uma janela de 3,1s em que ela nao faz nada, entao ela limpa o que
-		estiver junto e deixa passar a fila que vier atras. E a lendaria de alcance
-		curto ao lado do Azure -- os dois so machucam quem chega perto --, e o que os
-		separa e o ritmo e o alvo: o Azure bate de pouco em pouco num inimigo, este
-		limpa a roda toda de uma vez e para.
+		What it sells is not average DPS: it is 134 area damage packed into 2.9s and a
+		3.1s window where it does nothing, so it clears whatever is bunched up and lets
+		the queue behind pass. It is the short-range Legendary next to the Azure (both
+		only hurt enemies that come close), and what separates them is rhythm and
+		target: the Azure chips away at one enemy, and this one clears the whole
+		cluster at once and stops.
 
-		**Todo golpe deixa o alvo sangrando**: 4 de dano por segundo, 5 tiques
-		(`MobService:ApplyBleed`). Como o do Slasher, ele **nao acumula nem renova** --
-		dos quatro acertos do combo so o primeiro abre o corte, os outros tres caem em
-		quem ja esta sangrando e valem so o dano do golpe. Sao 20 de dano por alvo a
-		cada ciclo, e eles correm enquanto a unidade esta na recuperacao dos 3,1s.
+		**Every hit leaves the target bleeding**: 4 damage per second, 5 ticks
+		(`MobService:ApplyBleed`). Like the Slasher's, it **neither stacks nor
+		refreshes**: of the combo's four hits only the first opens the wound, and the
+		other three land on an enemy already bleeding and are worth only the hit's
+		damage. That is 20 damage per target each cycle, ticking while the unit sits in
+		its 3.1s recovery.
 
-		O corte abre o alvo do mesmo tanto que o do Slasher (`Vulnerability = 1.3`):
-		enquanto o inimigo sangra, todo dano que entra nele vale 30% a mais, venha de
-		onde vier -- inclusive dos golpes seguintes do proprio combo e dos tiques do
-		sangramento. E o que faz os 5 segundos depois da area valerem para o time
-		inteiro, e nao so para esta unidade. Um Slasher e um Berserker no mesmo alvo
-		nao dobram nada: quem abriu o corte primeiro manda ate o prazo vencer.
+		The wound opens the target as much as the Slasher's (`Vulnerability = 1.3`):
+		while the enemy bleeds, all damage to it is worth 30% more, from any source,
+		including the combo's next hits and the bleed's own ticks. That is what makes
+		the 5 seconds after the area pay off for the whole team, not only for this
+		unit. A Slasher and a Berserker on the same target double nothing: whoever
+		opened the wound first rules until the timer runs out.
 	]=]
 	["Berserker"] = {
 		Rarity = "Legendary",
@@ -334,8 +338,8 @@ local UnitStats = {
 		Cooldown = 6,
 		AttackType = "MultiShot",
 
-		-- Sem uso nesta unidade: os intervalos saem das diferencas do `HitTimes`
-		-- (ver `UnitAttackConfig`). Fica em 0 para a linha nao mentir.
+		-- Unused on this unit: the gaps come from the differences in `HitTimes`
+		-- (see `UnitAttackConfig`). It stays at 0 so the line does not lie.
 		HitInterval = 0,
 		Hits = 4,
 		AOE = { Radius = 3 },
@@ -353,10 +357,10 @@ local UnitStats = {
 		Rarity = "Epic",
 		Class = "Magic",
 		Cost = 350,
-		-- O servidor arredonda o dano cobrado: no nivel 0 a mina tira 38.
+		-- The server rounds the damage it applies: at level 0 the mine deals 38.
 		Damage = 37.5,
 		Range = 10,
-		-- O do nivel 0; o upgrade desce ate 3s no maximo (ver o `UnitUpgradeConfig`).
+		-- The level 0 value; upgrades bring it down to 3s at max (see `UnitUpgradeConfig`).
 		Cooldown = 5,
 		AttackType = "SingleShot",
 		HitInterval = 0,
@@ -364,30 +368,30 @@ local UnitStats = {
 		Tripmine = {
 			BaseLimit = 3,
 			LimitPerUpgrade = 1,
-			-- Teto das minas no mapa: 3, 4, 5 e dai para em 6 nos niveis 3 a 5.
+			-- Cap on mines on the map: 3, 4, 5, then it stops at 6 on levels 3 to 5.
 			MaxLimit = 6,
 			TriggerRadius = 2.5,
 			AOE = { Radius = 6 },
 
 			--[[
-				Quanto a mina leva no ar, do fim do arremesso ate o chao.
+				How long the mine spends in the air, from the end of the throw to the ground.
 
-				E tempo de partida, como o resto: acelerado, ela voa mais rapido junto
-				com todo o resto. E o unico numero desta tabela que os dois lados usam
-				para a mesma coisa -- o servidor **so arma a mina quando ela pousa**, e
-				o cliente gasta exatamente este tempo desenhando o arco. Mexer aqui move
-				os dois juntos; separa-los poria a mina explodindo com o modelo ainda no
-				ar (ou o contrario).
+				It is match time, like everything else: sped up, it flies faster along
+				with the rest. It is the only number in this table both sides use for the
+				same thing: the server **arms the mine only when it lands**, and the
+				client spends exactly this time drawing the arc. Changing it here moves
+				both together; splitting them would have the mine exploding while the
+				model is still in the air (or the reverse).
 			]]
 			ThrowTime = 0.35,
 
 			--[[
-				Carregamento da mina depois de pousar.
+				The mine's charge-up after landing.
 
-				Ela arma assim que toca o chao, mas explode com so `StartDamage` do dano
-				(0.35 = 35%) e sobe em linha reta ate 100% em `Time` segundos. Pisada aos
-				2.5s, tira 67.5%. Tempo de partida, como o `ThrowTime`: no 3x carrega tres
-				vezes mais rapido.
+				It arms as soon as it touches the ground, but explodes with only
+				`StartDamage` of its damage (0.35 = 35%) and rises linearly to 100% over
+				`Time` seconds. Stepped on at 2.5s, it deals 67.5%. Match time, like
+				`ThrowTime`: at 3x it charges three times faster.
 			]]
 			Charge = {
 				Time = 5,
@@ -401,15 +405,15 @@ local UnitStats = {
 	},
 
 	--[[
-		Gelo de alvo unico: o tiro e o do Slingshot (sem area), e o que ela vende e o
-		controle, e nao o dano. Cada acerto deixa um acumulo de `Frost`; com qualquer
-		acumulo o inimigo anda 30% mais devagar, e no quarto ele congela por 3s.
+		Single-target ice: the shot is the Slingshot's (no area), and what it sells is
+		control, not damage. Each hit leaves a `Frost` stack; with any stack the enemy
+		walks 30% slower, and on the fourth it freezes for 3s.
 
-		Por isso o DPS por caixa fica abaixo do das outras Epic (regra 1): 10 a cada 1s
-		da 10 de DPS, ou 5 por 100 de caixa. O resto do preco e o congelamento: tiro
-		rapido fecha os quatro acumulos em 3s, congela por 3s, e o inimigo ainda passa
-		2s imune antes de poder acumular de novo -- perto de um terco do tempo parado,
-		e nunca preso de vez, por mais rapida que a unidade fique.
+		That is why its DPS per cash sits low (rule 1): 10 every 1s is 10 DPS, or 5 per
+		100 cash. The rest of the price is the freeze: fast shots close the four stacks
+		in 3s, freeze for 3s, and the enemy still spends 2s immune before it can stack
+		again. Close to a third of the time stopped, and never locked for good, however
+		fast the unit gets.
 	]]
 	["Frostione"] = {
 		Rarity = "Epic",
@@ -424,22 +428,22 @@ local UnitStats = {
 		Projectile = { Asset = "FrostioneProjectile", Speed = 60 },
 
 		--[[
-			Os acumulos de gelo (ver o `MobService:ApplyFrost`).
+			The frost stacks (see `MobService:ApplyFrost`).
 
-			Os acumulos sao contados **por unidade**: cada Frostione tem a conta dela no
-			inimigo, e o acerto dela so renova o prazo dos dela. `Duration` e quanto
-			eles duram sem acerto novo. `FreezeStacks` acumulos de uma mesma unidade
-			congelam o inimigo por `FreezeDuration` segundos e zeram a conta de todas, e
-			por mais `FreezeImmunity` segundos depois do degelo ele nao aceita acumulo
-			nenhum: sem essa folga a Frostione refaz os quatro e prende o mesmo inimigo
-			para sempre quando o cooldown dela fica curto.
+			Stacks are counted **per unit**: each Frostione has its own count on the
+			enemy, and its hit refreshes only its own stacks' timer. `Duration` is how
+			long they last without a new hit. `FreezeStacks` stacks from the same unit
+			freeze the enemy for `FreezeDuration` seconds and reset every unit's count,
+			and for `FreezeImmunity` more seconds after thawing it accepts no stacks:
+			without that slack, the Frostione rebuilds the four and locks the same enemy
+			forever once its cooldown gets short.
 
-			`Slow` e a lentidao, uma so, enquanto qualquer Frostione tiver acumulo no
-			inimigo -- a carta Chill Out multiplica este numero.
+			`Slow` is the slow, a single one, while any Frostione has a stack on the
+			enemy; the Chill Out card multiplies this number.
 
-			`Radius` e a area em volta do alvo: todo inimigo nela ganha um acumulo da
-			mesma unidade, como se tivesse levado o tiro, mas sem dano -- o dano
-			continua so no alvo. Sobe em linha reta ate `MaxRadius` no nivel maximo
+			`Radius` is the area around the target: every enemy in it gets a stack from
+			the same unit, as if it had been shot, but without damage; the damage stays
+			on the target only. It rises linearly to `MaxRadius` at max level
 			(`UnitUpgradeConfig:GetFrostRadius`).
 		]]
 		Frost = {
@@ -459,20 +463,19 @@ local UnitStats = {
 	},
 
 	--[[
-		A unidade que nao ataca: ela paga caixa no fim de cada wave e faz quem esta
-		em volta render mais.
+		The unit that does not attack: it pays cash at the end of each wave and makes
+		the units around it earn more.
 
-		As duas coisas crescem com o upgrade, e por caminhos diferentes. A renda e
-		uma escada na mao (`Incomes`, no `UnitUpgradeConfig`) que dobra e sobra do
-		nivel 0 ao 5 -- 60 a 225 --, com um salto de 50% no ultimo degrau contra os
-		25% dos outros: o nivel maximo dela e o unico investimento de economia da
-		tabela. A aura sobe 5 pontos por nivel e **para em 30%** (`Aura.MaxBonus`),
-		entao os niveis 4 e 5 dao o mesmo bonus e o que o ultimo compra e a renda e
-		o raio.
+		Both grow with upgrades, along different paths. Income is a hand-written ladder
+		(`Incomes`, in `UnitUpgradeConfig`) that more than doubles from level 0 to 5
+		(60 to 225), with a 50% jump on the last step against the others' 25%: its max
+		level is the table's only economy investment. The aura rises 5 points per level
+		and **stops at 30%** (`Aura.MaxBonus`), so levels 4 and 5 give the same bonus,
+		and what the last one buys is income and radius.
 
-		O raio e o `Range` (ver o `Aura` abaixo), e vai de 4 a 8 em degraus
-		desiguais -- e a unica unidade cujo alcance dobra com o upgrade, porque nela
-		alcance nao e mira, e quantas torres cabem debaixo da aura.
+		The radius is `Range` (see `Aura` below), and it goes from 4 to 8 in uneven
+		steps. It is the only unit whose range doubles with upgrades, because here
+		range is not aim: it is how many towers fit under the aura.
 	]]
 	["Entrepreneur"] = {
 		Rarity = "Epic",
@@ -485,43 +488,41 @@ local UnitStats = {
 		HitInterval = 0,
 		Hits = 1,
 		Farm = {
-			-- O do nivel 0; a escada inteira e o `Incomes` do `UnitUpgradeConfig`, e
-			-- quem faz a conta para os dois lados e o `GetIncome`.
+			-- The level 0 value; the whole ladder is `Incomes` in `UnitUpgradeConfig`, and
+			-- `GetIncome` does the math for both sides.
 			Income = 60,
 
 			--[[
-				A aura: toda unidade aliada dentro do alcance do Entrepreneur leva
-				`Bonus` a mais de caixa em cima do que ela ganhar por dano e por morte.
-				Vale para qualquer dono -- a torre do vizinho tambem rende mais perto
-				da minha farm, e quem recebe e sempre o dono da torre.
+				The aura: every allied unit inside the Entrepreneur's range gets `Bonus`
+				more cash on top of what it earns from damage and kills. It applies to
+				any owner (a neighbor's tower also earns more near my farm), and the
+				payout always goes to the tower's owner.
 
-				O raio nao esta escrito aqui de proposito: ele e o `Range` acima, lido
-				pelo `UnitUpgradeConfig:GetRange`, que e exatamente o circulo que o
-				jogador ve ao selecionar a farm. Mexer no `Range` move a aura e o
-				circulo juntos, e nao ha como um mentir sobre o outro.
+				The radius is not written here on purpose: it is the `Range` above, read
+				through `UnitUpgradeConfig:GetRange`, which is exactly the circle the
+				player sees when selecting the farm. Changing `Range` moves the aura and
+				the circle together, and neither can lie about the other.
 
-				`Bonus` e uma fracao somavel: 0.15 e "+15%", e duas farms cobrindo a
-				mesma torre valem 30%. `BonusPerUpgrade` e quanto cada nivel soma --
-				somado, e nao multiplicado como a renda, porque porcentagem que cresce
-				em passo redondo (15, 20, 25...) e o que o card consegue mostrar sem
-				casa decimal.
+				`Bonus` is an additive fraction: 0.15 is "+15%", and two farms covering
+				the same tower give 30%. `BonusPerUpgrade` is what each level adds
+				(added, not multiplied like income), because a percentage that grows in
+				round steps (15, 20, 25...) is what the card can show without decimals.
 
-				Quem faz a conta e o `UnitUpgradeConfig:GetAuraBonus`, para o servidor
-				e o card nunca discordarem.
+				`UnitUpgradeConfig:GetAuraBonus` does the math, so the server and the
+				card never disagree.
 			]]
 			Aura = {
 				Bonus = 0.10,
 				BonusPerUpgrade = 0.05,
 
 				--[[
-					O teto da aura, e o que faz os niveis 4 e 5 darem os mesmos 30%.
+					The aura cap, and why levels 4 and 5 give the same 30%.
 
-					Sem ele a conta seguiria reta ate 35% no maximo, e duas farms
-					encostadas fechariam 70% em cima de cada torre -- o bonus e somavel
-					entre farms (ver o `Bonus` acima), entao o que limita o empilhamento
-					e este numero e nao o numero de farms. O ultimo upgrade nao fica
-					vazio por causa disso: ele compra o salto de renda (150 -> 225) e
-					mais um stud de raio.
+					Without it the math would continue linearly to 35% at max, and two
+					adjacent farms would stack 70% on each tower. The bonus adds up across
+					farms (see `Bonus` above), so what limits stacking is this number, not
+					the number of farms. The last upgrade is not empty because of it: it
+					buys the income jump (150 -> 225) and one more stud of radius.
 				]]
 				MaxBonus = 0.30,
 			},
@@ -534,19 +535,19 @@ local UnitStats = {
 	--[[ RARE ]]
 
 	--[[
-		A barata de longe: 7 de dano a cada 1,15 s, a 6,1 de DPS -- 3,5 por 100 de
-		caixa, o pior da tabela e de proposito. Ela nao mata nada sozinha; o que ela
-		vende e cutucar sem parar de longe, e no nivel maximo o ciclo cai para 0,77 s
-		e o dano quase quadruplica (26).
+		The cheap long-range poker: 7 damage every 1.15 s, 6.1 DPS, 3.5 per 100 cash,
+		among the lowest in the table on purpose. It kills nothing alone; what it sells
+		is constant poking from afar, and at max level the cycle drops to 0.77 s and
+		the damage almost quadruples (26).
 
-		**O cooldown ja nao e mais curto que o windup do tiro** (0,7 s no
-		`UnitAttackConfig`) nos primeiros niveis, mas volta a ficar perto dele no
-		topo, e por isso o passo dela continua escrito como `HitTimes` + `Duration`,
-		e nao como `HitTime`: com 0,77 s de ciclo contra 1,25 s de animacao, as duas
-		pontas espremem o instante junto com o gesto. Ver o comentario dela la.
+		**The cooldown is no longer shorter than the shot's windup** (0.7 s in
+		`UnitAttackConfig`) at the first levels, but it gets close again at the top,
+		so its step is still written as `HitTimes` + `Duration` instead of `HitTime`:
+		with a 0.77 s cycle against a 1.25 s animation, both ends compress the instant
+		along with the gesture. See its comment there.
 
-		O alcance sobe em degraus ate 16 (`RangeStats.Levels`) -- a faixa longa da
-		regra 2, que ela divide com o Archer (12 na base tambem, 17 no maximo).
+		Range rises in steps up to 16 (`RangeStats.Levels`): rule 2's long band, shared
+		with the Archer (also 12 at base, 17 at max).
 	]]
 	["Slingshot"] = {
 		Rarity = "Rare",
@@ -565,45 +566,45 @@ local UnitStats = {
 	},
 
 	--[[
-		O Slingshot com outro boneco: mesma familia (Ranged de tiro unico e projetil
-		`Bullet`), so que o arco puxa mais devagar e bate mais forte.
+		The Slingshot with a different model: same family (single-shot Ranged with a
+		`Bullet` projectile), but the bow draws slower and hits harder.
 
-		**Os numeros sao provisorios** e existem para a unidade entrar em jogo
-		coerente, nao para fechar balanceamento. Duas coisas neles nao sao chute e
-		vale saber antes de mexer:
+		**The numbers are provisional** and exist so the unit enters play coherent, not
+		to settle balance. Two things in them are not guesses and are worth knowing
+		before changing them:
 
-		- **2,00s e o piso do cooldown**, e e a duracao da animacao `Attack` do
-		  modelo. O `Cooldowns` do `UnitUpgradeConfig` desce de 3,5s ate exatamente
-		  esse numero no nivel maximo e nao passa dele: com um cooldown menor a
-		  unidade pediria um golpe novo antes de o boneco terminar o anterior, e o
-		  `playAttackVisual` nao reinicia uma track que ja esta tocando -- a flecha
-		  sairia sem o gesto acompanhar.
-		- 16 de dano em 3,5s da 4,6 de DPS, ou 3,0 por 100 de caixa: na mesma casa do
-		  Slingshot (3,5), que e a outra Rare de tiro, e bem abaixo do teto de 15 da
-		  regra 1 la de cima. No nivel maximo sao 22,5 de DPS.
+		- **2.00s is the cooldown floor**, and it is the duration of the model's
+		  `Attack` animation. `UnitUpgradeConfig`'s `Cooldowns` goes from 3.5s down to
+		  exactly that number at max level and not below: with a shorter cooldown the
+		  unit would ask for a new attack before the model finished the previous one,
+		  and `playAttackVisual` does not restart a track that is already playing, so
+		  the arrow would leave without the gesture.
+		- 16 damage in 3.5s is 4.6 DPS, or 3.0 per 100 cash: next to the Slingshot
+		  (3.5), the other shooting Rare, and well below rule 1's cap of 15. At max
+		  level it is 22.5 DPS.
 
-		**A flecha atravessa** (`Projectile.Subtype = "Piercing"`), e e isso que separa
-		o Archer do Slingshot agora que os dois tem o mesmo alcance: o tiro deixa de
-		valer por alvo e passa a valer por **fila**. Contra um inimigo sozinho ele
-		continua sendo os mesmos 8,0 de DPS; contra a fileira que anda em coluna pelo
-		caminho, ele cobra de cada um que estiver na linha, e por isso o lugar onde a
-		unidade e posta passa a importar mais que o numero dela.
+		**The arrow pierces** (`Projectile.Subtype = "Piercing"`), and that is what
+		separates the Archer from the Slingshot now that both have the same range: the
+		shot stops being worth per target and becomes worth per **queue**. Against a
+		lone enemy it is still the same 4.6 DPS; against the line walking single file
+		down the path, it charges every enemy on the line, so where the unit is placed
+		matters more than its number.
 
-		`PierceFalloff = 0.1` e o freio disso. Cada corpo furado tira 10% do que o
-		anterior levou, entao os 16 de dano saem 16, 14, 13, 12, 10, 9, 9, 8: oito
-		inimigos em linha somam 91 de dano, e nao os 128 de oito tiros cheios. Sem a
-		queda, um Archer bem posto num mapa que enfileira estouraria o teto de 15 por
-		100 de caixa da regra 1 la de cima sozinho; com ela, alinhar mais inimigos
-		continua valendo a pena e para de escalar reto.
+		`PierceFalloff = 0.1` is the brake on that. Each body pierced takes 10% off
+		what the previous one took, so the 16 damage comes out 16, 14, 13, 12, 10, 9,
+		9, 8: eight enemies in line add up to 91 damage, not the 128 of eight full
+		shots. Without the falloff, a well-placed Archer on a map that lines enemies up
+		would break rule 1's cap of 15 per 100 cash on its own; with it, lining up more
+		enemies stays worthwhile and stops scaling linearly.
 
-		Contra um alvo so ele passa a valer o dobro do que valia ao subir de nivel --
-		o dano quase triplica (16 a 45) enquanto o ciclo cai quase pela metade (3,5s a
-		2s) --, e contra fila ele escala junto com os dois. E por isso que o
-		`Cooldowns` dele para nos 2s da animacao: e o unico teto que a unidade tem.
+		Against a single target it grows a lot with levels (damage almost triples,
+		16 to 45, while the cycle drops almost by half, 3.5s to 2s), and against a
+		queue it scales with both. That is why its `Cooldowns` stops at the
+		animation's 2s: it is the only ceiling the unit has.
 
-		Se ele ainda virar escolha obvia em algum mapa, os botoes a girar sao o
-		`Damage` e o `PierceFalloff`, nesta ordem -- o subtipo e a identidade da
-		unidade, e nao um numero de balanceamento.
+		If it still becomes the obvious pick on some map, the knobs to turn are
+		`Damage` and `PierceFalloff`, in that order: the subtype is the unit's
+		identity, not a balance number.
 	]]
 	["Archer"] = {
 		Rarity = "Rare",
@@ -623,22 +624,21 @@ local UnitStats = {
 	},
 
 	--[[
-		A primeira unidade `Fire`: tiro unico com projetil, e o acerto deixa o alvo
-		queimando -- 3 de dano a cada 0,5s por 10s, 60 no total, pelo
+		The first `Fire` unit: a single shot with a projectile, and the hit leaves the
+		target burning: 3 damage every 0.5s for 10s, 60 in total, through
 		`MobService:ApplyBurn`.
 
-		**A queimadura nao acumula**, venha de quem vier: acerto em quem ja queima so
-		da o dano do tiro, sem somar tique nem renovar o prazo. Por isso o valor dela
-		esta em **espalhar** o fogo, e nao em insistir no mesmo alvo.
+		**Burn does not stack**, whoever applies it: a hit on an enemy already burning
+		only deals the shot's damage, without adding ticks or refreshing the timer. So
+		its value is in **spreading** fire, not in hammering the same target.
 
-		**Os numeros de custo, alcance e cooldown sao provisorios.** O que nao e
-		chute: `Cooldown = 2,1` fica logo acima da animacao `Attack` (2,033s), pelo
-		mesmo motivo do Archer; 15 de dano em 2,1s da 7,1 de DPS no tiro, e com a
-		queimadura inteira (6 de DPS) chega a 13,1 -- 8,8 por 100 de caixa, abaixo do
-		teto de 15 da regra 1 la de cima.
+		**The cost, range, and cooldown numbers are provisional.** What is not a guess:
+		`Cooldown = 2.1` sits just above the `Attack` animation (2.033s), for the same
+		reason as the Archer; 15 damage in 2.1s is 7.1 DPS from the shot, and with the
+		full burn (6 DPS) it reaches 13.1: 8.8 per 100 cash, below rule 1's cap of 15.
 
-		A queimadura nao cresce com upgrade, clima nem carta de dano: so a carta Fire
-		Hazard mexe nela.
+		The burn does not grow with upgrades, weather, or damage cards: only the Fire
+		Hazard card changes it.
 	]]
 	["Pyre"] = {
 		Rarity = "Rare",
@@ -653,18 +653,19 @@ local UnitStats = {
 		Projectile = { Asset = "PyreProjectile", Speed = 60 },
 
 		--[[
-			O tiro estoura onde cai: quem estiver a 3 studs da mira leva o dano cheio
-			**e** pega fogo, porque a queimadura sai do `creditDamage` e ele roda uma
-			vez por alvo atingido.
+			The shot bursts where it lands: anyone within 3 studs of the aim point takes
+			full damage **and** catches fire, because the burn comes from `creditDamage`,
+			which runs once per target hit.
 
-			E o que separa o Pyre do Rocket, que tem area de 2 e nao deixa nada: aqui a
-			area nao e o golpe, e o que espalha a queimadura. Numa fila apertada um tiro
-			so acende quatro inimigos, e cada um queima por conta propria pelos 10s --
-			o `BurningUntil` e por mob, e a regra de nao acumular continua valendo por
-			inimigo, nao por tiro.
+			That is what separates the Pyre from the Rocket, which has a radius-2 area
+			and leaves nothing: here the area is not the hit, it is what spreads the
+			burn. In a tight queue one shot lights four enemies, and each burns on its
+			own for the 10s. `BurningUntil` is per enemy, and the no-stacking rule still
+			applies per enemy, not per shot.
 
-			Sem queda por alvo, de proposito: a area e pequena (3 contra os 6 da
-			tripmine) e o cooldown e longo. Se precisar segurar, o lugar e o raio.
+			No per-target falloff, on purpose: the area is small (3 against the
+			tripmine's 6) and the cooldown is long. If it needs reining in, the place is
+			the radius.
 		]]
 		AOE = { Radius = 3 },
 
@@ -678,12 +679,12 @@ local UnitStats = {
 	--[[ COMMON ]]
 
 	--[[
-		O golpe pesado e lento, contra o Slasher que e rapido e fraco.
+		The heavy, slow hit, against the Slasher's fast, weak one.
 
-		35 de dano a cada 2 s da 17,5 de DPS, ou 8,8 por 100 de caixa: o melhor
-		aproveitamento das duas Common, e o preco disso e o alcance -- ela so alcanca
-		4, e o upgrade so a leva a 5 (`RangeStats.Levels`), do nivel 3 para cima. E a
-		unidade que precisa colar no caminho mais que qualquer outra.
+		35 damage every 2 s is 17.5 DPS, or 8.8 per 100 cash: the better value of the
+		two Commons, and the price is range: it only reaches 4, and upgrades only take
+		it to 5 (`RangeStats.Levels`), from level 3 up. It is the unit that has to hug
+		the path more than any other.
 	]]
 	["Sword"] = {
 		Rarity = "Common",
@@ -701,29 +702,28 @@ local UnitStats = {
 	},
 
 	--[[
-		A unidade de entrada: 90 de caixa, o menor preco da tabela, porque e o que o
-		jogador compra na wave 1.
+		The starter unit: 90 cash, the lowest price in the table, because it is what
+		the player buys on wave 1.
 
-		5 de dano a cada 0,85 s da 5,9 de DPS, ou 6,5 por 100 de caixa -- longe do
-		teto de 15 da regra 1, e **acima** do Slingshot (4,2) e do Archer (5,3), que
-		sao Rare e custam mais. A escada por raridade ja nao valia (ver a regra 1 la
-		em cima), e o que separa os tres continua sendo o alcance: ela precisa colar
-		no caminho para bater, e eles nao.
+		5 damage every 0.85 s is 5.9 DPS, or 6.5 per 100 cash: far from rule 1's cap of
+		15, and **above** the Slingshot (3.5) and the Archer (3.0), which are Rare and
+		cost more. Rarity is not a ladder (see rule 1 at the top), and what separates
+		the three is still range: it has to hug the path to strike, and they do not.
 
-		O alcance sobe em degraus ate 6 (`RangeStats.Levels`), e para ai de proposito:
-		na faixa media ela alcancaria o mesmo que as unidades de tiro sem ter deixado
-		de ser corpo a corpo em nada.
+		Range rises in steps up to 6 (`RangeStats.Levels`) and stops there on purpose:
+		in the medium band it would reach as far as the shooting units without having
+		stopped being melee in any way.
 	]]
 	--[[
-		Cada golpe deixa o alvo sangrando: 1 de dano por segundo, 5 tiques. Como a
-		queimadura, **nao acumula nem renova** -- golpe em quem ja sangra so da o dano
-		do golpe. Upgrade, clima e carta nao mexem no sangramento.
+		Each hit leaves the target bleeding: 1 damage per second, 5 ticks. Like burn,
+		it **neither stacks nor refreshes**: a hit on an enemy already bleeding only
+		deals the hit's damage. Upgrades, weather, and cards do not change the bleed.
 
-		O corte tambem abre o alvo: enquanto ele sangra, todo dano que entrar nele vale
-		30% a mais (`Vulnerability`), venha de onde vier. Isso vale muito mais no time
-		do que na unidade -- os 5 tiques de 1 sao troco perto de 30% do que as outras
-		torres despejam no mesmo alvo --, e e de proposito: o Slasher e a unidade de
-		entrada, e o que ela faz de melhor e marcar o alvo para os outros.
+		The wound also opens the target: while it bleeds, all damage to it is worth 30%
+		more (`Vulnerability`), from any source. That is worth far more to the team
+		than to the unit (the 5 ticks of 1 are pocket change next to 30% of what the
+		other towers pour into the same target), and it is on purpose: the Slasher is
+		the starter unit, and what it does best is mark the target for the others.
 	]]
 	["Slasher"] = {
 		Rarity = "Common",

@@ -12,44 +12,47 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("TutorialShopController")
 
 local TutorialConfig = SharedConfig.TutorialConfig
 local Config = TutorialConfig.Lobby
 
 --[[
-	A segunda metade do tutorial, no lobby, depois da vitória.
+	The second half of the tutorial, in the Lobby, after the win.
 
-	É um fluxo de sete tempos, e cada um aponta **a única coisa clicável do
-	momento**:
+	It is a seven-beat flow, and each beat points at **the only clickable thing at
+	that moment**:
 
-		1. a fala de parabéns;
-		2. o botão da loja;
-		3. o botão de comprar a Crate of Beginnings, quando a loja abre;
-		4. a loja fecha sozinha e o botão da mochila é apontado;
-		5. a primeira caixa da mochila, quando ela abre — **um clique só**;
-		6. a mochila fecha sozinha e o unboxing roda com a tela trancada;
-		7. a fala de despedida.
+		1. the congratulations dialog;
+		2. the shop button;
+		3. the Crate of Beginnings buy button, when the shop opens;
+		4. the shop closes on its own and the backpack button is pointed at;
+		5. the first crate in the backpack, when it opens: **a single click**;
+		6. the backpack closes on its own and the unboxing runs with the screen locked;
+		7. the farewell dialog.
 
-	**Nada fora do passo é clicável.** Quem desliga é o `ButtonGateController`, o
-	mesmo que os passos da partida usam: a cada tempo do fluxo a whitelist é o alvo
-	daquele tempo (mais a caixa de fala, que é `TutorialConfig.ButtonGate.Always`), e o
-	resto para de aceitar clique. É o que impede o jogador de abrir o deck, entrar num
-	portal ou comprar outra caixa no meio do roteiro.
+	**Nothing outside the step is clickable.** `ButtonGateController` turns the rest
+	off, the same one the match steps use: at each beat the whitelist is that beat's
+	target (plus the dialog box, which is `TutorialConfig.ButtonGate.Always`), and the
+	rest stops accepting clicks. That keeps the player from opening the deck, entering
+	a portal, or buying another crate mid-script.
 
-	A trava é nos botões, e **não** no `BlockInput` do destaque, de propósito:
-	aquele cobre a tela com frames que engolem qualquer input, inclusive o arrastar
-	que gira a câmera — o jogador ficava preso olhando para um lado só. A trava sai
-	junto com o fluxo: acabando, sendo interrompido ou o jogador morrendo, o
-	`finish` devolve tudo.
+	The lock is on the buttons, and **not** on the highlight's `BlockInput`, on
+	purpose: that one covers the screen with frames that swallow any input, including
+	the drag that turns the camera, and the player would be stuck looking one way. The
+	lock leaves with the flow: when it ends, is interrupted, or the player dies,
+	`finish` gives everything back.
 
-	**O servidor é quem começa** (`TutorialShopPrompt`), e é ele quem garante a unit
-	épica desta caixa — o cliente não pede raridade nenhuma, e por isso não há como
-	forjar uma.
+	**The server starts it** (`TutorialShopPrompt`), and the server guarantees this
+	crate's epic unit: the client asks for no rarity, so there is no way to forge one.
 
-	Fica em `common/` porque o destaque e a caixa de fala são de lá; o fluxo em si só
-	existe no lobby, e é o servidor de lá que o dispara.
+	It lives in `common/` because the highlight and the dialog box live there; the flow
+	itself only exists in the Lobby, and that place's server triggers it.
+
+	See docs/common/tutorial.md.
 ]]
 
 local TutorialShopController = {
@@ -58,8 +61,8 @@ local TutorialShopController = {
 		HighlightController = {},
 		ButtonGateController = {},
 
-		-- As telas que o fluxo abre e fecha. Nenhuma delas é obrigatória: place sem
-		-- alguma delas simplesmente não tem esse passo.
+		-- The screens the flow opens and closes. None of them is required: a place
+		-- missing one simply does not have that step.
 		ShopController = {},
 		CrateUIController = {},
 		UnboxingController = {},
@@ -68,26 +71,26 @@ local TutorialShopController = {
 
 TutorialShopController.Running = false
 
--- Uma sessão por fluxo: o `while` de cada espera morre quando outra começa (ou
--- quando o fluxo é abortado), em vez de ficar rodando em segundo plano.
+-- One session per flow: each wait's `while` dies when another starts (or when the
+-- flow is aborted), instead of running in the background.
 TutorialShopController.Session = 0
 
--- De quanto em quanto tempo uma espera longa se anuncia no output.
+-- How often a long wait announces itself in the output.
 local REPORT_INTERVAL = 3
 
 --[[ INTERNAL ]]
 
 --[=[
-	Um controller irmão, procurado **na hora do uso**.
+	A sibling controller, looked up **at the time of use**.
 
-	Não dá para resolver tudo no `init`: o `Me:Load` chama o `init` de cada módulo
-	no meio da varredura, então quem é carregado depois deste ainda não existe — e
-	uma busca sem espera ali devolve `nil` para sempre. Foi exatamente isso que fez
-	o fluxo não reagir ao comando: o `ShopController` nunca chegava.
+	Everything cannot be resolved in `init`: `Me:Load` calls each module's `init`
+	during the sweep, so modules loaded after this one do not exist yet, and a
+	non-waiting lookup there returns `nil` forever. That would leave the flow unable to
+	react to the command, with `ShopController` never arriving.
 
-	Esperar também não serve: metade destes controllers é do lobby e não existe na
-	Game, e um `Get` com espera ficaria preso para sempre lá. Buscar tarde e guardar
-	o que achou resolve os dois casos.
+	Waiting does not work either: half of these controllers are Lobby-only and do not
+	exist in Game, and a waiting `Get` would hang forever there. Looking up late and
+	caching what was found solves both cases.
 ]=]
 function TutorialShopController:controller(name : string) : any
 	local found = self.Controllers[name]
@@ -106,20 +109,20 @@ function TutorialShopController:controller(name : string) : any
 end
 
 --[=[
-	Aponta um alvo e deixa **só ele** clicável.
+	Points at a target and leaves **only it** clickable.
 
-	A trava é refeita a cada tempo do fluxo, e é isso que cobre os botões que ainda
-	não existiam quando o anterior começou — o de comprar nasce com a loja aberta, a
-	caixa nasce com a mochila aberta. O gate ainda se reaplica sozinho quando um botão
-	novo chega, então a ordem entre "abriu a tela" e "apontei o alvo" deixou de
-	importar.
+	The lock is rebuilt on every beat of the flow, and that is what covers buttons
+	that did not exist when the previous one started: the buy button is born with the
+	shop open, the crate is born with the backpack open. The gate also reapplies
+	itself when a new button arrives, so the order between "opened the screen" and
+	"pointed at the target" does not matter.
 
-	`nil` tranca a tela inteira e apaga o destaque: é o que o passo do unboxing pede,
-	para não haver uma segunda caixa para abrir sem querer.
+	`nil` locks the whole screen and clears the highlight: that is what the unboxing
+	step asks for, so there is no second crate to open by accident.
 
-	O prazo da válvula é o `StallRelease` do config, contado a partir daqui — e como
-	o `point` vem sempre um instante antes da espera daquele tempo, ele é o prazo
-	daquela espera.
+	The valve's deadline is the config's `StallRelease`, counted from here, and since
+	`point` always comes an instant before that beat's wait, it is that wait's
+	deadline.
 ]=]
 function TutorialShopController:point(target : GuiObject?)
 	local gate = self:controller("ButtonGateController")
@@ -155,15 +158,15 @@ function TutorialShopController:point(target : GuiObject?)
 end
 
 --[=[
-	Espera uma condição virar verdadeira, sem passar do orçamento.
+	Waits for a condition to become true, without exceeding the budget.
 
-	Devolve `false` quando o tempo acaba **ou** quando outro fluxo começou no meio —
-	quem chama trata os dois do mesmo jeito: para de esperar e sai.
+	Returns `false` when time runs out **or** when another flow started midway;
+	callers treat both the same way: stop waiting and leave.
 
-	A válvula que solta a trava quando a espera passa do limite **não é daqui**: ela é
-	do `ButtonGateController`, armada pelo `point` que vem antes de cada espera (ver
-	`Lobby.StallRelease`). Estava aqui antes de os passos da partida precisarem da
-	mesma rede, e duas implementações da mesma ideia é uma a mais.
+	The valve that releases the lock when a wait runs past the limit **is not here**:
+	it belongs to `ButtonGateController`, armed by the `point` that comes before each
+	wait (see `Lobby.StallRelease`). One shared implementation serves this flow and
+	the match steps.
 ]=]
 function TutorialShopController:await(session : number, timeout : number?, condition : () -> boolean, label : string?) : boolean
 	local deadline = if timeout then os.clock() + timeout else nil
@@ -175,17 +178,17 @@ function TutorialShopController:await(session : number, timeout : number?, condi
 		end
 
 		if deadline and os.clock() > deadline then
-			print(`[DEBUG/TutorialLobby] desisti de esperar: {label or "?"}`)
+			log:Debug(`gave up waiting: {label or "?"}`)
 
 			return false
 		end
 
-		-- Espera que demora vira linha no output: "nada acontece" é o relato mais
-		-- difícil de investigar, e o fluxo sabe exatamente o que está esperando.
+		-- A slow wait becomes a line in the output: "nothing happens" is the hardest
+		-- report to investigate, and the flow knows exactly what it is waiting for.
 		if label and os.clock() >= nextReport then
 			nextReport = os.clock() + REPORT_INTERVAL
 
-			print(`[DEBUG/TutorialLobby] esperando: {label}`)
+			log:Debug(`waiting: {label}`)
 		end
 
 		task.wait(Config.PollInterval)
@@ -195,7 +198,7 @@ function TutorialShopController:await(session : number, timeout : number?, condi
 end
 
 --[=[
-	Uma fala, esperando ela fechar para seguir.
+	A dialog line, waiting for it to close before continuing.
 ]=]
 function TutorialShopController:say(session : number, lines : { string }?) : boolean
 	local dialog = self:controller("DialogController")
@@ -215,7 +218,7 @@ function TutorialShopController:say(session : number, lines : { string }?) : boo
 	end)
 
 	local playing = dialog:Play(lines, TutorialConfig.Speech({
-		-- O HUD fica: o passo seguinte aponta um botão dele.
+		-- The HUD stays: the next step points at one of its buttons.
 		HideUI = false,
 		Blur = false,
 		Duck = false,
@@ -223,23 +226,23 @@ function TutorialShopController:say(session : number, lines : { string }?) : boo
 	}))
 
 	--[=[
-		Fala que não entrou não pode **parar** o fluxo.
+		A dialog line that did not start must not **stop** the flow.
 
-		A espera aqui embaixo não tem prazo: ela roda até o `OnClosed` chegar, e
-		`OnClosed` de uma fala que nunca começou não chega nunca. O fluxo ficava parado
-		na primeira linha, com a tela trancada no alvo do tempo anterior e nada
-		acontecendo — foi assim que o recomeço depois do respawn no lobby morria em
-		silêncio.
+		The wait below has no deadline: it runs until `OnClosed` arrives, and
+		`OnClosed` for a line that never started never arrives. The flow would stall on
+		the first line, with the screen locked on the previous beat's target and
+		nothing happening; a restart after respawning in the Lobby would die silently.
 
-		Seguir sem ela é o menor dos males: o tempo seguinte aponta o botão da loja, que
-		é o que o jogador precisa clicar de qualquer jeito. O output diz o que faltou.
+		Continuing without it is the lesser evil: the next beat points at the shop
+		button, which is what the player needs to click anyway. The output says what
+		was missing.
 	]=]
 	if not playing then
 		if disconnect then
 			disconnect()
 		end
 
-		warn("[TutorialShopController]: a caixa de fala nao entrou; seguindo o fluxo sem ela.")
+		log:StudioWarn("the dialog box did not open; continuing the flow without it.")
 
 		return true
 	end
@@ -248,8 +251,8 @@ function TutorialShopController:say(session : number, lines : { string }?) : boo
 		return closed
 	end)
 
-	-- Espera que acabou sem a fala fechar (outra sessão começou, ou o fluxo foi
-	-- abortado) deixa a inscrição para trás: sem isto, cada recomeço empilha mais uma.
+	-- A wait that ended without the dialog closing (another session started, or the
+	-- flow was aborted) leaves the subscription behind: without this, each restart stacks one more.
 	if disconnect then
 		disconnect()
 	end
@@ -258,16 +261,16 @@ function TutorialShopController:say(session : number, lines : { string }?) : boo
 end
 
 --[=[
-	Este elemento está **de fato** na tela?
+	Is this element **actually** on screen?
 
-	`Visible` é propriedade de cada objeto, não do que se vê: um botão dentro de um
-	painel fechado continua com `Visible = true`, e o `AbsoluteSize` dele continua
-	valendo. Foi assim que a prova de tela do passo 2 se deu por cumprida com a loja
-	fechada — o fluxo pulou o clique no botão da loja e foi destacar o de comprar
-	dentro de um painel que ninguém tinha aberto.
+	`Visible` is a property of each object, not of what is seen: a button inside a
+	closed panel still has `Visible = true`, and its `AbsoluteSize` still holds.
+	Checking only that let step 2's on-screen proof pass with the shop closed: the
+	flow skipped the shop button click and highlighted the buy button inside a panel
+	nobody had opened.
 
-	Estar na tela é o objeto visível **e** toda a linhagem dele visível, até a
-	`ScreenGui`, que por sua vez tem de estar ligada.
+	Being on screen means the object visible **and** its whole ancestry visible, up to
+	the `ScreenGui`, which in turn must be enabled.
 ]=]
 function TutorialShopController:onScreen(instance : GuiObject?) : boolean
 	if not instance or not instance.Visible then
@@ -292,10 +295,10 @@ function TutorialShopController:onScreen(instance : GuiObject?) : boolean
 end
 
 --[=[
-	O botão de comprar a caixa do tutorial, dentro da loja.
+	The tutorial crate's buy button, inside the shop.
 
-	Procurado pelo **id do item**, que é como o `ShopController` nomeia o container
-	de cada caixa, e então o botão de compra dentro dele.
+	Looked up by the **item id**, which is how `ShopController` names each crate's
+	container, and then the buy button inside it.
 ]=]
 function TutorialShopController:buyButton() : GuiObject?
 	local shop = PlayerGui:FindFirstChild("ShopUI")
@@ -306,21 +309,21 @@ function TutorialShopController:buyButton() : GuiObject?
 end
 
 --[=[
-	A primeira caixa da mochila — a que o jogador acabou de comprar.
+	The first crate in the backpack: the one the player just bought.
 
-	"Primeira" é a de menor `LayoutOrder`, e não a primeira da lista de filhos: a
-	ordem dos filhos é a de criação e quem manda na tela é o layout.
+	"First" is the one with the lowest `LayoutOrder`, not the first in the children
+	list: children order is creation order, and the layout rules the screen.
 
-	**Só entra botão visível.** O wrapper guarda uma entrada por raridade, e o
-	`CrateController` só mostra as que o jogador tem — mais o `cratetemplate`, o
-	molde, que fica lá escondido para o designer editar. Sem o filtro, o destaque ia
-	parar em cima de algo invisível, que é o mesmo que não aparecer.
+	**Only visible buttons count.** The wrapper keeps one entry per rarity, and
+	`CrateController` only shows those the player owns, plus `cratetemplate`, the
+	template, which stays hidden there for the designer to edit. Without the filter,
+	the highlight would land on something invisible, which is the same as not showing.
 
-	**`Active` não entra na conta**, e isso é uma pedra em que já tropecei: o passo
-	anterior deixa todo botão fora dele desligado, e as caixas da mochila estão
-	nesse "fora dele". Exigir `Active` aqui era procurar um alvo que a minha própria
-	trava tinha acabado de esconder — o passo esperava cinco segundos e desistia sem
-	destaque nenhum. Quem destranca é o `point`, logo depois desta busca.
+	**`Active` does not count**, and this is an easy trap: the previous step leaves
+	every button outside it disabled, and the backpack crates are in that "outside".
+	Requiring `Active` here would look for a target this flow's own lock had just
+	hidden: the step would wait five seconds and give up with no highlight. `point`
+	unlocks it, right after this lookup.
 ]=]
 function TutorialShopController:firstCrate() : GuiObject?
 	local highlight = self:controller("HighlightController")
@@ -340,8 +343,8 @@ function TutorialShopController:firstCrate() : GuiObject?
 
 		local order = child.LayoutOrder
 
-		-- Entrada de verdade tem o prefixo; o molde não. Sem prefixo declarado, vale
-		-- qualquer botão visível.
+		-- A real entry has the prefix; the template does not. With no prefix declared, any
+		-- visible button counts.
 		if not prefix or string.sub(child.Name, 1, #prefix) == prefix then
 			if order < bestOrder then
 				best, bestOrder = child, order
@@ -355,7 +358,7 @@ function TutorialShopController:firstCrate() : GuiObject?
 end
 
 --[=[
-	Devolve a tela: nenhum destaque, nenhuma trava.
+	Gives the screen back: no highlight, no lock.
 ]=]
 function TutorialShopController:finish()
 	self.Running = false
@@ -372,18 +375,18 @@ function TutorialShopController:finish()
 end
 
 --[=[
-	O fluxo inteiro, de cima a baixo.
+	The whole flow, top to bottom.
 
-	Escrito como uma sequência, e não como um punhado de callbacks, porque é isso
-	que ele é: cada passo só faz sentido depois do anterior, e o `await` é o que
-	transforma "o jogador clicou" em uma linha de código.
+	Written as a sequence, not as a handful of callbacks, because that is what it is:
+	each step only makes sense after the previous one, and `await` is what turns "the
+	player clicked" into a line of code.
 
-	Ele é partido em duas metades pela **compra**, e a fratura é ali por causa do
-	respawn: morrer no lobby destrói a `HUD`, a `ShopUI` e a `crateui` (todas têm
-	`ResetOnSpawn`), e o fluxo tem de recomeçar em algum lugar. Antes da compra,
-	recomeçar do zero não custa nada — o jogador só tinha clicado num botão. Depois
-	dela, recomeçar seria mandá-lo comprar uma caixa que ele já comprou, então a volta
-	é pela segunda metade. Ver `onRespawn`.
+	It is split in two halves by the **purchase**, and the split is there because of
+	respawn: dying in the Lobby destroys `HUD`, `ShopUI`, and `crateui` (all have
+	`ResetOnSpawn`), and the flow has to restart somewhere. Before the purchase,
+	restarting from zero costs nothing: the player had only clicked a button. After
+	it, restarting would send them to buy a crate they already bought, so the return
+	goes through the second half. See `onRespawn`.
 ]=]
 function TutorialShopController:run(session : number, fromCrate : boolean?)
 	if fromCrate then
@@ -398,39 +401,39 @@ function TutorialShopController:run(session : number, fromCrate : boolean?)
 end
 
 --[=[
-	A primeira metade: a fala, o botão da loja e a compra da caixa.
+	The first half: the dialog, the shop button, and the crate purchase.
 
-	Devolve `false` quando o fluxo morreu no meio — outra sessão começou, ou uma
-	espera desistiu.
+	Returns `false` when the flow died midway: another session started, or a wait gave
+	up.
 ]=]
 function TutorialShopController:runShop(session : number) : boolean
 	local highlight = self:controller("HighlightController")
 
-	-- 1. a fala
+	-- 1. the dialog
 	if not self:say(session, Config.Lines) then return false end
 
-	-- 2. o botão da loja, até ela abrir
+	-- 2. the shop button, until it opens
 	local shopButton = highlight and highlight:Find(Config.ShopButton)
-	print(`[DEBUG/TutorialLobby] passo 2: botao da loja = {shopButton and shopButton:GetFullName() or "NAO ACHEI"}`)
+	log:Debug(`step 2: shop button = {shopButton and shopButton:GetFullName() or "NOT FOUND"}`)
 
 	self:point(shopButton)
 
 	--[[
-		O controller é procurado **a cada volta**, e não guardado antes do laço: se
-		ele ainda não tivesse carregado quando o fluxo começou, a condição seria
-		falsa para sempre e o passo travaria em silêncio.
+		The controller is looked up **on every pass**, not cached before the loop: if it
+		had not loaded when the flow started, the condition would be false forever and
+		the step would stall silently.
 	]]
 	--[[
-		"A loja abriu" é perguntado ao controller **e** conferido na tela.
+		"The shop opened" is asked of the controller **and** checked on screen.
 
-		O controller responde pelo painel de proximidade, e o painel pode abrir por
-		caminhos que ele não acompanha. Como a trava desliga tudo o que não é o alvo,
-		um "não abriu" errado deixaria o botão de comprar desligado para sempre.
+		The controller answers through the proximity panel, and the panel can open
+		through paths it does not track. Since the lock turns off everything that is not
+		the target, a wrong "did not open" would leave the buy button disabled forever.
 
-		O segundo testemunho é o botão de comprar **na tela** — e "na tela" quer
-		dizer a linhagem inteira visível (ver `onScreen`), não o `Visible` do próprio
-		botão: esse continua ligado dentro de um painel fechado, e conferi-lo sozinho
-		fazia o passo se dar por cumprido antes de o jogador clicar em nada.
+		The second witness is the buy button **on screen**, and "on screen" means the
+		whole ancestry visible (see `onScreen`), not the button's own `Visible`: that
+		stays on inside a closed panel, and checking it alone made the step pass before
+		the player clicked anything.
 	]]
 	if not self:await(session, nil, function()
 		local shop = self:controller("ShopController")
@@ -439,23 +442,23 @@ function TutorialShopController:runShop(session : number) : boolean
 		end
 
 		return self:onScreen(self:buyButton())
-	end, "a loja abrir") then
+	end, "the shop to open") then
 		return false
 	end
 
-	-- 3. o botão de comprar, até a compra acontecer
+	-- 3. the buy button, until the purchase happens
 	self:await(session, Config.WaitForUi, function()
 		return self:buyButton() ~= nil
-	end, "o botao de comprar aparecer")
+	end, "the buy button to appear")
 
 	local buy = self:buyButton()
-	print(`[DEBUG/TutorialLobby] passo 3: botao de compra = {buy and buy:GetFullName() or "NAO ACHEI"}`)
+	log:Debug(`step 3: buy button = {buy and buy:GetFullName() or "NOT FOUND"}`)
 
 	self:point(buy)
 
 	if not self:await(session, nil, function()
 		return self.Bought == true
-	end, "a compra da caixa") then
+	end, "the crate purchase") then
 		return false
 	end
 
@@ -463,14 +466,14 @@ function TutorialShopController:runShop(session : number) : boolean
 end
 
 --[=[
-	A segunda metade: a caixa comprada saindo da mochila, e a despedida.
+	The second half: the purchased crate leaving the backpack, and the farewell.
 
-	É por aqui que o fluxo volta quando o jogador morre **depois** de ter comprado.
+	This is how the flow returns when the player dies **after** buying.
 ]=]
 function TutorialShopController:runCrate(session : number)
 	local highlight = self:controller("HighlightController")
 
-	-- 4. a loja fecha sozinha e a mochila é apontada
+	-- 4. the shop closes on its own and the backpack is pointed at
 	local shop = self:controller("ShopController")
 	if shop and shop:IsOpen() then
 		shop:Close()
@@ -484,46 +487,46 @@ function TutorialShopController:runCrate(session : number)
 			return true
 		end
 
-		-- O mesmo segundo testemunho da loja: a caixa **na tela** é a mochila aberta,
-		-- diga o controller o que disser.
+		-- The same second witness as the shop: the crate **on screen** is the backpack
+		-- open, whatever the controller says.
 		return self:onScreen(self:firstCrate())
 	end, "a mochila abrir") then
 		return
 	end
 
-	-- 5. a primeira caixa, até ela sair da mochila (foi aberta)
+	-- 5. the first crate, until it leaves the backpack (it was opened)
 	self:await(session, Config.WaitForUi, function()
 		return self:firstCrate() ~= nil
-	end, "a primeira caixa aparecer na mochila")
+	end, "the first crate to appear in the backpack")
 
 	local crate = self:firstCrate()
 
 	do
 		local highlight = self:controller("HighlightController")
 		local list = highlight and highlight:Find(Config.CrateList)
-		local visiveis = 0
+		local visible = 0
 
 		if list then
 			for _, c in list:GetDescendants() do
-				if c:IsA("GuiButton") and c.Visible then visiveis += 1 end -- `Active` fica fora: a trava do passo anterior o desliga
+				if c:IsA("GuiButton") and c.Visible then visible += 1 end -- `Active` stays out: the previous step's lock turns it off
 			end
 		end
 
-		print(string.format("[DEBUG/TutorialLobby] passo 5: lista=%s botoes visiveis=%d escolhida=%s",
-			list and list:GetFullName() or "NAO ACHEI", visiveis,
-			crate and `{crate.Name} (ordem {crate.LayoutOrder})` or "NENHUMA"))
+		log:Debug(string.format("step 5: list=%s visible buttons=%d picked=%s",
+			list and list:GetFullName() or "NOT FOUND", visible,
+			crate and `{crate.Name} (order {crate.LayoutOrder})` or "NONE"))
 	end
 
 	self:point(crate)
 
 	--[[
-		**Uma caixa, um clique.**
+		**One crate, one click.**
 
-		Esperar o unboxing terminar com o botão ainda destacado e clicável era um
-		convite: o jogador tem mais caixas, o botão continua lá, e ele abre três
-		enquanto a primeira ainda está rodando. O passo escuta a **ativação** do
-		botão e fecha no primeiro clique — daí em diante nada é clicável (o
-		`point(nil)` tranca tudo) até o unboxing acabar.
+		Waiting for the unboxing to finish with the button still highlighted and
+		clickable was an invitation: the player has more crates, the button is still
+		there, and they open three while the first is still spinning. The step listens
+		to the button's **activation** and closes on the first click; from then on
+		nothing is clickable (`point(nil)` locks everything) until the unboxing ends.
 	]]
 	local clicked = false
 	local connection = if crate and crate:IsA("GuiButton")
@@ -534,7 +537,7 @@ function TutorialShopController:runCrate(session : number)
 
 	local advanced = self:await(session, nil, function()
 		return clicked or self.Unboxed == true or crate == nil or not crate.Parent
-	end, "o clique na caixa")
+	end, "the click on the crate")
 
 	if connection then
 		connection:Disconnect()
@@ -544,28 +547,28 @@ function TutorialShopController:runCrate(session : number)
 		return
 	end
 
-	-- Da primeira caixa até o fim do unboxing, a tela inteira fica trancada: não há
-	-- segunda caixa para abrir sem querer.
+	-- From the first crate to the end of the unboxing, the whole screen stays locked:
+	-- there is no second crate to open by accident.
 	self:point(nil)
 
-	-- 6. a mochila sai da frente do unboxing
+	-- 6. the backpack gets out of the unboxing's way
 	local backpack = self:controller("CrateUIController")
 	if backpack and backpack:IsOpen() then
 		backpack:Close()
 	end
 
-	-- 7. o unboxing termina e a fala de despedida fecha o tutorial
+	-- 7. the unboxing ends and the farewell dialog closes the tutorial
 	local unboxed = self:await(session, nil, function()
 		return self.Unboxed == true
 	end, "o unboxing terminar")
 
 	--[[
-		O último passo do funil de onboarding sai daqui, e não do `:finish()`: aquele
-		roda também quando o fluxo aborta (`:Stop`, ou um `await` que voltou falso), e
-		"abriu a caixa" tem de querer dizer que a caixa abriu.
+		The onboarding funnel's last step is sent from here, not from `:finish()`: that
+		one also runs when the flow aborts (`:Stop`, or an `await` that returned false),
+		and "opened the crate" must mean the crate opened.
 
-		Quem confere se este jogador é um que terminou o tutorial de verdade — e não
-		alguém rodando o `tutorialshop` do Cmdr — é o servidor.
+		The server checks whether this player really finished the tutorial, and is not
+		someone running Cmdr's `tutorialshop`.
 	]]
 	if unboxed then
 		Framework:Fire("TutorialShopFinished")
@@ -578,12 +581,12 @@ end
 --[[ API ]]
 
 --[=[
-	Começa o fluxo. Chamar de novo reinicia do primeiro passo — é o que o
-	`tutorialshop` do Cmdr faz quando alguém quer ver de novo.
+	Starts the flow. Calling again restarts from the first step: that is what Cmdr's
+	`tutorialshop` does when someone wants to see it again.
 
-	`fromCrate` entra pela segunda metade, com a compra dada por feita. É por onde o
-	respawn volta quando o jogador já tinha comprado a caixa (ver `onRespawn`), e é
-	também o que impede o recomeço de pedir uma segunda compra.
+	`fromCrate` enters through the second half, with the purchase taken as done. It is
+	how respawn returns when the player had already bought the crate (see
+	`onRespawn`), and it also keeps the restart from asking for a second purchase.
 ]=]
 function TutorialShopController:Start(fromCrate : boolean?)
 	self:hookUnboxing()
@@ -594,11 +597,11 @@ function TutorialShopController:Start(fromCrate : boolean?)
 	self.Running = true
 	self.Unboxed = false
 
-	-- Recomeço pela segunda metade não desfaz a compra: ela aconteceu, e o servidor
-	-- não a faria de novo.
+	-- Restarting through the second half does not undo the purchase: it happened, and
+	-- the server would not make it again.
 	self.Bought = fromCrate == true
 
-	print(string.format("[DEBUG/TutorialLobby] comecando o fluxo | dialogo=%s destaque=%s loja=%s mochila=%s unboxing=%s",
+	log:Debug(string.format("starting the flow | dialog=%s highlight=%s shop=%s backpack=%s unboxing=%s",
 		tostring(self:controller("DialogController") ~= nil),
 		tostring(self:controller("HighlightController") ~= nil),
 		tostring(self:controller("ShopController") ~= nil),
@@ -615,34 +618,34 @@ function TutorialShopController:Start(fromCrate : boolean?)
 end
 
 --[=[
-	O jogador morreu no meio do fluxo.
+	The player died mid-flow.
 
-	No lobby **toda** `ScreenGui` tem `ResetOnSpawn`: a `HUD`, a `ShopUI`, a
-	`crateui`. A tela em que o fluxo estava apontando deixou de existir, e as
-	referências que ele tinha na mão viraram lixo — inclusive a caixa cujo clique ele
-	estava esperando, que é uma instância e não uma condição.
+	In the Lobby **every** `ScreenGui` has `ResetOnSpawn`: `HUD`, `ShopUI`, `crateui`.
+	The screen the flow was pointing at no longer exists, and the references it held
+	became garbage, including the crate whose click it was waiting for, which is an
+	instance and not a condition.
 
-	Por isso a volta é um recomeço, e onde ele recomeça depende do que já foi feito:
+	So the return is a restart, and where it restarts depends on what was done:
 
-	  - **sem a compra**, do primeiro tempo. O jogador só tinha clicado num botão, e
-	    refazer isso não custa nada;
-	  - **com a compra**, da segunda metade. Mandá-lo comprar de novo uma caixa que
-	    ele já tem seria um passo que nunca fecha — o servidor não vende duas vezes.
+	  - **without the purchase**, from the first beat. The player had only clicked a
+	    button, and redoing that costs nothing;
+	  - **with the purchase**, from the second half. Sending them to buy a crate they
+	    already own would be a step that never closes: the server does not sell twice.
 
-	Fluxo parado não reage: morrer fora do tutorial da loja é morrer, e nada mais.
+	A stopped flow does not react: dying outside the shop tutorial is just dying.
 ]=]
 function TutorialShopController:onRespawn()
 	if not self.Running then return end
 
 	local bought = self.Bought == true
 
-	print(`[DEBUG/TutorialLobby] respawn no meio do fluxo; recomecando {bought and "pela caixa" or "do inicio"}.`)
+	log:Debug(`respawn in the middle of the flow; restarting {bought and "from the crate" or "from the start"}.`)
 
 	--[[
-		A tela nova ainda não chegou quando o `CharacterAdded` dispara: o
-		`ResetOnSpawn` reclona a `StarterGui` depois dele. As esperas do fluxo já
-		procuram cada peça com orçamento próprio, então basta sair da frente do quadro
-		do nascimento — quem espera de verdade é o `await`.
+		The new screen has not arrived yet when `CharacterAdded` fires: `ResetOnSpawn`
+		reclones `StarterGui` after it. The flow's waits already look for each piece
+		with their own budget, so it is enough to get off the spawn frame; `await` does
+		the real waiting.
 	]]
 	task.defer(function()
 		if not self.Running then return end
@@ -652,7 +655,7 @@ function TutorialShopController:onRespawn()
 end
 
 --[=[
-	Liga o aviso de fim de unboxing, uma vez.
+	Hooks up the end-of-unboxing notification, once.
 ]=]
 function TutorialShopController:hookUnboxing()
 	if self.UnboxingHooked then return end
@@ -669,7 +672,7 @@ function TutorialShopController:hookUnboxing()
 end
 
 --[=[
-	Aborta o que estiver em curso e devolve a tela.
+	Aborts whatever is in progress and gives the screen back.
 ]=]
 function TutorialShopController:Stop()
 	self.Session += 1
@@ -680,28 +683,28 @@ function TutorialShopController:IsRunning() : boolean
 	return self.Running
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function TutorialShopController:construct()
 	Framework:Listen("TutorialShopPrompt", function()
 		self:Start()
 	end)
 
-	-- Ver `onRespawn`: no lobby o respawn leva a tela inteira embora.
+	-- See `onRespawn`: in the Lobby, respawn takes the whole screen away.
 	Player.CharacterAdded:Connect(function()
 		self:onRespawn()
 	end)
 
-	-- A compra: quem avisa é o servidor, pelo mesmo evento que já fechava o passo
-	-- antigo.
+	-- The purchase: the server announces it, through the same event that closed the
+	-- old step.
 	Framework:Listen("TutorialShopDone", function()
 		self.Bought = true
 	end)
 
 	--[[
-		O unboxing pode ainda não ter carregado quando este `construct` roda (ver
-		`controller`), então a inscrição é feita na primeira vez que o fluxo começa —
-		e uma vez só.
+		The unboxing controller may not have loaded when this `construct` runs (see
+		`controller`), so the subscription happens the first time the flow starts, and
+		only once.
 	]]
 	self.UnboxingHooked = false
 end

@@ -1,56 +1,58 @@
 --[[
-	Os presets de dificuldade.
+	The difficulty presets.
 
-	A planilha de waves em `Config.Wave` cuida da composicao — quantos inimigos e
-	de que tipo — e cada preset so escala o tamanho dela: `HealthMultiplier`,
-	`AmountMultiplier` e `BossAmountMultiplier` engordam a wave sem mudar o que vem
-	dentro. Ate o Medio o numero de bosses fica em 1; do Dificil para cima os tres
-	crescem juntos, ate 6,75x de vida, 5,25x de inimigos e 9x de bosses no topo.
+	The wave spreadsheet in `Config.Wave` handles composition (how many enemies and
+	of which type), and each preset only scales its size: `HealthMultiplier`,
+	`AmountMultiplier`, and `BossAmountMultiplier` fatten the wave without changing
+	what is inside. Up to Medium the boss count stays at 1; from Hard up all three
+	grow together, up to 6.75x health, 5.25x enemies, and 9x bosses at the top.
 
-	A progressao tem duas fontes, e elas se somam. Alem do tamanho da wave, o
-	`HealthGrowth` cuida da vida de cada mob e compoe por wave — a vida de um mob
-	na wave N e `HealthMultiplier * HealthGrowth^(N-1)`. Quanto mais dura a
-	dificuldade, mais rapido esse juro corre: 1,5% por wave no Facil e 5% no
-	Nightmare, o que na ultima wave de cada preset da 1,2x no Facil e 5,2x no
-	Nightmare.
+	Progression has two sources, and they add up. Besides wave size, `HealthGrowth`
+	handles each enemy's health and compounds per wave: an enemy's health on wave N
+	is `HealthMultiplier * HealthGrowth^(N-1)`. The harder the difficulty, the faster
+	that interest runs: 1.5% per wave on Easy and 5% on Nightmare, which on each
+	preset's last wave gives 1.2x on Easy and 5.2x on Nightmare.
 
-	O expoente e por wave, entao presets longos acumulam mais: e de proposito, mas
-	e tambem o que explode rapido se alguem subir esses numeros. Uma referencia:
-	este mesmo campo ja esteve em 1,08 e fazia a ultima wave do preset do topo ter
-	inimigos 44x mais gordos que os da primeira.
+	The exponent is per wave, so long presets accumulate more: that is deliberate,
+	but it is also what blows up fast if someone raises these numbers. For
+	reference: at 1.08 this field made the top preset's last wave have enemies 44x
+	beefier than the first wave's.
 
-	A velocidade segue a mesma ideia com numeros bem menores: `SpeedMultiplier` e o
-	piso do preset, `SpeedGrowth` e o quanto ela sobe por wave e `SpeedGrowthCap` e
-	o teto que esse acumulo pode alcancar. O teto existe porque velocidade quebra
-	mais rapido que vida: mob rapido demais atravessa o alcance da torre entre um
-	tiro e o proximo, e alguns inimigos ainda multiplicam a propria velocidade por
-	conta (o Wall Smasher ganha 30% a cada curva, ate cinco vezes).
+	Speed follows the same idea with much smaller numbers: `SpeedMultiplier` is the
+	preset's floor, `SpeedGrowth` is how much it rises per wave, and
+	`SpeedGrowthCap` is the ceiling that accumulation can reach. The cap exists
+	because speed breaks faster than health: an enemy that is too fast crosses a
+	tower's range between one shot and the next, and some enemies also multiply
+	their own speed (the Wall Smasher gains 30% per turn, up to five times).
 
-	`BaseHealth` dividido por `MobDamage` e quantos vazamentos o jogador aguenta:
-	12 no Facil, 7 no Medio, 5 no Dificil, 4 no Impossivel e 3 no Nightmare.
+	`BaseHealth` divided by `MobDamage` is how many leaks the player can take: 12 on
+	Easy, 7 on Medium, 5 on Hard, 4 on Impossible, and 3 on Nightmare.
 
-	`WinCash` e `WinShards` sao o premio de **uma run completa**, ja em moeda e nao
-	em multiplicador -- quanto o Nightmare paga se le direto na tabela, sem precisar
-	multiplicar por uma base em outro arquivo. Quem sai antes do fim leva a parte
-	proporcional (ver `WaveService.computeReward`): coins sao lineares na fracao de
-	waves, e shards so entram depois da metade da run e dai por uma curva, entao a
-	moeda cara fica com quem chega perto do fim. O XP e o unico que continua sendo
-	base vezes multiplicador (`Data.BASE_WINNING_XP` vezes `WinXpMultiplier`).
+	`WinCash` and `WinShards` are the reward for **a complete run**, already in
+	currency and not a multiplier: what Nightmare pays reads straight off the table,
+	with no need to multiply by a base in another file. A player who leaves early
+	gets a proportional share (see `WaveService.computeReward`): coins are linear in
+	the fraction of waves, and shards only start after half the run and then follow a
+	curve, so the expensive currency goes to those who get close to the end. XP is
+	the only one still computed as base times multiplier (`Data.BASE_WINNING_XP`
+	times `WinXpMultiplier`).
 
-		| Dificuldade | Coins | Shards |
+		| Difficulty  | Coins | Shards |
 		| Easy        |   100 |      1 |
 		| Medium      |   225 |      2 |
 		| Hard        |   450 |      3 |
 		| Impossible  |   685 |      4 |
 		| Nightmare   |   900 |      5 |
 
-	`WeatherChance` e a chance, por wave, de sair um aviso de clima — o clima em si
-	cai tres waves depois (ver `WeatherConfig.Round`). O dado so e jogado quando nao
-	houver nenhum clima agendado nem no ar, entao o numero nao e "quantas waves tem
-	clima": e a pressa com que o proximo aparece depois que o anterior sai. Nos
-	valores de hoje, no Facil sai um a cada ~10 waves de intervalo livre e no
-	Nightmare a cada ~2,5 — o que, somado aos presets serem mais longos la em cima,
-	e o que faz a dificuldade mudar tambem o quanto o mapa e imprevisivel.
+	`WeatherChance` is the chance, per wave, of a weather warning; the weather itself
+	arrives three waves later (see `WeatherConfig.Round`). The die is only rolled when
+	no weather is scheduled or active, so the number is not "how many waves have
+	weather": it is how quickly the next one shows up after the previous one ends.
+	With today's values, Easy gets one every ~10 free waves and Nightmare every
+	~2.5, which, together with the higher presets being longer, is what makes
+	difficulty also change how unpredictable the map is.
+
+	See docs/game/difficulty-vote.md.
 ]]
 
 local Difficulty = {}
@@ -67,57 +69,57 @@ Difficulty.Order = {
 
 Difficulty.Presets = {
 	--[[
-		O tutorial.
+		The tutorial.
 
-		**Fora do `Order` de propósito**: ele não é uma dificuldade que se vota, é a
-		que a partida de tutorial impõe. O `Difficulty.Get` acha qualquer preset da
-		tabela, então ficar fora da lista de votação não o torna inalcançável.
+		**Left out of `Order` on purpose**: it is not a difficulty that gets voted on,
+		it is the one the tutorial match imposes. `Difficulty.Get` finds any preset in
+		the table, so being off the voting list does not make it unreachable.
 
-		Os números são de uma partida que o jogador **tem** de ganhar: mob com um
-		terço da vida, metade da quantidade, base com 500 de vida e dano de mob em 5
-		— perder aqui exigiria esforço. `StartingCash` cobre o deck inteiro do
-		tutorial (Archer 150 x2 + Slasher 90 = 390) com folga, porque o jogador
-		coloca uma unidade na wave 1 e as outras duas na wave 5, e ficar sem dinheiro
-		no meio de um roteiro é o único jeito de ele travar.
+		The numbers are for a match the player **must** win: enemies with a third of
+		the health, half the count, a base with 500 health, and enemy damage at 5.
+		Losing here would take effort. `StartingCash` covers the whole tutorial deck
+		(Slingshot 175 + Archer 150 x2 = 475) with room to spare, because the player
+		places one unit on wave 1 and the other two on wave 5, and running out of
+		money mid-script is the only way they could get stuck.
 
-		`WeatherChance = 0` porque o clima do tutorial é roteirizado: quem o liga, na
-		wave 3, é o `TutorialMatchService` — não o sorteio.
+		`WeatherChance = 0` because the tutorial's weather is scripted:
+		`TutorialMatchService` turns it on at wave 3, not the roll.
 
-		`WinCash`/`WinShards` são o prêmio da run completa, e a conta do
-		`computeReward` chega neles inteiros quando as 5 waves são vencidas: 50 coins
-		e 1 shard, como pedido.
+		`WinCash`/`WinShards` are the complete-run reward, and `computeReward` arrives
+		at them in full when the 5 waves are won: 50 coins and 1 shard, as requested.
 	]]
 	Tutorial = {
 		--[[
-			As cinco waves são as cinco **primeiras** linhas da tabela, e não a tabela
-			inteira comprimida em cinco — ver `TableRows` no `Config.Wave`. Sem isto a
-			wave 2 do tutorial vinha com doze inimigos, incluindo Guard e Pawn.
+			The five waves are the **first** five table rows, not the whole table
+			squeezed into five; see `TableRows` in `Config.Wave`. Without this, the
+			tutorial's wave 2 came with twelve enemies, including Guard and Pawn.
 		]]
 		TableRows = 5,
 
 		--[[
-			A wave 5 é só o chefe, e um chefe fraco.
+			Wave 5 is only the boss, and a weak boss.
 
-			`BossWaveOnly` tira a escolta (ver `Config.Wave.GetSpawns`): a primeira vez
-			que alguém vê um chefe não deve ser no meio de dez inimigos comuns.
+			`BossWaveOnly` removes the escort (see `Config.Wave.GetSpawns`): the first
+			time someone sees a boss should not be amid ten regular enemies.
 
-			`BossHealthMultiplier` é por cima do `HealthMultiplier`, e o número é
-			pequeno de propósito: 900 de vida do Champion × 0.35 da dificuldade × 0.18
-			daqui dá cerca de 57, que três torres derrubam. O chefe continua sendo ele
-			— mesma lentidão, mesmo gimmick, mesma barra —, só não é uma parede.
+			`BossHealthMultiplier` applies on top of `HealthMultiplier`, and the number
+			is small on purpose: the Champion's 900 health × the difficulty's 0.35 ×
+			this 0.18 gives about 57, which three towers take down. The boss is still
+			itself (same slowness, same gimmick, same bar), it just is not a wall.
 
-			Os 0.18 são os 0.15 de antes com 20% a mais: o chefe estava caindo rápido
-			demais para o fecho do roteiro, que existe justamente para o jogador ver as
-			três torres trabalhando juntas. Vinte por cento é o passo que engorda a luta
-			sem chegar perto de ameaçar a base — que no tutorial nem toma dano
+			0.18 rather than 0.15: at 0.15 the boss fell too quickly for the script's
+			finale, which exists precisely so the player sees the three towers working
+			together. The extra 20% fattens the fight without coming close to
+			threatening the base, which in the tutorial takes no damage at all
 			(`MobDamage = 0`).
 		]]
 		BossWaveOnly = true,
 		BossHealthMultiplier = 0.18,
 
 		--[[
-			A wave 3 é a do clima: ela chega com o céu virado e o jogador aprendendo a
-			usar a carta que o limpa. Metade dos inimigos, porque a lição já é duas.
+			Wave 3 is the weather wave: it arrives with the sky turned and the player
+			learning to use the card that clears it. Half the enemies, because that is
+			already two lessons.
 		]]
 		WaveAmountScale = { [3] = 0.5 },
 
@@ -138,17 +140,17 @@ Difficulty.Presets = {
 		BaseHealth = 500,
 
 		--[[
-			A base do tutorial não morre.
+			The tutorial base does not die.
 
-			Zero dano por inimigo que escapa é o jeito de dizer "vida infinita" que
-			deixa a barra **cheia** na tela, e não um número absurdo escrito nela: quem
-			está aprendendo a colocar a primeira torre não deve descobrir o que é perder
-			antes de descobrir o que é jogar.
+			Zero damage per escaped enemy is the way to say "infinite health" that
+			keeps the bar **full** on screen, instead of an absurd number written on
+			it: someone learning to place their first tower should not discover losing
+			before discovering playing.
 
-			É zero, e não um `BaseHealth` gigante, porque a conta é a mesma de sempre
-			(`MobService:mobEscaped`) e continua valendo — nenhum caminho novo, nenhuma
-			exceção espalhada pelo código. O `or` que lê este campo trata o zero como
-			valor, e não como ausência, então ele chega inteiro lá.
+			It is zero, not a giant `BaseHealth`, because the math is the usual one
+			(`MobService:mobEscaped`) and still applies: no new path, no exception
+			scattered through the code. The `or` that reads this field treats zero as a
+			value, not as absence, so it arrives intact.
 		]]
 		MobDamage = 0,
 
@@ -159,11 +161,11 @@ Difficulty.Presets = {
 
 	Easy = {
 		--[[
-			O elenco Astral, em vez dos Redcliff (ver `SharedConfig.Mob.ModelSets`).
+			The Astral cast instead of Redcliff (see `SharedConfig.Mob.ModelSets`).
 
-			E so o boneco: a wave, a vida e os gimmicks sao os mesmos que qualquer
-			outro preset le da mesma tabela de entidades. Os presets sem esta chave
-			usam o `Hard`, que e o fallback.
+			It is only the models: the wave, health, and gimmicks are the same any
+			other preset reads from the same entity table. Presets without this key use
+			`Hard`, the fallback.
 		]]
 		ModelSet = "Easy",
 
@@ -190,9 +192,9 @@ Difficulty.Presets = {
 
 	Medium = {
 		--[[
-			O elenco Sky (ver `SharedConfig.Mob.ModelSets`). Como no Nightmare, sair do
-			fallback `Hard` tirou desta dificuldade os gimmicks escopados la -- por isso
-			o atordoamento do chefe lista os tres conjuntos.
+			The Sky cast (see `SharedConfig.Mob.ModelSets`). As with Nightmare, leaving
+			the `Hard` fallback means gimmicks scoped there do not reach this
+			difficulty, which is why the boss stun lists all three sets.
 		]]
 		ModelSet = "Medium",
 
@@ -240,7 +242,7 @@ Difficulty.Presets = {
 	},
 
 	Impossible = {
-		-- O elenco Korblox (ver `SharedConfig.Mob.ModelSets`).
+		-- The Korblox cast (see `SharedConfig.Mob.ModelSets`).
 		ModelSet = "Impossible",
 
 		WeatherChance = 0.30,
@@ -266,11 +268,10 @@ Difficulty.Presets = {
 
 	Nightmare = {
 		--[[
-			O elenco Overseer (ver `SharedConfig.Mob.ModelSets`).
+			The Overseer cast (see `SharedConfig.Mob.ModelSets`).
 
-			Como o `Hard` deixou de ser o fallback daqui, todo gimmick escopado nele
-			parou de alcancar esta dificuldade -- e por isso o atordoamento do chefe
-			passou a listar os dois conjuntos.
+			Since `Hard` is not the fallback here, no gimmick scoped to it reaches
+			this difficulty, which is why the boss stun lists both sets.
 		]]
 		ModelSet = "Nightmare",
 

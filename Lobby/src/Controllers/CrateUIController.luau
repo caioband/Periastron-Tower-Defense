@@ -9,11 +9,13 @@ local Util = Shared:WaitForChild("Util")
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local Signal = require(Packages.Signal)
 
 local UIUtil = require(Util.UIUtil)
 
 local Framework = Me.new()
+local log = Log.new("CrateUIController")
 
 --[[ CONSTANTS ]]
 local CRATE_UI_NAME = "crateui"
@@ -116,7 +118,7 @@ function CrateUIController:_bindPanel(screenGui : ScreenGui)
 	local panelScale = panel and panel:FindFirstChildWhichIsA("UIScale")
 
 	if not panel or not panelScale then
-		warn(`[CrateUIController]: Could not find {CRATE_UI_NAME}.{PANEL_NAME} with a UIScale.`)
+		log:StudioWarn(`could not find {CRATE_UI_NAME}.{PANEL_NAME} with a UIScale.`)
 		return
 	end
 
@@ -140,7 +142,7 @@ function CrateUIController:_bindHud(screenGui : ScreenGui)
 	local button = hudFrame and UIUtil.waitForDescendant(hudFrame, TOGGLE_BUTTON_NAME, 10)
 
 	if not button or not button:IsA("GuiButton") then
-		warn(`[CrateUIController]: Could not find {HUD_UI_NAME}.{HUD_FRAME_NAME}.{TOGGLE_BUTTON_NAME}.`)
+		log:StudioWarn(`could not find {HUD_UI_NAME}.{HUD_FRAME_NAME}.{TOGGLE_BUTTON_NAME}.`)
 		return
 	end
 

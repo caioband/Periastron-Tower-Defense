@@ -13,17 +13,19 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("WarningController")
 
 local WarningConfig = SharedConfig.WarningConfig
 local Config = WarningConfig.Label
 
 --[[
-	O aviso grande no meio da tela: `Interface.WeatherWarning`.
+	The big warning in the middle of the screen: `Interface.WeatherWarning`.
 
-	Este controller é o **único** que encosta no label. Quem tem algo a avisar manda
-	a frase pronta:
+	This controller is the **only** one that touches the label. Anything with
+	something to announce sends the finished sentence:
 
 		local Warning = Framework:Get("WarningController")
 
@@ -31,21 +33,22 @@ local Config = WarningConfig.Label
 			Priority = WarningConfig.Priority.Weather,
 		})
 
-	O texto desce do alto até a posição autorada enquanto a transparência do texto e
-	do UIStroke cai de 1 para 0 — a impressão é a de a frase estar se formando no
-	lugar. Passados `Hold` segundos ela sobe de volta e some.
+	The text slides down from above to the authored position while the text and
+	UIStroke transparency goes from 1 to 0: it looks like the sentence is forming in
+	place. After `Hold` seconds it slides back up and disappears.
 
-	Toda a animação é montada a partir da posição que o designer deixou no
-	StarterGui: ela é o destino, e o começo é ela menos `SlideOffset`. Assim mover o
-	label no Studio não exige tocar em nada aqui.
+	The whole animation is built from the position the designer left in StarterGui:
+	that is the destination, and the start is it minus `SlideOffset`. So moving the
+	label in Studio requires no change here.
 
-	**Prioridade.** Um aviso novo derrota o que estiver na tela quando a prioridade
-	dele empata ou ganha — o segundo aviso do mesmo dono é sempre mais atual que o
-	primeiro. Aviso de prioridade menor é recusado (o `Show` devolve `false`) em vez
-	de entrar na fila: quando o restart do servidor está na tela, o clima da wave 8
-	não é notícia.
+	**Priority.** A new warning beats the one on screen when its priority ties or
+	wins: an owner's second warning is always more current than its first. A
+	lower-priority warning is refused (`Show` returns `false`) instead of queued:
+	when the server restart is on screen, wave 8's weather is not news.
 
-	Fica em `common/` porque as duas places avisam.
+	It lives in `common/` because both places show warnings.
+
+	See docs/common/screen-warnings.md.
 ]]
 
 local WarningController = {
@@ -56,7 +59,7 @@ WarningController.Label = nil :: TextLabel?
 WarningController.BasePosition = nil :: UDim2?
 WarningController.Token = 0
 
--- Prioridade do aviso no ar. Zero é tela livre.
+-- Priority of the warning on screen. Zero means the screen is free.
 WarningController.Priority = 0
 
 WarningController.Warned = false
@@ -64,11 +67,11 @@ WarningController.Warned = false
 --[[ INTERNAL ]]
 
 --[=[
-	O TextLabel do aviso, na primeira vez em que ele for preciso.
+	The warning's TextLabel, the first time it is needed.
 
-	Resolvido tarde e guardado depois: a Interface pode ainda não ter replicado
-	quando o controller carrega, e um `WaitForChild` no `init` seguraria o boot do
-	cliente por causa de um label que só aparece lá pela wave 4.
+	Resolved late and cached afterward: the Interface may not have replicated when
+	the controller loads, and a `WaitForChild` in `init` would hold up the client
+	boot for a label that only shows around wave 4.
 ]=]
 function WarningController:getLabel() : TextLabel?
 	local label = self.Label
@@ -89,11 +92,10 @@ function WarningController:getLabel() : TextLabel?
 end
 
 --[=[
-	Transparência do texto e do stroke de uma vez.
+	Text and stroke transparency at once.
 
-	O stroke entra junto de propósito: só o texto aparecendo deixaria o contorno
-	sólido por trás de uma letra invisível, que é exatamente o efeito contrário do
-	pretendido.
+	The stroke goes along on purpose: fading in only the text would leave a solid
+	outline behind an invisible letter, exactly the opposite of the intended effect.
 ]=]
 function WarningController:tweenTo(label : TextLabel, position : UDim2, transparency : number, time : number)
 	local info = TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -110,19 +112,20 @@ function WarningController:tweenTo(label : TextLabel, position : UDim2, transpar
 end
 
 --[=[
-	Barulho quando o label não aparece.
+	Noise when the label does not show up.
 
-	Place sem `Interface` nenhuma (o Lobby, hoje) não tem aviso na tela por desenho
-	— não é engano, e um `warn` ali só ensinaria a ignorar warns. `Interface`
-	existindo **sem** o label é engano, e esse merece barulho: uma vez, para um
-	aviso que volta (o do restart) não virar spam.
+	A place with no `Interface` at all (the Lobby, today) has no on-screen warning by
+	design: it is not a mistake, and a warning there would only teach people to
+	ignore warnings. An `Interface` **without** the label is a mistake, and that
+	deserves noise: once, so a recurring warning (the restart one) does not become
+	spam.
 ]=]
 function WarningController:warnMissing()
 	if self.Warned then return end
 	if not PlayerGui:FindFirstChild("Interface") then return end
 
 	self.Warned = true
-	warn(`[WarningController]: nao achei o TextLabel "{Config.Name}" em PlayerGui.Interface.`)
+	log:StudioWarn(`could not find the TextLabel "{Config.Name}" in PlayerGui.Interface.`)
 end
 
 --[[ API ]]
@@ -133,10 +136,10 @@ export type ShowOptions = {
 }
 
 --[=[
-	Coloca uma frase na tela.
+	Puts a sentence on screen.
 
-	Devolve `false` quando o aviso foi recusado — label que ainda não existe nesta
-	place, ou prioridade menor que a do aviso que está no ar.
+	Returns `false` when the warning was refused: a label that does not exist yet in
+	this place, or a lower priority than the warning on screen.
 ]=]
 function WarningController:Show(text : string, options : ShowOptions?) : boolean
 	local priority = (options and options.Priority) or 0
@@ -160,8 +163,8 @@ function WarningController:Show(text : string, options : ShowOptions?) : boolean
 		basePosition.Y.Offset
 	)
 
-	-- Um token por aviso: o `task.delay` da saida so vale se ninguem tiver pedido
-	-- outro aviso no meio, senao ele apagaria o texto que acabou de entrar.
+	-- One token per warning: the exit's `task.delay` only applies if nobody asked for
+	-- another warning in between, or it would erase the text that just came in.
 	self.Token += 1
 	local token = self.Token
 	self.Priority = priority
@@ -198,12 +201,12 @@ function WarningController:Show(text : string, options : ShowOptions?) : boolean
 end
 
 --[=[
-	Esconde o aviso na hora, sem animação. É o que o recomeço de round precisa: o
-	aviso do round anterior não pode continuar na tela.
+	Hides the warning immediately, without animation. That is what a round restart
+	needs: the previous round's warning must not stay on screen.
 
-	`maxPriority` é o "limpe só o que for meu": passando a própria prioridade, quem
-	chama não apaga um aviso mais importante que o dele. Sem argumento, limpa o que
-	estiver lá.
+	`maxPriority` is "clear only what is mine": passing its own priority, the caller
+	does not erase a warning more important than its own. With no argument, it clears
+	whatever is there.
 ]=]
 function WarningController:Hide(maxPriority : number?)
 	if maxPriority and self.Priority > maxPriority then return end
@@ -220,7 +223,7 @@ function WarningController:Hide(maxPriority : number?)
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function WarningController:start()
 end

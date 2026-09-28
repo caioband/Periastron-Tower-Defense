@@ -6,6 +6,9 @@ local Vendor = Shared:WaitForChild("Vendor")
 
 local Spring = require(Vendor.Spring)
 local Observers = require(Vendor.Observers)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
+
+local log = Log.new("UILibraryController")
 
 local Camera = workspace.CurrentCamera
 
@@ -22,7 +25,7 @@ function UILibraryController:closeFrame(FrameName : string)
 	local FrameData = self.Frames[FrameName]
 
 	if not FrameData then
-		warn("Frame not found", FrameName)
+		log:StudioWarn("frame not found:", FrameName)
 		return
 	end
 
@@ -79,7 +82,7 @@ function UILibraryController:doComponent(name : string, func : string, ...)
 	local component = script.Components:FindFirstChild(name)
 
 	if not component then
-		print("did not find any component with name", name)
+		log:StudioWarn("did not find any component named", name)
 		return
 	end
 
@@ -145,7 +148,7 @@ function UILibraryController.addHoverAnimation(Button : GuiButton)
 			})
 		end
 
-	--	require(Vendor.Me).new():Get("MusicController"):PlaySFX("UIHover")   -- falta o UIHover em SharedSounds.SFX
+	--	require(Vendor.Me).new():Get("MusicController"):PlaySFX("UIHover")   -- UIHover is missing from SharedSounds.SFX
 	end))
 	table.insert(conn, Button.MouseLeave:Connect(function()
 		Spring.target(UIScale, .65, 4, {
@@ -198,7 +201,7 @@ function UILibraryController.addClickAnimation(Button : GuiButton, clickCallback
 			clickCallback()
 		end
 
-		--require(Vendor.Me).new():Get("MusicController"):PlaySFX("UIClick")   -- falta o UIClick em SharedSounds.SFX
+		--require(Vendor.Me).new():Get("MusicController"):PlaySFX("UIClick")   -- UIClick is missing from SharedSounds.SFX
 	end))
 
 	return conn
@@ -318,7 +321,7 @@ function UILibraryController:openFrame(FrameName : string)
 	local FrameData = self.Frames[FrameName]
 
 	if not FrameData then
-		warn("Frame not found", FrameName)
+		log:StudioWarn("frame not found:", FrameName)
 		return
 	end
 

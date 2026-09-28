@@ -16,7 +16,7 @@ local module = {
 		WALK_FOV = 70,
 	},
 
-	-- (isRunning : boolean) -- o botao de correr do celular acende e apaga por aqui.
+	-- (isRunning : boolean) -- the mobile run button lights up and turns off through this.
 	Changed = Instance.new("BindableEvent"),
 	isRunning = false,
 }
@@ -43,8 +43,8 @@ function module:updateAnimation()
 end
 
 --[=[
-	Liga ou desliga a corrida. O Shift do teclado segura (liga no aperto, desliga
-	no soltar); o botao do celular alterna -- os dois passam por aqui.
+	Turns running on or off. Keyboard Shift holds (on when pressed, off when
+	released); the mobile button toggles. Both go through here.
 ]=]
 function module:setRunning(running : boolean)
 	if not self.humanoid or running == self.isRunning then return end
@@ -115,7 +115,7 @@ function module:stop()
 		end
 	end
 
-	-- Morrer correndo nao pode deixar a camera aberta no FOV da corrida.
+	-- Dying while running must not leave the camera at the run FOV.
 	if self.isRunning then
 		tweenFov(self.SETTINGS.WALK_FOV)
 	end

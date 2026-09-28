@@ -1,13 +1,13 @@
 --[[
 	cmdr type "weatherName".
 
-	Registrado no servidor por `Registry:RegisterTypesIn`, que replica este módulo
-	para `ReplicatedStorage.CmdrClient.Types` — é o que faz o autocomplete existir
-	no console do cliente.
+	Registered on the server by `Registry:RegisterTypesIn`, which replicates this
+	module to `ReplicatedStorage.CmdrClient.Types`: that is what makes autocomplete
+	exist in the client console.
 
-	A lista sai de `Assets.Weathers` em tempo real. `off` entra junto porque desligar
-	é o outro lado do mesmo comando, e ter que lembrar de um segundo nome de comando
-	só para isso atrapalharia justamente quem está testando.
+	The list comes from `Assets.Weathers` live. `off` is included because turning
+	off is the other side of the same command, and having to remember a second
+	command name just for that would get in the way of exactly the people testing.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -21,8 +21,8 @@ local Config = SharedConfig.WeatherConfig
 local OFF = "off"
 
 --[[
-	Sempre `FindFirstChild`: no Lobby a pasta pode nem existir, e aí o autocomplete
-	fica só com o `off` em vez de derrubar o console.
+	Always `FindFirstChild`: in the Lobby the folder may not even exist, and then
+	autocomplete shows only `off` instead of crashing the console.
 ]]
 local function getNames(): { string }
 	local names = { OFF }
@@ -80,9 +80,10 @@ return function(registry)
 		end,
 
 		--[[
-			Quem recusa nome inválido é o servidor, não isto: quando o console abre, o
-			cliente pode ainda não ter recebido `Assets.Weathers`, e barrar um clima que
-			existe seria pior do que deixar o WeatherService responder que não achou.
+			The server rejects invalid names, not this: when the console opens, the
+			client may not have received `Assets.Weathers` yet, and blocking a weather
+			that exists would be worse than letting WeatherService answer that it was
+			not found.
 		]]
 		Parse = function(text: string)
 			return text

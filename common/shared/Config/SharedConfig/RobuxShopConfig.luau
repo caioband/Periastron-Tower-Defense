@@ -1,58 +1,59 @@
 --[[
-	A loja de Robux do lobby: `StarterGui.ShopUI.RobuxShop`.
+	The Lobby's Robux shop: `StarterGui.ShopUI.RobuxShop`.
 
-	Ela e uma vitrine e nada mais. As seis gamepasses e os tres packs de coins abrem
-	o prompt da Roblox, e quem credita e quem sempre creditou: a pass e um **estado**
-	que o `MonetizationService` confere na entrada (`RecalibratePasses`), e o pack e um
-	**evento** que o `ProcessReceipt` paga uma vez so, pelo `RobuxShopService`.
+	It is only a storefront. The six game passes and three coin packs open the
+	Roblox prompt, and crediting stays where it always was: a pass is a **state**
+	that `MonetizationService` checks on join (`RecalibratePasses`), and a pack is
+	an **event** that `ProcessReceipt` pays once, through `RobuxShopService`.
 
-	Por isso aqui nao ha nada alem de nomes e numeros: o que cada linha da UI vende. O
-	beneficio de cada pass continua no `GamepassConfig` -- esta tabela so diz que o
-	`GP1` da tela e a pass `VIP` de la, e nunca o que o VIP faz. Duas fontes para a
-	mesma coisa e como uma pass ganha um beneficio na loja que ela nao tem no jogo.
+	So there is nothing here but names and numbers: what each UI row sells. Each
+	pass's benefit stays in `GamepassConfig`; this table only says that `GP1` on
+	screen is the `VIP` pass there, never what VIP does. Two sources for the same
+	thing is how a pass gains a benefit in the shop that it lacks in the game.
 
-	Nada disto e sigiloso: os ids estao na pagina de cada produto, o preco e a Roblox
-	quem desenha no prompt, e o cliente precisa dos numeros para abrir a compra. O que
-	e sigiloso continua onde estava (ver `ServerScriptService.Config`).
+	Nothing here is secret: ids are on each product page, Roblox draws the price in
+	the prompt, and the client needs the numbers to open the purchase.
+
+	See docs/common/gamepasses.md.
 ]]
 
 local module = {}
 
 --[=[
-	O caminho da UI. O `Wrapper` e a moldura que vai e vem, e o `Panel` e a arte que a
-	`OPEN_ANIMATION` anima -- a `ShopUI` carrega tres lojas, e cada uma acende a sua
-	(ver `ProximityPanel`).
+	The UI path. `Wrapper` is the frame that comes and goes, and `Panel` is the art
+	`OPEN_ANIMATION` animates; `ShopUI` holds three shops, and each lights its own
+	(see `ProximityPanel`).
 
-	As linhas moram em duas `ScrollingFrame` de **mesmo nome** dentro do painel (uma
-	das passes, outra dos packs), entao cada linha e procurada pelo nome dela em
-	profundidade a partir do painel, e nunca pelo caminho da lista.
+	Rows live in two `ScrollingFrame`s with the **same name** inside the panel (one
+	for passes, one for packs), so each row is found by its name in depth from the
+	panel, never by the list path.
 ]=]
 module.Gui = {
 	ScreenGui = "ShopUI",
 	Wrapper = "RobuxShop",
 	Panel = "ImageLabel",
 
-	-- O botao de comprar de uma linha, e o texto dentro dele.
+	-- A row's buy button, and the text inside it.
 	Buy = "BUY",
 }
 
 module.OPEN_ANIMATION = "OpenShop"
 
 --[=[
-	O texto do botao. `OWNED` e para a pass que este jogador ja tem -- o botao apaga e
-	para de abrir o prompt, do mesmo jeito que o CLAIM de um contrato ja resgatado.
+	The button text. `OWNED` is for a pass this player already has: the button dims
+	and stops opening the prompt, like the CLAIM of a claimed contract.
 
-	Pack de coins nao tem estado: ele pode ser comprado de novo quantas vezes quiser.
+	A coin pack has no state: it can be bought again any number of times.
 ]=]
 module.BUY_TEXT = "BUY"
 module.OWNED_TEXT = "OWNED"
 
 --[=[
-	As gamepasses da vitrine, uma por linha da UI, na ordem em que o designer as
-	desenhou.
+	The storefront game passes, one per UI row, in the order the designer drew them.
 
-	`Frame` e o nome da linha na tela; `Pass` e a chave do `GamepassConfig.PASSES`, de
-	onde sai o id que o prompt abre e onde o perfil diz se o jogador ja tem.
+	`Frame` is the row name on screen; `Pass` is the `GamepassConfig.PASSES` key,
+	which gives the id the prompt opens and where the profile says whether the
+	player owns it.
 ]=]
 module.PASSES = {
 	{ Frame = "GP1", Pass = "VIP" },
@@ -64,11 +65,11 @@ module.PASSES = {
 }
 
 --[=[
-	Os packs de coins, uma linha por developer product.
+	The coin packs, one row per developer product.
 
-	`Coins` e o que o servidor deposita no `Stats.Cash` quando o recibo chega. Ele
-	**nao** entra no `Stats.CoinsEarned`: a board MOST COINS e o que o jogador ganhou
-	jogando, e nao o que ele comprou (ver o `RobuxShopService`).
+	`Coins` is what the server deposits into `Stats.Cash` when the receipt arrives.
+	It does **not** count toward `Stats.CoinsEarned`: the MOST COINS board is what
+	the player earned by playing, not what they bought (see `RobuxShopService`).
 ]=]
 module.PACKS = {
 	{ Frame = "DEVPROD1", ProductId = 3713311022, Coins = 200 },
@@ -77,8 +78,8 @@ module.PACKS = {
 }
 
 --[=[
-	O pack de um `ProductId`, ou nil. E como o recibo volta: ele so diz o numero do
-	produto.
+	The pack for a `ProductId`, or nil. That is how a receipt comes back: it only
+	carries the product number.
 ]=]
 function module.packOfProduct(productId : number?)
 	for _, pack in module.PACKS do

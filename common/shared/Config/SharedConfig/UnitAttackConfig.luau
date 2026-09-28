@@ -5,36 +5,36 @@ local UnitAttackConfig = {
 		  Animation  - name of the Animation child on the unit model to play
 		  HitTime    - seconds into the animation when the hit fires to the server
 		              (set to 0 to fire immediately on swing start)
-		  HitTimes   - lista de instantes, no lugar do `HitTime`, quando o golpe
-		              acerta mais de uma vez dentro da MESMA animacao
-		  Duration   - a duracao da animacao, em segundos; so faz falta junto do
-		              `HitTimes` (ver abaixo)
+		  HitTimes   - list of instants, instead of `HitTime`, when the attack hits
+		              more than once within the SAME animation
+		  Duration   - the animation length, in seconds; only needed with `HitTimes`
+		              (see below)
 		The sequence loops back to step 1 after the last step.
+		See docs/game/units.md.
 	--]]
 
 	--[=[
-		`HitTimes` e o golpe que acerta varias vezes **em tempos proprios**, e nao o
-		`Hits`/`HitInterval` do `UnitStats`, que espaca os acertos de forma igual a
-		partir do windup.
+		`HitTimes` is an attack that hits several times **at its own instants**, not
+		the `Hits`/`HitInterval` of `UnitStats`, which space hits evenly after the
+		windup.
 
-		Os dois nao se misturam: com `HitTimes` no passo, o numero de acertos e o
-		tamanho da lista e os intervalos saem das diferencas dela -- o `HitTime`, o
-		`Hits` e o `HitInterval` daquela unidade ficam de fora do calculo. O `Hits`
-		do `UnitStats` continua tendo que bater com `#HitTimes`, porque e ele que o
-		`GetDPS` usa para o numero que o card mostra.
+		They do not mix: with `HitTimes` on the step, the number of hits is the list
+		length and the intervals are its differences; that unit's `HitTime`, `Hits`,
+		and `HitInterval` are left out. `Hits` in `UnitStats` must still equal
+		`#HitTimes`, because `GetDPS` uses it for the number the card shows.
 
-		Os instantes sao os dos marcadores `Hit` da animacao, copiados na mao -- a
-		mesma regra do `HitTime` do Archer logo abaixo, e pelo mesmo motivo: quem
-		cobra o dano e o servidor, que nao tem `AnimationTrack` para escutar. Mexeu
-		o marcador, mexe aqui junto.
+		The instants are the animation's `Hit` markers, copied by hand, the same rule
+		as the Archer's `HitTime` below and for the same reason: the server applies
+		the damage and has no `AnimationTrack` to listen to. Move the marker, update
+		this too.
 
-		`Duration` e a duracao da animacao, e existe para o servidor **espremer os
-		acertos junto com o gesto**. O cliente ja encolhe a animacao quando ela nao
-		cabe na janela do golpe (ver `Unit:playAttackVisual`); sem o mesmo fator
-		aqui, uma unidade acelerada por carta acertaria no tempo antigo enquanto o
-		boneco corre no novo -- e o ultimo acerto sairia depois de o golpe seguinte
-		ja ter comecado. Com a janela maior que a animacao, que e o caso normal, o
-		fator e 1 e os instantes sao os da lista.
+		`Duration` is the animation length, so the server can **squeeze the hits
+		along with the gesture**. The client already shrinks the animation when it
+		does not fit the attack window (see `Unit:playAttackVisual`); without the same
+		factor here, a unit sped up by a card would hit on the old timing while the
+		model moves on the new one, and the last hit would land after the next attack
+		started. With the window longer than the animation (the normal case), the
+		factor is 1 and the instants are the list's.
 	]=]
 
 	["Azure"] = {
@@ -57,16 +57,15 @@ local UnitAttackConfig = {
 
 
 	--[[
-		Escrito como `HitTimes` + `Duration`, e nao como `HitTime`, pelo mesmo motivo
-		do Frostione la embaixo: o cooldown dela e **menor que o windup**. Sao 0,55s no
-		nivel 0 e 0,32s no maximo contra os 0,7s do tiro, e `HitTime` e uma espera fixa
-		que so o cliente encolhe junto com a track -- o tiro sairia depois de o golpe
-		seguinte ja ter comecado, e a unidade acertaria cada vez mais atrasada quanto
-		mais rapido ela ficasse. Com a lista, as duas pontas dividem pelo mesmo fator
-		(ver o `squeeze` do `UnitService` e o `fit` do `Unit:playAttackVisual`).
+		Written as `HitTimes` + `Duration`, not `HitTime`, for the same reason as the
+		Frostione below: its cooldown is **shorter than the windup**. 0.55 s at level
+		0 and 0.32 s at max, against the shot's 0.7 s; `HitTime` is a fixed wait that
+		only the client shrinks along with the track, so the shot would land after
+		the next attack started, later and later as the unit got faster. With the
+		list, both sides divide by the same factor (see `UnitService`'s `squeeze` and
+		`Unit:playAttackVisual`'s `fit`).
 
-		1,25s e a duracao da animacao `Attack`. Ela ja era maior que o cooldown antes
-		desta mudanca -- o que passou a nao caber foi o instante do tiro dentro dela.
+		1.25 s is the `Attack` animation length.
 	]]
 	["Slingshot"] = {
 		AttackSequence = {
@@ -75,18 +74,18 @@ local UnitAttackConfig = {
 	},
 
 	--[[
-		1,017s e o frame do marcador `Hit` da animacao `Attack` do Archer -- o
-		instante em que quem animou disse que a flecha sai do arco.
+		1.017 s is the frame of the `Hit` marker in the Archer's `Attack` animation:
+		the instant the animator said the arrow leaves the bow.
 
-		**O numero fica escrito aqui mesmo com o marcador existindo**, e nao em
-		`HitTime = 0` para o `Unit:playAttackVisual` escutar a track. Quem cobra o
-		dano e o servidor (`UnitService:executeAttack`), que le este campo como
-		windup e nao tem `AnimationTrack` nenhuma para escutar: com zero aqui, o dano
-		sairia no instante do pedido enquanto o boneco ainda puxa a corda. O ramo do
-		marcador la e so um fallback de cliente para unidade sem `HitTime`.
+		**The number is written here even though the marker exists**, instead of
+		`HitTime = 0` for `Unit:playAttackVisual` to listen to the track. The server
+		applies the damage (`UnitService:executeAttack`), reads this field as the
+		windup, and has no `AnimationTrack` to listen to: with zero here, damage would
+		land at the request while the model is still drawing the bow. The marker
+		branch there is only a client fallback for units without `HitTime`.
 
-		Ou seja: o marcador e a **fonte** do numero, e este campo e a copia que as
-		duas pontas obedecem. Mexeu o marcador, mexe aqui junto.
+		In short: the marker is the **source** of the number, and this field is the
+		copy both sides obey. Move the marker, update this too.
 	]]
 	["Archer"] = {
 		AttackSequence = {
@@ -94,8 +93,8 @@ local UnitAttackConfig = {
 		},
 	},
 
-	-- 1,017s e o marcador `Hit` da animacao `Attack` do Pyre (2,033s de duracao).
-	-- Mesma regra do Archer logo acima: o marcador e a fonte, este numero e a copia.
+	-- 1.017 s is the `Hit` marker of the Pyre's `Attack` animation (2.033 s long).
+	-- Same rule as the Archer above: the marker is the source, this number the copy.
 	["Pyre"] = {
 		AttackSequence = {
 			{ Animation = "Attack", HitTime = 1.017 },
@@ -103,16 +102,16 @@ local UnitAttackConfig = {
 	},
 
 	--[=[
-		Quatro golpes numa animacao so, e nao quatro animacoes: os instantes sao os
-		marcadores `Hit` da `Attack` do Berserker (0,4333s, 1,2667s, 2,3833s e
-		2,5667s de uma animacao de 2,9s).
+		Four hits in one animation, not four animations: the instants are the `Hit`
+		markers of the Berserker's `Attack` (0.4333 s, 1.2667 s, 2.3833 s, and
+		2.5667 s of a 2.9 s animation).
 
-		Os intervalos entre eles nao sao nem de longe iguais -- 0,83s, depois 1,12s,
-		depois 0,18s --, e e por isso que a unidade nao cabia no `Hits`/`HitInterval`:
-		aquilo espaca os acertos de forma regular, e o combate do boneco tem ritmo
-		proprio. Os dois ultimos quase se encostam de proposito: e o par rapido que
-		fecha o combo. O `Cooldown = 5.9` do `UnitStats` conta a animacao inteira mais
-		os 3s de recuperacao, entao o quarto acerto cai bem dentro da janela do golpe.
+		The gaps between them are far from even (0.83 s, then 1.12 s, then 0.18 s),
+		which is why the unit did not fit `Hits`/`HitInterval`: that spaces hits
+		evenly, and the model's fight has its own rhythm. The last two almost touch
+		on purpose: the quick pair that closes the combo. The `UnitStats` cooldown
+		counts the whole animation plus the recovery, so the fourth hit falls well
+		inside the attack window.
 	]=]
 	["Berserker"] = {
 		AttackSequence = {
@@ -141,16 +140,16 @@ local UnitAttackConfig = {
 	},
 
 	--[[
-		1,05s e o marcador `Hit` da animacao `Attack` do Electro (1,6667s de duracao),
-		e vale a mesma regra do Archer logo acima: o marcador e a **fonte** do numero,
-		este campo e a copia que as duas pontas obedecem, e quem cobra o dano e o
-		servidor, que nao tem `AnimationTrack` para escutar.
+		1.05 s is the `Hit` marker of the Electro's `Attack` animation (1.6667 s long),
+		with the same rule as the Archer above: the marker is the **source**, this
+		field is the copy both sides obey, and the server applies the damage without
+		an `AnimationTrack` to listen to.
 
-		Aqui isso pesa mais do que no resto da tabela, porque nesta unidade o instante
-		nao decide so quando a vida sai: o raio que salta pelos inimigos e disparado
-		na mesma linha do dano (`UnitService:executeAttack`), entao o numero daqui e
-		literalmente o frame em que o jogador ve o raio. Mexeu o marcador, mexe aqui
-		junto -- senao o raio sai com o boneco ainda erguendo a mao.
+		It matters more here, because for this unit the instant does not only decide
+		when health drops: the chain lightning fires on the same line as the damage
+		(`UnitService:executeAttack`), so this number is literally the frame the
+		player sees the bolt. Move the marker, update this too, or the bolt fires
+		with the model still raising its hand.
 	]]
 	["Electro"] = {
 		AttackSequence = {
@@ -159,16 +158,16 @@ local UnitAttackConfig = {
 	},
 
 	--[[
-		1,1s e o marcador `Hit` da animacao `Attack` do Frostione (1,8333s de duracao).
-		Mesma regra das outras: o marcador e a fonte, este numero e a copia que as duas
-		pontas obedecem. E nele que o projetil sai e o servidor cobra o dano.
+		1.1 s is the `Hit` marker of the Frostione's `Attack` animation (1.8333 s
+		long). Same rule as the others: the marker is the source, this number is the
+		copy both sides obey. The projectile leaves and the server applies damage on it.
 
-		Escrito como `HitTimes` + `Duration`, e nao como `HitTime`, por causa do
-		cooldown: com upgrade ele desce ate 1s, abaixo da animacao. O `HitTime` e uma
-		espera fixa que so o cliente encolhe junto com a track; os `HitTimes` as duas
-		pontas dividem pelo mesmo fator (ver o `squeeze` do `UnitService` e o `fit`
-		do `Unit:playAttackVisual`), entao o tiro continua saindo no frame do
-		marcador com a animacao espremida.
+		Written as `HitTimes` + `Duration`, not `HitTime`, because of the cooldown:
+		with upgrades it drops to 1 s, below the animation. `HitTime` is a fixed wait
+		only the client shrinks with the track; both sides divide `HitTimes` by the
+		same factor (see `UnitService`'s `squeeze` and `Unit:playAttackVisual`'s
+		`fit`), so the shot still leaves on the marker frame with the animation
+		squeezed.
 	]]
 	["Frostione"] = {
 		AttackSequence = {
@@ -177,17 +176,17 @@ local UnitAttackConfig = {
 	},
 
 	--[=[
-		Meteor, Lighting e Teleport, em sequencia. `ChainSequence` liga o encadeamento:
-		entre o comeco de um passo e o do seguinte a espera e o `ChainDelay` (5s), e o
-		`Cooldown` do `UnitStats` so conta depois da animacao do ultimo
-		(`UnitService:getAttackDelay`). O `ChainDelay` nunca encurta uma animacao: se
-		um passo durar mais que ele, a espera e a `Duration` do passo.
+		Meteor, Lighting, and Teleport, in sequence. `ChainSequence` turns on chaining:
+		between the start of one step and the next the wait is `ChainDelay` (5 s), and
+		the `UnitStats` cooldown only counts after the last step's animation
+		(`UnitService:getAttackDelay`). `ChainDelay` never shortens an animation: if a
+		step lasts longer, the wait is the step's `Duration`.
 
-		`Combo` diz qual ataque de `UnitStats[nome].Combo` o passo executa
-		(`UnitService:executeCombo`). Os tempos sao os marcadores das animacoes,
-		copiados na mao como nas outras unidades: o `Hit` da `Meteor` (1,7167s), o
-		`HitInitial` e o `HitEnd` da `Lighting` (0,9167s e 1,4167s) e o `Hit` da
-		`Teleport` (0,4167s). Mexeu o marcador, mexe aqui junto.
+		`Combo` says which attack of `UnitStats[name].Combo` the step runs
+		(`UnitService:executeCombo`). The times are the animations' markers, copied by
+		hand as for the other units: `Meteor`'s `Hit` (1.7167 s), `Lighting`'s
+		`HitInitial` and `HitEnd` (0.9167 s and 1.4167 s), and `Teleport`'s `Hit`
+		(0.4167 s). Move a marker, update this too.
 	]=]
 	["Archmage"] = {
 		ChainSequence = true,

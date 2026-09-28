@@ -5,36 +5,40 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
+local log = Log.new("ServerRestartService")
 
 --[[
-	O aviso de que o servidor vai reiniciar.
+	The warning that the server is about to restart.
 
-	Quem avisa é a própria engine: `game.ServerRestartScheduled` dispara no servidor
-	quando a Roblox marca o fim deste servidor — seja porque o desenvolvedor
-	publicou uma atualização, seja por manutenção, moderação ou memória da própria
-	Roblox. O evento traz **quando** (`restartTime`, um `DateTime`) e **por que**
-	(`source`, um `Enum.CloseReason`).
+	The engine itself warns: `game.ServerRestartScheduled` fires on the server when
+	Roblox schedules this server's end, whether because the developer published an
+	update or for Roblox maintenance, moderation, or memory. The event carries
+	**when** (`restartTime`, a `DateTime`) and **why** (`source`, an
+	`Enum.CloseReason`).
 
-	O evento só existe no servidor, então este service o repassa para os clientes
-	como `ServerRestartScheduled` (nome do motivo + segundos que faltam) e o
-	`ServerRestartController` escreve a frase na tela.
+	The event only exists on the server, so this service relays it to clients as
+	`ServerRestartScheduled` (reason name + seconds left), and
+	`ServerRestartController` writes the sentence on screen.
 
-	**Segundos que faltam, e não o horário.** O `restartTime` é UTC e o relógio do
-	cliente não é confiável — máquina com a hora errada mostraria "restart em 3
-	horas". A conta é feita aqui, contra o relógio do servidor, e refeita a cada
-	envio: quem entra dois minutos depois recebe dois minutos a menos.
+	**Seconds left, not the time of day.** `restartTime` is UTC and the client clock
+	is not reliable: a machine with the wrong time would show "restart in 3 hours".
+	The math is done here, against the server clock, and redone on every send: a
+	player who joins two minutes later gets two minutes less.
 
-	Fica em `common/` porque o restart derruba as duas places.
+	It lives in `common/` because the restart takes down both places.
+
+	See docs/common/screen-warnings.md.
 ]]
 
 local ServerRestartService = {
 	Services = {}
 }
 
--- Nome do `Enum.CloseReason` que a engine mandou, e o instante do restart em
--- tempo Unix. Ambos nil enquanto nada estiver agendado.
+-- The `Enum.CloseReason` name the engine sent, and the restart instant in
+-- Unix time. Both nil while nothing is scheduled.
 ServerRestartService.Source = nil :: string?
 ServerRestartService.RestartTime = nil :: number?
 ServerRestartService.Scheduled = false
@@ -42,12 +46,13 @@ ServerRestartService.Scheduled = false
 --[[ INTERNAL ]]
 
 --[=[
-	Separa `restartTime` e `source` do que a engine mandou.
+	Splits `restartTime` and `source` out of what the engine sent.
 
-	A ordem dos argumentos é lida do valor, e não da posição, de propósito: a
-	assinatura documentada é `(restartTime, source, attributes)`, mas o evento é
-	novo e já apareceu documentado na ordem trocada. Olhar o `typeof` custa nada e
-	sobrevive às duas — o que não dá é mostrar a hora no lugar do motivo.
+	The argument order is read from the value, not the position, on purpose: the
+	documented signature is `(restartTime, source, attributes)`, but the event is new
+	and has already been documented in swapped order. Checking `typeof` costs nothing
+	and survives both; what must not happen is showing the time in place of the
+	reason.
 ]=]
 local function readSchedule(...) : (DateTime?, EnumItem?)
 	local packed = table.pack(...)
@@ -70,7 +75,7 @@ local function readSchedule(...) : (DateTime?, EnumItem?)
 end
 
 --[=[
-	Quantos segundos faltam para o restart, ou nil se a engine não disse quando.
+	How many seconds are left until the restart, or nil if the engine did not say when.
 ]=]
 function ServerRestartService:GetRemaining() : number?
 	if not self.RestartTime then
@@ -81,7 +86,7 @@ function ServerRestartService:GetRemaining() : number?
 end
 
 --[=[
-	Manda o aviso para um jogador. Sem nada agendado, não manda nada.
+	Sends the warning to one player. With nothing scheduled, sends nothing.
 ]=]
 function ServerRestartService:Send(player : Player)
 	if not self.Scheduled then return end
@@ -90,10 +95,10 @@ function ServerRestartService:Send(player : Player)
 end
 
 --[=[
-	Guarda o agendamento e avisa quem já está no servidor.
+	Stores the schedule and warns everyone already on the server.
 
-	Público porque é isto que o `restartwarning` do Cmdr precisa para ensaiar o aviso sem
-	derrubar o servidor de verdade.
+	Public because this is what Cmdr's `restartwarning` needs to rehearse the warning
+	without actually taking the server down.
 ]=]
 function ServerRestartService:Schedule(source : string?, restartTime : number?)
 	self.Scheduled = true
@@ -105,24 +110,24 @@ function ServerRestartService:Schedule(source : string?, restartTime : number?)
 	end
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function ServerRestartService:construct()
-	-- Quem entra depois do agendamento (ou antes de a Interface dele existir) pede
-	-- o aviso pendente.
+	-- Players who join after the schedule (or before their Interface exists) ask
+	-- for the pending warning.
 	Framework:Listen("RequestServerRestart", function(player : Player)
 		self:Send(player)
 	end)
 
-	-- Numa versão da engine que ainda não tenha o evento, ler a propriedade é erro,
-	-- e não nil. O `pcall` deixa o resto do service de pé — o `restartwarning` do
-	-- Cmdr continua ensaiando o aviso.
+	-- On an engine version that does not have the event yet, reading the property is
+	-- an error, not nil. The `pcall` keeps the rest of the service up: Cmdr's
+	-- `restartwarning` still rehearses the warning.
 	local ok, scheduled = pcall(function()
 		return (game :: any).ServerRestartScheduled
 	end)
 
 	if not ok or typeof(scheduled) ~= "RBXScriptSignal" then
-		warn("[ServerRestartService]: game.ServerRestartScheduled nao existe nesta versao da engine.")
+		log:Warn("game.ServerRestartScheduled does not exist in this engine version.")
 		return
 	end
 
@@ -142,9 +147,9 @@ function ServerRestartService:start()
 end
 
 function ServerRestartService:init()
-	-- O identificador do evento nasce no servidor: sem este `Listen` vazio, o
-	-- `Listen` do cliente ficaria dez segundos esperando um evento que ninguém
-	-- registrou e levaria junto o resto do controller.
+	-- The event identifier is created on the server: without this empty `Listen`,
+	-- the client's `Listen` would wait ten seconds for an event nobody registered,
+	-- and take the rest of the controller down with it.
 	Framework:Listen("ServerRestartScheduled", function() end)
 end
 

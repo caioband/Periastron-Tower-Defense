@@ -7,10 +7,10 @@ local Me = require(Vendor:WaitForChild("Me"))
 local Framework = Me.new()
 
 --[[
-	Ver a seta sem precisar de um passo de tutorial para isso.
+	See the arrow without needing a tutorial step for it.
 
-	Sem posição, apaga. Sem jogadores, aponta para quem rodou — que é o caso de
-	quem está conferindo se a seta gira e flutua do jeito certo.
+	Without a position, it clears. Without players, it points for whoever ran the
+	command, which is the case when checking that the arrow spins and floats right.
 ]]
 return function(context, position : Vector3?, players : { Player }?)
 	local ArrowService = Framework:Get("ArrowService", false, true)

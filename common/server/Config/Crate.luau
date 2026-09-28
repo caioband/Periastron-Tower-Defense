@@ -1,68 +1,72 @@
 
 --[[
-	Odds das crates — SÓ SERVIDOR.
+	Crate odds: SERVER ONLY.
 
-	Mora aqui pelo mesmo motivo que `Summon`: é a chance de drop do jogo, o cliente
-	não precisa (nem deve) ler. O que o cliente vê de raridade — nome, cor, ordem —
-	está em `ReplicatedStorage.Shared.Config.SharedConfig.RarityConfig`.
+	It lives here for the same reason as `Summon`: these are the game's drop chances,
+	which the client does not need (and should not) read. What the client sees of
+	rarity (name, color, order) is in
+	`ReplicatedStorage.Shared.Config.SharedConfig.RarityConfig`.
 
-	O pool devolve só a RARIDADE. Qual unit sai é sorteado depois, entre as units
-	daquela raridade (`RarityConfig.getUnitsOfRarity`) — é de propósito: para incluir
-	uma unit nova no drop basta dar uma `Rarity` para ela no UnitStats. Para deixar
-	uma de fora sem apagá-la do jogo, veja `EXCLUDED_UNITS` logo abaixo.
+	The pool returns only the RARITY. Which unit comes out is drawn afterward, among
+	the units of that rarity (`RarityConfig.getUnitsOfRarity`). That is deliberate:
+	to include a new unit in the drop, give it a `Rarity` in UnitStats. To leave one
+	out without deleting it from the game, see `EXCLUDED_UNITS` just below.
+
+	See docs/lobby/crates-and-unboxing.md.
 ]]
 
 local module = {}
 
 --[[
-	Units que existem no jogo mas **não saem de caixa nenhuma**.
+	Units that exist in the game but **drop from no crate**.
 
-	Não é o mesmo que apagar a unit: quem já tem continua com ela, ela continua no
-	deck, no banner de invocação (`Summon`), nos stats e no balanceamento. O que ela
-	perde é só esta porta de entrada.
+	This is not the same as deleting the unit: players who have it keep it, and it
+	stays in the deck, the summon banner (`Summon`), stats, and balance. It only
+	loses this way in.
 
-	Mora aqui, e não em UnitStats, porque é uma regra de **drop** e não uma propriedade
-	da unit — a `Rarity` dela continua sendo Legendary, e é isso que a carta, a cor e o
-	preço leem. Uma unit exclusiva de evento ou de promoção entra nesta lista no dia em
-	que a promoção acabar, e sai dela sem tocar em mais nada.
+	It lives here, not in UnitStats, because it is a **drop** rule, not a unit
+	property: its `Rarity` is still Legendary, and that is what the card, the color,
+	and the price read. An event or promo exclusive unit goes on this list the day
+	the promo ends, and comes off it without touching anything else.
 
-	As odds publicadas na loja não mudam: elas são **por raridade**, e tirar a Azure não
-	tira a chance de lendária — só faz o sorteio cair sempre nas outras duas (Berserker
-	e Electro). A conta de `GetDisplayOdds` continua valendo palavra por palavra.
+	The odds published in the shop do not change: they are **per rarity**, and
+	removing the Azure does not remove the Legendary chance; it just makes the draw
+	always land on the other two (Berserker and Electro). The `GetDisplayOdds` math
+	still holds word for word.
 
-	⚠️ Esvaziar uma raridade inteira aqui faz o sorteio **descer um degrau** e entregar
-	uma unit mais fraca no lugar, com um aviso no output — o mesmo caminho da Cosmic,
-	que não tem unit nenhuma. Deixe sempre uma unit sobrando por raridade que o pool
-	alcança.
+	⚠️ Emptying an entire rarity here makes the draw **step down** and deliver a
+	weaker unit instead, with a warning in the output: the same path as a rarity with
+	no units at all. Always leave at least one unit per rarity the pool reaches.
 ]]
 module.EXCLUDED_UNITS = {
 	["Azure"] = true,
 }
 
 --[[
-	Chance (em %) de cada raridade de unit, por crate aberta. Cada linha soma 100.
+	Chance (in %) of each unit rarity, per crate opened. Each row sums to 100.
 
-	A crate comum não alcança Cosmic: o único caminho dela para lá é evoluir antes
-	(veja UPGRADES abaixo).
+	The common crate does not reach Cosmic: its only way there is to upgrade first
+	(see UPGRADES below).
 
-	Cosmic só tem peso na épica (a Fragmented Crate), onde mora o Archmage, a única
-	unit Cosmic hoje. Nas outras linhas ela continua em zero de propósito.
+	Cosmic has weight only in the epic tier (the Fragmented Crate), home of the
+	Archmage, today's only Cosmic unit. It stays at zero in the other rows on
+	purpose.
 
-	⚠️ Zero no pool não é "nunca": a comum e a rara podem **evoluir** até a épica
-	(ver UPGRADES), e aí o sorteio é o do pool épico. Por esse caminho elas também
-	entregam Cosmic, bem mais raro. O `GetOdds` conta isso; a loja da Crate Of
-	Beginnings esconde a linha (ver `HIDDEN_DISPLAY_RARITIES`).
+	⚠️ Zero in the pool is not "never": the common and rare crates can **upgrade** up
+	to the epic one (see UPGRADES), and then the draw uses the epic pool. Through that
+	path they also deliver Cosmic, much more rarely. `GetOdds` accounts for it; the
+	Crate Of Beginnings shop hides the row (see `HIDDEN_DISPLAY_RARITIES`).
 
-	**O pool da comum sai de trás para frente**, da chance que a loja tem de mostrar
-	(`GetOdds`, com a evolução dentro) -- por isso os números quebrados. O alvo
-	publicado da Crate Of Beginnings é 86 / 10 / 3 / 1.
+	**The common pool is derived backward**, from the chance the shop must show
+	(`GetOdds`, with upgrades included), hence the odd numbers. The published target
+	for the Crate Of Beginnings is 86 / 10 / 3 / 1.
 
-	A Cosmic dela (0,014%, escondida) vem só da evolução até a Fragmented e não tem
-	como sair, então quem cede é a Common: a loja mostra 85,99, e não 86.
+	Its Cosmic (0.014%, hidden) comes only from upgrading to Fragmented and cannot be
+	removed, so Common gives way: the shop shows 85.99, not 86.
 
-	Mexeu em UPGRADES ou em qualquer outro pool, a chance publicada da Beginnings muda
-	junto e a conta tem de ser refeita. É também por ela que a evolução da comum
-	baixou para 10% (ver UPGRADES).
+	Changing UPGRADES or any other pool changes the Beginnings' published chance too,
+	and the math must be redone. It is also why the common crate's upgrade chance is
+	10% (see UPGRADES).
 ]]
 module.POOLS = {
 	["Common"] = {
@@ -81,8 +85,8 @@ module.POOLS = {
 		Cosmic = 0,
 	},
 
-	-- A Fragmented Crate e a unica com Cosmic (o Archmage): o 1% saiu da Legendary,
-	-- que tinha ficado com o peso dela enquanto nao existia unit Cosmic.
+	-- The Fragmented Crate is the only one with Cosmic (the Archmage): the 1% came out
+	-- of Legendary, which held its weight while no Cosmic unit existed.
 	["Epic"] = {
 		Common = 0,
 		Rare = 45,
@@ -101,58 +105,59 @@ module.POOLS = {
 }
 
 --[[
-	Raridades que a LOJA não mostra nas odds de uma caixa. Só a exibição: o sorteio,
-	a evolução e a garantia (pity) continuam iguais.
+	Rarities the SHOP does not show in a crate's odds. Display only: the draw, the
+	upgrade, and the guarantee (pity) stay the same.
 
-	A Crate Of Beginnings ainda pode entregar Cosmic evoluindo até a Fragmented Crate
-	(uns 0,014%). A linha só sai da tela; as outras raridades seguem com a chance real
-	delas, sem redistribuir o peso da escondida.
+	The Crate Of Beginnings can still deliver Cosmic by upgrading up to the
+	Fragmented Crate (about 0.014%). The row only leaves the screen; the other
+	rarities keep their real chance, without redistributing the hidden one's weight.
 ]]
 module.HIDDEN_DISPLAY_RARITIES = {
 	["Common"] = { Cosmic = true },   -- Crate Of Beginnings
 }
 
 --[[
-	Antes de sortear no pool, a crate pode evoluir para a próxima — e aí quem manda
-	é o pool da crate evoluída. Chance em %.
+	Before drawing from the pool, the crate may upgrade to the next one, and then the
+	upgraded crate's pool rules. Chance in %.
 ]]
 module.UPGRADES = {
-	-- Era 25. Baixou para a Beginnings conseguir publicar 86/10/3/1: a 25%, so a
-	-- parte que vira Nature ja passava de 3% de Epic e 10% de Rare (ver POOLS). O
-	-- teto que ainda fecha e ~17,7% -- acima disso a Epic da Beginnings estoura.
+	-- Not 25: at 25%, the share that becomes Nature alone already exceeded 3% Epic
+	-- and 10% Rare, so the Beginnings could not publish 86/10/3/1 (see POOLS). The
+	-- ceiling that still works is ~17.7%; above it the Beginnings' Epic overflows.
 	["Common"] = { To = "Rare", Chance = 10 },
 	["Rare"] = { To = "Epic", Chance = 15 },
 	["Epic"] = { To = "Legendary", Chance = 8 },
 }
 
 --[[
-	Com `true`, a crate que evoluiu rola a evolução dela também: uma Common pode
-	encadear até Legendary (10% * 15% * 8% = 0,12%). Com `false`, evolui no máximo um
-	degrau — a Common nunca passa de Rare.
+	With `true`, an upgraded crate rolls its own upgrade too: a Common can chain up
+	to Legendary (10% * 15% * 8% = 0.12%). With `false`, it upgrades at most one
+	step: the Common never goes past Rare.
 ]]
 module.CHAIN_UPGRADES = true
 
 --[=[
-	A chance de cada raridade de unit sair de uma caixa daquele tier, **ja com a
-	evolucao dentro** -- e o numero que a loja mostra.
+	The chance of each unit rarity coming out of a crate of that tier, **with upgrades
+	already included**: the number the shop shows.
 
-	As `POOLS` la em cima sao a chance depois de a caixa parar de evoluir, e nao a
-	chance de comprar aquela caixa e receber aquela raridade. Uma Crate Of Beginnings
-	evolui para Crate Of Nature em 10% das aberturas (e dali pode continuar), entao o
-	pool da comum vale so em 90% delas. A diferenca nao e detalhe: a lendaria sai a
-	0,64% pelo pool e a **1%** de verdade.
+	The `POOLS` above are the chance after the crate stops upgrading, not the chance
+	of buying that crate and getting that rarity. A Crate Of Beginnings upgrades to a
+	Crate Of Nature in 10% of openings (and may continue from there), so the common
+	pool applies only in 90% of them. The difference is not a detail: Legendary
+	comes out at 0.64% by the pool and at **1%** in reality.
 
-	Mostrar o pool cru seria a loja prometer um numero que o jogo nao entrega, e por
-	isso a conta e feita aqui e nao na tela: **a chance publicada e a chance real**.
+	Showing the raw pool would have the shop promise a number the game does not
+	deliver, which is why the math is done here and not on screen: **the published
+	chance is the real chance**.
 
-	Como a conta anda: cada degrau da corrente leva `1 - chance` da probabilidade que
-	sobrou para o tier atual e passa o resto adiante, ate um tier sem evolucao. Com
-	`CHAIN_UPGRADES` desligado a corrente para no primeiro degrau, e a funcao segue
-	valendo -- ela le a mesma bandeira que o sorteio le.
+	How the math goes: each step of the chain takes `1 - chance` of the remaining
+	probability for the current tier and passes the rest on, until a tier with no
+	upgrade. With `CHAIN_UPGRADES` off the chain stops at the first step, and the
+	function still holds: it reads the same flag the draw reads.
 
-	Devolve um mapa `{ [raridade] = porcentagem }` somando 100, ou nil para um tier
-	que nao existe. Raridade com chance zero (a Cosmic, hoje) sai de fora: linha de
-	"0%" na loja e ruido.
+	Returns a `{ [rarity] = percentage }` map summing to 100, or nil for a tier that
+	does not exist. A rarity with zero chance is left out: a "0%" row in the shop is
+	noise.
 ]=]
 function module.GetOdds(crateRarity : string) : { [string]: number }?
 	local pool = module.POOLS[crateRarity]
@@ -160,7 +165,7 @@ function module.GetOdds(crateRarity : string) : { [string]: number }?
 		return nil
 	end
 
-	-- Quanto de cada tier a caixa comprada vira, depois de a evolucao rolar.
+	-- How much of each tier the purchased crate becomes, after the upgrade rolls.
 	local tiers = {}
 	local current = crateRarity
 	local remaining = 1
@@ -200,7 +205,7 @@ function module.GetOdds(crateRarity : string) : { [string]: number }?
 end
 
 --[=[
-	O `GetOdds` sem as raridades de `HIDDEN_DISPLAY_RARITIES` -- e o que a loja mostra.
+	`GetOdds` without the rarities in `HIDDEN_DISPLAY_RARITIES`: what the shop shows.
 ]=]
 function module.GetDisplayOdds(crateRarity : string) : { [string]: number }?
 	local odds = module.GetOdds(crateRarity)
@@ -216,40 +221,41 @@ function module.GetDisplayOdds(crateRarity : string) : { [string]: number }?
 end
 
 --[=[
-	A garantia (pity) das raridades altas: as que tem contador proprio por caixa, em
-	ordem de prioridade.
+	The guarantee (pity) for high rarities: those with their own counter per crate,
+	in priority order.
 
-	Cada caixa conta, no perfil de quem abre (`Pity[caixa][raridade]`), quantas
-	aberturas seguidas sairam **sem** aquela raridade. Quando a conta chega no limite
-	do `GetPityThreshold`, a abertura seguinte entrega uma unit daquela raridade, e a
-	conta volta a zero sempre que ela sai -- garantida ou nao.
+	Each crate counts, on the opener's profile (`Pity[crate][rarity]`), how many
+	openings in a row came out **without** that rarity. When the count reaches
+	`GetPityThreshold`'s limit, the next opening delivers a unit of that rarity, and
+	the count resets whenever it comes out, guaranteed or not.
 
-	As contas sao independentes: tirar Cosmic nao zera a de Legendary. Se as duas
-	vencerem na mesma abertura, manda a primeira desta lista, e a outra fica para a
-	abertura seguinte, porque a conta dela continua no limite.
+	The counts are independent: pulling Cosmic does not reset Legendary's. If both
+	come due on the same opening, the first in this list wins, and the other waits for
+	the next opening, because its count stays at the limit.
 
-	Quem aplica e o `CrateService:OpenCrate`. O `unbox` do Cmdr nao abre caixa de
-	verdade e nao mexe em conta nenhuma.
+	`CrateService:OpenCrate` applies it. Cmdr's `unbox` does not open a real crate and
+	touches no count.
 ]=]
 module.PITY_RARITIES = { "Cosmic", "Legendary" }
 
 --[=[
-	Quantas aberturas seguidas sem `rarity` fazem a proxima ser garantida, numa caixa
-	daquele tier. Nil quando a caixa nao tem chance nenhuma dela -- entao nao ha o
-	que garantir.
+	How many openings in a row without `rarity` make the next one guaranteed, for a
+	crate of that tier. Nil when the crate has no chance of it at all, so there is
+	nothing to guarantee.
 
-	Sai sozinho da chance **real** (`GetOdds`, com a evolucao dentro, e sem
-	a sorte da gamepass): com 1%, cem aberturas sem ela garantem a centesima primeira.
-	Mexeu nos pools ou nas evolucoes, o limite acompanha sem tocar em mais nada.
+	It derives from the **real** chance (`GetOdds`, with upgrades included, and
+	without the gamepass luck): at 1%, a hundred openings without it guarantee the
+	hundred-and-first. Change the pools or the upgrades and the limit follows without
+	touching anything else.
 
-		| Caixa (hoje)        | Legendary | Cosmic |
+		| Crate (today)       | Legendary | Cosmic |
 		| Crate Of Beginnings |       100 |   7247 |
 		| Crate Of Nature     |        24 |    725 |
 		| Fragmented Crate    |         9 |    109 |
 		| Legendary Crate     |         3 |      - |
 ]=]
 function module.GetPityThreshold(crateRarity : string, rarity : string) : number?
-	-- A chance real, e nao a da loja: esconder a linha nao pode desligar a garantia.
+	-- The real chance, not the shop's: hiding the row must not turn the guarantee off.
 	local odds = module.GetOdds(crateRarity)
 	local chance = odds and odds[rarity]
 
@@ -257,8 +263,8 @@ function module.GetPityThreshold(crateRarity : string, rarity : string) : number
 		return nil
 	end
 
-	-- A folga tira o erro de ponto flutuante de uma chance redonda: 100 / 1 nao pode
-	-- virar 101 por causa de um 100.00000000001.
+	-- The slack absorbs floating-point error on a round chance: 100 / 1 must not
+	-- become 101 because of a 100.00000000001.
 	return math.max(1, math.ceil(100 / chance - 1e-9))
 end
 

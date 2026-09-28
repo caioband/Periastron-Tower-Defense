@@ -10,6 +10,7 @@ local Util = Shared:WaitForChild("Util")
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local Signal = require(Packages.Signal)
 
 local SharedConfig = require(Configs.SharedConfig)
@@ -24,6 +25,7 @@ local UnitStats = SharedConfig.UnitStats
 local UpgradeConfig = SharedConfig.UnitUpgradeConfig
 
 local Framework = Me.new()
+local log = Log.new("DeckController")
 
 --[[ CONSTANTS ]]
 local HUD_UI_NAME = "HUD"
@@ -58,55 +60,55 @@ local RANGE_NAME = "Range"
 local WAIT_TIMEOUT = 10
 
 --[[
-	O nome do pedido ao `InterfaceController`: com o loadout aberto, a tela e so
-	dele -- o mesmo das lojas e dos contratos (`ProximityPanel`).
+	The name of the `InterfaceController` request: with the loadout open, the screen is its
+	alone, the same as the shops and contracts (`ProximityPanel`).
 ]]
 local HIDE_REASON = "Deck"
 
--- O borrao do fundo, o mesmo `UIBlur` e o mesmo tamanho do `ProximityPanel`.
+-- The background blur, the same `UIBlur` and the same size as `ProximityPanel`.
 local BLUR_SIZE = 24
 
 --[[
-	O texto do slot travado. O `%d` e o nivel que ele pede
-	(`DeckConfig.SLOT_UNLOCK_LEVELS`); a frase e a que o designer deixou autorada no
-	`LockText`, com o `X` no lugar do numero.
+	The locked slot text. `%d` is the level it asks for (`DeckConfig.SLOT_UNLOCK_LEVELS`);
+	the sentence is the one the designer authored in `LockText`, with `X` in place of the
+	number.
 ]]
 local LOCK_TEXT_FORMAT = "Unlocked at Level %d"
 
 local OPEN_INFO = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
--- A entrada das cartas: a posição estica (Back) e a opacidade só acompanha, mais
--- curta, porque transparência com overshoot passaria de 0 e piscaria.
+-- The cards' entrance: position overshoots (Back) and opacity just follows, shorter,
+-- because transparency with overshoot would pass 0 and flicker.
 local INTRO_MOVE_TIME = 0.42
 local INTRO_FADE_TIME = 0.28
 local INTRO_STAGGER = 0.035
 
--- Teto do atraso acumulado: com inventário grande, a última carta não pode
--- demorar meio minuto para entrar.
+-- Cap on the accumulated delay: with a large inventory, the last card must not
+-- take half a minute to come in.
 local INTRO_MAX_DELAY = 0.9
 
--- De onde toda carta vem na abertura. É a posição dentro do próprio wrapper — o
--- wrapper é quem o UIGridLayout coloca no lugar, então animar a carta não briga
--- com a grade.
+-- Where every card comes from on opening. It is the position inside its own wrapper: the
+-- wrapper is what the UIGridLayout puts in place, so animating the card does not fight
+-- the grid.
 local INTRO_FROM_POSITION = UDim2.fromScale(0, 0)
 
--- A carta que viaja entre o inventário e o deck. O clone voa por cima de tudo,
--- então o ZIndex é bem acima dos painéis (que estão em 1) -- o HUD é
--- `ZIndexBehavior.Sibling`, então isso basta.
+-- The card that travels between the inventory and the deck. The clone flies over
+-- everything, so its ZIndex is well above the panels (which are at 1); the HUD is
+-- `ZIndexBehavior.Sibling`, so that is enough.
 local FLIGHT_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local FLIGHT_ZINDEX = 50
 local FLIGHT_NAME = "FlyingCard"
 
--- Quando a lista se reacomoda (uma unidade acabou e a linha dela saiu), o wrapper
--- pula direto para a célula nova e é a carta de dentro que faz o caminho.
+-- When the list rearranges (a unit ran out and its row left), the wrapper
+-- jumps straight to the new cell and the card inside makes the trip.
 local SLIDE_INFO = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
--- O EquipToggle é só o estado "pode equipar", e a cor dele vem autorada na GUI.
--- Quando não há o que equipar o botão some, em vez de virar um "desequipar".
+-- EquipToggle is only the "can equip" state, and its color comes authored in the GUI.
+-- When there is nothing to equip the button hides, instead of becoming an "unequip".
 local EQUIP_TEXT = "Equip"
 
--- O som de toda carta clicada, em SoundService.SharedSounds.SFX.
+-- The sound for every clicked card, in SoundService.SharedSounds.SFX.
 local CARD_SOUND = "CardFlip"
 
 local LIMIT_FORMAT = "%d/%d"
@@ -117,8 +119,8 @@ local ERROR_DURATION = 3
 --[[ HELPERS ]]
 
 --[=[
-	Número com no máximo `decimals` casas e sem zeros sobrando: 12.00 -> "12".
-	Mesmo formato do card de upgrade do Game (`ToggleTower`).
+	A number with at most `decimals` places and no trailing zeros: 12.00 -> "12".
+	The same format as Game's upgrade card (`ToggleTower`).
 ]=]
 local function formatNumber(value : number, decimals : number?) : string
 	local text = string.format("%." .. (decimals or 0) .. "f", value)
@@ -140,9 +142,9 @@ local function formatStat(value : number) : string
 end
 
 --[=[
-	Dano por golpe da unidade sem upgrade nenhum, ou a renda por wave quando ela é
-	uma Farm — que não ataca. É o mesmo texto que o card de upgrade mostra em
-	partida, só que no nível 0 e sem clima: no lobby não existe nem um nem outro.
+	The unit's damage per hit with no upgrade at all, or its income per wave when it is a
+	Farm, which does not attack. It is the same text the upgrade card shows in a match,
+	just at level 0 and without weather: in the Lobby neither exists.
 ]=]
 local function formatDamageOrIncome(unitName : string) : string
 	local stats = UnitStats[unitName]
@@ -156,9 +158,9 @@ local function formatDamageOrIncome(unitName : string) : string
 end
 
 --[=[
-	Onde a unidade fica na lista do inventário: da raridade mais alta para a mais
-	baixa, e alfabética dentro da faixa. É uma ordem que só depende do nome, então
-	dá para saber onde uma carta vai cair antes de ela existir.
+	Where the unit sits in the inventory list: highest rarity to lowest, alphabetical
+	within a band. It is an order that only depends on the name, so you can know where a
+	card will land before it exists.
 ]=]
 local function sortByRarity(a : string, b : string) : boolean
 	local orderA = RarityConfig.getOrder(UnitStats[a].Rarity) or 0
@@ -172,15 +174,15 @@ local function sortByRarity(a : string, b : string) : boolean
 end
 
 --[=[
-	As transparências que a carta tem **antes** de qualquer animação mexer nela,
-	uma entrada por objeto — a carta, os textos, os contornos.
+	The transparencies the card has **before** any animation touches it, one entry per
+	object: the card, the texts, the outlines.
 
-	É lido do próprio objeto, e não de uma tabela de valores fixos, porque o alvo
-	do fade é "o que o designer deixou": um contorno que veio meio apagado volta
-	meio apagado.
+	It is read from the object itself, not a table of fixed values, because the fade's
+	target is "what the designer left": an outline that came half faded returns half
+	faded.
 
-	Só vale se for chamado antes da primeira animação. Carta do inventário é
-	clonada e lida na hora; carta de slot é lida uma vez, no bind.
+	It only holds if called before the first animation. An inventory card is cloned and read
+	on the spot; a slot card is read once, on bind.
 ]=]
 local function captureFades(card : GuiObject)
 	local fades = {}
@@ -219,8 +221,8 @@ local function captureFades(card : GuiObject)
 end
 
 --[=[
-	Tudo o que a animação de entrada precisa saber sobre uma carta: onde ela
-	descansa e quão opaca ela é quando está parada.
+	Everything the entrance animation needs to know about a card: where it rests and how
+	opaque it is when still.
 ]=]
 local function captureIntro(card : GuiObject)
 	return {
@@ -231,7 +233,7 @@ local function captureIntro(card : GuiObject)
 end
 
 --[=[
-	Coloca a carta no estado de saída: no canto do wrapper e invisível.
+	Puts the card in its starting state: at the wrapper's corner and invisible.
 ]=]
 local function applyIntroStart(entry)
 	entry.Card.Position = INTRO_FROM_POSITION
@@ -244,9 +246,9 @@ local function applyIntroStart(entry)
 end
 
 --[=[
-	Coloca a carta no estado final na hora, sem animar. É o que vale quando a
-	lista é redesenhada com o painel já aberto — equipar uma carta não pode fazer
-	a tela inteira entrar de novo.
+	Puts the card in its final state right away, without animating. That is what applies
+	when the list is redrawn with the panel already open: equipping a card must not make
+	the whole screen come in again.
 ]=]
 local function applyIntroEnd(entry)
 	entry.Card.Position = entry.Position
@@ -259,37 +261,39 @@ local function applyIntroEnd(entry)
 end
 
 --[=[
-	Dono do `StarterGui.HUD.CardUI`: o inventário de unidades, o deck equipado e o
-	painel de detalhe.
+	Owner of `StarterGui.HUD.CardUI`: the unit inventory, the equipped deck, and the detail
+	panel.
 
-	O botão `HUDFrame.Deck` abre e fecha (o mesmo botão com o painel aberto
-	fecha), e a abertura é um tween do `UIScale` de 0 até a escala que veio
-	autorada. Aberto, ele fica sozinho na tela com o fundo borrado, como as lojas e
-	os contratos (ver `_claimScreen`).
+	The `HUDFrame.Deck` button opens and closes it (the same button with the panel open
+	closes it), and opening is a tween of the `UIScale` from 0 to the authored scale. Open,
+	it is alone on screen with the background blurred, like the shops and contracts (see
+	`_claimScreen`).
 
-	**Uma carta por clique.** Quem põe carta no deck é o `EquipToggle`, com a
-	unidade selecionada — a carta do inventário só **mostra**, ela não equipa. O botão
-	some quando não sobra cópia no inventário, e tirar carta é só clicando na carta do
-	próprio deck. Toda troca é uma carta clonada que voa até o destino.
+	**One card per click.** `EquipToggle` puts cards in the deck, with the selected unit:
+	an inventory card only **shows**, it does not equip. The button hides when no copy is
+	left in the inventory, and removing a card is only by clicking the card in the deck
+	itself. Every swap is a cloned card flying to its destination.
 
-	**No PC existe um atalho:** o botão direito numa carta do inventário seleciona e
-	já equipa, sem a ida ao `EquipToggle`. É o mesmo caminho de equipar, com as
-	mesmas checagens — o que muda é só quantos cliques custa.
+	**On PC there is a shortcut:** right-clicking an inventory card selects and equips at
+	once, without going to `EquipToggle`. It is the same equip path, with the same checks;
+	only the click count changes.
 
-	**O lado de onde a carta saiu muda na hora; o lado onde ela vai cair espera o
-	pouso.** Os dois são desenhados separadamente (`_renderInventory` e
-	`_renderSlots`), e cada um fica parado enquanto houver carta voando para ele —
-	é o que segura o `EmptyCard` visível, ou a carta fora da lista, até ela chegar.
+	**The side the card left changes right away; the side it will land on waits for the
+	landing.** The two are drawn separately (`_renderInventory` and `_renderSlots`), and
+	each stays still while a card is flying toward it: that is what keeps the `EmptyCard`
+	visible, or the card out of the list, until it arrives.
 
-	Clicar em rajada é para funcionar: cada clique solta mais uma carta, e o que
-	decide se ele vale é o `Projected` — o deck contando o que ainda está no ar,
-	que é o que o servidor já gravou, e não o que a tela está mostrando.
+	Clicking in bursts is meant to work: each click releases one more card, and what
+	decides whether it counts is `Projected`: the deck counting what is still in the air,
+	which is what the server already saved, not what the screen is showing.
 
-	Nada aqui decide o que o jogador tem: o inventário, o deck e o limite saem da
-	replica do perfil (`Units`, `EquippedUnits`, `CardLimit`), e o clique só pede a
-	troca ao `DeckService`.
+	Nothing here decides what the player owns: the inventory, the deck, and the limit come
+	from the profile replica (`Units`, `EquippedUnits`, `CardLimit`), and the click only
+	asks `DeckService` for the swap.
 
-	O HUD tem `ResetOnSpawn` ligado, então o bind roda de novo a cada respawn.
+	The HUD has `ResetOnSpawn` on, so the bind runs again on every respawn.
+
+	See docs/lobby/deck.md.
 ]=]
 local DeckController = {
 	Controllers = {
@@ -303,7 +307,7 @@ local DeckController = {
 		-- (isOpen : boolean)
 		OpenChanged = Signal.new(),
 
-		-- (unitName : string?) — a carta que o painel de detalhe está mostrando.
+		-- (unitName : string?) — the card the detail panel is showing.
 		SelectionChanged = Signal.new(),
 	},
 }
@@ -324,8 +328,7 @@ function DeckController:_playTween(object : Instance, info : TweenInfo, goal : {
 end
 
 --[=[
-	O inventário do perfil (`{[nome] = quantidade}`), ou uma tabela vazia enquanto
-	a replica não chegou.
+	The profile inventory (`{[name] = count}`), or an empty table until the replica arrives.
 ]=]
 function DeckController:_getUnits() : { [string]: number }
 	local replica = self.Replica
@@ -334,9 +337,9 @@ function DeckController:_getUnits() : { [string]: number }
 end
 
 --[=[
-	Quantas cartas cabem no deck. Sai do mesmo `limitFor` que o `DeckService` usa,
-	entao a gamepass +5 conta aqui sem o cliente perguntar nada -- e os dois lados
-	chegam ao mesmo numero a partir da mesma replica.
+	How many cards fit in the deck. It comes from the same `limitFor` `DeckService` uses,
+	so the +5 gamepass counts here without the client asking anything, and both sides
+	reach the same number from the same replica.
 ]=]
 function DeckController:_getLimit() : number
 	local replica = self.Replica
@@ -346,14 +349,14 @@ function DeckController:_getLimit() : number
 end
 
 --[=[
-	Quantos slots o jogador tem hoje.
+	How many slots the player has today.
 
-	Sai do `Stats.XP` da replica pelo mesmo `DeckConfig` que o servidor usa, entao os
-	dois chegam ao mesmo numero sem trocar nada -- o cliente conta junto so para
-	desenhar o cadeado e recusar o clique antes da resposta. Quem decide continua
-	sendo o `DeckService`.
+	It comes from the replica's `Stats.XP` through the same `DeckConfig` the server uses,
+	so both reach the same number without exchanging anything: the client counts along
+	only to draw the lock and refuse the click before the answer. `DeckService` still
+	decides.
 
-	Tres enquanto a replica nao chegou, que e o que todo jogador tem.
+	Three until the replica arrives, which is what every player has.
 ]=]
 function DeckController:_getUnlocked() : number
 	local replica = self.Replica
@@ -374,13 +377,13 @@ function DeckController:_getEquipped() : DeckConfig.Deck
 end
 
 --[=[
-	As unidades que têm linha na lista do inventário, na ordem em que elas aparecem.
+	The units that have a row in the inventory list, in the order they appear.
 
-	Unidade com todas as cópias equipadas some daqui — é o que apaga a carta do
-	inventário quando o jogador equipa a última —, **a não ser** que ela tenha uma
-	carta voltando do deck: aí a linha continua, escondida, guardando o lugar onde a
-	carta vai pousar. Unidade que sumiu do `UnitStats` (renomeada, cortada) fica de
-	fora de qualquer jeito: o card não teria número nenhum para mostrar.
+	A unit with every copy equipped leaves here (that is what removes the inventory card
+	when the player equips the last one), **unless** it has a card coming back from the
+	deck: then the row stays, hidden, holding the spot where the card will land. A unit
+	that left `UnitStats` (renamed, cut) is left out either way: the card would have no
+	number to show.
 ]=]
 function DeckController:_sortedUnits(
 	units : { [string]: number },
@@ -393,7 +396,7 @@ function DeckController:_sortedUnits(
 		if not DeckConfig.exists(unitName) then
 			if not self.WarnedMissing[unitName] then
 				self.WarnedMissing[unitName] = true
-				warn(`[DeckController]: o perfil tem "{unitName}", que não está no UnitStats.`)
+				log:StudioWarn(`the profile has "{unitName}", which is not in UnitStats.`)
 			end
 
 			continue
@@ -413,15 +416,15 @@ function DeckController:_sortedUnits(
 end
 
 --[=[
-	A arte da carta da unidade.
+	The unit's card art.
 
-	O `Card` é um ImageLabel e a arte dele é a **carta inteira** — moldura,
-	ilustração e fundo numa imagem só —, então trocar de unidade é trocar a imagem.
-	Os ids ficam em `SharedConfig.CardConfig`, os mesmos que a hotbar do Game usa.
+	`Card` is an ImageLabel and its art is the **whole card** (frame, illustration, and
+	background in a single image), so switching units is switching the image. The ids live
+	in `SharedConfig.CardConfig`, the same ones Game's hotbar uses.
 
-	Unidade sem id fica com a arte que a GUI trouxe autorada: carta com a arte
-	errada é melhor do que carta em branco no meio do inventário. O `EmptyCard` do
-	slot livre tem arte própria e não passa por aqui.
+	A unit without an id keeps the art the GUI came authored with: a card with the wrong
+	art beats a blank card in the middle of the inventory. A free slot's `EmptyCard` has
+	its own art and does not go through here.
 ]=]
 local function writeCardImage(card : GuiObject, unitName : string)
 	if not card:IsA("ImageLabel") and not card:IsA("ImageButton") then
@@ -437,14 +440,14 @@ local function writeCardImage(card : GuiObject, unitName : string)
 end
 
 --[=[
-	A identidade da carta: de que unidade ela é.
+	The card's identity: which unit it belongs to.
 
-	A arte, o nome e o contorno na cor da raridade — o nome é o único lugar da carta
-	onde a raridade cabe, e sem ele o inventário inteiro é roxo.
+	The art, the name, and the outline in the rarity's color: the name is the only place
+	on the card where rarity fits, and without it the whole inventory is purple.
 
-	Nada disso muda enquanto a carta for daquela unidade, então a linha do inventário
-	só escreve isso quando nasce. A carta de slot passa por aqui a cada redesenho,
-	porque ela é fixa e troca de unidade conforme o deck muda.
+	None of this changes while the card belongs to that unit, so an inventory row only
+	writes it when it is born. A slot card goes through here on every redraw, because it
+	is fixed and switches units as the deck changes.
 ]=]
 local function writeCardName(card : GuiObject, unitName : string)
 	card:SetAttribute("Unit", unitName)
@@ -468,7 +471,7 @@ local function writeCardName(card : GuiObject, unitName : string)
 end
 
 --[=[
-	O contador da carta. É o que de fato muda de um redesenho para o outro.
+	The card's counter. It is what actually changes from one redraw to the next.
 ]=]
 local function writeCardCount(card : GuiObject, count : number?)
 	local countHolder = card:FindFirstChild(COUNT_NAME)
@@ -480,8 +483,8 @@ local function writeCardCount(card : GuiObject, count : number?)
 end
 
 --[=[
-	Escreve uma carta inteira e liga o clique dela. É o caminho das cartas dos slots,
-	que são instâncias fixas e trocam de unidade conforme o deck muda.
+	Writes a whole card and hooks up its click. It is the path for slot cards, which are
+	fixed instances that switch units as the deck changes.
 ]=]
 function DeckController:_fillCard(card : GuiObject, unitName : string, count : number, onClick : (() -> ())?, maid)
 	writeCardName(card, unitName)
@@ -495,14 +498,14 @@ end
 
 
 --[=[
-	Onde a carta que sai do deck vai pousar: a linha daquela unidade no inventário.
+	Where the card leaving the deck will land: that unit's row in the inventory.
 
-	Ela é saída normal do `_renderInventory` — a unidade que tem carta a caminho
-	sempre ganha uma linha, escondida se ela não tinha nenhuma cópia sobrando.
+	It is a normal output of `_renderInventory`: a unit with a card on its way always gets
+	a row, hidden if it had no copy left.
 
-	Só espera um frame quando a linha acabou de nascer: o `UIGridLayout` posiciona o
-	wrapper novo no fim do frame, e sem essa espera a carta voaria para onde ele
-	*estava*. Linha que já existia não move, então a viagem começa na hora.
+	It only waits a frame when the row was just born: `UIGridLayout` positions the new
+	wrapper at the end of the frame, and without that wait the card would fly to where it
+	*was*. A row that already existed does not move, so the trip starts right away.
 ]=]
 function DeckController:_inventoryTarget(unitName : string, isNew : boolean) : GuiObject?
 	if isNew then
@@ -515,9 +518,9 @@ function DeckController:_inventoryTarget(unitName : string, isNew : boolean) : G
 end
 
 --[=[
-	A posição (centro) e o tamanho de uma carta em escala do `CardUI`, que é onde o
-	clone que viaja mora. Sair do absoluto é o que permite voar entre a lista com
-	rolagem e o quadro do deck, que não têm nada em comum além do painel.
+	A card's position (center) and size in `CardUI` scale, which is where the traveling
+	clone lives. Leaving absolute space is what allows flying between the scrolling list
+	and the deck frame, which share nothing but the panel.
 ]=]
 function DeckController:_rectToScale(card : GuiObject) : (UDim2, UDim2)
 	local cardUI = self.CardUI
@@ -535,10 +538,10 @@ function DeckController:_rectToScale(card : GuiObject) : (UDim2, UDim2)
 end
 
 --[=[
-	Corta a animação de abertura e põe toda carta no lugar de uma vez.
+	Cuts the opening animation and puts every card in place at once.
 
-	Quem clica antes de a entrada terminar não pode ver a carta voar para onde o
-	destino *ainda estava chegando* — nem sair de uma carta pela metade da opacidade.
+	Someone clicking before the entrance ends must not see the card fly to where the
+	destination *was still arriving*, nor leave a card at half opacity.
 ]=]
 function DeckController:_finishIntro()
 	self.AnimMaid:DoCleaning()
@@ -556,16 +559,15 @@ function DeckController:_finishIntro()
 end
 
 --[=[
-	Deixa o clone com cara de carta que viaja.
+	Makes the clone look like a traveling card.
 
-	O contador sai: quantas cartas existem de cada lado é conversa das cartas que
-	estão paradas, e o número da origem já nasce velho no instante em que o clone
-	sai — mais ainda com várias viagens no ar ao mesmo tempo.
+	The counter goes: how many cards exist on each side is the business of the cards
+	standing still, and the source's number is already stale the instant the clone leaves,
+	all the more with several trips in the air at once.
 
-	O nome **e a arte** são reescritos porque a origem pode estar escondida e ainda
-	mostrando outra unidade: é o caso do slot que só vai ser preenchido quando a
-	carta anterior pousar. Sem isso, a carta que voa sai com a cara da unidade
-	errada.
+	The name **and the art** are rewritten because the source may be hidden and still
+	showing another unit: that is the case of a slot that will only be filled when the
+	previous card lands. Without it, the flying card leaves with the wrong unit's face.
 ]=]
 function DeckController:_dressClone(clone : GuiObject, unitName : string)
 	clone.Name = FLIGHT_NAME
@@ -595,7 +597,7 @@ function DeckController:_dressClone(clone : GuiObject, unitName : string)
 		end
 	end
 
-	-- O clone é enfeite: o botão dele não pode equipar nada.
+	-- The clone is decoration: its button must not equip anything.
 	for _, descendant in clone:GetDescendants() do
 		if descendant:IsA("GuiButton") then
 			descendant.Interactable = false
@@ -606,14 +608,14 @@ function DeckController:_dressClone(clone : GuiObject, unitName : string)
 end
 
 --[=[
-	Solta o clone que viaja de `sourceCard` até `targetCard`. Quem já registrou a
-	viagem é o pedido — aqui só se preenche o clone e o tween dela.
+	Releases the clone traveling from `sourceCard` to `targetCard`. The request already
+	registered the trip; here only the clone and its tween are filled in.
 ]=]
 function DeckController:_launchFlight(flight, sourceCard : GuiObject?, targetCard : GuiObject?)
-	-- Entre registrar a viagem e chegar aqui existe um frame (o que o
-	-- `_inventoryTarget` cede), e nele o painel pode ter fechado ou o jogador
-	-- renascido — os dois encerram tudo o que estava no ar. Sem esta guarda, o
-	-- clone nasceria para uma viagem que ninguém mais acompanha.
+	-- Between registering the trip and getting here there is a frame (the one
+	-- `_inventoryTarget` yields), and in it the panel may have closed or the player
+	-- respawned: both end everything in the air. Without this guard, the
+	-- clone would be born for a trip nobody follows anymore.
 	if not table.find(self.Flights, flight) then
 		return
 	end
@@ -650,9 +652,9 @@ function DeckController:_launchFlight(flight, sourceCard : GuiObject?, targetCar
 	flight.Tween = tween
 
 	tween.Completed:Connect(function(state : Enum.PlaybackState)
-		-- Cancelado é o caminho de quem já encerrou a viagem (fechar o painel, um
-		-- respawn, uma recusa do servidor): quem faz o pouso valer é só o tween que
-		-- chegou ao fim.
+		-- Canceled is the path of whoever already ended the trip (closing the panel, a
+		-- respawn, a server refusal): only a tween that reached the end makes the landing
+		-- count.
 		if state ~= Enum.PlaybackState.Completed then
 			return
 		end
@@ -664,21 +666,21 @@ function DeckController:_launchFlight(flight, sourceCard : GuiObject?, targetCar
 end
 
 --[=[
-	Registra uma viagem. Enquanto houver **alguma** no ar, a tela não é
-	redesenhada: é isso que segura cada slot no estado antigo até a carta dele
-	pousar, mesmo com outras cartas saindo no meio do caminho.
+	Registers a trip. While **any** is in the air, the screen is not redrawn: that is what
+	holds each slot in its old state until its card lands, even with other cards leaving
+	along the way.
 ]=]
 function DeckController:_addFlight(flight)
 	table.insert(self.Flights, flight)
 end
 
 --[=[
-	Fim de uma viagem: o clone some e a tela é redesenhada. O lado que estava
-	esperando esta carta só é liberado se ela era a última a caminho dele — é aí que
-	o slot troca `EmptyCard` por `Card`, ou que a carta reaparece no inventário.
+	End of a trip: the clone disappears and the screen is redrawn. The side waiting for
+	this card is only released if it was the last one on its way there: that is when the
+	slot swaps `EmptyCard` for `Card`, or the card reappears in the inventory.
 
-	`silent` só encerra, sem redesenhar: é para quem vai redesenhar por conta
-	própria depois de encerrar todas.
+	`silent` only ends, without redrawing: it is for callers that will redraw on their own
+	after ending all of them.
 ]=]
 function DeckController:_endFlight(flight, silent : boolean?)
 	local index = table.find(self.Flights, flight)
@@ -710,12 +712,12 @@ function DeckController:_endAllFlights()
 end
 
 --[=[
-	Mexe no deck que o cliente acredita ser o verdadeiro (`Projected`): o que a
-	replica diz mais o que já foi pedido e ainda está no ar.
+	Changes the deck the client believes is the real one (`Projected`): what the replica
+	says plus what was already requested and is still in the air.
 
-	É contra ele que os cliques são validados e é dele que sai o slot de destino —
-	a tela pode estar dois cliques atrasada, mas o que o servidor já gravou não
-	está. O `_render` do último pouso ressincroniza tudo com o perfil.
+	Clicks are validated against it and the destination slot comes from it: the screen may
+	be two clicks behind, but what the server already saved is not. The last landing's
+	`_render` resyncs everything with the profile.
 ]=]
 function DeckController:_project(action : string, unitName : string)
 	if action == "Equip" then
@@ -726,20 +728,19 @@ function DeckController:_project(action : string, unitName : string)
 end
 
 --[=[
-	Desfaz o que `_project` fez. É o caminho da recusa do servidor.
+	Undoes what `_project` did. It is the server refusal path.
 ]=]
 function DeckController:_unproject(action : string, unitName : string)
 	self:_project(if action == "Equip" then "Unequip" else "Equip", unitName)
 end
 
 --[=[
-	Quantas cartas de cada unidade estão voando na direção desta ação — `"Equip"`
-	para quem vai ao deck, `"Unequip"` para quem volta ao inventário.
+	How many cards of each unit are flying in this action's direction: `"Equip"` for those
+	going to the deck, `"Unequip"` for those returning to the inventory.
 
-	O que espera o pouso é a carta, não o painel: com uma carta indo para o deck e
-	outra voltando para o inventário ao mesmo tempo, cada uma segura só o próprio
-	slot (ou a própria linha da lista), e todo o resto dos dois lados continua
-	respondendo na hora.
+	What waits for the landing is the card, not the panel: with one card going to the deck
+	and another returning to the inventory at once, each holds only its own slot (or its own
+	list row), and everything else on both sides keeps responding right away.
 ]=]
 function DeckController:_incomingUnits(action : string) : { [string]: number }
 	local counts = {}
@@ -754,9 +755,9 @@ function DeckController:_incomingUnits(action : string) : { [string]: number }
 end
 
 --[=[
-	O deck do jeito que os **slots** têm direito de mostrar: o `Projected` sem as
-	cartas que ainda estão voando para lá, para o slot só mudar quando a carta dele
-	chegar. Sem carta no ar, é o `Projected`.
+	The deck as the **slots** are entitled to show it: `Projected` without the cards still
+	flying there, so a slot only changes when its card arrives. With no card in the air,
+	it is `Projected`.
 ]=]
 function DeckController:_landedDeck() : DeckConfig.Deck
 	local deck = DeckConfig.copy(self.Projected)
@@ -771,9 +772,8 @@ function DeckController:_landedDeck() : DeckConfig.Deck
 end
 
 --[=[
-	Quantas cartas de cada unidade o **inventário** tem direito de considerar
-	equipadas: as do `Projected` mais as que ainda estão voltando, que só saem da
-	conta quando pousam.
+	How many cards of each unit the **inventory** is entitled to consider equipped:
+	`Projected`'s plus those still returning, which only leave the count when they land.
 ]=]
 function DeckController:_landedTally() : { [string]: number }
 	local tally = DeckConfig.tally(self.Projected)
@@ -788,11 +788,11 @@ function DeckController:_landedTally() : { [string]: number }
 end
 
 --[=[
-	Manda equipar **uma** carta da unidade e solta a que viaja até o slot dela.
+	Requests equipping **one** card of the unit and releases the one traveling to its slot.
 
-	As checagens daqui são as mesmas do `DeckService`, só que para o aviso sair na
-	hora, sem ida e volta. Quem decide de verdade continua sendo o servidor — se
-	ele recusar, a viagem é desfeita em `DeckCardResult`.
+	The checks here are the same as `DeckService`'s, just so the warning shows right away,
+	without a round trip. The server still really decides: if it refuses, the trip is
+	undone in `DeckCardResult`.
 ]=]
 function DeckController:_requestEquip(unitName : string)
 	if not self.CardUI then
@@ -814,16 +814,16 @@ function DeckController:_requestEquip(unitName : string)
 		return
 	end
 
-	-- Cópia de quem já está no deck vai para o slot dele; unidade nova, para o
-	-- primeiro livre — que não é necessariamente o próximo da fila, já que um slot
-	-- no meio pode ter esvaziado, e nunca é um que o nível ainda não abriu.
+	-- A copy of a unit already in the deck goes to its slot; a new unit, to the
+	-- first free one, which is not necessarily the next in line, since a slot
+	-- in the middle may have emptied, and never one the level has not opened yet.
 	local slotIndex = DeckConfig.slotIndexOf(projected, unitName)
 		or DeckConfig.firstFreeSlot(projected, self:_getUnlocked())
 
 	local slot = slotIndex and self.Slots[slotIndex]
 	if not slot then
-		-- Não sobrou slot destravado: ou o deck já tem uma unidade diferente em cada
-		-- um, ou os que faltam ainda pedem nível.
+		-- No unlocked slot left: either the deck already has a different unit in each
+		-- one, or the remaining ones still require a level.
 		self:_showError()
 		return
 	end
@@ -839,20 +839,20 @@ function DeckController:_requestEquip(unitName : string)
 	self:_addFlight(flight)
 	self:_project("Equip", unitName)
 
-	-- O clone sai antes do redesenho: a carta de origem pode ser justamente a que
-	-- vai sumir da lista (era a última cópia), e depois não haveria de onde clonar
-	-- nem de onde medir a posição de partida.
+	-- The clone goes out before the redraw: the source card may be exactly the one
+	-- that will leave the list (it was the last copy), and afterward there would be nothing
+	-- to clone nor to measure the starting position from.
 	self:_launchFlight(flight, source.Card, slot.Card)
 
-	-- O lado de origem — o inventário — muda na hora. Os slots ficam parados: é
-	-- para lá que a carta está indo.
+	-- The source side (the inventory) changes right away. The slots stay still: that is
+	-- where the card is going.
 	self:_render()
 end
 
 --[=[
-	Manda tirar **uma** carta da unidade e solta a que viaja de volta para o
-	inventário. Se a unidade estava com todas as cópias no deck, a carta de destino
-	é criada escondida antes da viagem.
+	Requests removing **one** card of the unit and releases the one traveling back to the
+	inventory. If the unit had every copy in the deck, the destination card is created
+	hidden before the trip.
 ]=]
 function DeckController:_requestUnequip(unitName : string)
 	if not self.CardUI then
@@ -868,34 +868,33 @@ function DeckController:_requestUnequip(unitName : string)
 
 	Framework:Fire("RequestUnequipCard", unitName)
 
-	-- A viagem é registrada antes do `_render`: é ela que diz ao inventário que tem
-	-- carta chegando, e portanto que a linha de destino tem que existir.
+	-- The trip is registered before `_render`: it tells the inventory there is a card
+	-- arriving, and therefore that the destination row must exist.
 	local flight = { Action = "Unequip", Unit = unitName }
 	self:_addFlight(flight)
 	self:_project("Unequip", unitName)
 
-	-- Se a unidade estava com todas as cópias no deck, a linha dela vai nascer agora
-	-- e o layout precisa de um frame; se ela já estava na lista, não precisa.
+	-- If the unit had every copy in the deck, its row will be born now
+	-- and the layout needs a frame; if it was already in the list, it does not.
 	local isNew = self.InventoryByUnit[unitName] == nil
 
-	-- O lado de origem — os slots — muda na hora. O inventário fica parado: é para
-	-- lá que a carta está indo.
+	-- The source side (the slots) changes right away. The inventory stays still: that is
+	-- where the card is going.
 	self:_render()
 
-	-- Clonar depois do redesenho não é problema: o `_dressClone` reescreve o nome e
-	-- devolve a visibilidade, e a posição do slot não muda com o conteúdo dele.
+	-- Cloning after the redraw is not a problem: `_dressClone` rewrites the name and
+	-- restores visibility, and the slot's position does not change with its content.
 	local destination = self:_inventoryTarget(unitName, isNew)
 	self:_launchFlight(flight, slot.Card, destination)
 end
 
 --[=[
-	Redesenha o inventário, os seis slots e o contador a partir da replica.
+	Redraws the inventory, the six slots, and the counter from the replica.
 
-	Roda a cada escrita do servidor em `Units`, `EquippedUnits` ou `CardLimit`, no
-	bind, a cada clique e a cada pouso. Quem decide o que de fato é redesenhado são
-	os dois lados: cada um se recusa a mudar enquanto houver carta voando para ele.
-	Com o painel aberto as cartas nascem prontas (`applyIntroEnd`); a animação de
-	entrada é só da abertura.
+	It runs on every server write to `Units`, `EquippedUnits`, or `CardLimit`, on bind, on
+	every click, and on every landing. The two sides decide what is actually redrawn: each
+	refuses to change while a card is flying toward it. With the panel open cards are born
+	ready (`applyIntroEnd`); the entrance animation is only for opening.
 ]=]
 function DeckController:_render()
 	if not self.CardUI or not self.CardUI.Parent or not self.Template then
@@ -904,9 +903,9 @@ function DeckController:_render()
 
 	local units = self:_getUnits()
 
-	-- Sem nada no ar, o que o cliente acha e o que o perfil diz voltam a ser a
-	-- mesma coisa. Com carta voando, o `Projected` é quem manda: ele já tem o que
-	-- a replica pode ainda não ter recebido.
+	-- With nothing in the air, what the client thinks and what the profile says are the
+	-- same thing again. With cards flying, `Projected` rules: it already has what
+	-- the replica may not have received yet.
 	if #self.Flights == 0 then
 		self.Projected = DeckConfig.copy(self:_getEquipped())
 	end
@@ -916,7 +915,7 @@ function DeckController:_render()
 	self:_renderInventory(units)
 	self:_renderSlots()
 
-	-- A unidade selecionada pode ter saído do perfil no meio do caminho.
+	-- The selected unit may have left the profile along the way.
 	if self.SelectedUnit and (units[self.SelectedUnit] or 0) <= 0 then
 		self.SelectedUnit = nil
 		self.Signals.SelectionChanged:Fire(nil)
@@ -926,19 +925,19 @@ function DeckController:_render()
 end
 
 --[=[
-	Reconstrói a lista do inventário.
+	Rebuilds the inventory list.
 
-	A unidade que tem carta voando **para cá** fica com o número de antes, e entra
-	escondida se ela não tinha carta nenhuma na lista — é isso que segura o pouso.
-	Todo o resto da lista é do jeito que está agora: carta que saiu daqui some na
-	hora, porque este é o lado de origem dela.
+	A unit with a card flying **here** keeps its previous number, and comes in hidden if it
+	had no card in the list: that is what holds the landing. Everything else in the list is
+	as it is now: a card that left here disappears right away, because this is its source
+	side.
 ]=]
 --[=[
-	Cria a linha de uma unidade na lista.
+	Creates a unit's row in the list.
 
-	O que não muda enquanto a linha existir é escrito aqui, uma vez só: o nome, a cor
-	da raridade e o clique. Carta escondida não recebe entrada, então a conexão pode
-	ficar ligada mesmo quando a linha está só guardando o lugar de um pouso.
+	What does not change while the row exists is written here, only once: the name, the
+	rarity color, and the click. A hidden card receives no input, so the connection can
+	stay on even when the row is only holding a landing spot.
 ]=]
 function DeckController:_createInventoryEntry(unitName : string)
 	local wrapper = self.Template:Clone()
@@ -956,8 +955,8 @@ function DeckController:_createInventoryEntry(unitName : string)
 		Wrapper = wrapper,
 		Card = card,
 
-		-- Lido do clone intocado: é o valor "pré-runtime" que o fade tem que devolver
-		-- no fim.
+		-- Read from the untouched clone: it is the "pre-runtime" value the fade must restore
+		-- at the end.
 		Intro = captureIntro(card),
 		Maid = Maid.new(),
 	}
@@ -971,25 +970,25 @@ function DeckController:_createInventoryEntry(unitName : string)
 
 	local button = card:FindFirstChild(BUTTON_NAME)
 	if button and button:IsA("GuiButton") then
-		-- Carta do inventário só mostra: quem equipa é o `EquipToggle`, com a carta
-		-- selecionada.
+		-- An inventory card only shows: `EquipToggle` equips, with the selected
+		-- card.
 		entry.Maid:GiveTask(button.Activated:Connect(function()
 			self:Select(unitName)
 		end))
 
-		-- O atalho de quem tem mouse: o botão direito seleciona **e** equipa, sem
-		-- passar pelo `EquipToggle`. `MouseButton2Click` só existe para o botão
-		-- direito de verdade, então toque e gamepad continuam no clique normal, que é
-		-- só seleção. O equipar é o mesmo `_requestEquip` do toggle -- os mesmos
-		-- tetos, o mesmo aviso quando não dá, a mesma carta voando para o slot livre.
+		-- The mouse users' shortcut: right-click selects **and** equips, without
+		-- going through `EquipToggle`. `MouseButton2Click` only exists for the real right
+		-- button, so touch and gamepad stay on the normal click, which is
+		-- selection only. Equipping is the toggle's same `_requestEquip`: the same
+		-- caps, the same warning when it cannot, the same card flying to the free slot.
 		entry.Maid:GiveTask(button.MouseButton2Click:Connect(function()
 			self:Select(unitName)
 			self:_requestEquip(unitName)
 		end))
 	end
 
-	-- Linha que nasce com o painel já aberto entra pronta: a animação de entrada é
-	-- só da abertura.
+	-- A row born with the panel already open comes in ready: the entrance animation is
+	-- only for opening.
 	if self.IsOpenState then
 		applyIntroEnd(entry.Intro)
 	end
@@ -1000,8 +999,8 @@ function DeckController:_createInventoryEntry(unitName : string)
 end
 
 --[=[
-	Apaga todas as linhas. Só no bind e no fim da vida do controller — o redesenho
-	normal tira uma por uma.
+	Clears every row. Only on bind and at the end of the controller's life: the normal
+	redraw removes them one by one.
 ]=]
 function DeckController:_clearInventory()
 	for _, entry in self.InventoryByUnit do
@@ -1013,16 +1012,16 @@ function DeckController:_clearInventory()
 end
 
 --[=[
-	Onde a célula de índice `index` fica dentro da lista, em pixels.
+	Where the cell at `index` sits inside the list, in pixels.
 
-	A conta é a do próprio `UIGridLayout` (célula + espaçamento, preenchendo na
-	horizontal), e serve para saber de quanto uma linha andou **sem** ter que esperar
-	o layout recalcular: ler `AbsolutePosition` logo depois de mexer no `LayoutOrder`
-	ainda devolve o valor velho, e esperar um frame faria a carta piscar na posição
-	nova antes de voltar para animar.
+	The math is `UIGridLayout`'s own (cell + spacing, filling horizontally), and it serves
+	to know how far a row moved **without** waiting for the layout to recompute: reading
+	`AbsolutePosition` right after changing `LayoutOrder` still returns the old value, and
+	waiting a frame would make the card flash at the new position before going back to
+	animate.
 
-	Só vale para a grade como ela está montada (alinhada no topo à esquerda). Se o
-	alinhamento mudar, a última linha incompleta sai um pouco fora — o resto continua.
+	It only holds for the grid as built (aligned top-left). If the alignment changes, the
+	last incomplete row comes out slightly off; the rest still works.
 ]=]
 function DeckController:_cellOffset(index : number) : Vector2
 	local grid = self.Grid
@@ -1041,7 +1040,7 @@ function DeckController:_cellOffset(index : number) : Vector2
 
 	local columns = grid.FillDirectionMaxCells
 
-	-- Zero quer dizer "quantas couberem": a conta é a mesma que o layout faz.
+	-- Zero means "as many as fit": the math is the same the layout does.
 	if columns <= 0 then
 		columns = math.max(1, math.floor((size.X + padX) / math.max(cell.X + padX, 1)))
 	end
@@ -1062,15 +1061,15 @@ function DeckController:_cancelSlide(entry)
 end
 
 --[=[
-	Leva a carta da célula antiga para a nova.
+	Takes the card from the old cell to the new one.
 
-	O wrapper já está na célula nova — quem o coloca lá é o `UIGridLayout`, e isso é
-	instantâneo. O que se faz aqui é deslocar a carta de dentro pela diferença entre
-	as duas células, de modo que ela continue **exatamente onde estava** na tela, e
-	daí trazê-la de volta ao repouso animando.
+	The wrapper is already in the new cell (`UIGridLayout` puts it there, instantly). What
+	is done here is offsetting the card inside by the difference between the two cells, so
+	it stays **exactly where it was** on screen, and from there bringing it back to rest
+	with an animation.
 
-	O deslocamento é em pixels somado à posição em escala que a carta tem autorada,
-	então o alvo do tween é sempre a posição de repouso dela.
+	The offset is in pixels added to the card's authored scale position, so the tween's
+	target is always its resting position.
 ]=]
 function DeckController:_slideCard(entry, fromIndex : number, toIndex : number)
 	if not self.IsOpenState or not entry.Card.Visible then
@@ -1104,9 +1103,9 @@ end
 function DeckController:_renderInventory(units : { [string]: number }?)
 	units = units or self:_getUnits()
 
-	-- Contagem "pousada": a carta que está voando para cá ainda conta como
-	-- equipada, então a linha dela fica com o número antigo (ou fora da lista) até
-	-- o pouso. Quem não tem carta no ar usa o número de agora.
+	-- The "landed" count: a card flying here still counts as
+	-- equipped, so its row keeps the old number (or stays out of the list) until
+	-- it lands. Units with no card in the air use the current number.
 	local landed = self:_landedTally()
 	local incoming = self:_incomingUnits("Unequip")
 	local names = self:_sortedUnits(units, landed, incoming)
@@ -1117,12 +1116,13 @@ function DeckController:_renderInventory(units : { [string]: number }?)
 	end
 
 	--[[
-		A lista é atualizada no lugar, e não refeita.
+		The list is updated in place, not rebuilt.
 
-		Recriar todo wrapper a cada redesenho fazia o inventário piscar a cada pouso:
-		as cartas eram destruídas e clonadas de novo, e o `AutomaticCanvasSize` da
-		rolagem recalculava junto. Agora só sai quem não tem mais o que mostrar, só
-		entra quem ainda não estava lá, e quem fica leva apenas o contador novo.
+		Recreating every wrapper on every redraw would make the inventory flash on every
+		landing: cards would be destroyed and cloned again, and the scroller's
+		`AutomaticCanvasSize` would recompute along. Instead only rows with nothing left to
+		show leave, only rows not there yet come in, and the ones that stay only get the new
+		counter.
 	]]
 	for unitName, entry in self.InventoryByUnit do
 		if not wanted[unitName] then
@@ -1148,20 +1148,20 @@ function DeckController:_renderInventory(units : { [string]: number }?)
 
 		local remaining = (units[unitName] or 0) - (landed[unitName] or 0)
 
-		-- Unidade sem cópia sobrando mas com carta a caminho: a linha continua,
-		-- escondida, só para a grade guardar o espaço onde ela vai pousar.
+		-- A unit with no copy left but a card on its way: the row stays,
+		-- hidden, only so the grid keeps the space where it will land.
 		entry.Card.Visible = remaining > 0
 		writeCardCount(entry.Card, remaining)
 
-		-- O LayoutOrder é a ordem da lista: é o que faz a linha que nasce no meio de
-		-- um desequipar abrir o buraco no lugar certo, e não no fim da grade.
+		-- LayoutOrder is the list order: it is what makes a row born in the middle of
+		-- an unequip open the gap in the right place, not at the end of the grid.
 		local previousIndex = entry.Index
 
 		entry.Index = index
 		entry.Wrapper.LayoutOrder = index
 
-		-- Linha que mudou de célula porque outra saiu da lista: o wrapper vai direto,
-		-- a carta faz o caminho. Linha recém-criada não tem de onde vir.
+		-- A row that changed cell because another left the list: the wrapper goes straight,
+		-- the card makes the trip. A freshly created row has nowhere to come from.
 		if previousIndex and previousIndex ~= index then
 			self:_slideCard(entry, previousIndex, index)
 		end
@@ -1171,16 +1171,16 @@ function DeckController:_renderInventory(units : { [string]: number }?)
 end
 
 --[=[
-	Reescreve os seis slots e o contador de cartas.
+	Rewrites the six slots and the card counter.
 
-	O slot que tem carta voando **para cá** fica com o número de antes, e continua
-	mostrando o `EmptyCard` se ele estava vazio — é isso que segura o pouso. Os
-	outros cinco mudam na hora.
+	A slot with a card flying **here** keeps its previous number, and keeps showing
+	`EmptyCard` if it was empty: that is what holds the landing. The other five change
+	right away.
 
-	Cada slot mostra **uma** de três coisas: a carta, a carta apagada (livre) ou a
-	capa de travado, com o nível que ele pede. O deck que chega aqui já veio limpo
-	pelo `sanitize`, então um slot travado nunca tem ocupante — a checagem do nível é
-	sobre o que desenhar, e não sobre o que existe.
+	Each slot shows **one** of three things: the card, the dimmed card (free), or the
+	locked cover, with the level it asks for. The deck arriving here was already cleaned by
+	`sanitize`, so a locked slot never has an occupant: the level check is about what to
+	draw, not about what exists.
 ]=]
 function DeckController:_renderSlots()
 	self.SlotMaid:DoCleaning()
@@ -1189,7 +1189,7 @@ function DeckController:_renderSlots()
 	local unlocked = self:_getUnlocked()
 
 	for index, slot in self.Slots do
-		-- O slot é fixo: o que manda é a posição no deck, não a ordem de quem entrou.
+		-- The slot is fixed: what rules is the position in the deck, not the order of arrival.
 		local occupant = deck[index]
 
 		if typeof(occupant) ~= "table" then
@@ -1203,20 +1203,20 @@ function DeckController:_renderSlots()
 		end
 
 		if locked then
-			-- O nível vem do config, e não do texto autorado: mudar a régua de
-			-- desbloqueio é uma linha no `DeckConfig` e nada aqui.
+			-- The level comes from the config, not the authored text: changing the unlock
+			-- ladder is one line in `DeckConfig` and nothing here.
 			if slot.LockText then
 				slot.LockText.Text = string.format(LOCK_TEXT_FORMAT, DeckConfig.slotUnlockLevel(index))
 			end
 
 			--[[
-				A carta apagada fica **por baixo** da capa: o slot travado é um slot vazio
-				que ainda não abriu, e sem ela o cadeado ficaria num buraco no meio da
-				fileira em vez de sobre a moldura de um slot.
+				The dimmed card goes **under** the cover: a locked slot is an empty slot not open
+				yet, and without it the padlock would sit in a hole in the middle of the row
+				instead of over a slot's frame.
 
-				A ordem na tela é a da árvore (`ZIndexBehavior.Sibling`), e o
-				`LockedFrame` vem depois da `EmptyCard` e ainda por cima com `ZIndex`
-				maior — a capa cobre a carta apagada, e não o contrário.
+				Screen order is tree order (`ZIndexBehavior.Sibling`), and `LockedFrame` comes
+				after `EmptyCard` and also with a higher `ZIndex`: the cover covers the dimmed
+				card, not the reverse.
 			]]
 			slot.Card.Visible = false
 			slot.Empty.Visible = true
@@ -1225,8 +1225,8 @@ function DeckController:_renderSlots()
 			continue
 		end
 
-		-- Slot ocupado mostra a carta, slot livre mostra a carta apagada. Os dois
-		-- nunca aparecem juntos.
+		-- An occupied slot shows the card, a free slot shows the dimmed card. The two
+		-- never show together.
 		slot.Card.Visible = occupant ~= nil
 		slot.Empty.Visible = occupant == nil
 
@@ -1242,18 +1242,18 @@ function DeckController:_renderSlots()
 		end
 	end
 
-	-- O contador é do deck, então ele anda junto com os slots: cai na hora quando
-	-- uma carta sai, sobe quando a que está voando chega.
+	-- The counter belongs to the deck, so it moves with the slots: drops right away when
+	-- a card leaves, goes up when the flying one arrives.
 	if self.LimitLabel then
 		self.LimitLabel.Text = string.format(LIMIT_FORMAT, DeckConfig.total(deck), self.Limit)
 	end
 end
 
 --[=[
-	O som de carta virando. Toca quando uma carta **muda de lado** — sai do inventário
-	para o deck, ou volta —, e não no clique: selecionar uma carta não move nada.
+	The card-flip sound. It plays when a card **changes sides** (leaves the inventory for
+	the deck, or returns), not on the click: selecting a card moves nothing.
 
-	Sai junto com o clone, e não no pouso: o som é a resposta ao clique.
+	It goes out with the clone, not on landing: the sound is the response to the click.
 ]=]
 function DeckController:_playCardSound()
 	local music = self.Controllers.MusicController
@@ -1264,11 +1264,10 @@ function DeckController:_playCardSound()
 end
 
 --[=[
-	Se ainda sobra cópia da unidade no inventário para pôr no deck.
+	Whether there is still a copy of the unit in the inventory to put in the deck.
 
-	Lê o `Projected`, e não o que está desenhado: a carta que ainda está no ar já
-	está gravada no perfil, e contar pela tela deixaria o jogador equipar a mesma
-	cópia duas vezes.
+	It reads `Projected`, not what is drawn: the card still in the air is already saved on
+	the profile, and counting by the screen would let the player equip the same copy twice.
 ]=]
 function DeckController:_hasSpare(unitName : string) : boolean
 	local owned = self:_getUnits()[unitName] or 0
@@ -1277,15 +1276,15 @@ function DeckController:_hasSpare(unitName : string) : boolean
 end
 
 --[=[
-	O botão de equipar: uma carta da unidade selecionada por clique, e o **único**
-	jeito de pôr carta no deck — a carta do inventário só seleciona.
+	The equip button: one card of the selected unit per click, and the **only** way to put
+	a card in the deck: an inventory card only selects.
 
-	Ele **some** quando não sobra cópia no inventário, ou seja, quando a unidade está
-	inteira no deck e não há mais o que equipar. Não existe estado de desequipar aqui:
-	para tirar carta, clica-se na carta do próprio deck.
+	It **hides** when no copy is left in the inventory, that is, when the unit is entirely
+	in the deck and there is nothing left to equip. There is no unequip state here: to
+	remove a card, click the card in the deck itself.
 
-	A cor e o texto são reescritos junto com a visibilidade para o botão nunca
-	depender de como a cópia da GUI chegou.
+	Color and text are rewritten along with visibility so the button never depends on how
+	the GUI copy arrived.
 ]=]
 function DeckController:_renderEquipToggle(unitName : string)
 	local toggle = self.EquipToggle
@@ -1313,8 +1312,8 @@ function DeckController:_renderEquipToggle(unitName : string)
 end
 
 --[=[
-	Escreve o painel de detalhe da carta selecionada. Sem seleção ele some — é o
-	estado em que o painel abre.
+	Writes the selected card's detail panel. With no selection it hides: that is the state
+	the panel opens in.
 ]=]
 function DeckController:_renderSelection()
 	local container = self.Container
@@ -1364,8 +1363,8 @@ function DeckController:_renderSelection()
 		range.Text = formatStat(UpgradeConfig:GetRange(unitName, 0)) .. " RANGE"
 	end
 
-	-- Unidade sem classe (ou classe sem arte ainda) esconde o ícone em vez de
-	-- mostrar um quadrado vazio — mesma regra do card de upgrade do Game.
+	-- A unit with no class (or a class with no art yet) hides the icon instead of
+	-- showing an empty square: the same rule as Game's upgrade card.
 	local classIcon = container:FindFirstChild(CLASS_ICON_NAME)
 	if classIcon and classIcon:IsA("ImageLabel") then
 		local image = ClassConfig.GetIcon(unitName)
@@ -1380,22 +1379,21 @@ function DeckController:_renderSelection()
 end
 
 --[=[
-	A entrada das cartas: todas saem do canto do wrapper, transparentes, e caem no
-	lugar uma depois da outra.
+	The cards' entrance: all leave from the wrapper's corner, transparent, and fall into
+	place one after another.
 
-	Os dois lados de um slot (a carta e a carta vazia) entram juntos, com o mesmo
-	atraso: só um dos dois está visível, e dar um atraso a cada um abriria um
-	buraco na ordem.
+	A slot's two sides (the card and the empty card) come in together, with the same delay:
+	only one of the two is visible, and giving each its own delay would open a gap in the
+	order.
 
-	O atraso vai no próprio `TweenInfo`, e não num `task.delay`: enquanto ele não
-	vence, o tween não escreve nada e a carta fica parada onde `applyIntroStart` a
-	deixou.
+	The delay lives in the `TweenInfo` itself, not a `task.delay`: until it expires, the
+	tween writes nothing and the card stays where `applyIntroStart` left it.
 ]=]
 function DeckController:_playIntro()
 	self.AnimMaid:DoCleaning()
 
-	-- A entrada reposiciona toda carta: um deslize da lista que ainda estivesse
-	-- correndo brigaria com ela pela mesma propriedade.
+	-- The entrance repositions every card: a list slide still running
+	-- would fight it over the same property.
 	for _, entry in self.InventoryEntries do
 		self:_cancelSlide(entry)
 	end
@@ -1442,8 +1440,8 @@ function DeckController:_hideError()
 end
 
 --[=[
-	Acende o aviso vermelho por alguns segundos. Sem texto, volta o que veio
-	autorado na GUI — que é o caso do deck sem slot livre.
+	Lights the red warning for a few seconds. With no text, the text authored in the GUI
+	comes back, which is the no-free-slot case.
 ]=]
 function DeckController:_showError(message : string?)
 	local label = self.ErrorLabel
@@ -1468,8 +1466,8 @@ function DeckController:_showError(message : string?)
 end
 
 --[=[
-	A mensagem de cada recusa do servidor. Só chega aqui o que a checagem do
-	cliente deixou passar — replica atrasada, ou duas abas do mesmo jogador.
+	The message for each server refusal. Only what the client's check let through gets
+	here: a lagging replica, or two tabs of the same player.
 ]=]
 function DeckController:_errorMessage(reason : string?, unitName : string) : string?
 	if reason == "LimitReached" then
@@ -1480,9 +1478,9 @@ function DeckController:_errorMessage(reason : string?, unitName : string) : str
 		return string.format(COPIES_ERROR, unitName)
 	end
 
-	-- "NoSlot" cai no texto autorado; o resto não é coisa que o jogador provoque.
+	-- "NoSlot" falls to the authored text; the rest is not something the player causes.
 	if reason ~= "NoSlot" then
-		warn(`[DeckController]: o servidor recusou "{unitName}" — {tostring(reason)}.`)
+		log:StudioWarn(`the server refused "{unitName}": {tostring(reason)}.`)
 	end
 
 	return nil
@@ -1503,14 +1501,12 @@ function DeckController:_playBlur(open : boolean)
 end
 
 --[=[
-	O loadout e a unica coisa na tela enquanto esta aberto, como as lojas e os
-	contratos.
+	The loadout is the only thing on screen while it is open, like the shops and contracts.
 
-	O pedido ao `InterfaceController` so sabe esconder ScreenGui inteira, e o
-	`CardUI` mora **dentro** do `HUD`: o pedido deixa o `HUD` de fora, e os vizinhos
-	do `CardUI` (`HUDFrame`, `HUDMiddle`, `HUDLeft`) apagam aqui. So sai quem estava
-	aceso, e so esses voltam -- um frame que outro dono ja tinha apagado continua
-	apagado.
+	The `InterfaceController` request can only hide whole ScreenGuis, and `CardUI` lives
+	**inside** `HUD`: the request leaves `HUD` out, and `CardUI`'s neighbors (`HUDFrame`,
+	`HUDMiddle`, `HUDLeft`) are dimmed here. Only those that were lit leave, and only those
+	come back: a frame another owner had already hidden stays hidden.
 ]=]
 function DeckController:_claimScreen()
 	self.ScreenClaimed = true
@@ -1536,9 +1532,9 @@ function DeckController:_claimScreen()
 end
 
 --[=[
-	Devolve a tela: o resto da UI volta e o borrao sai. So age se o loadout pediu a
-	tela -- o bind chama isto sempre, e baixar o borrao ali apagaria o de uma loja
-	que estivesse aberta.
+	Gives the screen back: the rest of the UI returns and the blur leaves. It only acts if
+	the loadout asked for the screen: bind always calls this, and lowering the blur there
+	would clear that of a shop that was open.
 ]=]
 function DeckController:_releaseScreen()
 	if not self.ScreenClaimed then
@@ -1578,18 +1574,18 @@ function DeckController:_setOpen(open : boolean)
 
 	if open then
 		--[[
-			O loadout foi aberto: o selo `New` do botão se encerra aqui. O jogador viu as
-			cartas, e a unit que cair depois disso acende o selo de novo sozinha.
+			The loadout was opened: the button's `New` badge ends here. The player saw the
+			cards, and a unit arriving after that lights the badge again on its own.
 
-			Aqui dentro do `_setOpen`, e não no clique do botão, porque o painel também
-			abre pelo `Open()` — e abrir é abrir, venha de onde vier.
+			Inside `_setOpen`, not the button click, because the panel also opens through
+			`Open()`, and opening is opening, wherever it comes from.
 		]]
 		local badges = self.Controllers.HUDBadgeController
 		if badges then
 			badges:NoteSeen(HUD_BUTTON_NAME)
 		end
 
-		-- O painel abre sem carta selecionada, então o detalhe começa fechado.
+		-- The panel opens with no card selected, so the detail starts closed.
 		self.SelectedUnit = nil
 		self:_render()
 		self.Signals.SelectionChanged:Fire(nil)
@@ -1605,12 +1601,12 @@ function DeckController:_setOpen(open : boolean)
 		self.AnimMaid:DoCleaning()
 		self:_hideError()
 
-		-- Devolvida no comeco do fechamento, como no `ProximityPanel`: o resto da UI
-		-- volta atras do painel, em vez de aparecer de uma vez depois que ele sai.
+		-- Given back at the start of the close, as in `ProximityPanel`: the rest of the UI
+		-- comes back behind the panel, instead of appearing at once after it leaves.
 		self:_releaseScreen()
 
-		-- Fechar com carta no ar não perde nada: a troca já está gravada no perfil, e
-		-- o pouso vira o redesenho que acontece agora.
+		-- Closing with a card in the air loses nothing: the swap is already saved on the profile,
+		-- and the landing becomes the redraw that happens now.
 		if #self.Flights > 0 then
 			self:_endAllFlights()
 			self:_render()
@@ -1618,7 +1614,7 @@ function DeckController:_setOpen(open : boolean)
 
 		local tween = self:_playTween(self.Scale, CLOSE_INFO, { Scale = 0 })
 		tween.Completed:Once(function(state : Enum.PlaybackState)
-			-- Reaberto no meio do fecha: quem manda no painel agora é o outro tween.
+			-- Reopened mid-close: the other tween owns the panel now.
 			if state == Enum.PlaybackState.Completed and not self.IsOpenState then
 				cardUI.Visible = false
 			end
@@ -1629,7 +1625,7 @@ function DeckController:_setOpen(open : boolean)
 end
 
 --[=[
-	Liga a uma cópia do CardUI. Roda de novo a cada respawn (`ResetOnSpawn`).
+	Binds to a copy of CardUI. Runs again on every respawn (`ResetOnSpawn`).
 ]=]
 function DeckController:_bindUI(screenGui : ScreenGui)
 	local cardUI = screenGui:WaitForChild(CARD_UI_NAME, WAIT_TIMEOUT)
@@ -1641,7 +1637,7 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 	local template = list and list:FindFirstChild(WRAPPER_NAME)
 
 	if not cardUI or not list or not equippedFrame or not container or not template then
-		warn(`[DeckController]: não achei a estrutura de {HUD_UI_NAME}.{CARD_UI_NAME}.`)
+		log:StudioWarn(`could not find the {HUD_UI_NAME}.{CARD_UI_NAME} structure.`)
 		return
 	end
 
@@ -1656,8 +1652,8 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 	self.CardUI = cardUI
 	self.List = list
 
-	-- A grade da lista: é dela que sai a conta de quanto uma linha andou quando a
-	-- lista se reacomoda (ver `_cellOffset`).
+	-- The list's grid: it provides the math for how far a row moved when the
+	-- list rearranges (see `_cellOffset`).
 	self.Grid = list:FindFirstChildOfClass("UIGridLayout")
 	self.Container = container
 	local limitLabel = cardUI:FindFirstChild(LIMIT_NAME)
@@ -1671,13 +1667,13 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 
 	self.Scale = scale
 
-	-- A escala "aberto" é a que o designer deixou na Studio, lida antes de
-	-- qualquer animação mexer no valor.
+	-- The "open" scale is the one the designer left in Studio, read before
+	-- any animation touches the value.
 	self.ShownScale = if scale.Scale > 0 then scale.Scale else 1
 
-	-- O wrapper autorado é o molde, não uma carta: a lista inteira vem do
-	-- inventário do perfil. O molde vive fora da DataModel e morre com o bind,
-	-- senão cada respawn deixaria uma cópia para trás.
+	-- The authored wrapper is the template, not a card: the whole list comes from the
+	-- profile inventory. The template lives outside the DataModel and dies with the bind,
+	-- or each respawn would leave a copy behind.
 	self.Template = template:Clone()
 	self.UIMaid:GiveTask(self.Template)
 
@@ -1700,27 +1696,27 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 		local emptyCard = wrapper:FindFirstChild(EMPTY_CARD_NAME)
 
 		if not card or not emptyCard then
-			warn(`[DeckController]: {WRAPPER_NAME} sem {CARD_NAME} ou {EMPTY_CARD_NAME}.`)
+			log:StudioWarn(`{WRAPPER_NAME} has no {CARD_NAME} or {EMPTY_CARD_NAME}.`)
 			continue
 		end
 
-		-- A capa do slot travado. Opcional de proposito: sem ela o slot travado so
-		-- deixa de aceitar carta, em vez de o painel inteiro parar de desenhar.
+		-- The locked slot's cover. Optional on purpose: without it a locked slot only
+		-- stops accepting cards, instead of the whole panel failing to draw.
 		local lockedFrame = wrapper:FindFirstChild(LOCKED_FRAME_NAME)
 		local lockText = lockedFrame and lockedFrame:FindFirstChild(LOCK_TEXT_NAME, true)
 
 		if not lockedFrame then
-			warn(`[DeckController]: {WRAPPER_NAME} sem {LOCKED_FRAME_NAME} -- o slot travado nao mostra cadeado.`)
+			log:StudioWarn(`{WRAPPER_NAME} has no {LOCKED_FRAME_NAME}; the locked slot shows no padlock.`)
 		end
 
-		-- A carta vazia é a mesma carta, apagada: ela segue a inclinação que o
-		-- designer deu à carta cheia do slot (-4 ou 4), senão o slot livre entorta
-		-- para o lado errado.
+		-- The empty card is the same card, dimmed: it follows the tilt the
+		-- designer gave the slot's full card (-4 or 4), or the free slot leans
+		-- the wrong way.
 		emptyCard.Rotation = card.Rotation
 
-		-- Os seis wrappers vêm todos com LayoutOrder 0, e aí a ordem na tela é a
-		-- ordem na Explorer. Carimbar o índice deixa o primeiro slot sempre no
-		-- primeiro lugar, e sem mudar nada do que o designer montou.
+		-- The six wrappers all come with LayoutOrder 0, and then the on-screen order is the
+		-- Explorer order. Stamping the index keeps the first slot always in
+		-- first place, without changing anything the designer built.
 		wrapper.LayoutOrder = #self.Slots + 1
 
 		table.insert(self.Slots, {
@@ -1735,7 +1731,7 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 	end
 
 	if #self.Slots ~= DeckConfig.MAX_SLOTS then
-		warn(`[DeckController]: {EQUIPPED_NAME} tem {#self.Slots} slots e o DeckConfig espera {DeckConfig.MAX_SLOTS}.`)
+		log:StudioWarn(`{EQUIPPED_NAME} has {#self.Slots} slots and DeckConfig expects {DeckConfig.MAX_SLOTS}.`)
 	end
 
 	local toggle = container:FindFirstChild(EQUIP_TOGGLE_NAME)
@@ -1745,8 +1741,8 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 	self.EquipLabel = toggleLabel
 	self.EquipStrokeObject = toggleLabel and toggleLabel:FindFirstChildOfClass("UIStroke")
 
-	-- O estado autorado é o "pode equipar": guardado da primeira cópia, que é a
-	-- única garantidamente intocada.
+	-- The authored state is "can equip": stored from the first copy, the
+	-- only one guaranteed untouched.
 	if not self.EquipColor and toggle then
 		self.EquipColor = toggle.ImageColor3
 		self.EquipStroke = self.EquipStrokeObject and self.EquipStrokeObject.Color
@@ -1771,8 +1767,8 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 		end))
 	end
 
-	-- O `Close` já foi um TextLabel com um `Button` dentro e hoje é o botão em si:
-	-- os dois formatos servem.
+	-- `Close` may be a TextLabel with a `Button` inside or the button itself:
+	-- both shapes work.
 	local close = cardUI:FindFirstChild(CLOSE_NAME)
 	local closeButton = if close and close:IsA("GuiButton")
 		then close
@@ -1784,9 +1780,9 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 		end))
 	end
 
-	-- Cópia nova é respawn: o painel volta fechado e sem seleção. Morrer com ele
-	-- aberto deixaria o pedido de tela de pé -- o jogador renasceria sem o resto da
-	-- UI e com o fundo borrado.
+	-- A new copy means a respawn: the panel comes back closed and with no selection. Dying
+	-- with it open would leave the screen request up: the player would respawn without the
+	-- rest of the UI and with the background blurred.
 	self:_releaseScreen()
 	self.IsOpenState = false
 	self.SelectedUnit = nil
@@ -1800,22 +1796,22 @@ function DeckController:_bindUI(screenGui : ScreenGui)
 end
 
 --[=[
-	Liga o botão do HUD. Ele mora dentro de um wrapper, então é procurado pelo nome
-	em qualquer profundidade do frame — e quem anima o hover e o clique dele é o
-	HUDButtonController, que cuida de todos os botões de lá.
+	Hooks up the HUD button. It lives inside a wrapper, so it is looked up by name at any
+	depth of the frame, and `HUDButtonController`, which handles every button up there,
+	animates its hover and click.
 ]=]
 function DeckController:_bindHud(screenGui : ScreenGui)
 	local hudFrame = screenGui:WaitForChild(HUD_FRAME_NAME, WAIT_TIMEOUT)
 	local button = hudFrame and UIUtil.waitForDescendant(hudFrame, HUD_BUTTON_NAME, WAIT_TIMEOUT)
 
 	if not button or not button:IsA("GuiButton") then
-		warn(`[DeckController]: não achei {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
+		log:StudioWarn(`could not find {HUD_UI_NAME}.{HUD_FRAME_NAME}.{HUD_BUTTON_NAME}.`)
 		return
 	end
 
 	self.HudMaid:DoCleaning()
 	self.HudMaid:GiveTask(button.Activated:Connect(function()
-		-- O mesmo botão fecha o que ele abriu.
+		-- The same button closes what it opened.
 		self:Toggle()
 	end))
 end
@@ -1840,9 +1836,9 @@ function DeckController:_observeUI()
 end
 
 --[=[
-	Segura a replica do perfil e redesenha a cada escrita em `Units`,
-	`EquippedUnits` ou `CardLimit`. É por aqui que o resultado de um equipar chega —
-	o clique não mexe na tela sozinho.
+	Holds the profile replica and redraws on every write to `Units`, `EquippedUnits`, or
+	`CardLimit`. It is how the result of an equip arrives: the click does not touch the
+	screen on its own.
 ]=]
 function DeckController:_watchData()
 	task.spawn(function()
@@ -1854,10 +1850,10 @@ function DeckController:_watchData()
 		local connection = replica:OnChange(function(_action, path)
 			local key = path[1]
 
-			-- `Stats` entra na lista por causa do XP: os slots 4, 5 e 6 abrem por
-			-- nivel, e sem isto um level-up so apareceria no painel na proxima vez que
-			-- o jogador mexesse no deck. `Gamepasses` entra pelo mesmo motivo: a pass
-			-- +5 Total Cards muda o teto, e comprar no meio da sessao tem de aparecer.
+			-- `Stats` is in the list because of XP: slots 4, 5, and 6 open by
+			-- level, and without this a level-up would only show on the panel the next time
+			-- the player touched the deck. `Gamepasses` is in for the same reason: the
+			-- +5 Total Cards pass changes the cap, and buying it mid-session must show.
 			if key ~= nil
 				and key ~= "Units"
 				and key ~= "EquippedUnits"
@@ -1896,7 +1892,7 @@ function DeckController:Toggle()
 end
 
 --[=[
-	A carta que o painel de detalhe mostra. `nil` fecha o painel.
+	The card the detail panel shows. `nil` closes the panel.
 ]=]
 function DeckController:Select(unitName : string?)
 	if unitName ~= nil and not DeckConfig.exists(unitName) then
@@ -1913,10 +1909,10 @@ function DeckController:Select(unitName : string?)
 end
 
 --[=[
-	O que o `EquipToggle` faz: põe uma carta da unidade selecionada no deck.
+	What `EquipToggle` does: puts one card of the selected unit in the deck.
 
-	Não faz nada sem cópia sobrando — nesse estado o botão está invisível, então isto
-	só vale para quem chamar o método na mão.
+	It does nothing without a copy left: in that state the button is invisible, so this
+	only applies to callers invoking the method by hand.
 ]=]
 function DeckController:EquipSelected()
 	local unitName = self.SelectedUnit
@@ -1936,8 +1932,8 @@ function DeckController:construct()
 			return
 		end
 
-		-- A viagem mais nova daquela carta é a que não aconteceu: ela some no meio
-		-- do caminho e a tela volta ao que o perfil diz.
+		-- The newest trip of that card is the one that did not happen: it vanishes midway
+		-- and the screen returns to what the profile says.
 		for index = #self.Flights, 1, -1 do
 			local flight = self.Flights[index]
 
@@ -1964,20 +1960,20 @@ function DeckController:init()
 	self.Maid = Maid.new()
 	self.UIMaid = Maid.new()
 
-	-- Cada linha do inventário tem o próprio maid (ela entra e sai da lista sozinha,
-	-- ver `_renderInventory`); os slots são instâncias fixas e cabem num maid só.
-	-- Separados porque os dois lados são redesenhados em momentos diferentes, e
-	-- limpar um não pode desligar os botões do outro.
+	-- Each inventory row has its own maid (it enters and leaves the list on its own; see
+	-- `_renderInventory`); the slots are fixed instances and fit in a single maid.
+	-- Separate because the two sides are redrawn at different times, and
+	-- clearing one must not disconnect the other's buttons.
 	self.SlotMaid = Maid.new()
 
 	self.TweenMaid = Maid.new()
 	self.AnimMaid = Maid.new()
 	self.HudMaid = Maid.new()
 
-	-- O tween do borrao vive fora do bind: ele e do Lighting, e nao do HUD.
+	-- The blur tween lives outside the bind: it belongs to Lighting, not the HUD.
 	self.BlurMaid = Maid.new()
 
-	-- Os vizinhos do `CardUI` que a abertura apagou, para o fechamento devolver.
+	-- The `CardUI` neighbors the opening dimmed, for the close to restore.
 	self.HiddenSiblings = {}
 	self.ScreenClaimed = false
 
@@ -1999,14 +1995,14 @@ function DeckController:init()
 	self.InventoryByUnit = {}
 	self.Limit = DeckConfig.DEFAULT_CARD_LIMIT
 
-	-- As cartas que estão no ar agora. Enquanto houver alguma, a tela não é
-	-- redesenhada -- mas clicar continua valendo, e cada clique solta mais uma.
+	-- The cards in the air now. While there is any, the screen is not
+	-- redrawn, but clicking still counts, and each click releases one more.
 	self.Flights = {}
 
-	-- O deck contando o que ainda está no ar. Ver `_project`.
+	-- The deck counting what is still in the air. See `_project`.
 	self.Projected = DeckConfig.empty()
 
-	-- Nomes de unidade do perfil que não existem mais, para o aviso sair uma vez só.
+	-- Profile unit names that no longer exist, so the warning goes out only once.
 	self.WarnedMissing = {}
 
 	self.ErrorToken = 0

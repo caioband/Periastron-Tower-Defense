@@ -7,28 +7,34 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 
 local RobuxShopConfig = SharedConfig.RobuxShopConfig
 
 local Framework = Me.new()
+local log = Log.new("RobuxShopService")
 
 --[[
-	Quem paga os packs de coins da loja de Robux (`StarterGui.ShopUI.RobuxShop`).
+	Pays out the coin packs of the Robux shop (`StarterGui.ShopUI.RobuxShop`).
 
-	A vitrine e do `RobuxShopController`, e ela nao credita nada: o clique so abre o
-	prompt. O que chega aqui e o **recibo**, pelo `MonetizationService`, que ja cuidou
-	do que um recibo tem de ter -- o perfil aberto, o `PurchaseHistory` para o mesmo
-	`PurchaseId` nao pagar duas vezes, e o save antes de dizer `PurchaseGranted`.
-	Devolver `false` daqui e "nao deu para creditar agora": o recibo volta como
-	`NotProcessedYet` e a Roblox tenta de novo.
+	The storefront belongs to `RobuxShopController`, and it credits nothing: the
+	click only opens the prompt. What arrives here is the **receipt**, through
+	`MonetizationService`, which already handled what a receipt needs: the open
+	profile, `PurchaseHistory` so the same `PurchaseId` does not pay twice, and the
+	save before answering `PurchaseGranted`. Returning `false` from here means "could
+	not credit right now": the receipt comes back as `NotProcessedYet` and Roblox
+	retries.
 
-	Mora em `common/` porque um recibo pendente volta **onde o jogador estiver**, e ele
-	pode ter ido para a partida antes de ele ser processado -- e a mesma razao dos
-	rerolls dos contratos. As gamepasses da mesma loja nao passam por aqui: pass e
-	estado, e quem confere e o `MonetizationService:RecalibratePasses`.
+	It lives in `common/` because a pending receipt comes back **wherever the player
+	is**, and they may have gone to a match before it was processed; the same reason
+	as contract rerolls. The same shop's gamepasses do not go through here: a pass is
+	state, and `MonetizationService:RecalibratePasses` checks it.
 
-	O deposito e so no `Stats.Cash`. O `Stats.CoinsEarned` (a board MOST COINS) fica de
-	fora de proposito: ela e o que o jogador ganhou jogando, e nao o que ele comprou.
+	The deposit goes only to `Stats.Cash`. `Stats.CoinsEarned` (the MOST COINS board)
+	is left out on purpose: it is what the player earned by playing, not what they
+	bought.
+
+	See docs/common/gamepasses.md.
 ]]
 local RobuxShopService = {
 	Services = {
@@ -40,22 +46,22 @@ local RobuxShopService = {
 --[[ EXTERNAL ]]
 
 --[=[
-	Deposita um pack no saldo. `false` quando nao deu -- perfil que ainda nao abriu, o
-	jogador que saiu no meio --, e ai o recibo volta mais tarde.
+	Deposits a pack into the balance. `false` when it could not (a profile that has
+	not opened yet, a player who left midway), and then the receipt comes back later.
 ]=]
 function RobuxShopService:Grant(player : Player, pack) : boolean
 	local currency = self.Services.CurrencyService
 
 	if not currency then
-		warn("[RobuxShopService]: sem CurrencyService; o pack nao pode ser creditado agora.")
+		log:Warn("no CurrencyService; the pack cannot be credited right now.")
 		return false
 	end
 
 	local _, updated, reason = currency:Apply(player, "Cash", "add", pack.Coins)
 
 	if not updated then
-		warn(string.format(
-			"[RobuxShopService]: nao deu para creditar %d coins a %s (%s); o recibo volta.",
+		log:Warn(string.format(
+			"could not credit %d coins to %s (%s); the receipt is retried.",
 			pack.Coins, player.Name, tostring(reason)))
 		return false
 	end
@@ -67,7 +73,7 @@ function RobuxShopService:construct()
 	local monetization = self.Services.MonetizationService
 
 	if not monetization then
-		warn("[RobuxShopService]: sem MonetizationService; os packs de coins nao vao ser creditados.")
+		log:Warn("no MonetizationService; coin packs will not be credited.")
 		return
 	end
 

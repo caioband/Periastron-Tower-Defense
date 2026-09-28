@@ -14,10 +14,12 @@ local MarkerUtil = require(Util.MarkerUtil)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local PortalConfig = SharedConfig.PortalConfig
 
 local Framework = Me.new()
+local log = Log.new("PlayButtonController")
 
 --[[ CONSTANTS ]]
 local HUD_UI_NAME = "HUD"
@@ -29,22 +31,23 @@ local MAP_FOLDER_NAME = "Map"
 local WAIT_TIMEOUT = 10
 
 --[=[
-	O botão de jogar do `StarterGui.HUD.HUDMiddle`: ele leva o jogador até os portais,
-	que é onde a partida começa de verdade.
+	The play button in `StarterGui.HUD.HUDMiddle`: it takes the player to the portals,
+	which is where the match really starts.
 
-	O crescer e o afundar são do `ButtonUtil`, o mesmo gesto dos botões de compra das
-	duas lojas — e não o do `HUDButtonController`, que é dos ícones da coluna do
-	`HUDFrame` e desliza para fora dela. Este botão está no meio da tela e não tem
-	coluna de onde sair, então o que sobra dele é a escala, no `UIScale` autorado
-	dentro do botão.
+	The grow and sink come from `ButtonUtil`, the same gesture as both shops' buy buttons,
+	not `HUDButtonController`'s, which belongs to the `HUDFrame` column icons and slides
+	out of the column. This button is in the middle of the screen and has no column to
+	slide out of, so what is left for it is the scale, on the `UIScale` authored inside
+	the button.
 
-	O pouso é o `PortalsTpPart` do mapa, achado em profundidade sob `Workspace.Map`
-	como qualquer outro marcador. Chegar lá é tudo o que o botão faz: quem abre o
-	painel de mapas é o `PortalController`, por proximidade, do mesmo jeito que abriria
-	se o jogador tivesse ido a pé.
+	The landing spot is the map's `PortalsTpPart`, found by depth under `Workspace.Map`
+	like any other marker. Getting there is all the button does: `PortalController`
+	opens the maps panel, by proximity, just as it would if the player had walked there.
 
-	O HUD tem `ResetOnSpawn` ligado, então o bind roda de novo a cada cópia nova que a
-	engine coloca na PlayerGui.
+	The HUD has `ResetOnSpawn` on, so the bind runs again for every new copy the engine
+	puts in PlayerGui.
+
+	See docs/lobby/hud.md.
 ]=]
 local PlayButtonController = {
 	Controllers = {},
@@ -57,7 +60,7 @@ function PlayButtonController:_bindHud(screenGui : ScreenGui)
 	local button = middle and middle:WaitForChild(BUTTON_NAME, WAIT_TIMEOUT)
 
 	if not button or not button:IsA("GuiButton") then
-		warn(`[PlayButtonController]: não achei {HUD_UI_NAME}.{MIDDLE_NAME}.{BUTTON_NAME}.`)
+		log:StudioWarn(`could not find {HUD_UI_NAME}.{MIDDLE_NAME}.{BUTTON_NAME}.`)
 		return
 	end
 
@@ -89,14 +92,14 @@ end
 --[[ EXTERNAL ]]
 
 --[=[
-	Larga o jogador em cima do marcador que fica na entrada dos portais.
+	Drops the player on the marker at the portals' entrance.
 
-	O cliente é dono do próprio personagem, então mover ele aqui basta — o servidor vê
-	a posição nova pela replicação de sempre, igual ao `ShopController:TeleportToShop`.
+	The client owns its own character, so moving it here is enough: the server sees the
+	new position through the usual replication, like `ShopController:TeleportToShop`.
 
-	Devolve `false` quando não deu: personagem ainda não carregou, ou o mapa está sem o
-	marcador. Nos dois casos o botão só não faz nada — o aviso do marcador que falta
-	sai uma vez por nome, pelo `MarkerUtil`.
+	Returns `false` when it could not: the character has not loaded yet, or the map lacks
+	the marker. In both cases the button simply does nothing; the missing-marker warning
+	goes out once per name, through `MarkerUtil`.
 ]=]
 function PlayButtonController:TeleportToPortals() : boolean
 	local character = Players.LocalPlayer.Character
@@ -123,7 +126,7 @@ function PlayButtonController:TeleportToPortals() : boolean
 
 	character:PivotTo(pivot * CFrame.new(0, halfHeight + PortalConfig.PLAY_TELEPORT_HEIGHT_OFFSET, 0))
 
-	-- Sem isto o jogador leva junto a velocidade que tinha e escorrega do marcador.
+	-- Without this the player carries the velocity they had and slides off the marker.
 	root.AssemblyLinearVelocity = Vector3.zero
 
 	return true

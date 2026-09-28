@@ -1,36 +1,33 @@
 local RunService = game:GetService("RunService")
 
 --[[
-	O relogio da partida: o mesmo `os.clock()` de sempre, so que andando na
-	velocidade que o jogador escolheu no botao `Interface.Speed`.
+	The match clock: the usual `os.clock()`, but running at the speed chosen on
+	the `Interface.Speed` button.
 
-	A ideia e nao ter uma regra de "x2" espalhada por cada duracao do jogo. Todo o
-	gameplay ja comparava instantes contra `os.clock()` -- `StunnedUntil`,
-	`lastAttack`, `expiresAt` da carga --, entao basta trocar a fonte do "agora"
-	por uma que corre mais rapido para que cooldown, atordoamento, buff e cadencia
-	de spawn encolham juntos, sem tocar em nenhum numero de config.
+	There is no "x2" rule spread across the game's durations. Gameplay compares
+	instants against a clock (`StunnedUntil`, `lastAttack`, a charge's
+	`expiresAt`), so swapping the source of "now" for a faster one shrinks
+	cooldowns, stuns, buffs, and spawn cadence together without touching config.
 
-	**O relogio comeca em `os.clock()`, de proposito.** Muito codigo faz
-	`now - (entry.lastAttack or 0)`, contando com um numero grande de um lado e
-	zero do outro para dizer "nunca atacou, pode atacar ja". Um relogio comecando
-	em zero faria a unidade recem-colocada esperar o primeiro cooldown a mais.
+	**It starts at `os.clock()` on purpose.** Code like
+	`now - (entry.lastAttack or 0)` relies on a large number on one side and zero
+	on the other to mean "never attacked, may attack now"; a clock starting at
+	zero would make a new unit wait one extra cooldown.
 
-	**Cada maquina tem o seu.** O servidor e cada cliente carregam uma copia deste
-	modulo, e o `SpeedService` mantem as escalas iguais avisando todo mundo a cada
-	troca. E por isso que o cliente tambem precisa dele: quem move o modelo do mob
-	na tela e o `MobController`, e ele tem que andar no mesmo ritmo da distancia
-	que o servidor esta somando.
+	**Each machine has its own copy.** `SpeedService` keeps the scales in sync by
+	broadcasting every change. The client needs it because `MobController` moves
+	enemy models at the same pace as the distance the server is adding.
 
-	**O que NAO passa por aqui.** O que e tempo de tela, e nao de partida: o
-	intervalo antes da wave (que tem o proprio botao de Ready), as setas do
-	caminho, o tempo de VFX e as telas de resultado. Acelerar aquilo nao e
-	acelerar a partida, e so tirar do jogador o tempo de ler.
+	**What does NOT go through here:** screen time, not match time (the
+	intermission, path arrows, VFX, result screens).
+
+	See docs/game/match-speed.md.
 ]]
 
 local GameClock = {}
 
--- Menor escala aceita. `Wait` espera o relogio passar de um instante; com escala
--- zero esse instante nunca chega e a espera vira um travamento.
+-- Smallest accepted scale. `Wait` waits for the clock to pass an instant; with a
+-- zero scale that instant never comes and the wait hangs.
 local MIN_SCALE = 0.01
 
 local scale = 1
@@ -42,7 +39,7 @@ end)
 
 --[[ API ]]
 
---- O "agora" da partida, no lugar de `os.clock()`.
+--- The match "now", used instead of `os.clock()`.
 function GameClock.Now() : number
 	return now
 end
@@ -55,19 +52,19 @@ function GameClock.SetScale(newScale : number?)
 	scale = math.max(MIN_SCALE, newScale or 1)
 end
 
---- O `dt` de um Heartbeat convertido para tempo de partida.
+--- A Heartbeat `dt` converted to match time.
 function GameClock.Scaled(dt : number) : number
 	return dt * scale
 end
 
 --[=[
-	`task.wait`, em tempo de partida.
+	`task.wait`, in match time.
 
-	A espera e refeita a cada quadro contra o relogio, e nao convertida para
-	segundos reais na chamada: trocar a velocidade no meio de uma espera de 3s
-	encurta o que falta dela, em vez de so valer da proxima em diante.
+	The wait is re-checked against the clock every frame instead of being
+	converted to real seconds at the call, so changing speed during a 3 s wait
+	shortens what is left of it.
 
-	Cede pelo menos um quadro, como o `task.wait()`.
+	Yields at least one frame, like `task.wait()`.
 ]=]
 function GameClock.Wait(duration : number?) : number
 	local deadline = now + (duration or 0)
@@ -79,7 +76,7 @@ function GameClock.Wait(duration : number?) : number
 	return now
 end
 
---- `task.delay`, em tempo de partida.
+--- `task.delay`, in match time.
 function GameClock.Delay(duration : number?, callback : () -> ()) : thread
 	return task.spawn(function()
 		GameClock.Wait(duration)

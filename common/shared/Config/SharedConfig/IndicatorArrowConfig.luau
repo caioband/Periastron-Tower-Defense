@@ -1,27 +1,28 @@
 --[[
-	A seta que aponta um lugar no mundo: `Shared.Assets.VFX.IndicatorArrow`.
+	The arrow that points at a place in the world: `Shared.Assets.VFX.IndicatorArrow`.
 
-	Quem a coloca e anima é o `ArrowController`. Aqui ficam o caminho do modelo e os
-	números do movimento.
+	`ArrowController` places and animates it; this holds the model path and the
+	motion numbers.
 
-	**Não confundir com o `ArrowConfig`** do `SharedConfig`, que é a flecha do Archer
-	— projétil, dano, velocidade de voo. Esta aqui não acerta ninguém: ela só aponta.
+	**Not to be confused with `ArrowConfig`** in `SharedConfig`, which is the
+	Archer's projectile. This one hits nobody; it only points.
 
-	O modelo mora no place, não no git (o `Shared.Assets` não é sincronizado pelo
-	Rojo, como o `StarterGui` e o `vfx`), e existe nas duas places. Por isso o
-	caminho é por nome e resolvido tarde: place sem o modelo não quebra, só não
-	aponta nada.
+	The model lives in the place, not in git (Rojo does not sync `Shared.Assets`),
+	and exists in both places. The path is by name and resolved late, so a place
+	without the model does not break; it just points at nothing.
+
+	See docs/common/ui-guidance.md.
 ]]
 
 local IndicatorArrowConfig = {}
 
 --[[
-	Onde o modelo está, a partir de `ReplicatedStorage.Shared`, e onde as cópias
-	vivas ficam penduradas no `Workspace`.
+	Where the model is, from `ReplicatedStorage.Shared`, and where live copies hang
+	in the `Workspace`.
 
-	A pasta no Workspace é criada na primeira seta e não é limpa por ninguém além
-	deste controller — ela não entra no `Workspace.Map`, que o `MapService` troca
-	entre partidas.
+	The Workspace folder is created with the first arrow and only this controller
+	cleans it. It is not inside `Workspace.Map`, which `MapService` swaps between
+	matches.
 ]]
 IndicatorArrowConfig.Asset = {
 	Path = { "Assets", "VFX" },
@@ -31,19 +32,18 @@ IndicatorArrowConfig.Asset = {
 IndicatorArrowConfig.Container = "Indicators"
 
 --[=[
-	O voo da seta.
+	The arrow's motion.
 
-	`Height` é a **folga entre a ponta da seta e o alvo**, em studs — não a altura do
-	pivô. A diferença importa: o pivô do modelo está onde o designer o deixou (hoje,
-	na ponta), e o controller mede essa distância sozinho, então mexer no pivô no
-	Studio, ou definir um `PrimaryPart`, não muda onde a seta aponta. Zero encosta a
-	ponta no alvo.
+	`Height` is the **gap between the arrow tip and the target**, in studs, not
+	the pivot height. The model's pivot is wherever the designer left it (today,
+	at the tip), and the controller measures that distance itself, so moving the
+	pivot in Studio or setting a `PrimaryPart` does not change where the arrow
+	points. Zero touches the target.
 
-	`Spin` é em **voltas por segundo** e `Bob.Speed` em **ciclos por segundo**: os
-	dois são o que se pensa ao olhar ("uma volta a cada segundo"), e não radianos
-	por quadro.
+	`Spin` is in **turns per second** and `Bob.Speed` in **cycles per second**:
+	what you think when looking at it, not radians per frame.
 
-	`Bob.Amplitude` é em studs, de quanto ela sobe e desce a partir da altura.
+	`Bob.Amplitude` is in studs: how far it rises and falls from the height.
 ]=]
 IndicatorArrowConfig.Motion = {
 	Height = 1.5,
@@ -57,8 +57,8 @@ IndicatorArrowConfig.Motion = {
 }
 
 --[[
-	Tamanho da cópia, em cima do tamanho autorado (o modelo tem 4x7x1 studs). É
-	`Model:ScaleTo`, então vale para o modelo inteiro e para o pivô junto.
+	Copy size, on top of the authored size (the model is 4x7x1 studs). It is
+	`Model:ScaleTo`, so it applies to the whole model and its pivot.
 ]]
 IndicatorArrowConfig.Scale = 1
 

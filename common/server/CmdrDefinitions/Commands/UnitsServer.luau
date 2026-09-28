@@ -12,30 +12,31 @@ local Framework = Me.new()
 local UnitStats = SharedConfig.UnitStats
 
 --[[
-	O inventário de unidades do perfil (`Units`), que é outra coisa do deck.
+	The profile's unit inventory (`Units`), which is not the deck.
 
-	`Units` é **quantas de cada uma o jogador tem**; `EquippedUnits` é quais delas
-	estão nos slots. Este comando mexe só no primeiro, e de propósito: o
-	`DeckConfig.sanitize` roda a cada leitura do deck e já corta o `Amount` de cada
-	slot pelo que a pessoa possui, então tirar unidade daqui esvazia o slot sozinho,
-	sem ninguém precisar reescrever o deck.
+	`Units` is **how many of each the player owns**; `EquippedUnits` is which are in
+	the slots. This command touches only the first, on purpose: `DeckConfig.sanitize`
+	runs on every deck read and already caps each slot's `Amount` at what the player
+	owns, so removing units here empties the slot on its own, without anyone
+	rewriting the deck.
 
-	Mora no `common/` porque as duas places têm `DataService` e as duas leem o
-	`Units`: o Lobby para montar o deck, a Game para as cartas da partida.
+	It lives in `common/` because both places have `DataService` and both read
+	`Units`: the Lobby to build the deck, Game for the match cards.
 
-	⚠️ **Na Game, o round que já começou não muda.** As cartas da partida são
-	fotografadas do perfil no `UnitService:initPlayerCards`, que roda no começo do
-	round — dar unidade no meio de uma wave só aparece no round seguinte (ou depois
-	de um `ResetRound`). No Lobby o efeito é imediato: o deck lê o perfil a cada
-	mudança da replica.
+	⚠️ **In Game, a round already in progress does not change.** Match cards are a
+	snapshot of the profile taken in `UnitService:initPlayerCards`, which runs at
+	round start: giving units mid-wave only shows on the next round (or after a
+	`ResetRound`). In the Lobby the effect is immediate: the deck reads the profile
+	on every replica change.
 ]]
 
 --[=[
-	O nome canônico da unidade, aceitando diferença de maiúsculas.
+	The unit's canonical name, ignoring case differences.
 
-	O tipo `unitName` só recusa string vazia — o autocomplete oferece a lista certa,
-	mas nada impede digitar `slasher` na mão. Resolver aqui evita um "não existe"
-	para um nome que existe, e a resposta do comando devolve a grafia oficial.
+	The `unitName` type only rejects an empty string: autocomplete offers the right
+	list, but nothing stops typing `slasher` by hand. Resolving here avoids a "does
+	not exist" for a name that exists, and the command's answer returns the official
+	spelling.
 ]=]
 local function resolveUnitName(text : string) : string?
 	if UnitStats[text] then
@@ -70,8 +71,8 @@ return function(_context, action : string, userIds : { number }, unitText : stri
 		return string.format("There is no unit called '%s'. Known units: %s.", unitText, knownNames())
 	end
 
-	-- Online neste servidor, em outro ou offline: quem decide o caminho é o
-	-- `ProfileEditService`. Unidade zerada sai da tabela (ver `KEYS` lá).
+	-- Online on this server, on another one, or offline: `ProfileEditService`
+	-- picks the path. A unit at zero leaves the table (see `KEYS` there).
 	return ProfileEditService:RunCommand(userIds, {
 		Key = "Units",
 		Field = unitName,

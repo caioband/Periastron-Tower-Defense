@@ -1,27 +1,28 @@
 --[[
-	Os marcadores que o mapa deixa para a UI: onde uma loja fica e onde ela larga o
-	jogador.
+	The markers the map leaves for the UI: where a shop is and where it drops the
+	player.
 
-	As duas lojas do lobby funcionam pelo mesmo par de peças — uma de referência, que
-	é o centro do raio de abertura, e uma de pouso, onde o teleporte deixa o
-	personagem. Este módulo é só como achar uma dessas peças e como ler onde ela está;
-	o que fazer com isso continua sendo de cada controller.
+	Both Lobby shops use the same pair of parts: a reference, the center of the
+	opening radius, and a landing spot, where the teleport leaves the character.
+	This module only finds one of those parts and reads where it is; what to do
+	with it belongs to each controller.
 
-	A busca é **em profundidade** dentro do mapa, e não nos filhos diretos: os
-	marcadores vivem agrupados no modelo da loja a que pertencem (`Map.Shop`,
-	`Map.Deco.Houses.CardShop`), e exigir que eles fiquem soltos na raiz do mapa faria
-	o artista quebrar a loja só por organizar a árvore. O nome de cada marcador é
-	único no mapa, então descer a árvore acha o mesmo part de sempre.
+	The search is **deep** inside the map, not only direct children: markers are
+	grouped in the model of their shop (`Map.Shop`, `Map.Deco.Houses.CardShop`),
+	and requiring them loose at the map root would make an artist break the shop
+	just by organizing the tree. Each marker name is unique in the map.
 ]]
+
+local Log = require(script.Parent.Log)
 
 local MarkerUtil = {}
 
 --[=[
-	Onde um marcador está, seja ele uma Part ou um Model.
+	Where a marker is, whether it is a Part or a Model.
 
-	Devolve nil para qualquer outra coisa — e nil é a resposta certa, e não um erro:
-	um marcador que virou Folder por acidente deixa a loja sem abrir, e não o jogo sem
-	rodar.
+	Returns nil for anything else, and nil is the right answer, not an error: a
+	marker that became a Folder by accident leaves the shop closed, not the game
+	broken.
 ]=]
 function MarkerUtil.pivotOf(part : Instance?) : CFrame?
 	if not part then
@@ -38,8 +39,8 @@ function MarkerUtil.pivotOf(part : Instance?) : CFrame?
 end
 
 --[=[
-	Meia altura do marcador, para o personagem pousar **em cima** dele em vez de meio
-	enterrado. Zero para o que não tem altura própria.
+	Half the marker's height, so the character lands **on top** of it instead of
+	half buried. Zero for anything without its own height.
 ]=]
 function MarkerUtil.halfHeightOf(part : Instance?) : number
 	if part and part:IsA("BasePart") then
@@ -50,16 +51,16 @@ function MarkerUtil.halfHeightOf(part : Instance?) : number
 end
 
 --[=[
-	Acha um marcador sob `Workspace.<parentName>`, com cache e um aviso só por nome.
+	Finds a marker under `Workspace.<parentName>`, with a cache and one warning per
+	name.
 
-	`cache` é uma tabela do controller, por nome do marcador: a entrada é reaproveitada
-	enquanto a peça estiver no mundo e refeita quando ela sair dele — uma troca de mapa
-	reparenta tudo, e uma referência guardada para sempre apontaria para a peça de um
-	mapa que já saiu.
+	`cache` is a controller-owned table keyed by marker name: an entry is reused
+	while the part is in the world and rebuilt when it leaves (a map change
+	reparents everything, and a reference kept forever would point at an old map).
 
-	`warned` é a mesma coisa para os avisos: marcador que falta é erro de autoria, e
-	repetir o aviso a cada respawn só enche o output. `source` é o nome que aparece no
-	aviso, para o output dizer qual loja está sem a peça.
+	`warned` is the same for warnings: a missing marker is an authoring mistake, and
+	repeating the warning on every respawn only floods the Output. `source` is the
+	name that appears in the warning, so it says which shop lacks the part.
 ]=]
 function MarkerUtil.find(
 	parentName : string,
@@ -78,7 +79,7 @@ function MarkerUtil.find(
 
 	if not part and not warned[partName] then
 		warned[partName] = true
-		warn(`[{source}]: no {partName} under Workspace.{parentName}.`)
+		Log.new(source):StudioWarn(`no {partName} under Workspace.{parentName}.`)
 	end
 
 	cache[partName] = part

@@ -1,99 +1,95 @@
 --[[
-	Texto rico: o vocabulário que o jogo fala.
+	Rich text: the vocabulary the game speaks.
 
-	Quem escreve texto animado no jogo não escreve tag de biblioteca nenhuma — fala
-	este vocabulário, e o `RichTextController` traduz para a tecnologia da vez (hoje
-	o HyperText, em `ReplicatedStorage.Shared.Vendor.HyperText`).
+	Code that writes animated text never writes library tags: it speaks this
+	vocabulary, and `RichTextController` translates it to the current technology
+	(today HyperText, in `ReplicatedStorage.Shared.Vendor.HyperText`).
 
-	São três tabelas, e é de propósito que as três fiquem no mesmo arquivo: elas são
-	o contrato inteiro. Trocar de biblioteca é reescrever a coluna da biblioteca em
-	`Aliases`, escrever um backend novo e não tocar em mais nada do jogo.
+	The three tables live in the same file on purpose: together they are the whole
+	contract. Switching libraries means rewriting the library column in `Aliases`,
+	writing a new backend, and touching nothing else in the game.
 
-		Options   — o que dá para pedir de um render (velocidade, cor, fonte...)
-		Presets   — combinações batizadas: "Dialogue", "Warning", "Instant"
-		Aliases   — a marcação dentro do texto: `[shake]NEVASCA[/shake]`
+		Options   - what a render can ask for (speed, color, font...)
+		Presets   - named combinations: "Dialogue", "Warning", "Instant"
+		Aliases   - markup inside the text: `[shake]BLIZZARD[/shake]`
 
-	**A marcação.** Colchete, não sinal de menor: `[nome]texto[/nome]` para o que
-	envolve um trecho, `[nome]` sozinho para o que é um ponto no texto (`[br]`,
-	`[pause]`). Alias que aceita valor recebe com `=`: `[color=red]`, `[size=40]`,
-	`[pause=1]`. O colchete separa a nossa marcação da do vendor: um `<...>` escrito
-	à mão continua chegando cru na biblioteca — é a saída de emergência para o que
-	ainda não virou alias, e quem usa sabe que está se amarrando à tecnologia.
+	**Markup.** Brackets, not angle brackets: `[name]text[/name]` wraps a span,
+	`[name]` alone marks a point (`[br]`, `[pause]`). An alias that takes a value
+	uses `=`: `[color=red]`, `[size=40]`, `[pause=1]`. Brackets separate our markup
+	from the vendor's: a hand-written `<...>` still reaches the library raw, the
+	escape hatch for what is not an alias yet.
 
-	**Por que os dois níveis.** `Options` é o que vale para o render todo e não cabe
-	no texto (a fonte, o alinhamento, a velocidade); `Aliases` é o que vale para um
-	pedaço e só faz sentido no meio da frase. Texto que vem do servidor ou de
-	tradução atravessa a rede como texto — por isso o efeito viaja dentro dele.
+	**Why two levels.** `Options` applies to the whole render and does not fit in the
+	text (font, alignment, speed); `Aliases` apply to a span and only make sense
+	mid-sentence. Text from the server or a translation crosses the network as text,
+	which is why the effect travels inside it.
+
+	See docs/common/rich-text.md.
 ]]
 
 local RichTextConfig = {}
 
 --[[
-	Ordem de preferência dos backends. O controller tenta de cima para baixo e fica
-	no primeiro que carregar.
+	Backend order of preference. The controller tries top to bottom and keeps the
+	first that loads.
 
-	`Plain` é o fim da fila e não falha nunca: ele arranca a marcação e escreve o
-	texto puro num TextLabel. É o que segura a tela quando o vendor sai do sync ou
-	quebra num update da Roblox — aviso feio é melhor que aviso nenhum.
+	`Plain` is last and never fails: it strips the markup and writes plain text into
+	a TextLabel. It holds the screen when the vendor falls out of sync or breaks in a
+	Roblox update: an ugly warning beats no warning.
 ]]
 RichTextConfig.Backends = { "HyperText", "Plain" }
 
 --[=[
-	O que dá para pedir de um render. Tudo opcional; o que não vier fica no valor
-	do `Defaults` e, faltando lá também, no padrão do backend.
+	What a render can ask for. All optional; anything missing takes the `Defaults`
+	value and, failing that, the backend default.
 
-	`Speed` é em **caracteres por segundo**, não em intervalo — é assim que se
-	pensa em máquina de escrever, e é o backend que converte. `Speed = 0` escreve
-	tudo de uma vez.
+	`Speed` is in **characters per second**, not an interval: that is how you think
+	about a typewriter, and the backend converts. `Speed = 0` writes everything at once.
 ]=]
 --[=[
-	Como o tamanho da letra sai da **caixa**, e não de um número de pixels.
+	How the text size comes from the **box** instead of a pixel number.
 
-	Pixel não se traduz entre telas: 12px ocupam um quinto de uma caixa no monitor e
-	metade dela no celular, e a mesma frase que cabia some ou estoura. Pedindo `Fit`, o
-	controller mede a caixa no instante da escrita e tira dela o tamanho da letra — é
-	`Size` calculado, não escrito.
+	Pixels do not translate between screens: 12 px is a fifth of a box on a monitor
+	and half of it on a phone. With `Fit`, the controller measures the box at write
+	time and derives the text size from it: `Size` computed, not written.
 
-	São duas paredes, e a letra é a menor das duas:
+	There are two walls, and the text size is the smaller:
 
-	  1. **a altura** da caixa vezes `TextRatio`, dividida pelas fileiras;
-	  2. **a largura** da caixa contra a largura real da frase mais comprida, também
-	     dividida pelas fileiras.
+	  1. the box **height** times `TextRatio`, divided by the rows;
+	  2. the box **width** against the real width of the longest sentence, also
+	     divided by the rows.
 
-	E é por isso que as **fileiras** entram na conta. Uma frase de 32 caracteres numa
-	caixa estreita fica minúscula se tiver de caber em uma fileira só — a largura manda,
-	e manda pouco. Deixando-a usar duas, a largura disponível dobra e a altura de cada
-	fileira cai à metade: onde a caixa é larga e baixa a primeira opção ganha, e onde ela
-	é estreita e alta ganha a segunda. O controller experimenta de 1 a `MaxRows` e fica
-	com a que der a **letra maior**, que é a definição do que se quer aqui.
+	That is why **rows** enter the math. A 32-character sentence in a narrow box is
+	tiny if it must fit one row: width rules, and rules small. Allowing two doubles
+	the available width and halves each row's height. The controller tries 1 to
+	`MaxRows` and keeps whichever gives the **largest** text.
 
-	`TextRatio` é a altura da letra como fração da altura da caixa — o que sobra é a
-	folga em volta.
+	`TextRatio` is the text height as a fraction of the box height; the rest is padding.
 
-	`MinTextSize` é o piso: abaixo dele não se lê, e é melhor a frase estourar a caixa
-	(e alguém ver o problema) que virar uma tarja cinza. `MaxTextSize` é o teto, para a
-	caixa grande com frase curta não virar letreiro.
+	`MinTextSize` is the floor: below it nothing is readable, and it is better for the
+	sentence to overflow (and someone notice) than to become a gray smudge.
+	`MaxTextSize` is the ceiling, so a big box with a short sentence does not become
+	a billboard.
 
-	`MaxRows` é quantas fileiras uma frase pode ocupar. 1 é o padrão porque é o que não
-	surpreende: caixa de uma linha só. Container que quebra linha (uma fala, um tutorial)
-	diz aqui quantas linhas cabem nele.
+	`MaxRows` is how many rows a sentence may take. 1 is the default because it
+	surprises nobody; a wrapping container (a dialog, a tutorial) says how many fit.
 
-	`WidthPerChar` é o **plano B**: a largura da frase é medida de verdade
-	(`TextService`), e esta estimativa por caractere só entra quando a medida falha (a
-	fonte não carregou, a chamada foi recusada). 0.6 é a média de uma fonte
-	proporcional; fonte quase monoespaçada (a Press Start 2P) quer 1.
+	`WidthPerChar` is the **fallback**: sentence width is measured for real
+	(`TextService`), and this per-character estimate only applies when measuring
+	fails. 0.6 is a proportional font's average; an almost monospaced font (Press
+	Start 2P) wants 1.
 
-	`Font` é com que fonte a largura é medida, e só vale quando o render não disse a
-	dele em `Options.Font`. O valor é o padrão do HyperText — medir numa fonte e desenhar
-	noutra dá uma letra do tamanho errado, e este é o único lugar em que o palpite cabe.
+	`Font` is the font width is measured in, used only when the render did not set
+	`Options.Font`. The value is HyperText's default: measuring in one font and
+	drawing in another gives the wrong size.
 
-	`LayoutTimeout` é quanto se espera a caixa ter tamanho **estável** antes de medir.
-	Peça criada agora só mede depois da passada de layout, e medir antes disso congela
-	uma letra do tamanho de um valor intermediário. Ver `RichTextController:AwaitLayout`.
+	`LayoutTimeout` is how long to wait for the box to have a **stable** size before
+	measuring. A new piece only has a size after the layout pass. See
+	`RichTextController:AwaitLayout`.
 
-	`Debug` acende no output do Studio **qual das duas paredes** mandou no tamanho. Sem
-	isso, ajustar uma caixa é tentativa e erro: mexer em `TextRatio` não faz nada quando
-	é a largura que limita, e mexer em `MaxRows` não faz nada quando é a altura.
+	`Debug` logs in Studio **which wall** decided the size. Without it, tuning a box
+	is guesswork: `TextRatio` does nothing when width limits, and `MaxRows` does
+	nothing when height limits.
 ]=]
 export type FitOptions = {
 	TextRatio : number?,
@@ -107,24 +103,24 @@ export type FitOptions = {
 }
 
 export type Options = {
-	-- Combinação batizada em `Presets`, aplicada por baixo do resto.
+	-- A named combination from `Presets`, applied underneath everything else.
 	Preset : string?,
 
-	-- Máquina de escrever.
+	-- Typewriter.
 	Speed : number?,
 	Sound : (string | number)?,
 	SoundVolume : number?,
 
-	-- Aparência.
+	-- Look.
 	Size : number?,
 
 	--[[
-		Tira o `Size` da caixa em vez de aceitar o que veio em pixels. `true` usa os
-		padrões de `RichTextConfig.Fit`; uma tabela ajusta o que quiser deles.
+		Derives `Size` from the box instead of taking pixels. `true` uses the
+		`RichTextConfig.Fit` defaults; a table overrides any of them.
 
-		Ligado, a escrita **dorme**: ela espera a caixa ter tamanho estável e mede a
-		largura da frase numa chamada assíncrona. Quem escreve dentro de um clique já
-		está numa thread própria; quem não estiver, que use `task.spawn`.
+		When on, the write **yields**: it waits for a stable box size and measures
+		the sentence width asynchronously. Code in a click handler already runs in its
+		own thread; anything else should use `task.spawn`.
 	]]
 	Fit : (boolean | FitOptions)?,
 
@@ -136,27 +132,27 @@ export type Options = {
 	Stroke : { Thickness : number?, Color : Color3?, Transparency : number? }?,
 	Shadow : { Color : Color3?, Offset : Vector2? }?,
 
-	-- Entrada de cada caractere: "slide", "bounce", "wiggle", "grow" ou "none".
+	-- Each character's entrance: "slide", "bounce", "wiggle", "grow", or "none".
 	Anim : string?,
 	AnimDuration : number?,
 	AnimLoop : boolean?,
 
-	-- Layout dentro do container.
+	-- Layout inside the container.
 	Align : Enum.HorizontalAlignment?,
 	VerticalAlign : Enum.VerticalAlignment?,
 	ZIndex : number?,
 	Wrapped : boolean?,
 
-	-- `true` segura a thread de quem chamou até o render acabar.
+	-- `true` holds the caller's thread until the render ends.
 	Yield : boolean?,
 }
 
 --[[
-	O que vale para todo render que não pedir diferente.
+	What applies to every render that does not ask otherwise.
 
-	Curto de propósito: cada valor aqui é uma decisão que o backend deixaria de
-	tomar. `Anim = "none"` porque a maioria das telas quer texto, não animação de
-	entrada — quem quer a animação pede o preset.
+	Short on purpose: each value is a decision the backend no longer makes.
+	`Anim = "none"` because most screens want text, not an entrance animation; those
+	that do ask for a preset.
 ]]
 RichTextConfig.Defaults = {
 	Speed = 0,
@@ -165,8 +161,8 @@ RichTextConfig.Defaults = {
 } :: Options
 
 --[[
-	Os padrões do `Fit`, para o render que pediu `Fit = true` e não quis escolher nada.
-	O que vier na chamada entra por cima, campo a campo. Ver o tipo `FitOptions`.
+	`Fit` defaults, for renders that set `Fit = true` without choosing anything.
+	Call options override them field by field. See the `FitOptions` type.
 ]]
 RichTextConfig.Fit = {
 	TextRatio = 0.9,
@@ -180,20 +176,20 @@ RichTextConfig.Fit = {
 } :: FitOptions
 
 --[[
-	Combinações batizadas.
+	Named combinations.
 
-	O nome é o que o código do jogo diz; o conteúdo é ajuste de designer e pode
-	mudar aqui sem ninguém ficar sabendo.
+	The name is what game code says; the contents are designer tuning and can change
+	here without anyone else noticing.
 ]]
 RichTextConfig.Presets = {
-	-- Texto que só precisa aparecer.
+	-- Text that only needs to appear.
 	Instant = {
 		Speed = 0,
 		Anim = "none",
 	},
 
-	-- Aviso curto e urgente, do tamanho do `WarningController`: entra letra a
-	-- letra, rápido, com contorno para sobreviver a qualquer fundo.
+	-- A short, urgent warning, sized for `WarningController`: types in letter by
+	-- letter, fast, with an outline to survive any background.
 	Warning = {
 		Speed = 45,
 		Anim = "slide",
@@ -204,14 +200,13 @@ RichTextConfig.Presets = {
 	},
 
 	--[[
-		Fala de NPC: devagar o bastante para ser lida no ritmo de quem fala.
+		NPC dialog: slow enough to read at a speaker's pace.
 
-		`Size` é a altura da linha em pixels **na caixa do tamanho em que ela estava
-		quando o texto entrou** — o renderizador guarda esse tamanho como referência
-		e reescala o texto junto com a tela, então o número vale para todas as
-		resoluções. 24 é o que cabe na `DialogGUI.Container` de hoje (625x287) com
-		folga para quatro linhas; 38 já estoura a caixa e parte palavra no meio.
-		Caixa de outro tamanho pede outro número, e é aqui que ele se muda.
+		`Size` is the line height in pixels **in the box at the size it had when the
+		text entered**: the renderer keeps that as the reference and rescales with the
+		screen, so the number works at every resolution. 24 fits today's
+		`DialogGUI.Container` (625x287) with room for four lines; 38 already overflows
+		and breaks words. A box of another size needs another number, changed here.
 	]]
 	Dialogue = {
 		Size = 24,
@@ -219,28 +214,28 @@ RichTextConfig.Presets = {
 		Anim = "slide",
 		AnimDuration = 0.25,
 
-		-- Centrado nos dois eixos: a fala ocupa a caixa inteira em vez de crescer a
-		-- partir do canto de cima, e frase curta não fica boiando no alto.
+		-- Centered on both axes: the dialog fills the box instead of growing from the
+		-- top corner, and a short sentence does not float at the top.
 		Align = Enum.HorizontalAlignment.Center,
 		VerticalAlign = Enum.VerticalAlignment.Center,
 	},
 } :: { [string] : Options }
 
 --[=[
-	As paletas que `[gradient=nome]` usa.
+	The palettes `[gradient=name]` uses.
 
-	Cor em `r,g,b`, separadas por `;` — é o formato que o HyperText entende, e
-	repeti-lo aqui é mais honesto que inventar um nosso e converter no meio do
-	caminho. De 1 a 18 cores.
+	Colors as `r,g,b`, separated by `;`: the format HyperText understands, and
+	repeating it here is more honest than inventing our own and converting midway.
+	From 1 to 18 colors.
 
-	`MoveSpeed` é quantas voltas completas de cor o gradiente dá por segundo; zero é
-	gradiente parado. `MoveDir` ("left" ou "right") e `Rot` (graus) são opcionais.
+	`MoveSpeed` is how many full color cycles the gradient makes per second; zero is
+	a still gradient. `MoveDir` ("left" or "right") and `Rot` (degrees) are optional.
 
-	O nome é o que o jogo escreve — `[gradient=orange]` —, e é ele que sobrevive a
-	uma troca de biblioteca. As cores são ajuste de designer e mudam aqui.
+	The name is what the game writes (`[gradient=orange]`), and it survives a library
+	change. Colors are designer tuning and change here.
 ]=]
 RichTextConfig.Gradients = {
-	-- O do módulo, para quem escreve `[gradient]` sem dizer qual.
+	-- The module's own, for `[gradient]` without a name.
 	default = { Colors = "85,170,255;255,85,0" },
 
 	orange = { Colors = "255,205,95;255,110,20", MoveSpeed = 0.2 },
@@ -250,21 +245,21 @@ RichTextConfig.Gradients = {
 }
 
 --[=[
-	A marcação que o jogo escreve, e no que ela vira em cada backend.
+	The markup the game writes, and what it becomes in each backend.
 
-	Cada alias tem uma coluna por backend. A do `Plain` não existe porque o Plain
-	apaga tudo — é essa a proposta dele.
+	Each alias has one column per backend. `Plain` has none because it strips
+	everything; that is its point.
 
-	`%s` é onde entra o valor de `[nome=valor]`. Alias com `%s` e sem `Default`
-	exige valor; sem `%s`, valor é ignorado. Alias sem `Close` é ponto no texto e
-	não se fecha: `[br]`, `[pause=1]`.
+	`%s` is where `[name=value]`'s value goes. An alias with `%s` and no `Default`
+	requires a value; without `%s`, a value is ignored. An alias without `Close` is a
+	point in the text and does not close: `[br]`, `[pause=1]`.
 
-	`Converter` é o valor que não é o mesmo nos dois mundos: `"Speed"` é
-	caractere por segundo aqui e intervalo em segundos lá dentro. Quem converte é o
-	backend, porque a unidade de chegada é dele.
+	`Converter` is a value that differs between the two worlds: `"Speed"` is
+	characters per second here and an interval in seconds inside. The backend
+	converts, because the target unit is its own.
 
-	O valor que o jogador escreve nunca chega aqui — `RichTextController:Escape()`
-	existe para nome de jogador e chat, e neutraliza colchete e `<` antes.
+	Player-typed values never reach here: `RichTextController:Escape()` exists for
+	player names and chat, and neutralizes brackets and `<` first.
 ]=]
 export type Alias = {
 	HyperText : { Open : string, Close : string? }?,
@@ -273,7 +268,7 @@ export type Alias = {
 }
 
 RichTextConfig.Aliases = {
-	--[[ ESTILO ]]
+	--[[ STYLE ]]
 
 	b = { HyperText = { Open = "<weight=bold>", Close = "</weight>" } },
 	i = { HyperText = { Open = "<italic=true>", Close = "</italic>" } },
@@ -289,39 +284,38 @@ RichTextConfig.Aliases = {
 	shadow = { HyperText = { Open = "<shadow=true>", Close = "</shadow>" } },
 	mark = { HyperText = { Open = "<mark=true>", Close = "</mark>" } },
 
-	--[[ EFEITO ]]
+	--[[ EFFECT ]]
 
-	-- Tremor curto e violento — dano, perigo, coisa quebrando.
+	-- A short, violent shake: damage, danger, something breaking.
 	shake = { HyperText = { Open = "<shake=true loop=true dur=.4>", Close = "</shake>" } },
 
 	--[[
-		Ondulação contínua — coisa mágica, flutuante.
+		A continuous wave: something magical, floating.
 
-		`amp` é a altura da onda como fração do tamanho da letra, e é ela que faz o
-		efeito ser leve ou circense: o padrão do módulo (.3) sacode a frase inteira.
-		.1 com `rot=false` deixa a linha ondulando sem as letras se inclinarem — o
-		texto continua legível enquanto se mexe, que é o ponto de usar isso numa
-		fala.
+		`amp` is the wave height as a fraction of the letter size, and it makes the
+		effect subtle or circus-like: the module default (.3) shakes the whole
+		sentence. .1 with `rot=false` waves the line without tilting the letters, so
+		the text stays readable while it moves, which is the point in a dialog.
 	]]
 	wiggle = { HyperText = { Open = "<anim=wiggle loop=true amp=.1 rot=false>", Close = "</anim>" } },
 
 	rainbow = { HyperText = { Open = "<rainbow=true>", Close = "</rainbow>" } },
 	fog = { HyperText = { Open = "<fog=true>", Close = "</fog>" } },
 
-	-- Faíscas em cima do texto. O valor é a cor delas: um atalho do módulo
-	-- (`[shiny=yellow]`) ou `r,g,b`.
+	-- Sparkles over the text. The value is their color: a module shortcut
+	-- (`[shiny=yellow]`) or `r,g,b`.
 	shiny = { HyperText = { Open = "<shiny=true color=%s>", Close = "</shiny>" }, Default = "white" },
 
-	-- Gradiente por paleta batizada em `RichTextConfig.Gradients`.
+	-- A gradient from a palette named in `RichTextConfig.Gradients`.
 	gradient = {
 		HyperText = { Open = "<gradient=true %s>", Close = "</gradient>" },
 		Default = "default",
 		Converter = "Gradient",
 	},
 
-	-- Dourado com brilho: a cor da letra e a faísca de uma vez, porque as duas
-	-- juntas é que fazem o efeito — só a cor é texto amarelo, só a faísca é
-	-- purpurina no escuro.
+	-- Shiny gold: the letter color and the sparkle at once, because together they make
+	-- the effect; the color alone is yellow text, the sparkle alone is glitter in the
+	-- dark.
 	gold = {
 		HyperText = {
 			Open = "<color=255,205,70><shiny=true color=255,240,175 rate=1.5>",
@@ -329,22 +323,22 @@ RichTextConfig.Aliases = {
 		},
 	},
 
-	--[[ RITMO E PONTUAÇÃO ]]
+	--[[ PACING AND PUNCTUATION ]]
 
-	-- Quebra de linha. O `\n` cru é ignorado pelo HyperText de propósito.
+	-- Line break. A raw `\n` is ignored by HyperText on purpose.
 	br = { HyperText = { Open = "<br=%s>" }, Default = "1" },
 
-	-- Pausa no meio da digitação, em segundos.
+	-- A pause mid-typing, in seconds.
 	pause = { HyperText = { Open = "<wait=%s>" }, Default = "0.4" },
 
-	-- Velocidade daqui para frente, em caracteres por segundo. O backend converte.
+	-- Speed from here on, in characters per second. The backend converts.
 	speed = { HyperText = { Open = "<interval=%s>", Close = "</interval>" }, Converter = "Speed" },
 
-	-- Imagem inline pelo id do asset.
+	-- An inline image by asset id.
 	img = { HyperText = { Open = "<img=%s>" } },
 
-	-- Marca no texto que dispara `handle:OnEvent(nome)` quando a digitação chega
-	-- nela. É como a fala sincroniza som e câmera com a própria frase.
+	-- A mark in the text that fires `handle:OnEvent(name)` when typing reaches it.
+	-- It is how a dialog syncs sound and camera with its own sentence.
 	event = { HyperText = { Open = "<renderEvent=%s>" } },
 } :: { [string] : Alias }
 

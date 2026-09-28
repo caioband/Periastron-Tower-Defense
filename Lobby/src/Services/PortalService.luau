@@ -13,6 +13,7 @@ local SharedConfig = require(Configs.SharedConfig)
 
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 local Observers = require(Vendor.Observers)
 local Signal = require(Packages.Signal)
 
@@ -20,6 +21,7 @@ local MapConfig = SharedConfig.MapConfig
 local PortalConfig = SharedConfig.PortalConfig
 
 local Framework = Me.new()
+local log = Log.new("PortalService")
 
 --[[ CONSTANTS ]]
 local MAP_FOLDER_NAME = "Map"
@@ -43,7 +45,7 @@ local TIMER_NAME = "Timer"
 ]=]
 local PortalService = {
 	Services = {
-		-- De onde saem as vitorias do perfil, que sao o que destranca um mapa.
+		-- Where the profile's wins come from, which is what unlocks a map.
 		DataService = {},
 	},
 
@@ -67,12 +69,12 @@ function PortalService:_readPortal(model : Model, id : number)
 	local billboard = billboardPart and billboardPart:FindFirstChildWhichIsA("BillboardGui")
 
 	if not enter or not enter:IsA("BasePart") or not exit or not exit:IsA("BasePart") then
-		warn(`[PortalService]: Portal {id} has no {PortalConfig.ENTER_NAME}/{PortalConfig.EXIT_NAME} part.`)
+		log:StudioWarn(`portal {id} has no {PortalConfig.ENTER_NAME}/{PortalConfig.EXIT_NAME} part.`)
 		return nil
 	end
 
 	if not gate or not billboard then
-		warn(`[PortalService]: Portal {id} has no {PortalConfig.GATE_NAME} or no BillboardGui.`)
+		log:StudioWarn(`portal {id} has no {PortalConfig.GATE_NAME} or no BillboardGui.`)
 		return nil
 	end
 
@@ -207,7 +209,7 @@ function PortalService:_abortLaunch(portal, group, reason : string?)
 	end
 
 	if reason then
-		warn(`[PortalService]: Portal {portal.Id} could not send its group away ({reason}); putting them back.`)
+		log:Warn(`portal {portal.Id} could not send its group away ({reason}); putting them back.`)
 	end
 
 	for index, member in group.Members do
@@ -364,11 +366,12 @@ function PortalService:GetPortalOf(player : Player)
 end
 
 --[=[
-	As vitorias do perfil aberto do jogador.
+	The wins on the player's open profile.
 
-	Perfil que ainda nao carregou (ou ja encerrou) vale zero, e nao "deixa passar": um
-	mapa a mais aberto por engano seria pior do que o jogador esperar o perfil chegar
-	-- e ate la a tela dele tambem esta mostrando tudo trancado, pela mesma conta.
+	A profile that has not loaded yet (or already closed) counts as zero, not "let it
+	through": one extra map opened by mistake would be worse than the player waiting for
+	the profile to arrive, and until then their screen also shows everything locked, by
+	the same math.
 ]=]
 function PortalService:_winsOf(player : Player) : number
 	local dataService = self.Services.DataService
@@ -398,23 +401,23 @@ function PortalService:CreateGroup(player : Player, portalId : number, mapName :
 
 	local resolvedMap = MapConfig.resolveMap(mapName)
 	if not resolvedMap then
-		warn(`[PortalService]: {player.Name} asked for map {tostring(mapName)}, which does not exist.`)
+		log:StudioWarn(`{player.Name} asked for map {tostring(mapName)}, which does not exist.`)
 		return false
 	end
 
 	--[[
-		O cadeado tambem vale aqui, e nao so na tela.
+		The lock also applies here, not only on screen.
 
-		O `ChooseMapsController` ja nao deixa clicar num mapa trancado, mas quem escolhe
-		o mapa e o cliente -- ele manda um nome, e um nome e o que qualquer cliente pode
-		mandar. Sem esta linha, o mapa de 8 vitorias abriria para quem nunca ganhou uma.
+		`ChooseMapsController` already does not allow clicking a locked map, but the client
+		chooses the map: it sends a name, and a name is something any client can send.
+		Without this line, the 8-win map would open for someone who never won a match.
 
-		E a mesma conta das duas pontas, com o mesmo config: nada aqui e sigiloso, e o
-		cliente calcular junto e so o desenho chegar antes da resposta.
+		It is the same math on both ends, with the same config: nothing here is secret, and
+		the client computing it too only lets the drawing arrive before the answer.
 	]]
 	if not MapConfig.isUnlocked(resolvedMap, self:_winsOf(player)) then
-		warn(string.format(
-			"[PortalService]: %s asked for map %s, which needs %d wins.",
+		log:StudioWarn(string.format(
+			"%s asked for map %s, which needs %d wins.",
 			player.Name, resolvedMap, MapConfig.getWinsRequired(resolvedMap)))
 		return false
 	end
@@ -561,8 +564,8 @@ function PortalService:construct()
 		end
 	end))
 
-	-- A chamada de teleporte passar não quer dizer que o jogador foi: o que não deu
-	-- certo volta por aqui, um jogador de cada vez.
+	-- The teleport call going through does not mean the player went: what went
+	-- wrong comes back here, one player at a time.
 	self.Maid:GiveTask(TeleportService.TeleportInitFailed:Connect(function(player : Player, result : Enum.TeleportResult, message : string)
 		local portal = self:GetPortalOf(player)
 		if not portal then

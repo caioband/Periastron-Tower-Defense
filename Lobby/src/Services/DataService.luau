@@ -18,24 +18,26 @@ local Maid = require(Vendor.Maid)
 local Promise = require(Packages.Promise)
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 local Signal = require(Packages.Signal)
 
 local ProfileStore = require(ServerVendor.ProfileStore)
 local Replica = require(ServerVendor.ReplicaServer)
 
 local Framework = Me.new()
+local log = Log.new("DataService")
 
 local DataService = {
 	Signals = {
 		PlayerDataLoaded = Signal.new(),
 
 		--[[
-			(player, key, value) — depois de toda escrita do `Update`.
+			(player, key, value): after every `Update` write.
 
-			O `Update` e o unico caminho de escrita no perfil (o `Set` da replica so
-			acontece la dentro), entao quem precisa reagir a uma mudanca no servidor
-			escuta aqui em vez de vigiar o perfil. O cliente nao precisa disto: para
-			ele a replica ja avisa sozinha, pelo `OnChange`.
+			`Update` is the only write path to the profile (the replica's `Set` only happens
+			in there), so server code that needs to react to a change listens here instead
+			of watching the profile. The client does not need this: for it the replica
+			already notifies on its own, through `OnChange`.
 		]]
 		DataUpdated = Signal.new(),
 	}
@@ -65,25 +67,25 @@ local function reconcileTemplate(data, template)
 end
 
 --[=[
-	O perfil foi tomado por outro servidor (ou a sessão caiu) com o jogador ainda
-	aqui. Daqui em diante nada do que ele fizesse seria salvo — o perfil já não é
-	deste servidor —, então ele sai, com o aviso para entrar de novo.
+	The profile was taken by another server (or the session dropped) with the player
+	still here. From now on nothing they did would be saved (the profile no longer
+	belongs to this server), so they are removed, with a message to rejoin.
 
-	Quem costuma tomar é a sessão curta do `ProfileEditService` (comando de admin
-	num jogador que acabou de entrar) ou o jogador entrando em outro servidor antes
-	de este soltar o perfil.
+	What usually takes it is `ProfileEditService`'s short session (an admin command on a
+	player who just joined) or the player joining another server before this one
+	released the profile.
 ]=]
 local SESSION_LOST_MESSAGE = "Your data was opened somewhere else. Please rejoin."
 
--- Quanto o `CreatePlayer` espera a sessão curta do `ProfileEditService` soltar a
--- chave antes de tentar mesmo assim.
+-- How long `CreatePlayer` waits for `ProfileEditService`'s short session to release
+-- the key before trying anyway.
 local OFFLINE_SESSION_WAIT = 20
 
 function DataService:construct()
 	self.Profiles = {}
 
-	-- `{ [UserId] = true }` enquanto o `ProfileEditService` segura o perfil de alguém
-	-- que não está no servidor. Ver `CreatePlayer`.
+	-- `{ [UserId] = true }` while `ProfileEditService` holds the profile of someone
+	-- who is not on the server. See `CreatePlayer`.
 	self.OfflineSessions = {}
 	self.Packages = {
 		ReplicaToken = Replica.Token("PlayerData"),
@@ -99,9 +101,9 @@ function DataService:CreatePlayer(Player : Player)
 	local profileKey = "Player_" .. Player.UserId
 
 	--[[
-		O ProfileStore recusa abrir a mesma chave duas vezes no mesmo servidor: se um
-		comando de admin está com o perfil deste jogador aberto numa sessão curta,
-		espera ela fechar (é questão de segundos).
+		ProfileStore refuses to open the same key twice on the same server: if an admin
+		command has this player's profile open in a short session, wait for it to close (a
+		matter of seconds).
 	]]
 	local deadline = os.clock() + OFFLINE_SESSION_WAIT
 	while self.OfflineSessions[Player.UserId] and os.clock() < deadline do
@@ -110,8 +112,8 @@ function DataService:CreatePlayer(Player : Player)
 
 	local Session = self.Packages.ProfileManager:StartSessionAsync(profileKey) :: typeof(ProfileStore.New():StartSessionAsync())
 
-	-- Saiu enquanto o perfil carregava: solta na hora, senão a sessão fica presa
-	-- até o servidor fechar e o jogador não entra em outro.
+	-- Left while the profile loaded: release immediately, or the session stays stuck
+	-- until the server closes and the player cannot join another.
 	if Session ~= nil and Player.Parent ~= Players then
 		Session:EndSession()
 		return
@@ -137,8 +139,8 @@ function DataService:CreatePlayer(Player : Player)
 			Profile = ReplicaProfile,
 			Session = Session,
 
-			-- `true` quando quem fecha é o `Destroy` (saída normal), para o
-			-- `OnSessionEnd` não confundir com perfil tomado.
+			-- `true` when `Destroy` is what closes it (normal leave), so `OnSessionEnd`
+			-- does not mistake it for a taken profile.
 			Releasing = false,
 		}
 		self.Profiles[Player] = entry
@@ -148,13 +150,13 @@ function DataService:CreatePlayer(Player : Player)
 				return
 			end
 
-			-- No desligamento o próprio ProfileStore fecha todas as sessões; aí quem
-			-- solta o jogador é o `BindToClose`, com os callbacks de saída rodando.
+			-- On shutdown ProfileStore itself closes every session; then `BindToClose`
+			-- releases the player, with the leave callbacks running.
 			if ProfileStore.IsClosing then
 				return
 			end
 
-			warn(string.format("[DataService]: a sessao de %s acabou com ele no servidor; expulsando.", Player.Name))
+			log:Warn(string.format("the session for %s ended while they were in the server; kicking.", Player.Name))
 
 			self.Profiles[Player] = nil
 			entry.Profile:Destroy()
@@ -162,9 +164,9 @@ function DataService:CreatePlayer(Player : Player)
 		end)
 
 		--[[
-			Edições de admin que chegam por mensagem (`ProfileEditService`): as que
-			estavam esperando no perfil e as que chegarem com ele aberto. Com espera
-			no `Get` porque o service pode ainda não ter subido na primeira leva.
+			Admin edits arriving by message (`ProfileEditService`): those waiting on the
+			profile and those that arrive while it is open. `Get` waits because the service
+			may not be up yet on the first batch.
 		]]
 		Session:MessageHandler(function(message, processed)
 			local editor = Framework:Get("ProfileEditService", false, true)
@@ -173,7 +175,7 @@ function DataService:CreatePlayer(Player : Player)
 			end
 		end)
 
-		print("Player User data has been loaded", self.Profiles[Player])
+		log:Debug("profile loaded for", Player.Name)
 		self.Signals.PlayerDataLoaded:Fire(Player)
 	end
 end
@@ -235,18 +237,18 @@ function DataService:Get(Player : Player, callbackFunc)
 end
 
 --[=[
-	Registra algo para acontecer com o perfil ainda aberto, no instante anterior
-	ao fechamento da sessao. O mesmo gancho do `DataService` da Game.
+	Registers something to happen with the profile still open, right before the session
+	closes. The same hook as Game's `DataService`.
 
-	Todo caminho de saida passa pelo `Destroy`: o `PlayerRemoving` de quem sai
-	sozinho e o `BindToClose` do desligamento do servidor. Registrar aqui cobre os
-	dois de uma vez e nao depende da ordem em que os services conectaram o proprio
-	`PlayerRemoving` -- o que fosse escrito depois do `EndSession` se perderia.
+	Every exit path goes through `Destroy`: the `PlayerRemoving` of a player who leaves
+	and the server shutdown's `BindToClose`. Registering here covers both at once and does
+	not depend on the order in which services connected their own `PlayerRemoving`:
+	anything written after `EndSession` would be lost.
 
-	`order` (0 por padrao) e para quem precisa **ler** o perfil depois de todo
-	mundo que ainda escreve nele: rodam do menor para o maior, e na ordem de
-	registro dentro do mesmo numero. O `LeaderboardService` usa 1 para pegar o
-	perfil ja com o tempo de jogo final do `PlaytimeService`.
+	`order` (0 by default) is for code that needs to **read** the profile after everyone
+	else that still writes to it: they run lowest to highest, in registration order within
+	the same number. `LeaderboardService` uses 1 to get the profile with
+	`PlaytimeService`'s final playtime already in.
 ]=]
 function DataService:OnBeforeRelease(callback : (Player) -> (), order : number?)
 	if not self.BeforeRelease then
@@ -272,12 +274,12 @@ function DataService:Destroy(Player : Player)
 	local entry = self.Profiles[Player]
 	if not entry then return end
 
-	-- Um pcall por callback: erro em qualquer um deles nao pode impedir a sessao
-	-- de fechar, senao o perfil fica preso e o jogador nao entra em outro servidor.
+	-- One pcall per callback: an error in any of them must not stop the session from
+	-- closing, or the profile stays stuck and the player cannot join another server.
 	for _, hook in self.BeforeRelease or {} do
 		local ok, err = pcall(hook.Callback, Player)
 		if not ok then
-			warn(string.format("[DataService]: callback de saida falhou para %s: %s", Player.Name, tostring(err)))
+			log:Warn(string.format("leave callback failed for %s: %s", Player.Name, tostring(err)))
 		end
 	end
 
@@ -289,7 +291,7 @@ end
 
 function DataService:Update(Player : Player, Key : string, callbackFunc)
 	if not self.Profiles[Player] then
-		warn(string.format("Attempted to update data for %s, but profile is not loaded!", Player.Name))
+		log:Warn(string.format("attempted to update data for %s, but the profile is not loaded.", Player.Name))
 		return
 	end
 
@@ -298,7 +300,7 @@ function DataService:Update(Player : Player, Key : string, callbackFunc)
 
 	local editedData = callbackFunc(currentData)
 	if editedData == nil then
-		warn(string.format("Update callback for %s returned nil; keeping existing data.", Key))
+		log:Warn(string.format("update callback for %s returned nil; keeping the existing data.", Key))
 		return currentData
 	end
 
@@ -309,22 +311,21 @@ function DataService:Update(Player : Player, Key : string, callbackFunc)
 end
 
 --[=[
-	Grava o perfil agora, em vez de esperar o autosave do ProfileStore.
+	Saves the profile now, instead of waiting for ProfileStore's autosave.
 
-	Quem precisa disto e o `ProcessReceipt` do `MonetizationService`: ele so devolve
-	`PurchaseGranted` depois que o que foi comprado esta **no disco**. Sem isso, um
-	servidor que caisse entre a compra e o autosave cobraria o jogador e perderia a
-	entrega -- e o `PurchaseHistory`, que e o que impede a compra de ser creditada duas
-	vezes, some junto.
+	`MonetizationService`'s `ProcessReceipt` needs this: it only returns
+	`PurchaseGranted` after what was bought is **on disk**. Without it, a server crashing
+	between the purchase and the autosave would charge the player and lose the delivery,
+	and `PurchaseHistory`, which keeps the purchase from being credited twice, goes with
+	it.
 
-	Devolve `false` quando nao ha perfil aberto ou quando a gravacao falhou, e e por
-	isso que ela e um `pcall`: o receipt volta como `NotProcessedYet` e a Roblox tenta
-	de novo, que e melhor do que confirmar uma entrega que nao ficou gravada.
+	Returns `false` when there is no open profile or when the save failed, which is why
+	it is a `pcall`: the receipt comes back as `NotProcessedYet` and Roblox retries, which
+	beats confirming a delivery that was not saved.
 
-	Existia so na Game ate agora, porque nenhum developer product tinha sido vendido
-	ainda. O primeiro deles (o reroll da loja de cartas) e do **Lobby**, e sem este
-	metodo o `ProcessReceipt` erraria aqui dentro: nenhuma compra seria creditada, em
-	nenhuma das duas places.
+	Both places need it: developer products are sold in the Lobby too (the card shop
+	reroll is one), and without this method `ProcessReceipt` would error in here and no
+	purchase would be credited.
 ]=]
 function DataService:Save(Player : Player)
 	local entry = self.Profiles[Player]

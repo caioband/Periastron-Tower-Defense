@@ -33,26 +33,21 @@ local Maid = require(Vendor.Maid)
 local Promise = require(Packages.Promise)
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("UnitPlacementController")
 local Player = Players.LocalPlayer
 
 local LERP_SPEED = 14
--- Teto do encosta-no-chao de `replicatePlacedUnit`. Um stud cobre a diferenca de
--- escala entre o fantasma e a unidade de verdade; acima disso o "acerto" seria a
--- unidade mudando de lugar por conta propria.
+-- Cap on `replicatePlacedUnit`'s snap-to-ground. One stud covers the scale difference
+-- between the ghost and the real unit; beyond that the "fix" would be the unit moving
+-- somewhere else on its own.
 local MAX_GROUND_SNAP = 1
 local VALID_COLOR = Color3.fromRGB(0, 255, 0)
 local INVALID_COLOR = Color3.fromRGB(255, 0, 0)
 local COLOR_LERP_SPEED = 10
 
--- Log de posicionamento: so no Studio, para nao poluir o console de producao.
-local IS_STUDIO = RunService:IsStudio()
-
-local function placementPrint(...)
-	if not IS_STUDIO then return end
-	print("[UnitPlacement]", ...)
-end
 
 local function formatVector(v : Vector3?)
 	if not v then return "nil" end
@@ -60,31 +55,30 @@ local function formatVector(v : Vector3?)
 end
 
 --[=[
-	A superficie que o raycast do posicionamento acertou, para o log: caminho
-	completo e classe.
+	The surface the placement raycast hit, for the log: full path and class.
 
-	A classe vai junto porque `GetFullName` sozinho nao distingue uma Part de um
-	MeshPart nem, principalmente, avisa que o alvo e o proprio `Terrain` -- que e
-	um acerto comum, ja que boa parte dos mapas tem chao esculpido, e que aparece
-	como uma instancia so para o mapa inteiro.
+	The class goes along because `GetFullName` alone does not distinguish a Part from a
+	MeshPart nor, above all, say the target is `Terrain` itself, which is a common hit,
+	since many maps have sculpted ground, and shows up as a single instance for the
+	whole map.
 ]=]
 local function describeSurface(instance : Instance?) : string
 	if not instance then
-		return "nada (o ponteiro nao acertou superficie nenhuma)"
+		return "nothing (the pointer hit no surface)"
 	end
 
 	return string.format("%s (%s)", instance:GetFullName(), instance.ClassName)
 end
 
 --[=[
-	`base` mais o personagem de todo jogador que estiver no servidor.
+	`base` plus the character of every player on the server.
 
-	E a lista de exclusao do teste generico de obstrucao: personagem nao entra nele,
-	porque quem responde por personagem e o `FindBlockingCharacter` -- com a caixa da
-	unidade inteira e com a regra de pular acessorio, que e o que o servidor tambem
-	faz. Duas listas em vez de uma porque o raycast do chao continua excluindo so o
-	fantasma e o proprio jogador: mirar em cima de outro jogador ainda apoia o
-	fantasma nele, e e o `FindBlockingCharacter` que pinta aquilo de vermelho.
+	It is the exclusion list for the generic obstruction test: characters are not part of
+	it, because `FindBlockingCharacter` answers for characters, with the whole unit's box
+	and the rule of skipping accessories, which is what the server does too. Two lists
+	instead of one because the ground raycast still excludes only the ghost and the player
+	themself: aiming on top of another player still rests the ghost on them, and
+	`FindBlockingCharacter` is what paints that red.
 ]=]
 local function characterFilter(base : { Instance }) : { Instance }
 	local list = table.clone(base)
@@ -100,12 +94,12 @@ local function characterFilter(base : { Instance }) : { Instance }
 end
 
 --[=[
-	O grupo de colisao do fantasma, ou `nil` se ele ainda nao existir aqui.
+	The ghost's collision group, or `nil` if it does not exist here yet.
 
-	Quem registra e o `CollisionService`, no servidor, e o registro replica. Perguntar
-	antes de escrever e o que separa "o servico nao subiu" de um erro no meio do
-	posicionamento: `CollisionGroup` com nome nao registrado estoura, e estourar aqui
-	levaria o fantasma inteiro junto.
+	`CollisionService` registers it, on the server, and registration replicates. Asking
+	before writing is what separates "the service did not start" from an error mid
+	placement: a `CollisionGroup` with an unregistered name errors, and erroring here
+	would take the whole ghost with it.
 ]=]
 local function getGhostCollisionGroup() : string?
 	local group = PlacementUtil.GhostCollisionGroup
@@ -118,41 +112,40 @@ local function getGhostCollisionGroup() : string?
 		return group
 	end
 
-	placementPrint("grupo de colisao", group, "nao registrado; fantasma so com CanCollide = false")
+	log:Debug("collision group", group, "is not registered; the ghost relies on CanCollide = false only")
 
 	return nil
 end
 
 --[=[
-	O Humanoid do fantasma, injetado na hora quando o rig nao traz um.
+	The ghost's Humanoid, injected on the spot when the rig does not ship one.
 
-	Os rigs das unidades sao R6 montados a mao -- MeshParts penduradas por Motor6D
-	numa HumanoidRootPart ancorada -- e nenhum deles guarda um Humanoid: quem toca a
-	animacao da unidade de verdade e o `AnimationController` que a classe `Unit`
-	cria, e o rig parado nao precisa de nada alem das juntas.
+	The unit rigs are hand-built R6 (MeshParts hung by Motor6D on an anchored
+	HumanoidRootPart) and none of them keeps a Humanoid: the real unit's animation is
+	played by the `AnimationController` the `Unit` class creates, and the idle rig needs
+	nothing beyond its joints.
 
-	O fantasma precisa. Por um bug antigo da engine, Highlight nao renderiza em part
-	transparente quando o modelo nao tem Humanoid -- e o fantasma e meio transparente
-	por natureza. Sem ele o modelo aparece nas cores normais e some justamente o
-	verde/vermelho que diz se da para colocar ali.
+	The ghost does. Because of an old engine bug, Highlight does not render on transparent
+	parts when the model has no Humanoid, and the ghost is semi-transparent by nature.
+	Without it the model shows in its normal colors and exactly the green/red that says
+	whether placement is allowed disappears.
 
-	Entao ele entra calado. `EvaluateStateMachine = false` porque e a maquina de
-	estado quem manda na colisao de um personagem: ao entrar num estado novo
-	(Running, Landed...) ela religa o `CanCollide` do torso e desfaz o laco de
-	`visualize`. E os dois displays saem para o nome do modelo e a barra de vida nao
-	flutuarem sobre o fantasma, que e o unico rastro que um Humanoid recem-criado
-	deixaria na tela.
+	So it goes in quietly. `EvaluateStateMachine = false` because the state machine rules
+	a character's collision: on entering a new state (Running, Landed...) it turns the
+	torso's `CanCollide` back on and undoes `visualize`'s loop. And both displays are
+	removed so the model name and health bar do not float over the ghost, the only trace
+	a freshly created Humanoid would leave on screen.
 ]=]
 local function prepareGhostHumanoid(ghost : Model) : Humanoid
 	local humanoid = ghost:FindFirstChildOfClass("Humanoid") or Instance.new("Humanoid")
 
-	-- Tudo configurado antes de parentear: e o parenteamento no workspace que
-	-- dispara a primeira avaliacao, e ela ja tem que achar a maquina desligada.
+	-- Everything configured before parenting: parenting into the workspace is what
+	-- triggers the first evaluation, and it must already find the machine off.
 	humanoid.EvaluateStateMachine = false
 	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 	humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
-	-- O rig nao e personagem: nao ha pescoco a vigiar nem morte a encenar, e um
-	-- Humanoid que se der por morto desmonta as juntas e derruba o fantasma.
+	-- The rig is not a character: there is no neck to watch or death to act out, and a
+	-- Humanoid that thinks it died breaks the joints and drops the ghost.
 	humanoid.RequiresNeck = false
 	humanoid.BreakJointsOnDeath = false
 	humanoid.Parent = ghost
@@ -168,22 +161,22 @@ local RING_SPIN_SPEED = 40
 local DOTTED_LINE_SPIN_SPEED = 25
 local SELECT_SCALE = 1.3
 
--- O nome do realce amarelo do atordoamento. Ele e procurado pelo nome quando uma
--- carta tira o atordoamento antes da hora -- ver o `UnitCleansed` no `construct`.
+-- The name of the yellow stun highlight. It is looked up by name when a card
+-- removes the stun early; see `UnitCleansed` in `construct`.
 local STUN_HIGHLIGHT = "StunHighlight"
 
--- Como o caminho fica marcado enquanto o jogador posiciona uma unidade.
+-- How the path is marked while the player places a unit.
 local GRID_PREVIEW_COLOR = Color3.fromRGB(255, 0, 0)
 local GRID_PREVIEW_MATERIAL = Enum.Material.Neon
 
 --[[
-	A entrada e em cascata, e o que se configura e o TEMPO TOTAL dela — nao o
-	intervalo entre parts. O intervalo sai da divisao pela quantidade de parts do
-	mapa carregado, entao a animacao dura o mesmo no Default (5 parts) e no
-	Mountain (206), em vez de esticar de 0.25s para 10s conforme o mapa.
+	The entrance is a cascade, and what is configured is its TOTAL TIME, not the interval
+	between parts. The interval comes from dividing by the loaded map's part count, so the
+	animation lasts the same on Default (5 parts) and Mountain (206), instead of stretching
+	from 0.25s to 10s depending on the map.
 
-	GRID_PAINT_TOTAL_TIME conta do inicio ate a ultima part terminar de ficar
-	vermelha, ou seja, ja inclui o tween final.
+	GRID_PAINT_TOTAL_TIME counts from the start until the last part finishes turning red,
+	so it already includes the final tween.
 ]]
 local GRID_PAINT_TOTAL_TIME = 0.75
 local GRID_PAINT_TIME = 0.25
@@ -196,11 +189,11 @@ local function getPaintStagger(count : number)
 end
 
 --[[
-	Aparencia original das parts do caminho, guardada na primeira vez que cada uma
-	e pintada e devolvida quando o posicionamento acaba.
+	The path parts' original appearance, stored the first time each one is painted and
+	restored when placement ends.
 
-	Chaves fracas: o mapa pode ser trocado entre rounds, e as parts do mapa antigo
-	nao devem ficar presas aqui.
+	Weak keys: the map can change between rounds, and the old map's parts must not stay
+	stuck here.
 ]]
 local gridOriginals = setmetatable({}, { __mode = "k" })
 
@@ -211,14 +204,16 @@ local function invalidateGridParts()
 end
 
 --[[
-	Parts do caminho do mapa que esta carregado, e so dele.
+	The path parts of the loaded map, and only that map.
 
-	O escopo e o clone que o MapService coloca em `workspace.Map`. `GetTagged("Grid")`
-	sozinho devolve tambem as parts dos outros mapas, que seguem em
-	ReplicatedStorage — hoje sao mais de 500 no total, de cinco mapas.
+	The scope is the clone MapService puts in `workspace.Map`. Maps live in
+	ServerStorage, so the client only ever sees the loaded one; scoping to
+	`workspace.Map` keeps that true even if other tagged parts ever replicate.
 
-	O resultado e calculado uma vez por mapa e reaproveitado em todo
-	posicionamento; o cache cai no RoundRestarted, quando o mapa pode ter mudado.
+	The result is computed once per map and reused for every placement; the cache drops
+	on RoundRestarted, when the map may have changed.
+
+	See docs/game/unit-placement.md.
 ]]
 local function getWorldGridParts()
 	if cachedGridParts then
@@ -234,8 +229,8 @@ local function getWorldGridParts()
 		end
 	end
 
-	-- Sem o mapa em workspace a lista pode estar incompleta (replicacao a caminho),
-	-- entao ela nao e guardada — senao um vazio ficaria congelado para sempre.
+	-- Without the map in workspace the list may be incomplete (replication on the way),
+	-- so it is not stored; otherwise an empty list would stay frozen forever.
 	if mapRoot then
 		cachedGridParts = parts
 	end
@@ -243,8 +238,8 @@ local function getWorldGridParts()
 	return parts
 end
 
--- Cascata em andamento e os tweens de cor vivos, para poder cortar os dois na
--- hora em que o jogador larga a unidade.
+-- The cascade in progress and the live color tweens, so both can be cut the moment
+-- the player drops the unit.
 local gridPaintThread = nil
 local gridTweens = {}
 
@@ -260,14 +255,14 @@ local function stopGridPaint()
 	end
 end
 
--- Acende uma part: Material de uma vez, cor por tween.
+-- Lights a part: Material at once, color by tween.
 local function paintOneGridPart(part)
 	if not part.Parent then
 		return
 	end
 
-	-- Capturado no momento em que a part entra: quem a cascata ainda nao
-	-- alcancou continua intocado e sem snapshot.
+	-- Captured the moment the part goes in: parts the cascade has not reached yet
+	-- stay untouched and without a snapshot.
 	if not gridOriginals[part] then
 		gridOriginals[part] = { material = part.Material, color = part.Color }
 	end
@@ -290,17 +285,17 @@ local function paintOneGridPart(part)
 end
 
 --[[
-	Acende o caminho em cascata: cada part troca para Neon e puxa a cor ate o
-	vermelho por tween, escalonadas para caber em GRID_PAINT_TOTAL_TIME.
+	Lights the path in a cascade: each part switches to Neon and pulls its color to red by
+	tween, staggered to fit GRID_PAINT_TOTAL_TIME.
 
-	O avanco e por tempo decorrido, e nao um `task.wait(intervalo)` por part. Com
-	107 parts em 0.75s o intervalo da ~0.005s, bem abaixo de um frame — e
-	`task.wait` sempre gasta um frame inteiro, o que faria a cascata levar 107
-	frames (~1.8s) em vez dos 0.75s pedidos. Aqui cada frame pinta todas as parts
-	cujo horario ja chegou, o que tambem e o que produz a sensacao de batch.
+	It advances by elapsed time, not a `task.wait(interval)` per part. With 107 parts in
+	0.75s the interval is ~0.005s, well below a frame, and `task.wait` always spends a
+	whole frame, which would make the cascade take 107 frames (~1.8s) instead of the
+	requested 0.75s. Here each frame paints every part whose time has come, which is also
+	what produces the batch feel.
 
-	O Material nao da para interpolar (e enum), entao ele troca de uma vez no
-	instante em que a part entra — e isso que a faz "acender". So a cor anda.
+	Material cannot be interpolated (it is an enum), so it switches at once the instant
+	the part goes in: that is what makes it "light up". Only the color moves.
 ]]
 local function paintGridParts(parts)
 	stopGridPaint()
@@ -334,10 +329,10 @@ local function paintGridParts(parts)
 end
 
 --[[
-	Volta tudo de uma vez, sem tween.
+	Restores everything at once, without a tween.
 
-	A cascata e os tweens de cor sao cortados primeiro: um tween sobrevivente
-	continuaria escrevendo Color depois da restauracao e deixaria a part vermelha.
+	The cascade and the color tweens are cut first: a surviving tween would keep writing
+	Color after the restore and leave the part red.
 ]]
 local function restoreGridParts(parts)
 	stopGridPaint()
@@ -395,23 +390,23 @@ local function tweenRingOut(ring)
 end
 
 --[[
-	Altura do chao debaixo de um ponto.
+	The ground height under a point.
 
-	As parts do caminho contam como chao aqui, e nao sao filtradas: elas sao o piso
-	visivel da trilha. Ignora-las fazia o raio atravessar o trilho e parar no bloco
-	de baixo — uma unidade aceita no ar (na quina de uma ponte, na face de uma
-	pedra) era entao DESENHADA de pe em cima do caminho, longe do CFrame que o
-	servidor guardou e usa para mirar.
+	Path parts count as ground here and are not filtered: they are the trail's visible
+	floor. Ignoring them would make the ray pass through the track and stop at the block
+	below: a unit accepted in mid-air (on a bridge corner, on the face of a rock) would
+	then be DRAWN standing on the path, far from the CFrame the server stored and aims
+	from.
 ]]
 local function raycastGroundY(position : Vector3, excludeInstances : {Instance}?)
 	local raycastParams = RaycastParams.new()
 	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 	raycastParams.FilterDescendantsInstances = excludeInstances or {}
 
-	-- O raio parte do proprio ponto, nao de um ponto acima dele: o que interessa e
-	-- o chao EMBAIXO da unidade. Comecando la em cima, a primeira coisa atingida
-	-- passa a ser qualquer coisa que estiver por cima — a copa de uma arvore, uma
-	-- saliencia de rocha — e a unidade era erguida ate la.
+	-- The ray starts from the point itself, not above it: what matters is the ground
+	-- BELOW the unit. Starting up high, the first thing hit becomes whatever is
+	-- above (a tree canopy, a rock ledge) and the unit would be lifted
+	-- up there.
 	local result = workspace:Raycast(position, Vector3.new(0, -1000, 0), raycastParams)
 	if result then
 		return result.Position.Y
@@ -421,88 +416,85 @@ local function raycastGroundY(position : Vector3, excludeInstances : {Instance}?
 end
 
 --[[
-	Controles de posicionamento para quem joga no toque.
+	Placement controls for touch players.
 
-	No PC o fluxo inteiro cabe no mouse: o fantasma segue o cursor, R gira e o
-	clique confirma. No celular nao ha cursor para seguir nem tecla para girar, e
-	confirmar no proprio toque seria pior ainda -- o dedo tapa justamente o ponto
-	onde a unidade vai nascer, e o jogador colocaria a torre sem ver o circulo de
-	alcance nem a cor do fantasma.
+	On PC the whole flow fits in the mouse: the ghost follows the cursor, R rotates, and
+	the click confirms. On mobile there is no cursor to follow nor key to rotate, and
+	confirming on the tap itself would be even worse: the finger covers exactly the spot
+	where the unit will be born, and the player would place the tower without seeing the
+	range circle or the ghost's color.
 
-	Entao o toque no mapa so MOVE o fantasma, e a confirmacao vem daqui. Os botoes
-	ficam no canto direito: o canto esquerdo de baixo e o direcional de movimento
-	do Roblox e o centro de baixo e a barra de cartas.
+	So a tap on the map only MOVES the ghost, and confirmation comes from here. The
+	buttons sit in the right corner: the bottom-left corner is Roblox's movement
+	thumbstick and the bottom center is the card bar.
 
-	Tudo aqui e em escala, nao em pixel: a mesma medida em offset que da um botao
-	confortavel num tablet vira um alvo minusculo num celular estreito. Os limites
-	de tamanho existem so para os extremos -- um alvo de toque nao pode encolher
-	abaixo do dedo nem virar um cartaz numa tela grande.
+	Everything here is in scale, not pixels: the same offset measurement that makes a
+	comfortable button on a tablet becomes a tiny target on a narrow phone. The size
+	limits only exist for the extremes: a touch target must not shrink below a finger nor
+	become a poster on a large screen.
 ]]
---[[ POSICIONAMENTO NO CELULAR ]]
+--[[ MOBILE PLACEMENT ]]
 
 --[[
-	O painel `ROTATE`/`PLACE`/`CANCEL` que ficava no canto direito saiu.
+	Mobile placement controls live in the shared `MobileButtons` cluster, next to `DASH`
+	and `RUN`, plus one gesture:
 
-	Ele custava caro em tela -- um retangulo de ~190px de altura em cima do mapa,
-	justamente onde o jogador precisa enxergar o fantasma e o circulo de alcance --
-	e falava um idioma que nao era o do resto dos controles de toque do jogo. No
-	lugar dele ficaram dois circulos no mesmo cluster do `DASH` e do `RUN`
-	(`MobileButtons`), e a confirmacao virou um gesto.
+	| Action | How |
+	| `ROTATE` | the `ROTATE` button in the cluster |
+	| place | two taps on the ghost |
+	| cancel | tap the equipped card again |
+	| lock the ghost | the `LOCK` button |
 
-	| antes | agora |
-	| `ROTATE` no painel | botao `ROTATE` no cluster |
-	| `PLACE` no painel | dois toques no fantasma |
-	| `CANCEL` no painel | tocar de novo a carta equipada |
-	| (nao existia) | botao `LOCK` |
+	A dedicated panel would cost screen space (a tall rectangle over the map, right where
+	the player needs to see the ghost and the range circle) and speak a different
+	language from the game's other touch controls.
 
-	O aviso de "nao da para colocar aqui" era a cor do botao `PLACE`; agora e so o
-	Highlight do fantasma, que ja pintava de verde e vermelho o tempo todo.
+	"You cannot place here" is the ghost's Highlight, which already paints green and red
+	the whole time.
 ]]
 
---- Nomes no cluster. Constantes porque registrar e desregistrar sao dois lugares.
+--- Names in the cluster. Constants because registering and unregistering are two places.
 local ROTATE_BUTTON = "Rotate"
 local LOCK_BUTTON = "Lock"
 
---- A acao do `ContextActionService` que toma o arrasto da camera.
+--- The `ContextActionService` action that takes over the camera drag.
 local TOUCH_ACTION = "UnitPlacementTouch"
 
 --[[
-	Acima da camera.
+	Above the camera.
 
-	O pan de toque da camera padrao e ligado pelo `PlayerModule` por
-	`ContextActionService`, entao ganhar dela e uma questao de prioridade -- e nao
-	de desligar modulo nenhum, que quebraria o dia em que a Roblox trocar o
-	`PlayerModule` por baixo.
+	The default camera's touch pan is bound by `PlayerModule` through
+	`ContextActionService`, so beating it is a matter of priority, not of disabling any
+	module, which would break the day Roblox changes `PlayerModule` underneath.
 ]]
 local TOUCH_ACTION_PRIORITY = Enum.ContextActionPriority.High.Value
 
 --[[
-	Um toque so vira "tap" se o dedo mal andou e saiu rapido -- os mesmos numeros do
-	`PointerUtil`, repetidos aqui porque la eles sao locais e a conta de double tap
-	e feita neste arquivo.
+	A touch only becomes a "tap" if the finger barely moved and lifted quickly: the same
+	numbers as `PointerUtil`, repeated here because there they are local and the double
+	tap math is done in this file.
 ]]
 local TAP_MAX_MOVEMENT = 20
 local TAP_MAX_DURATION = 0.6
 
 --[[
-	O que separa dois toques de um double tap: tem de ser rapido e no mesmo lugar.
+	What separates two taps from a double tap: it must be quick and in the same place.
 
-	`DOUBLE_TAP_RADIUS` e o que impede o jogador de colocar a unidade sem querer
-	enquanto so reposiciona. Destravado, o primeiro toque ja leva o fantasma para
-	onde o dedo encostou -- entao "os dois toques perto um do outro" e exatamente a
-	mesma coisa que "os dois toques no fantasma", so que medida sem depender de o
-	fantasma ja ter chegado la (ele persegue o alvo por lerp, e no quadro do toque
-	ainda esta a caminho).
+	`DOUBLE_TAP_RADIUS` is what keeps the player from placing the unit by accident while
+	only repositioning. Unlocked, the first tap already takes the ghost to where the finger
+	touched, so "the two taps close to each other" is exactly the same as "the two taps
+	on the ghost", just measured without depending on the ghost having arrived (it chases
+	the target by lerp, and on the tap's frame it is still on its way).
 ]]
 local DOUBLE_TAP_WINDOW = 0.45
 local DOUBLE_TAP_RADIUS = 55
 
 --[[
-	Quao perto do fantasma um toque tem de cair para contar como "nele", em pixels.
+	How close to the ghost a tap must land to count as "on it", in pixels.
 
-	So vale travado, que e quando o toque nao move mais nada e o double tap precisa
-	mesmo mirar. A medida sai do tamanho do fantasma na tela (ele muda com a
-	distancia da camera), com um piso confortavel para o dedo.
+	It only applies when locked, which is when the tap moves nothing and the double tap
+	really has to aim. The measure comes from the ghost's on-screen size (it changes with
+	camera distance), with a comfortable floor for the finger.
 ]]
 local GHOST_TAP_MIN_RADIUS = 60
 
@@ -528,8 +520,8 @@ UnitPlacementController.unitDottedLines = {}
 UnitPlacementController.dottedLineData = {}
 UnitPlacementController.scaleTweens = {}
 UnitPlacementController.isPlacing = false
--- Dano total por unitId. Guardado fora do modelo porque o lote do servidor pode
--- chegar antes de `ReplicateUnit` criar a unidade.
+-- Total damage per unitId. Kept outside the model because the server batch may
+-- arrive before `ReplicateUnit` creates the unit.
 UnitPlacementController.damageDoneById = {}
 
 function UnitPlacementController:getGroundExcludeList(extra)
@@ -620,21 +612,20 @@ function UnitPlacementController:deselectCurrent()
 end
 
 --[=[
-	Alcance de uma unidade com o clima do momento aplicado.
+	A unit's range with the current weather applied.
 
-	O circulo no chao tem que mostrar o alcance de verdade: durante a neblina a
-	unidade procura alvo num raio menor, e um circulo desenhado no alcance seco
-	prometeria uma cobertura que ela nao tem. E a mesma funcao que o servidor usa,
-	so que com o clima que este cliente esta vendo.
+	The circle on the ground must show the real range: during fog the unit looks for
+	targets in a smaller radius, and a circle drawn at the dry range would promise
+	coverage it does not have. It is the same function the server uses, just with the
+	weather this client is seeing.
 ]=]
 --[=[
-	O alcance de uma unidade como o servidor o calcula: a tabela, com o clima, vezes
-	o que as cartas de round estao fazendo com ele.
+	A unit's range as the server computes it: the table, with weather, times what round
+	cards are doing to it.
 
-	`position` e `unitId` sao o que uma carta de area precisa para responder -- o
-	anel do Staff of the Winds so vale para quem esta dentro dele. Sem eles (o
-	fantasma do posicionamento, que ainda nao esta em lugar nenhum) so entram os
-	modificadores que nao dependem de onde a unidade esta.
+	`position` and `unitId` are what an area card needs to answer: the Staff of the Winds
+	ring only applies to units inside it. Without them (the placement ghost, which is not
+	anywhere yet) only modifiers that do not depend on where the unit is apply.
 ]=]
 function UnitPlacementController:getUnitRange(unitName : string, upgrades : number, position : Vector3?, unitId : string?) : number
 	local weatherController = self.Controllers.WeatherController
@@ -651,10 +642,10 @@ function UnitPlacementController:getUnitRange(unitName : string, upgrades : numb
 end
 
 --[=[
-	Refaz o circulo da unidade selecionada a partir do alcance atual dela.
+	Redoes the selected unit's circle from its current range.
 
-	Chamado quando o alcance muda por baixo do jogador — um upgrade comprado ou uma
-	troca de clima. Sem unidade selecionada (ou sem circulo na tela) nao faz nada.
+	Called when range changes under the player: an upgrade bought or a weather change.
+	With no unit selected (or no circle on screen) it does nothing.
 ]=]
 function UnitPlacementController:resizeSelectionRing()
 	local unitModel = self.selectedUnit
@@ -808,16 +799,16 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 	unit.Parent = workspace
 
 	--[[
-		Encosta a unidade no chao. O ajuste e de acerto fino: o cliente calcula a
-		altura do fantasma com o modelo em escala reduzida, entao a unidade de
-		tamanho cheio nasce uns 20 cm enterrada.
+		Snaps the unit to the ground. The adjustment is fine-tuning: the client computes the
+		ghost's height with the model at a reduced scale, so the full-size unit is born
+		about 20 cm buried.
 
-		Dai o teto: quem manda na posicao e o servidor, e um "acerto" de metros nao
-		e acerto nenhum — e a unidade indo parar em outro lugar. Acontecia quando o
-		raio saia de dentro de alguma geometria (a quina da ponte em que a unidade
-		foi largada): sem nada para acertar por perto, ele descia ate o chao la
-		embaixo e a unidade era desenhada de pe no meio do caminho, enquanto o
-		servidor continuava mirando a partir de onde ela foi largada de verdade.
+		Hence the cap: the server rules the position, and a "fix" of meters is no fix at
+		all: it is the unit ending up somewhere else. That happens when the ray starts
+		inside some geometry (the bridge corner the unit was dropped on): with nothing to
+		hit nearby, it goes down to the ground far below and the unit is drawn standing in
+		the middle of the path, while the server keeps aiming from where it was really
+		dropped.
 	]]
 	local boundsCF, boundsSize = unit:GetBoundingBox()
 	local bottomY = boundsCF.Position.Y - boundsSize.Y / 2
@@ -825,8 +816,8 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 	if groundSurfaceY then
 		local lift = groundSurfaceY - bottomY
 		if math.abs(lift) > MAX_GROUND_SNAP then
-			placementPrint(unitName, "correcao de chao ignorada:", string.format("%.2f studs", lift),
-				"maior que o limite de", string.format("%.2f", MAX_GROUND_SNAP))
+			log:Debug(unitName, "ground correction skipped:", string.format("%.2f studs", lift),
+				"is above the limit of", string.format("%.2f", MAX_GROUND_SNAP))
 			groundSurfaceY = bottomY
 		elseif math.abs(lift) > 0.001 then
 			unit:PivotTo((CF or CFrame.new()) + Vector3.new(0, lift, 0))
@@ -837,9 +828,9 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 
 	local unitPos = unit:GetPivot().Position
 
-	placementPrint(unitName, "unidade posicionada em", formatVector(unitPos),
-		"(CFrame do servidor:", formatVector(CF and CF.Position) .. ")",
-		"dono", ownerUserId, "unitId", unitId)
+	log:Debug(unitName, "unit placed at", formatVector(unitPos),
+		"(server CFrame:", formatVector(CF and CF.Position) .. ")",
+		"owner", ownerUserId, "unitId", unitId)
 
 	local DottedLine = UIAssets.AOE.DottedLine:Clone()
 	local dottedPivot = DottedLine:GetPivot()
@@ -851,10 +842,10 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 		blueCircle.CFrame = CFrame.new(unitPos.X, groundSurfaceY + blueCircle.Size.X / 2, unitPos.Z) * CFrame.Angles(0, 0, math.pi / 2)
 
 		--[[
-			O disco azul e a marca de "esta e sua": ele fica aceso o tempo todo, fora
-			do liga-desliga que a linha pontilhada leva na selecao. So faz sentido
-			embaixo das unidades deste jogador — no chao de uma partida cheia, um
-			disco embaixo de cada unidade de cada um vira ruido e some com a marca.
+			The blue disc is the "this one is yours" mark: it stays lit the whole time,
+			outside the on/off the dotted line gets on selection. It only makes sense under
+			this player's units: on the ground of a full match, a disc under every unit of
+			every player becomes noise and erases the mark.
 		]]
 		if not isOwner then
 			blueCircle.Transparency = 1
@@ -886,13 +877,13 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 	class.upgrades = upgrades or 0
 	unit:SetAttribute("UnitID", unitId)
 	unit:SetAttribute("Upgrades", upgrades or 0)
-	-- A prioridade viaja em atributo pelo mesmo motivo que o nivel: quem precisa
-	-- dela — o card, que escreve o nome no botao, e o TargetingController, que gira
-	-- a unidade — le do modelo, sem passar por controller nenhum.
+	-- Priority travels in an attribute for the same reason as level: its consumers
+	-- (the card, which writes the name on the button, and TargetingController, which
+	-- turns the unit) read it from the model, without going through any controller.
 	unit:SetAttribute("TargetPriority", TargetPriority.Get(priority))
 	unit:SetAttribute("Owned", class.isOwner)
-	-- Total de dano da unidade; o servidor atualiza por `UnitDamageStats` e o card
-	-- de upgrade escuta o atributo.
+	-- The unit's total damage; the server updates it through `UnitDamageStats` and the
+	-- upgrade card listens to the attribute.
 	unit:SetAttribute("DamageDone", self.damageDoneById[unitId] or 0)
 	self.createdClasses[unit] = class
 	self.classesById[unitId] = class
@@ -908,13 +899,13 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 	end
 
 	--[[
-		Quem nasce no meio de um clima (ou dentro do anel de um cajado) ja nasce com o
-		realce e a billboard dele.
+		A unit born in the middle of a weather (or inside a staff's ring) is born with its
+		highlight and billboard already.
 
-		O `unitId` viaja junto: o feedback em cima da unidade precisa saber qual torre
-		e qual para acender uma carta de alvo unico (o Bloxiade numa torre so) na torre
-		certa. Ele vem daqui em vez de ser lido de volta do `createdClasses` para nao
-		fechar um ciclo entre os dois controllers.
+		The `unitId` travels along: the feedback over the unit needs to know which tower is
+		which to light a single-target card (Bloxiade on one tower) on the right tower. It
+		comes from here instead of being read back from `createdClasses` to avoid closing a
+		cycle between the two controllers.
 	]]
 	if self.Controllers.WeatherFeedbackController then
 		self.Controllers.WeatherFeedbackController:Register(unit, unitId)
@@ -924,29 +915,28 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 end
 
 --[=[
-	O fantasma que segue o ponteiro: o modelo da unidade em meio-tom, verde onde ela
-	pode ficar e vermelho onde nao pode, com o anel de alcance e o caminho pintado.
+	The ghost that follows the pointer: the unit model in half-tone, green where it can go
+	and red where it cannot, with the range ring and the painted path.
 
-	`options` deixa o mesmo fantasma servir a quem nao esta colocando uma unidade
-	nova. Ele existe para o Zippers, a carta que **muda uma torre de lugar**: o
-	destino dela passa exatamente pelas mesmas conferencias de um posicionamento
-	novo, e reescrever essas conferencias na carta era garantir que as duas
-	respostas divergissem na primeira vez que uma delas mudasse.
+	`options` lets the same ghost serve callers that are not placing a new unit. It exists
+	for Zippers, the card that **moves a tower**: its destination goes through exactly the
+	same checks as a new placement, and rewriting those checks in the card would
+	guarantee the two answers diverge the first time one of them changed.
 
-	| campo | o que faz |
+	| field | what it does |
 	| --- | --- |
-	| `IgnoreModel` | a torre que esta sendo movida: ela sai do raycast, da obstrucao e da distancia minima, senao o destino seria recusado por ela mesma |
-	| `Range` | alcance do anel; sem isto e o da tabela, sem upgrade nem carta |
-	| `Rotation` | giro inicial do fantasma, em graus |
-	| `OnConfirm(cf)` | roda no lugar do `PlaceUnit`, com o fantasma ja recolhido |
-	| `OnCancel()` | roda no lugar do desequipar da hotbar de unidades |
+	| `IgnoreModel` | the tower being moved: it leaves the raycast, obstruction, and minimum distance, or the destination would be refused by the tower itself |
+	| `Range` | the ring's range; without it, the table's, with no upgrade or card |
+	| `Rotation` | the ghost's initial rotation, in degrees |
+	| `OnConfirm(cf)` | runs instead of `PlaceUnit`, with the ghost already put away |
+	| `OnCancel()` | runs instead of unequipping from the unit hotbar |
 
-	Sem `options` nada disto muda: e o posicionamento de sempre, com a carta de
-	unidade equipada.
+	Without `options` none of this changes: it is the usual placement, with the unit card
+	equipped.
 ]=]
 function UnitPlacementController:visualize(unitName : string, options : { [string] : any }?)
 	if self.isPlacing then
-		placementPrint(unitName, "nao pode posicionar: ja existe um fantasma ativo")
+		log:Debug(unitName, "cannot place: a ghost is already active")
 		return
 	end
 
@@ -954,7 +944,7 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	local ignoreModel = options.IgnoreModel
 	local unitModel = Units:FindFirstChild(unitName)
 	if not unitModel then
-		placementPrint(unitName, "nao pode posicionar: modelo nao existe em Assets.Units")
+		log:StudioWarn(unitName, "cannot place: the model does not exist in Assets.Units")
 		return
 	end
 	self.isPlacing = true
@@ -964,44 +954,42 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	local ghost = unitModel:Clone()
 
 	--[[
-		O Zippers entra com o giro que a torre ja tem: quem so quer muda-la de lugar
-		nao deve precisar reencontrar a direcao dela no R, e um fantasma comecando no
-		zero viraria toda torre movida para o mesmo lado.
+		Zippers starts with the tower's current rotation: someone who only wants to move it
+		should not have to find its direction again with R, and a ghost starting at zero
+		would turn every moved tower the same way.
 	]]
 	local currentRotation = options.Rotation or 0
 	local currentColor = VALID_COLOR
 	local canPlace = false
-	-- Guardado so para o log do Studio dizer o motivo do bloqueio.
-	local blockReason = "ponteiro fora de qualquer superficie"
+	-- Kept only so the Studio log can say why placement is blocked.
+	local blockReason = "pointer is off every surface"
 
 	--[[
-		A superficie em que o fantasma esta apoiado, so para o log de quando a
-		unidade e enviada.
+		The surface the ghost is resting on, only for the log when the unit is sent.
 
-		Anda junto com o `targetCF`: os dois so mudam dentro do `if raycastResult`,
-		entao o que o log diz e a superficie daquele CFrame, e nao a ultima que o
-		ponteiro tocou por acaso.
+		It moves with `targetCF`: both only change inside `if raycastResult`, so what the
+		log says is that CFrame's surface, not the last one the pointer happened to touch.
 	]]
 	local groundInstance : Instance? = nil
 
 	--[[
-		No toque o fantasma segue o dedo enquanto ele estiver na tela, e fica onde
-		parou quando ele sai. Destravado, arrastar posiciona; travado, arrastar volta
-		a ser da camera e o fantasma nao sai do lugar.
+		On touch the ghost follows the finger while it is on the screen, and stays where it
+		stopped when it lifts. Unlocked, dragging positions; locked, dragging goes back to
+		the camera and the ghost does not move.
 
-		Ele nasce no centro da tela porque e para la que a camera esta olhando -- o
-		jogador ve a unidade e o circulo de alcance de cara, em vez de um fantasma
-		perdido na origem do mundo enquanto nao encosta na tela.
+		It is born at the center of the screen because that is where the camera is looking:
+		the player sees the unit and the range circle right away, instead of a ghost lost at
+		the world origin until they touch the screen.
 	]]
 	local isTouch = PointerUtil.isTouchOnly()
 	local touchTarget : Vector2? = if isTouch then workspace.CurrentCamera.ViewportSize / 2 else nil
 
 	--[[
-		O `LOCK`. Comeca solto: a primeira coisa que o jogador faz e escolher o lugar,
-		e travar antes disso seria pedir um toque a mais para comecar.
+		`LOCK`. It starts unlocked: the first thing the player does is choose the spot, and
+		locking before that would ask for one more tap to get started.
 
-		`lockedPosition` e o que o `LOCK` de fato congela: a posicao no **mundo**, e
-		nao o ponto da tela. Enquanto ela existir o fantasma nao e remirado.
+		`lockedPosition` is what `LOCK` actually freezes: the position in the **world**, not
+		the screen point. While it exists the ghost is not re-aimed.
 	]]
 	local ghostLocked = false
 	local lockedPosition : Vector3? = nil
@@ -1010,24 +998,24 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	ghost:ScaleTo(scale * 0.8)
 
 	--[[
-		O fantasma nao colide com nada, e isso custa tres cuidados.
+		The ghost collides with nothing, and that takes three safeguards.
 
-		**O grupo de colisao** e quem resolve de verdade: part num grupo declarado
-		nao-colidivel com todos os outros nao colide, ponto. Quem registra o grupo e o
-		`CollisionService`, no servidor -- `RegisterCollisionGroup` nao roda no
-		cliente. Registro que nao chegou nao vira erro: o fantasma so fica com os
-		outros dois cuidados, que e como ele vinha antes do grupo existir.
+		**The collision group** is what really solves it: a part in a group declared
+		non-collidable with all the others does not collide, period. `CollisionService`
+		registers the group, on the server: `RegisterCollisionGroup` does not run on the
+		client. A registration that has not arrived is not an error: the ghost just keeps
+		the other two safeguards.
 
-		**O `CanCollide = false`** continua sendo feito, como plano B do acima.
+		**`CanCollide = false`** is still applied, as the fallback for the above.
 
-		**O Humanoid** e cuidado do `prepareGhostHumanoid`: os rigs de hoje nao trazem
-		um, e sem Humanoid o Highlight nao pinta part transparente -- o fantasma
-		ficaria sem o verde/vermelho. Ele entra com a maquina de estado desligada,
-		antes de o modelo ir para o workspace.
+		**The Humanoid** is `prepareGhostHumanoid`'s job: today's rigs ship none, and without
+		a Humanoid the Highlight does not paint transparent parts, leaving the ghost without
+		its green/red. It goes in with the state machine off, before the model goes into the
+		workspace.
 
-		As perguntas de posicionamento nao mudam de resposta por causa do grupo: elas
-		sao feitas com `OverlapParams` no grupo `Default`, e e o grupo do *params* que
-		vale, nao o da part consultada.
+		The placement queries do not change their answers because of the group: they run
+		with `OverlapParams` in the `Default` group, and it is the *params*' group that
+		counts, not the queried part's.
 	]]
 	local ghostHumanoid = prepareGhostHumanoid(ghost)
 
@@ -1037,10 +1025,10 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		if descendant:IsA("BasePart") then
 			descendant.CanCollide = false
 
-			-- Part invisivel continua invisivel. A HumanoidRootPart dos rigs novos e
-			-- uma caixa opaca de 0.76 stud que so nao aparece porque esta em
-			-- Transparency = 1; pintada de 0.5 ela vira um bloco dentro do fantasma,
-			-- estourando pelo torso das unidades mais magras.
+			-- An invisible part stays invisible. The new rigs' HumanoidRootPart is an
+			-- opaque 0.76-stud box that only does not show because it is at
+			-- Transparency = 1; painted at 0.5 it becomes a block inside the ghost,
+			-- bursting through the torso of the thinner units.
 			if descendant.Transparency < 1 then
 				descendant.Transparency = 0.5
 			end
@@ -1052,13 +1040,13 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	end
 
 	--[[
-		A animacao nao depende da maquina de estado: quem toca a faixa e o Animator,
-		e a faixa e pedida na mao aqui.
+		The animation does not depend on the state machine: the Animator plays the track,
+		and the track is requested by hand here.
 
-		O Animator vai no Humanoid injetado, e nao num `AnimationController` como faz
-		a classe `Unit`. Os dois tocam igual, e o Humanoid ja esta ali de qualquer
-		forma pelo Highlight -- somar um AnimationController seria um segundo dono de
-		faixa no mesmo modelo, sem nada em troca.
+		The Animator goes on the injected Humanoid, not an `AnimationController` as the
+		`Unit` class does. Both play the same, and the Humanoid is already there anyway for
+		the Highlight: adding an AnimationController would be a second track owner on the
+		same model, with nothing in return.
 	]]
 	local animator = ghostHumanoid:FindFirstChildWhichIsA("Animator") or Instance.new("Animator")
 	animator.Parent = ghostHumanoid
@@ -1082,12 +1070,12 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	local ghostBoundsCF, ghostBoundsSize = unitModel:GetBoundingBox()
 	local unitSizeX = ghostBoundsSize.X
 	--[[
-		Altura do chao antes do primeiro movimento do mouse, so para o anel nascer
-		na altura certa -- a partir dai quem manda e o raycast do loop la embaixo.
+		Ground height before the first mouse move, only so the ring is born at the right
+		height; from then on the raycast in the loop below rules.
 
-		Media pelo chao debaixo do proprio jogador em vez de uma part fixa: o mapa
-		e clonado em runtime pelo MapService e cada um tem o seu, entao nao existe
-		uma `workspace.GroundPart` para ler (era o que estourava aqui).
+		Measured by the ground under the player instead of a fixed part: the map is cloned at
+		runtime by MapService and each map has its own, so there is no
+		`workspace.GroundPart` to read.
 	]]
 	local character = Player.Character
 	local characterPosition = character and character:GetPivot().Position
@@ -1110,8 +1098,8 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 
 	local targetRingScale = placementRing:GetScale()
 	placementRing:ScaleTo(0.001)
-	-- Nasce debaixo do jogador, nao no centro do mundo: o loop so reposiciona o anel
-	-- quando o mouse acerta alguma superficie.
+	-- Born under the player, not at the world center: the loop only repositions the ring
+	-- when the mouse hits some surface.
 	local ringOrigin = characterPosition or Vector3.zero
 	placementRing:PivotTo(CFrame.new(ringOrigin.X, groundSurfaceY + placementRing:GetExtentsSize().Y / 2, ringOrigin.Z))
 	placementRing.Parent = workspace.CurrentCamera
@@ -1133,8 +1121,8 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		ringScaleValue:Destroy()
 	end)
 
-	-- Nome distinto de proposito: o loop de validacao la embaixo tem o proprio
-	-- `gridParts`, que e o resultado de um GetPartsInPart e nao tem relacao.
+	-- A distinct name on purpose: the validation loop below has its own
+	-- `gridParts`, which is the result of a GetPartsInPart and unrelated.
 	local paintedGridParts = getWorldGridParts()
 	paintGridParts(paintedGridParts)
 
@@ -1145,8 +1133,8 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	local halfHeight = ghostExtentsSize.Y / 2
 
 	local gridProbe = Instance.new("Part")
-	-- Tamanho vem do `PathProbe`, igual ao do servidor: a caixa da unidade mais a
-	-- coluna de ar debaixo dela. O CFrame e reposto a cada teste, la embaixo.
+	-- The size comes from `PathProbe`, like the server's: the unit's box plus the
+	-- air column below it. The CFrame is reset on every test, below.
 	local _, gridProbeSize = PlacementUtil.PathProbe(CFrame.new(), ghostBoundsSize)
 	gridProbe.Size = gridProbeSize
 	gridProbe.Anchored = true
@@ -1173,34 +1161,33 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		end
 
 		--[[
-			A torre que esta sendo movida sai da mira junto com o fantasma. Ela ainda
-			esta de pe no lugar velho, e sem isto o raycast pararia nela -- o jogador
-			nao conseguiria apontar para o chao debaixo da propria torre, e o teste de
-			obstrucao a acusaria de obstruir a si mesma.
+			The tower being moved leaves the aim along with the ghost. It is still standing
+			at the old spot, and without this the raycast would stop on it: the player could
+			not point at the ground under their own tower, and the obstruction test would
+			accuse it of obstructing itself.
 		]]
 		if ignoreModel and ignoreModel.Parent then
 			table.insert(filterList, ignoreModel)
 		end
 		raycastParams.FilterDescendantsInstances = filterList
 
-		-- No mouse a mira e onde o cursor esta agora; no toque e onde o dedo encostou
-		-- por ultimo, que so muda quando o jogador toca de novo.
+		-- With a mouse the aim is where the cursor is now; on touch it is where the finger
+		-- last touched, which only changes when the player touches again.
 		local pointerPosition = if isTouch then touchTarget else PointerUtil.getScreenPosition()
 
 		--[=[
-			Travado, o fantasma deixa de ser remirado: a posicao dele vira uma ancora no
-			**mundo**.
+			Locked, the ghost stops being re-aimed: its position becomes an anchor in the
+			**world**.
 
-			A mira e um ponto de **tela**, e o raio sai da camera -- que anda com o
-			jogador. Sem esta guarda, travar so parava o dedo: bastava o jogador dar dois
-			passos para o mesmo ponto da tela cair noutro lugar do mapa, e a unidade
-			escorregava junto -- exatamente o que o `LOCK` existe para impedir.
+			The aim is a **screen** point, and the ray comes from the camera, which moves
+			with the player. Without this guard, locking would only stop the finger: two
+			steps by the player would make the same screen point land elsewhere on the map,
+			and the unit would slide along, exactly what `LOCK` exists to prevent.
 
-			A validacao continua rodando sobre a ancora, e nao e desperdicio: o mundo
-			muda debaixo de um fantasma parado (outra torre nasce ao lado, alguem para em
-			cima do lugar) e o Highlight tem de acompanhar. O giro tambem continua
-			valendo, porque o `targetCF` e remontado a cada quadro a partir da ancora
-			mais o `currentRotation`.
+			Validation keeps running on the anchor, and it is not wasted: the world changes
+			under a still ghost (another tower is born next to it, someone stands on the
+			spot) and the Highlight must follow. Rotation also still applies, because
+			`targetCF` is rebuilt every frame from the anchor plus `currentRotation`.
 		]=]
 		local raycastResult = nil
 		if not lockedPosition and pointerPosition then
@@ -1237,24 +1224,24 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 				local reason = ""
 
 				if onGrid then
-					reason = string.format("em cima do caminho (%d part(s) de Grid ate %d studs abaixo, primeira: %s)",
+					reason = string.format("on the path (%d Grid part(s) within %d studs below, first: %s)",
 						#gridParts, PlacementUtil.PathClearance, gridParts[1]:GetFullName())
 				end
 
 				if not onGrid then
 					--[[
-						Personagem nenhum entra neste teste -- nem o do proprio jogador,
-						nem o dos outros. Quem responde por eles e o `FindBlockingCharacter`
-						logo abaixo, e a caixa dele e a da unidade inteira: tudo que este
-						teste pegaria num corpo, aquele ja pega, e com a regra certa.
+						No character enters this test, neither the player's nor the others'.
+						`FindBlockingCharacter` just below answers for them, and its box is the
+						whole unit's: everything this test would catch on a body, that one
+						already catches, and with the right rule.
 
-						A regra que faltava aqui era a do acessorio. Chapeu e asa saem
-						metros fora do corpo e sao parts consultaveis como qualquer outra,
-						entao o chapeu de quem passasse perto pintava o fantasma de vermelho
-						-- num lugar que o servidor aceitaria, porque la o unico teste de
-						personagem e o `FindBlockingCharacter`, que pula acessorio de
-						proposito. Fantasma vermelho e servidor aprovando e exatamente a
-						divergencia que o `PlacementUtil` existe para evitar.
+						The rule that matters here is the accessory one. Hats and wings stick out
+						meters past the body and are queryable parts like any other, so the hat
+						of someone walking by would paint the ghost red, on a spot the server
+						would accept, because there the only character test is
+						`FindBlockingCharacter`, which skips accessories on purpose. A red ghost
+						with the server approving is exactly the divergence `PlacementUtil`
+						exists to prevent.
 					]]
 					local overlapParams = OverlapParams.new()
 					overlapParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -1270,25 +1257,24 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 				end
 
 				--[[
-					Personagem e caso a parte porque o teste generico acima nao o pega:
-					ele roda so na HumanoidRootPart do fantasma (uns 0,6 stud) e ainda
-					pula a part que o raycast acertou -- que, mirando num jogador, e
-					justamente o corpo dele. Aqui a caixa e a da unidade inteira, e o
-					proprio jogador conta: colocar uma torre dentro de si mesmo tambem
-					nao vale.
+					Characters are a separate case because the generic test above does not catch
+					them: it runs only on the ghost's HumanoidRootPart (about 0.6 stud) and also
+					skips the part the raycast hit, which, when aiming at a player, is exactly
+					their body. Here the box is the whole unit's, and the player themself counts:
+					placing a tower inside yourself is not allowed either.
 				]]
 				if not onGrid and not isObstructed then
 					local blockingCharacter = PlacementUtil.FindBlockingCharacter(ghostCFrameNow, ghostBoundsSize)
 					if blockingCharacter then
 						isObstructed = true
-						reason = "em cima do personagem " .. blockingCharacter:GetFullName()
+						reason = "on top of character " .. blockingCharacter:GetFullName()
 					end
 				end
 
 				if not onGrid and not isObstructed then
 					for placedUnit, _ in pairs(self.createdClasses) do
-						-- O mesmo `ignoreEntry` do `UnitService:isSpotFree` la no servidor:
-						-- uma torre nunca esta perto demais de si mesma.
+						-- The same `ignoreEntry` as `UnitService:isSpotFree` on the server:
+						-- a tower is never too close to itself.
 						if placedUnit == ignoreModel then continue end
 
 						local placedPos = placedUnit:GetPivot().Position
@@ -1298,7 +1284,7 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 						local dist = (Vector3.new(placedPosition.X, 0, placedPosition.Z) - Vector3.new(placedPos.X, 0, placedPos.Z)).Magnitude
 						if dist < minDist then
 							isObstructed = true
-							reason = string.format("perto demais de %s: %.2f studs (minimo %.2f)", placedUnit.Name, dist, minDist)
+							reason = string.format("too close to %s: %.2f studs (minimum %.2f)", placedUnit.Name, dist, minDist)
 							break
 						end
 					end
@@ -1341,46 +1327,46 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	end
 
 	--[[
-		Larga a unidade onde o fantasma esta. Vive numa funcao propria porque tem
-		duas portas de entrada: o clique do mouse no PC e o botao do painel de toque.
+		Drops the unit where the ghost is. It lives in its own function because it has two
+		entry points: the mouse click on PC and the double tap on touch.
 	]]
 	local function confirmPlacement()
 		if not self.isPlacing then return end
 
 		if not canPlace then
-			placementPrint(unitName, "nao pode posicionar aqui:", blockReason ~= "" and blockReason or "motivo desconhecido",
-				"fantasma em", formatVector(targetCF.Position))
+			log:Debug(unitName, "cannot place here:", blockReason ~= "" and blockReason or "unknown reason",
+				"ghost at", formatVector(targetCF.Position))
 			return
 		end
 
 		--[[
-			Vai `targetCF`, e nao `ghostCF`: o fantasma persegue o alvo por lerp, entao
-			ele quase nunca esta exatamente onde a mira aponta. Quem foi validado pelo
-			teste de caminho e de sobreposicao foi o alvo, e e ele que tem que chegar
-			ao servidor -- o lerp existe so para a unidade nao teleportar na tela.
+			It sends `targetCF`, not `ghostCF`: the ghost chases the target by lerp, so it is
+			almost never exactly where the aim points. The target is what was validated by the
+			path and overlap tests, and it is what must reach the server; the lerp only
+			exists so the unit does not teleport on screen.
 
-			No mouse a diferenca era invisivel porque o cursor fica parado sobre o
-			ponto e o fantasma alcanca antes do clique. No toque nao: o dedo toca e ja
-			aperta COLOCAR, com o fantasma ainda a caminho, e a unidade nascia no meio
-			do trajeto.
+			With a mouse the difference is invisible because the cursor stays on the point
+			and the ghost catches up before the click. On touch it is not: the finger confirms
+			with the ghost still on its way, and the unit would be born midway.
 		]]
-		placementPrint(unitName, "fantasma enviado ao servidor em", formatVector(targetCF.Position),
-			"| apoiado em", describeSurface(groundInstance))
+		log:Debug(unitName, "ghost sent to the server at", formatVector(targetCF.Position),
+			"| resting on", describeSurface(groundInstance))
 
 		--[[
-			O CFrame e congelado **antes** da limpeza, e o aviso sai **depois** dela.
+			The CFrame is frozen **before** the cleanup, and the notification goes out
+			**after** it.
 
-			Quem recebe o `OnConfirm` costuma desmontar a propria mira no mesmo passo
-			(o Zippers manda a carta e fecha o alvo, e o fechamento chama o `unequip`
-			daqui). Avisando antes, isso cairia no meio deste corpo -- o maid seria
-			destruido duas vezes e o `ghost` ja teria sumido quando a limpeza chegasse
-			nele.
+			Whoever receives `OnConfirm` usually tears down its own aiming in the same step
+			(Zippers sends the card and closes the target, and closing calls this
+			`unequip`). Notifying first, that would land in the middle of this body: the maid
+			would be destroyed twice and `ghost` would already be gone when the cleanup got to
+			it.
 		]]
 		local placedCF = targetCF
 		local onConfirm = options.OnConfirm
 
-		-- A devolucao da aparencia do caminho fica a cargo do maid, logo
-		-- abaixo: um dono so para os dois caminhos de saida.
+		-- Restoring the path's appearance is left to the maid, just
+		-- below: a single owner for both exit paths.
 		placementRing:Destroy()
 		ringScaleValue:Destroy()
 		self.isPlacing = false
@@ -1398,14 +1384,14 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	end
 
 	--[[
-		Desiste da unidade em mao. No PC isso e clicar de novo na carta; no toque a
-		carta fica atras do fantasma e do painel, entao o painel tem a propria saida.
+		Gives up the unit in hand. On both PC and touch it is clicking or tapping the
+		equipped card again; this is the shared exit.
 	]]
 	local function cancelPlacement()
 		--[[
-			Quem entrou por `options` tem a propria saida: a carta continua na mao do
-			jogador e quem a solta e o `RoundCardShopController`. Mexer na hotbar de
-			unidades aqui desequiparia uma carta de unidade que nem esta equipada.
+			Callers that came in through `options` have their own exit: the card stays in the
+			player's hand and `RoundCardShopController` releases it. Touching the unit hotbar
+			here would unequip a unit card that is not even equipped.
 		]]
 		if options.OnCancel then
 			options.OnCancel()
@@ -1432,16 +1418,16 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		local mobileButtons = Framework:Get("MobileButtons")
 
 		--[=[
-			Se o toque comecou em cima de alguma interface.
+			Whether the touch started on top of some interface.
 
-			O `ContextActionService` entrega o toque mesmo quando ele caiu num botao,
-			entao a pergunta tem de ser feita na mao -- sem isto, apertar `ROTATE`
-			teleportaria o fantasma para debaixo do proprio botao.
+			`ContextActionService` delivers the touch even when it landed on a button, so the
+			question has to be asked by hand: without this, pressing `ROTATE` would teleport
+			the ghost under the button itself.
 
-			A posicao vai **crua**: `GetGuiObjectsAtPosition` responde no espaco da
-			interface, que e o de `InputObject.Position`. Converter aqui erraria por uma
-			GuiInset. `GuiButton` cobre os botoes e `Active` cobre o resto que intercepta
-			toque (o direcional do Roblox, o card de upgrade).
+			The position goes **raw**: `GetGuiObjectsAtPosition` answers in interface space,
+			which is `InputObject.Position`'s. Converting here would be off by a GuiInset.
+			`GuiButton` covers the buttons and `Active` covers the rest that intercepts touch
+			(Roblox's thumbstick, the upgrade card).
 		]=]
 		local function isOverInterface(rawPosition : Vector2) : boolean
 			local playerGui = Player:FindFirstChildOfClass("PlayerGui")
@@ -1457,15 +1443,15 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		end
 
 		--[=[
-			Se um toque caiu em cima do fantasma.
+			Whether a tap landed on the ghost.
 
-			So e perguntado com o fantasma travado -- destravado, o primeiro toque do par
-			ja levou o fantasma para la e a proximidade entre os dois toques responde a
-			mesma pergunta sem depender do lerp.
+			It is only asked with the ghost locked: unlocked, the pair's first tap already
+			took the ghost there, and the closeness between the two taps answers the same
+			question without depending on the lerp.
 
-			O raio acompanha o tamanho do fantasma na tela: a mesma unidade ocupa muito
-			mais pixels com a camera perto, e um raio fixo seria generoso de longe e
-			apertado de perto. A medida sai da altura da caixa dele projetada.
+			The radius follows the ghost's on-screen size: the same unit takes far more
+			pixels with the camera close, and a fixed radius would be generous from afar and
+			tight up close. The measure comes from its box's projected height.
 		]=]
 		local function tapHitsGhost(rawPosition : Vector2) : boolean
 			if not ghost or not ghost.Parent then return false end
@@ -1485,12 +1471,12 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		local lastTapPosition : Vector2? = nil
 
 		--[=[
-			Fecha (ou comeca) um par de toques.
+			Closes (or starts) a pair of taps.
 
-			O segundo toque so coloca a unidade se veio rapido, no mesmo lugar do
-			primeiro, e -- travado -- em cima do fantasma. Depois de colocar, o par e
-			esquecido: sem isso um terceiro toque emendaria num quarto e o gesto
-			continuaria valendo depois de a unidade ja ter nascido.
+			The second tap only places the unit if it came quickly, in the same place as the
+			first, and (when locked) on the ghost. After placing, the pair is forgotten:
+			without that a third tap would chain into a fourth and the gesture would keep
+			counting after the unit was already born.
 		]=]
 		local function registerTap(rawPosition : Vector2)
 			local now = os.clock()
@@ -1511,9 +1497,8 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		end
 
 		--[[
-			O dedo que esta mandando agora. Guardado por identidade para um segundo
-			dedo na tela nao sequestrar o arrasto no meio -- o mesmo cuidado que o
-			arrasto do card de upgrade toma.
+			The finger in charge now. Stored by identity so a second finger on the screen
+			does not hijack the drag midway: the same care the upgrade card's drag takes.
 		]]
 		local activeInput : InputObject? = nil
 		local startPosition = Vector2.zero
@@ -1528,7 +1513,7 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 			local raw = Vector2.new(input.Position.X, input.Position.Y)
 
 			if state == Enum.UserInputState.Begin then
-				-- Ja ha um dedo no comando, ou este comecou num botao: nao e nosso.
+				-- A finger is already in charge, or this one started on a button: not ours.
 				if activeInput or isOverInterface(raw) then
 					return Enum.ContextActionResult.Pass
 				end
@@ -1565,9 +1550,9 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 			activeInput = nil
 
 			--[[
-				Arrasto nao e toque. Quem arrastou ja disse o que queria enquanto
-				arrastava (o fantasma seguiu o dedo), e deixar isso contar como tap faria
-				um arrasto de ida e volta virar meio double tap.
+				A drag is not a tap. Whoever dragged already said what they wanted while
+				dragging (the ghost followed the finger), and letting that count as a tap would
+				turn a back-and-forth drag into half a double tap.
 			]]
 			local wasTap = maxMovement <= TAP_MAX_MOVEMENT
 				and (os.clock() - startClock) <= TAP_MAX_DURATION
@@ -1603,17 +1588,17 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 					mobileButtons:setActive(LOCK_BUTTON, ghostLocked)
 
 					--[[
-						Trava onde o fantasma **ja foi validado**, e nao onde o dedo esta: o
-						`targetCF` e o que passou pelos testes de caminho e de sobreposicao e
-						o que seria enviado ao servidor. Congelar a mira em vez dele deixaria
-						a ancora um lerp atras do que o jogador ve.
+						Locks where the ghost **was already validated**, not where the finger is:
+						`targetCF` is what passed the path and overlap tests and what would be
+						sent to the server. Freezing the aim instead would leave the anchor a lerp
+						behind what the player sees.
 					]]
 					lockedPosition = if ghostLocked then targetCF.Position else nil
 
 					--[[
-						Travar no meio de um arrasto solta o dedo que estava mandando: sem
-						isso o `Change` seguinte ainda cairia no ramo de quem tem o comando e
-						o jogador teria de levantar o dedo para a trava valer.
+						Locking mid-drag releases the finger in charge: without that the next
+						`Change` would still land in the in-charge branch and the player would have
+						to lift the finger for the lock to take effect.
 					]]
 					activeInput = nil
 				end,
@@ -1648,13 +1633,12 @@ function UnitPlacementController:unequip()
 end
 
 --[=[
-	Larga tudo que o jogador tinha em mao: o fantasma que segue o mouse, a unidade
-	selecionada (com anel, linha pontilhada e painel de upgrade) e a carta equipada
-	na hotbar.
+	Drops everything the player had in hand: the ghost following the mouse, the selected
+	unit (with ring, dotted line, and upgrade panel), and the equipped hotbar card.
 
-	O fantasma e um Model no workspace, nao GUI — desligar a Interface no fim do
-	round nao o faz sumir, ele continuaria seguindo o mouse por cima da tela de
-	resultado. Por isso a limpeza e explicita.
+	The ghost is a Model in the workspace, not GUI: disabling the Interface at the end of
+	the round does not make it disappear; it would keep following the mouse over the
+	results screen. That is why the cleanup is explicit.
 ]=]
 function UnitPlacementController:clearInteraction()
 	self:unequip()
@@ -1667,17 +1651,17 @@ function UnitPlacementController:clearInteraction()
 end
 
 --[=[
-	Destroi a linha pontilhada de todas as unidades: o fim do round.
+	Destroys every unit's dotted line: the end of the round.
 
-	E o par do laco do `RemoveUnit`, para quando nao ha um `unitId` para procurar.
-	As linhas moram na `CurrentCamera`, que sobrevive ao round, e quem as destroi e
-	aquele evento -- que no fim da partida so chega no `ResetRound`, junto com o
-	round seguinte. Ate la elas ficavam na Camera, ja invisiveis (a tela de
-	resultado chama o `clearInteraction`, que apaga a da torre selecionada),
-	ocupando instancia por nada.
+	It is the pair of `RemoveUnit`'s loop, for when there is no `unitId` to look for. The
+	lines live in `CurrentCamera`, which survives the round, and that event destroys them,
+	which at match end only arrives with `ResetRound`, along with the next round. Until
+	then they would stay in the Camera, already invisible (the results screen calls
+	`clearInteraction`, which clears the selected tower's), taking up instances for
+	nothing.
 
-	O modelo da torre nao e tocado de proposito: ele continua no mapa atras da tela
-	de resultado, e quem o derruba e o `RemoveUnit` do `ResetRound`.
+	The tower model is not touched on purpose: it stays on the map behind the results
+	screen, and `ResetRound`'s `RemoveUnit` takes it down.
 ]=]
 function UnitPlacementController:clearAllDottedLines()
 	for unitModel, dottedLine in self.unitDottedLines do
@@ -1690,7 +1674,7 @@ function UnitPlacementController:clearAllDottedLines()
 	table.clear(self.unitDottedLines)
 	table.clear(self.dottedLineData)
 
-	-- O giro era da linha da torre selecionada, e ela acabou de ser destruida.
+	-- The rotation was the selected tower's line, and it was just destroyed.
 	if self.dottedLineSpinConn then
 		self.dottedLineSpinConn:Disconnect()
 		self.dottedLineSpinConn = nil
@@ -1716,11 +1700,11 @@ function UnitPlacementController:flashUpgrade(unitModel)
 end
 
 --[=[
-	O que esta debaixo do ponteiro, no mundo. O personagem do proprio jogador fica de
-	fora: ele anda pelo mapa e taparia a torre atras dele.
+	What is under the pointer, in the world. The player's own character is left out: it
+	walks around the map and would hide the tower behind it.
 
-	Devolve o `RaycastResult`, ou nil quando o raio nao encosta em nada -- o ceu, a
-	beirada do mapa.
+	Returns the `RaycastResult`, or nil when the ray touches nothing (the sky, the edge of
+	the map).
 ]=]
 function UnitPlacementController:raycastFromPointer(screenPosition : Vector2) : RaycastResult?
 	local pointerRay = workspace.CurrentCamera:ViewportPointToRay(screenPosition.X, screenPosition.Y)
@@ -1734,7 +1718,7 @@ function UnitPlacementController:raycastFromPointer(screenPosition : Vector2) : 
 	return workspace:Raycast(pointerRay.Origin, pointerRay.Direction * 1000, raycastParams)
 end
 
---- A unidade colocada a que esta peca pertence, ou nil.
+--- The placed unit this part belongs to, or nil.
 function UnitPlacementController:findUnitAt(instance : Instance?) : Model?
 	if not instance then return nil end
 
@@ -1748,11 +1732,11 @@ function UnitPlacementController:findUnitAt(instance : Instance?) : Model?
 end
 
 --[=[
-	A unidade que o ponteiro esta apontando: o modelo e o `unitId` dela.
+	The unit the pointer is aiming at: its model and `unitId`.
 
-	Existe para as cartas de round que pedem uma torre (o Bloxy Cola, o Bloxiade, o
-	Zippers). Elas precisam do **id**, que e o que o servidor entende, e ele mora na
-	classe da unidade -- que e deste controller, e nao do modelo.
+	It exists for the round cards that ask for a tower (Bloxy Cola, Bloxiade, Zippers).
+	They need the **id**, which is what the server understands, and it lives in the unit's
+	class, which belongs to this controller, not the model.
 ]=]
 function UnitPlacementController:getUnitAtPointer(screenPosition : Vector2)
 	local hit = self:raycastFromPointer(screenPosition)
@@ -1765,19 +1749,19 @@ function UnitPlacementController:getUnitAtPointer(screenPosition : Vector2)
 end
 
 --[=[
-	Tranca (ou destranca) o clique no mundo.
+	Locks (or unlocks) clicking in the world.
 
-	Enquanto uma carta de round esta pedindo um alvo, o clique pertence a ela: a
-	selecao de torre sai da frente e volta quando a mira termina ou e cancelada.
+	While a round card is asking for a target, the click belongs to it: tower selection
+	gets out of the way and returns when aiming ends or is canceled.
 ]=]
 function UnitPlacementController:setPointerLocked(locked : boolean)
 	self.pointerLocked = locked == true
 
 	--[[
-		A mira comeca com a mao vazia: o fantasma de uma unidade equipada disputaria o
-		mesmo clique no mapa, e o card de upgrade de uma torre selecionada ficaria por
-		cima do que a carta esta pedindo. O `clearInteraction` larga os tres de uma vez
-		-- o fantasma, a selecao e a carta da hotbar.
+		Aiming starts with an empty hand: an equipped unit's ghost would compete for the
+		same click on the map, and a selected tower's upgrade card would sit over what the
+		card is asking for. `clearInteraction` drops all three at once: the ghost, the
+		selection, and the hotbar card.
 	]]
 	if self.pointerLocked then
 		self:clearInteraction()
@@ -1786,22 +1770,22 @@ end
 
 function UnitPlacementController:construct()
 	--[[
-		Clique do mouse no PC, toque curto no celular: nos dois casos o que chega
-		aqui e um ponto na tela, e o resto do caminho e o mesmo.
+		A mouse click on PC, a short tap on mobile: in both cases what arrives here is a
+		point on the screen, and the rest of the path is the same.
 
-		Com uma unidade em mao esse ponto pertence ao posicionamento (e la que ele
-		move o fantasma), entao a selecao sai da frente.
+		With a unit in hand that point belongs to placement (that is where it moves the
+		ghost), so selection gets out of the way.
 	]]
 	PointerUtil.onPointerAction(function(screenPosition)
 		if self.isPlacing then return end
 
 		--[[
-			Uma carta de round esta pedindo um alvo: o clique e dela.
+			A round card is asking for a target: the click is its.
 
-			Sem esta porta o mesmo clique faria as duas coisas -- escolher a torre para
-			a carta e selecionar aquela torre --, e o jogador terminaria a mira com o
-			card de upgrade aberto por cima de uma carta que acabou de sumir. Quem abre
-			e fecha a porta e o `RoundCardShopController` (ver `setPointerLocked`).
+			Without this door the same click would do both things (choose the tower for the
+			card and select that tower), and the player would finish aiming with the upgrade
+			card open over a card that just vanished. `RoundCardShopController` opens and
+			closes the door (see `setPointerLocked`).
 		]]
 		if self.pointerLocked then return end
 
@@ -1815,19 +1799,18 @@ function UnitPlacementController:construct()
 		end
 	end)
 
-	-- Rede de seguranca: se o round reiniciar sem passar pela tela de resultado,
-	-- o jogador nao fica com fantasma nem carta equipada de uma partida que acabou.
+	-- Safety net: if the round restarts without going through the results screen,
+	-- the player is not left with a ghost or an equipped card from a finished match.
 	Framework:Listen("RoundRestarted", function()
 		self:clearInteraction()
-		-- O mapa pode ter mudado; a lista de parts do caminho e remontada no
-		-- proximo posicionamento.
+		-- The map may have changed; the path part list is rebuilt on the
+		-- next placement.
 		invalidateGridParts()
 	end)
 
 	--[[
-		O fim do round pelos dois lados -- `GameOver` e a base caindo, `Win` e a
-		ultima wave limpa --, e as linhas pontilhadas saem nos dois. Ver o
-		`clearAllDottedLines`.
+		The round's end from both sides (`GameOver` is the base falling, `Win` is the last
+		wave cleared), and the dotted lines go in both. See `clearAllDottedLines`.
 	]]
 	Framework:Listen("GameOver", function()
 		self:clearAllDottedLines()
@@ -1861,10 +1844,10 @@ function UnitPlacementController:construct()
 				unitModel:Destroy()
 
 				--[[
-					A torre que saiu era vizinha das outras, e duas cartas medem
-					vizinhanca (o Iceolated e o Ice to Meet You): vender uma pode ligar ou
-					desligar o buff de quem ficou. A varredura tambem e o que solta esta do
-					registro do feedback.
+					The tower that left was a neighbor of the others, and two cards measure
+					neighborhood (Iceolated and Ice to Meet You): selling one can turn the buff
+					on or off for those that remain. The sweep is also what drops this one from
+					the feedback registry.
 				]]
 				if self.Controllers.WeatherFeedbackController then
 					self.Controllers.WeatherFeedbackController:Refresh()
@@ -1933,10 +1916,10 @@ function UnitPlacementController:construct()
 	end)
 
 	--[[
-		O clima mexe no alcance e nos numeros do card, e nenhum dos dois se redesenha
-		sozinho: o circulo so e refeito quando alguem pede, e o card so quando a
-		selecao muda. Aqui os dois sao refeitos na troca, para o jogador ver a
-		neblina encolher o circulo no mesmo momento em que ela entra.
+		Weather changes the range and the card numbers, and neither redraws on its own:
+		the circle is only redone when someone asks, and the card only when the selection
+		changes. Here both are redone on the change, so the player sees the fog shrink the
+		circle the moment it arrives.
 	]]
 	Framework:Listen("WeatherChanged", function()
 		self:resizeSelectionRing()
@@ -1944,11 +1927,11 @@ function UnitPlacementController:construct()
 	end)
 
 	--[=[
-		Realce temporario numa unidade, para o jogador ver que algo pegou nela.
+		A temporary highlight on a unit, so the player sees something caught it.
 
-		Amarelo e atordoamento (a unidade parou), ciano e carga (ela esta melhor que
-		o normal). Duas cores porque os dois estados vem do mesmo raio e acontecem
-		lado a lado: sem separar, uma unidade Electric carregada pareceria congelada.
+		Yellow is stun (the unit stopped), cyan is charge (it is better than normal). Two
+		colors because both states come from the same bolt and happen side by side: without
+		separating them, a charged Electric unit would look frozen.
 	]=]
 	local function highlightUnit(unitId, duration, color, name)
 		for unitModel, class in pairs(self.createdClasses) do
@@ -1956,10 +1939,9 @@ function UnitPlacementController:construct()
 				local highlight = Instance.new("Highlight")
 
 				--[[
-					Nome proprio para o realce poder ser **apagado antes da hora**: o Staff
-					of Healing tira o atordoamento no meio dele, e sem um nome nao haveria
-					como distinguir este realce do verde da selecao, que mora no mesmo
-					modelo.
+					A distinct name so the highlight can be **cleared early**: the Staff of
+					Healing removes the stun midway, and without a name there would be no way to
+					tell this highlight from the selection's green, which lives on the same model.
 				]]
 				highlight.Name = name or "TempHighlight"
 				highlight.FillColor = color
@@ -1969,9 +1951,9 @@ function UnitPlacementController:construct()
 				highlight.Parent = unitModel
 
 				--[[
-					A duracao vem do servidor em tempo de partida, entao a espera tambem
-					corre no relogio da partida: no 2x o atordoamento de 5s acaba em 2,5s
-					reais, e o realce tem que apagar junto com ele.
+					The duration comes from the server in match time, so the wait also runs on
+					the match clock: at 2x the 5s stun ends in 2.5 real seconds, and the
+					highlight must go off with it.
 				]]
 				GameClock.Delay(duration, function()
 					if highlight and highlight.Parent then
@@ -1984,8 +1966,8 @@ function UnitPlacementController:construct()
 	end
 
 	Framework:Listen("UnitStunned", function(unitId, duration, source)
-		-- O congelamento de clima tem desenho proprio, com o Highlight azul do gelo
-		-- (`VFXController:PlayFreeze`): o amarelo por cima so sujaria a cor.
+		-- The weather freeze has its own visual, with the ice's blue Highlight
+		-- (`VFXController:PlayFreeze`): yellow on top would only muddy the color.
 		local effects = SharedConfig.WeatherConfig.GetEffects(source)
 		if effects and effects.Freeze then return end
 
@@ -1997,12 +1979,11 @@ function UnitPlacementController:construct()
 	end)
 
 	--[=[
-		O Staff of Healing tirou o atordoamento desta unidade antes da hora.
+		The Staff of Healing removed this unit's stun early.
 
-		O realce amarelo tem prazo proprio (um `GameClock.Delay` que nasceu com ele) e
-		nao tem como saber que o atordoamento acabou mais cedo -- ele e apagado pelo
-		nome. O VFX do congelamento da neve some pelo mesmo motivo, e por isso o
-		`VFXController` tambem e avisado.
+		The yellow highlight has its own deadline (a `GameClock.Delay` created with it) and
+		cannot know the stun ended sooner: it is cleared by name. The snow freeze VFX goes
+		away for the same reason, which is why `VFXController` is notified too.
 	]=]
 	Framework:Listen("UnitCleansed", function(unitId)
 		for unitModel, class in pairs(self.createdClasses) do

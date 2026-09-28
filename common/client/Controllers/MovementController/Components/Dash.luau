@@ -62,8 +62,8 @@ function module:createAfterimage()
 end
 
 --[=[
-	Quanto do cooldown ainda falta, de 1 (acabou de dar o dash) a 0 (pronto). O
-	botao do celular desenha a recarga com isto.
+	How much of the cooldown is left, from 1 (just dashed) to 0 (ready). The mobile
+	button draws the recharge with this.
 ]=]
 function module:getCooldownAlpha() : number
 	local elapsed = os.clock() - self.lastRoll
@@ -71,8 +71,8 @@ function module:getCooldownAlpha() : number
 end
 
 --[=[
-	O dash, se puder: a tecla do teclado e o botao do celular chamam o mesmo. Devolve
-	se o dash de fato saiu.
+	Dashes, if it can: the keyboard key and the mobile button call the same thing.
+	Returns whether the dash actually happened.
 ]=]
 function module:tryDash() : boolean
 	if not self.rootPart or not self.humanoid then return false end
@@ -187,7 +187,7 @@ function module:stop()
 		self.connections = nil
 	end
 
-	-- Sem personagem vivo o botao do celular nao pode dar dash num corpo morto.
+	-- Without a living character, the mobile button must not dash a dead body.
 	self.humanoid = nil
 	self.rootPart = nil
 end

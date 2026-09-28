@@ -15,70 +15,73 @@ local Me = require(Vendor.Me)
 
 local SharedConfig = require(Configs.SharedConfig)
 local UIUtil = require(Util.UIUtil)
+local Log = require(Util:WaitForChild("Log"))
 
 local LevelConfig = SharedConfig.LevelConfig
 
 local Framework = Me.new()
+local log = Log.new("ResultController")
 
 --[[
-	Tela de fim de partida.
+	The end-of-match screen.
 
-	Entra por `RoundReward`, o unico evento que o servidor dispara nos dois
-	desfechos (vitoria e derrota) ja com os dados do resultado.
+	It enters through `RoundReward`, the only event the server fires on both outcomes
+	(victory and defeat) already carrying the result data.
 
-	Toda a coreografia de entrada vive em `:playRevealAnimation()`. Quem precisa
-	mostrar a tela chama `:Show(info)` e nao encosta em tween nenhum; quem quiser
-	mudar ritmo, ordem ou easing mexe so nas constantes daqui e naquele metodo.
+	The whole entrance choreography lives in `:playRevealAnimation()`. Code that needs
+	to show the screen calls `:Show(info)` and touches no tween; changing rhythm, order,
+	or easing means editing only the constants here and that method.
 
 		StarterGui.ResultScreen
-		├── BackgroundFrame         Frame preto de tela cheia (o escurecimento)
-		└── MainScreen              ImageLabel do painel
-		    ├── ViewportFrame       o MVP em 3D
-		    │   └── WorldModel      onde o clone do personagem entra
-		    ├── MVPText             TextLabel "MVP: <nome>"
-		    ├── RewardTitle         TextLabel "REWARDS" — entra em fade
-		    ├── RewardsContainer    Frame com ClipsDescendants e UIListLayout
-		    │   ├── ShardRewardWrapper.ShardAmount   desliza para dentro do quadro
-		    │   └── CoinsRewardWrapper.CoinAmount    idem, REWARD_STAGGER depois
-		    ├── ExpContainer        Frame da barra de XP
-		    │   └── Bar             Size.X.Scale de BAR_MIN (0%) a BAR_MAX (100%)
-		    ├── ExpAmount           TextLabel "XP/proximo nivel"
-		    ├── ExpOrnament         ImageLabel decorativo, entra junto com o ExpContainer
+		├── BackgroundFrame         full-screen black Frame (the darkening)
+		└── MainScreen              the panel's ImageLabel
+		    ├── ViewportFrame       the MVP in 3D
+		    │   └── WorldModel      where the character clone goes
+		    ├── MVPText             TextLabel "MVP: <name>"
+		    ├── RewardTitle         TextLabel "REWARDS": fades in
+		    ├── RewardsContainer    Frame with ClipsDescendants and UIListLayout
+		    │   ├── ShardRewardWrapper.ShardAmount   slides into the frame
+		    │   └── CoinsRewardWrapper.CoinAmount    same, REWARD_STAGGER later
+		    ├── ExpContainer        the XP bar's Frame
+		    │   └── Bar             Size.X.Scale from BAR_MIN (0%) to BAR_MAX (100%)
+		    ├── ExpAmount           TextLabel "XP/next level"
+		    ├── ExpOrnament         decorative ImageLabel, enters with ExpContainer
 		    ├── PlayAgain           ImageButton
 		    └── Lobby               ImageButton
 
-	Tudo dentro de MainScreen nasce com `Visible = false` na GUI autorada: e a
-	revelacao que liga cada peca na hora certa. O painel antigo
-	(`ResultBackground`) nao e mais usado; se ainda estiver na arvore, ele so e
-	mantido desligado.
+	Everything inside MainScreen starts with `Visible = false` in the authored GUI: the
+	reveal turns each piece on at the right time. The old panel (`ResultBackground`) is
+	not used; if it is still in the tree, it is only kept disabled.
+
+	See docs/game/rewards.md.
 ]]
 
--- Escurecimento de fundo.
+-- Background darkening.
 local BACKDROP_TRANSPARENCY = 0.4
 local BACKDROP_TIME = 0.4
 
--- Painel e fades.
-local PANEL_DELAY = 0.75      -- espera entre o backdrop e o painel
-local ELEMENT_TIME = 0.35     -- duracao de cada fade
-local ELEMENT_STAGGER = 0.3   -- intervalo entre o inicio de um fade e o seguinte
+-- Panel and fades.
+local PANEL_DELAY = 0.75      -- wait between the backdrop and the panel
+local ELEMENT_TIME = 0.35     -- duration of each fade
+local ELEMENT_STAGGER = 0.3   -- interval between the start of one fade and the next
 
--- Recompensas: cada label entra deslizando de REWARD_SLIDE_FROM ate a posicao
--- autorada (0 -> 0.5 no X.Scale, com a arte de hoje).
+-- Rewards: each label slides in from REWARD_SLIDE_FROM to the authored
+-- position (0 -> 0.5 in X.Scale, with today's art).
 local REWARD_SLIDE_FROM = 0
 local REWARD_SLIDE_TIME = 0.4
-local REWARD_STAGGER = 0.4    -- do inicio de um wrapper ao inicio do proximo
-local REWARD_DELAY = 0.15     -- espera entre o titulo e o primeiro wrapper
+local REWARD_STAGGER = 0.4    -- from the start of one wrapper to the start of the next
+local REWARD_DELAY = 0.15     -- wait between the title and the first wrapper
 
--- Barra de XP.
+-- XP bar.
 local EXP_DELAY = 0.35
 local EXP_FILL_TIME = 1.1
-local BAR_MIN = 0.05          -- 0% de progresso
+local BAR_MIN = 0.05          -- 0% progress
 local BAR_MAX = 1             -- 100%
 
 local EASING_STYLE = Enum.EasingStyle.Quad
 local EASING_DIRECTION = Enum.EasingDirection.Out
 
---[[ nomes na arvore ]]
+--[[ names in the tree ]]
 
 local SCREEN_NAME = "ResultScreen"
 local PANEL_NAME = "MainScreen"
@@ -101,18 +104,18 @@ local PLAY_AGAIN_NAME = "PlayAgain"
 local LOBBY_NAME = "Lobby"
 local BUTTON_TEXT_NAME = "TextLabel"
 
--- De que chave de `info.rewards` sai o numero de cada wrapper. Wrapper fora da
--- lista entra na animacao do mesmo jeito, so nao tem numero para escrever.
+-- Which `info.rewards` key each wrapper's number comes from. A wrapper not in the
+-- list still enters the animation, it just has no number to write.
 local REWARD_KEYS = {
 	ShardRewardWrapper = "shards",
 	CoinsRewardWrapper = "coins",
 }
 
--- Enquadramento do MVP no ViewportFrame.
-local VIEWPORT_FOV = 30            -- FOV fechado: menos distorcao de lente no retrato
-local VIEWPORT_PADDING = 1.12      -- folga em volta do personagem
-local VIEWPORT_YAW = 15            -- graus de giro; 0 e de frente, positivo vira o ombro
-local VIEWPORT_HEIGHT_BIAS = 0     -- fracao da altura; sobe o alvo da camera e desce o corpo no quadro
+-- MVP framing in the ViewportFrame.
+local VIEWPORT_FOV = 30            -- narrow FOV: less lens distortion in the portrait
+local VIEWPORT_PADDING = 1.12      -- margin around the character
+local VIEWPORT_YAW = 15            -- degrees of turn; 0 is facing front, positive turns the shoulder
+local VIEWPORT_HEIGHT_BIAS = 0     -- fraction of the height; raises the camera target and lowers the body in the frame
 
 local LEAVING_TEXT = "LEAVING..."
 local LOBBY_TEXT = "BACK TO LOBBY"
@@ -121,9 +124,9 @@ local MAX_EXP_TEXT = "MAX"
 local MVP_TEXT = "MVP: %s"
 local MVP_EMPTY_TEXT = "MVP: —"
 
--- Propriedades de transparencia por classe. So o que estiver aqui entra nos
--- fades; UICorner e UIAspectRatioConstraint ficam de fora porque nao tem nada
--- para animar.
+-- Transparency properties per class. Only what is here enters the
+-- fades; UICorner and UIAspectRatioConstraint stay out because they have nothing
+-- to animate.
 local TRANSPARENCY_PROPERTIES = {
 	Frame = { "BackgroundTransparency" },
 	ScrollingFrame = { "BackgroundTransparency" },
@@ -142,16 +145,16 @@ local ResultController = {
 		UnitPlacementController = {},
 		DataController = {},
 
-		-- Quem sabe se esta partida e a do tutorial. Ver `bindButtons`.
+		-- The one that knows whether this match is the tutorial. See `bindButtons`.
 		TutorialStepController = {},
 	},
 	connections = {},
 	tweens = {},
 }
 
--- Valores autorais de transparencia e de posicao, por instancia. Chaves fracas
--- porque a ResultScreen tem ResetOnSpawn = true: a ScreenGui e recriada a cada
--- respawn e as instancias antigas precisam poder ser coletadas.
+-- Authored transparency and position values, per instance. Weak keys
+-- because ResultScreen has ResetOnSpawn = true: the ScreenGui is recreated on every
+-- respawn and the old instances need to be collectable.
 ResultController.snapshots = setmetatable({}, { __mode = "k" })
 ResultController.positions = setmetatable({}, { __mode = "k" })
 
@@ -159,14 +162,14 @@ local function tweenInfo(duration : number)
 	return TweenInfo.new(duration, EASING_STYLE, EASING_DIRECTION)
 end
 
---[[ resolucao das instancias ]]
+--[[ instance resolution ]]
 
 function ResultController:getScreen()
-	-- Resolvido na hora de mostrar, e nao guardado no init, porque a ScreenGui
-	-- volta do zero a cada respawn.
+	-- Resolved at show time, not stored in init, because the ScreenGui
+	-- starts from scratch on every respawn.
 	local screen = PlayerGui:FindFirstChild(SCREEN_NAME)
 	if not screen or not screen:IsA("ScreenGui") then
-		warn(`ResultController: StarterGui.{SCREEN_NAME} nao encontrada na PlayerGui.`)
+		log:StudioWarn(`StarterGui.{SCREEN_NAME} not found in PlayerGui.`)
 		return nil
 	end
 	return screen
@@ -185,11 +188,11 @@ function ResultController:setInterfaceEnabled(enabled : boolean)
 	end
 end
 
---[[ transparencia ]]
+--[[ transparency ]]
 
--- Guarda (uma vez por instancia) os valores autorais de transparencia. Sao eles
--- os alvos do fade: um elemento que nasce com ImageTransparency 0.47 precisa
--- voltar para 0.47, e nao para 0.
+-- Stores (once per instance) the authored transparency values. They are
+-- the fade targets: an element born with ImageTransparency 0.47 must
+-- return to 0.47, not to 0.
 function ResultController:snapshot(instance : Instance)
 	local properties = TRANSPARENCY_PROPERTIES[instance.ClassName]
 	if not properties then return nil end
@@ -206,7 +209,7 @@ function ResultController:snapshot(instance : Instance)
 	return values
 end
 
--- A subarvore de `root`, ela inclusa, na ordem da arvore.
+-- The subtree of `root`, itself included, in tree order.
 function ResultController:collectTargets(root : Instance)
 	local list = {}
 
@@ -232,9 +235,9 @@ function ResultController:setTransparent(target)
 end
 
 --[=[
-	Todo tween da tela passa por aqui: um `Show` novo cancela o que ficou rodando
-	do anterior antes de reposicionar as pecas, senao o tween antigo continua
-	escrevendo por cima do estado inicial da revelacao nova.
+	Every tween on the screen goes through here: a new `Show` cancels whatever was
+	still running from the previous one before repositioning the pieces, or the old
+	tween keeps writing over the new reveal's initial state.
 ]=]
 function ResultController:playTween(instance : Instance, duration : number, goal)
 	local tween = TweenService:Create(instance, tweenInfo(duration), goal)
@@ -264,8 +267,8 @@ function ResultController:fadeIn(target, duration : number)
 end
 
 --[=[
-	Prepara um grupo para entrar: guarda os valores autorais, poe tudo em
-	transparencia 1 e desliga o `Visible`. Devolve os alvos para o fade.
+	Prepares a group to enter: stores the authored values, sets everything to
+	transparency 1, and turns `Visible` off. Returns the targets for the fade.
 ]=]
 function ResultController:prepareGroup(root : Instance?)
 	if not root then return nil end
@@ -283,9 +286,8 @@ function ResultController:prepareGroup(root : Instance?)
 end
 
 --[=[
-	Liga o grupo e roda o fade dele inteiro de uma vez. Diferente da revelacao
-	antiga, que escalonava elemento a elemento: aqui o escalonamento e entre
-	grupos, e cada grupo entra junto.
+	Turns the group on and runs its whole fade at once. The stagger is between groups,
+	not element by element: each group enters together.
 ]=]
 function ResultController:revealGroup(group, duration : number?)
 	if not group then return end
@@ -299,12 +301,12 @@ function ResultController:revealGroup(group, duration : number?)
 	end
 end
 
---[[ recompensas ]]
+--[[ rewards ]]
 
 --[=[
-	Escreve os numeros dos wrappers e devolve, na ordem do UIListLayout, os labels
-	que vao deslizar. Wrapper com recompensa zerada fica de fora: numa derrota cedo
-	os shards sao 0 e uma linha "0" so ocupa espaco — o layout fecha o buraco.
+	Writes the wrappers' numbers and returns, in UIListLayout order, the labels that
+	will slide. A wrapper with a zero reward is left out: in an early defeat shards are
+	0, and a "0" row only takes space; the layout closes the gap.
 ]=]
 function ResultController:collectRewardWrappers(container : Instance, info)
 	local rewards = info.rewards or {}
@@ -321,7 +323,7 @@ function ResultController:collectRewardWrappers(container : Instance, info)
 			continue
 		end
 
-		-- O label e o unico filho GuiObject do wrapper; e ele que desliza.
+		-- The label is the wrapper's only GuiObject child; it is the one that slides.
 		local label = nil
 		for _, candidate in child:GetChildren() do
 			if candidate:IsA("GuiObject") then
@@ -360,8 +362,8 @@ function ResultController:collectRewardWrappers(container : Instance, info)
 end
 
 --[=[
-	Manda o label para o comeco do slide. A posicao autorada e o alvo, entao e
-	guardada antes de qualquer escrita — e ela que o `slideIn` devolve.
+	Sends the label to the start of the slide. The authored position is the target, so
+	it is stored before any write; it is what `slideIn` restores.
 ]=]
 function ResultController:setSlideStart(label : GuiObject)
 	local original = self.positions[label]
@@ -380,10 +382,10 @@ function ResultController:slideIn(label : GuiObject)
 	self:playTween(label, REWARD_SLIDE_TIME, { Position = original })
 end
 
---[[ barra de XP ]]
+--[[ XP bar ]]
 
 --[=[
-	O XP acumulado do perfil, direto da replica. `nil` enquanto ela nao chegou.
+	The profile's accumulated XP, straight from the replica. `nil` until it arrives.
 ]=]
 function ResultController:getTotalXP() : number?
 	local dataController = self.Controllers.DataController
@@ -415,34 +417,33 @@ function ResultController:applyExpState(bar : GuiObject, label : TextLabel?, tot
 end
 
 --[=[
-	Enche a barra do XP que o jogador tinha antes da partida ate o que ele tem
-	agora.
+	Fills the bar from the XP the player had before the match to what they have now.
 
-	O ponto de partida e deduzido: quando a animacao chega aqui a replica ja veio
-	somada (o servidor credita antes de disparar o `RoundReward`, e a barra so
-	entra depois do titulo e das recompensas), entao o "antes" e o total menos o
-	ganho da partida. Como cada quadro reresolve o total pelo `LevelConfig`, subir
-	de nivel no meio do enchimento sai de graca: a barra chega a 100%, volta para
-	0% e continua — inclusive mais de uma vez.
+	The starting point is derived: when the animation gets here the replica has
+	already come in with the sum (the server credits before firing `RoundReward`, and
+	the bar only enters after the title and rewards), so "before" is the total minus
+	the match gain. Since each frame re-resolves the total through `LevelConfig`,
+	leveling up mid-fill comes for free: the bar reaches 100%, returns to 0%, and
+	continues, even more than once.
 ]=]
 function ResultController:playExpAnimation(container : Instance, label : TextLabel?, info)
 	local bar = container:FindFirstChild(BAR_NAME)
 	if not bar or not bar:IsA("GuiObject") then
-		warn(`ResultController: {PANEL_NAME}.{EXP_NAME}.{BAR_NAME} nao encontrado.`)
+		log:StudioWarn(`{PANEL_NAME}.{EXP_NAME}.{BAR_NAME} not found.`)
 		return
 	end
 
-	-- Zera a barra antes de qualquer coisa que possa ceder: a replica so demora se
-	-- ainda nao tiver chegado, e ate la o container ja esta ligado — sem isto ele
-	-- apareceria com o tamanho que sobrou do round anterior.
+	-- Resets the bar before anything that may yield: the replica is only slow if it
+	-- has not arrived yet, and by then the container is already on; without this it
+	-- would appear at the size left over from the previous round.
 	local size = bar.Size
 	bar.Size = UDim2.new(BAR_MIN, size.X.Offset, size.Y.Scale, size.Y.Offset)
 
 	local gained = math.max(0, tonumber((info.rewards or {}).xp) or 0)
 	local total = self:getTotalXP()
 
-	-- Sem replica, o unico numero confiavel e o ganho da partida: a barra sobe de
-	-- zero ate ele em vez de mentir um nivel.
+	-- Without a replica, the only reliable number is the match gain: the bar rises from
+	-- zero to it instead of faking a level.
 	local finish = total or gained
 	local start = math.max(0, finish - gained)
 
@@ -466,18 +467,18 @@ end
 --[[ mvp ]]
 
 --[=[
-	Por que o personagem e copiado, e nao referenciado.
+	Why the character is copied, not referenced.
 
-	Um ViewportFrame renderiza so os proprios descendentes, e uma Instance tem um
-	Parent so: nao existe apontar para o personagem vivo daqui: so existe levar o
-	personagem de verdade para dentro do WorldModel, o que o tiraria do mundo (e,
-	sendo o personagem de outro jogador, ainda brigaria com a replicacao do
-	servidor, que o poe de volta). Entao a copia e obrigatoria.
+	A ViewportFrame renders only its own descendants, and an Instance has a single
+	Parent: there is no pointing at the live character from here; the only option is
+	moving the real character into the WorldModel, which would take it out of the world
+	(and, being another player's character, would still fight the server's
+	replication, which puts it back). So the copy is mandatory.
 
-	O que da para evitar e o acoplamento, e e o que estas funcoes fazem: o clone
-	entra sem script, sem som, com a raiz ancorada e tocando o proprio idle. Depois
-	de montado ele nunca mais olha para o personagem original — nao ha nada
-	sincronizando quadro a quadro com o mundo.
+	What can be avoided is coupling, and that is what these functions do: the clone
+	goes in with no scripts, no sounds, its root anchored, and playing its own idle.
+	Once built it never looks at the original character again: nothing syncs it frame
+	by frame with the world.
 ]=]
 function ResultController:getMVPCharacter(mvp) : Model?
 	if not mvp then return nil end
@@ -494,8 +495,8 @@ function ResultController:getMVPCharacter(mvp) : Model?
 	return nil
 end
 
--- O idle sai do `Animate` do proprio personagem: e ele que sabe se o rig e R6 ou
--- R15, entao nenhum id de animacao precisa ficar escrito aqui.
+-- The idle comes from the character's own `Animate`: it knows whether the rig is R6
+-- or R15, so no animation id needs to be written here.
 function ResultController:getIdleAnimationId(character : Model) : string?
 	local animate = character:FindFirstChild("Animate")
 	local idle = animate and animate:FindFirstChild("idle")
@@ -510,10 +511,10 @@ function ResultController:getIdleAnimationId(character : Model) : string?
 end
 
 --[=[
-	Tira do clone tudo que so daria trabalho dentro de uma ScreenGui — script (que
-	rodaria de verdade, por estar na PlayerGui), som, efeito, nameplate. Sobra o
-	rig, e so a raiz fica ancorada: ancorar o resto travaria os Motor6D e a
-	animacao junto.
+	Strips from the clone everything that would only cause trouble inside a ScreenGui:
+	scripts (which would actually run, being in PlayerGui), sounds, effects,
+	nameplates. The rig remains, and only the root is anchored: anchoring the rest
+	would lock the Motor6Ds and the animation with them.
 ]=]
 function ResultController:sanitizeMVPModel(model : Model)
 	for _, descendant in model:GetDescendants() do
@@ -551,13 +552,13 @@ function ResultController:sanitizeMVPModel(model : Model)
 end
 
 --[=[
-	Copia o personagem contornando o `Archivable`.
+	Copies the character, working around `Archivable`.
 
-	A engine marca o personagem do jogador com `Archivable = false` (o avatar nao
-	sai copiado por ai), e `Clone` devolve nil nesse caso — foi por isso que o
-	quadro nascia vazio. `Clone` tambem pula descendente marcado, entao a flag e
-	ligada no modelo e em quem estiver com ela desligada, e devolvida logo depois:
-	a janela e de uma linha e so existe neste cliente.
+	The engine marks the player's character `Archivable = false` (the avatar does not
+	get copied around), and `Clone` returns nil in that case, leaving the frame empty.
+	`Clone` also skips marked descendants, so the flag is turned on on the model and on
+	any descendant with it off, and restored right after: the window is a single line
+	and only exists on this client.
 ]=]
 function ResultController:cloneCharacter(character : Model) : Model?
 	local restore = {}
@@ -583,7 +584,7 @@ function ResultController:cloneCharacter(character : Model) : Model?
 	end
 
 	if not ok or not clone then
-		warn(`ResultController: nao consegui copiar o personagem do MVP — {tostring(clone)}`)
+		log:StudioWarn(`could not copy the MVP character: {tostring(clone)}`)
 		return nil
 	end
 
@@ -591,9 +592,9 @@ function ResultController:cloneCharacter(character : Model) : Model?
 end
 
 --[=[
-	Enquadra o personagem inteiro no quadro que a GUI tem. Recalculado depois que o
-	painel aparece porque `AbsoluteSize` so vale quando a GUI ja renderizou uma vez
-	— antes disso ele e zero e o aspecto sairia errado.
+	Frames the whole character in the frame the GUI has. Recomputed after the panel
+	appears because `AbsoluteSize` is only valid once the GUI has rendered once; before
+	that it is zero and the aspect would come out wrong.
 ]=]
 function ResultController:frameMVPCamera()
 	local viewport = self.mvpViewport
@@ -628,10 +629,10 @@ function ResultController:clearMVPModel()
 end
 
 --[=[
-	Escreve o nome do MVP e monta o retrato dele. Devolve `true` quando o
-	ViewportFrame tem alguem para mostrar — sem personagem (MVP saiu no fim da
-	partida, ou esta respawnando) o quadro nao entra na revelacao, em vez de
-	aparecer vazio.
+	Writes the MVP's name and builds their portrait. Returns `true` when the
+	ViewportFrame has someone to show: without a character (the MVP left at the end of
+	the match, or is respawning) the frame does not enter the reveal, instead of
+	appearing empty.
 ]=]
 function ResultController:populateMVP(panel : Instance, info) : boolean
 	local mvp = info.mvp
@@ -675,8 +676,8 @@ function ResultController:populateMVP(panel : Instance, info) : boolean
 	clone.Name = MVP_MODEL_NAME
 	self:sanitizeMVPModel(clone)
 
-	-- Identidade encara -Z, entao 180 graus poe o personagem de frente para a
-	-- camera; o VIEWPORT_YAW e so o tempero do angulo.
+	-- Identity faces -Z, so 180 degrees turns the character to face the camera;
+	-- VIEWPORT_YAW is only seasoning for the angle.
 	clone:PivotTo(CFrame.Angles(0, math.rad(180 + VIEWPORT_YAW), 0))
 	clone.Parent = world
 
@@ -698,10 +699,10 @@ function ResultController:populateMVP(panel : Instance, info) : boolean
 			track.Looped = true
 			track:Play(0)
 
-			-- Animator fora do Workspace nao anda sozinho: quem o avanca e o
-			-- `StepAnimations`. O passo zero ja aplica a primeira pose do idle, entao
-			-- mesmo sem o loop o retrato fica numa pose de pe, e nao na pose congelada
-			-- do instante em que o round acabou.
+			-- An Animator outside the Workspace does not advance on its own:
+			-- `StepAnimations` advances it. Step zero already applies the idle's first pose, so
+			-- even without the loop the portrait stands in a standing pose, not the frozen pose
+			-- from the instant the round ended.
 			pcall(function()
 				animator:StepAnimations(0)
 			end)
@@ -718,7 +719,7 @@ function ResultController:populateMVP(panel : Instance, info) : boolean
 	return true
 end
 
---[[ botoes ]]
+--[[ buttons ]]
 
 function ResultController:findButton(name : string)
 	local panel = self:getPanel()
@@ -738,7 +739,7 @@ function ResultController:setLobbyButtonText(text : string)
 	self:setButtonText(LOBBY_NAME, text)
 end
 
--- Contador de votos no proprio botao de recomecar.
+-- Vote counter on the play-again button itself.
 function ResultController:applyPlayAgainState()
 	local state = self.playAgainState
 	if not state then return end
@@ -747,11 +748,11 @@ function ResultController:applyPlayAgainState()
 end
 
 --[=[
-	Tranca (ou destranca) um botao da tela.
+	Locks (or unlocks) a button on the screen.
 
-	`Active = false` e o que de fato recusa o clique; o resto e para ele **parecer**
-	trancado, em vez de parecer quebrado -- botao que acende ao passar o mouse e nao
-	responde e pior que botao apagado.
+	`Active = false` is what actually refuses the click; the rest is so it **looks**
+	locked instead of broken: a button that lights up on hover and does not respond is
+	worse than a dimmed one.
 ]=]
 function ResultController:setButtonEnabled(button : GuiButton, enabled : boolean)
 	button.Active = enabled
@@ -759,7 +760,7 @@ function ResultController:setButtonEnabled(button : GuiButton, enabled : boolean
 	button.Selectable = enabled
 end
 
--- Reconectados a cada Show porque a ResultScreen e recriada no respawn.
+-- Reconnected on every Show because ResultScreen is recreated on respawn.
 function ResultController:bindButtons()
 	for _, connection in self.connections do
 		connection:Disconnect()
@@ -767,11 +768,11 @@ function ResultController:bindButtons()
 	table.clear(self.connections)
 
 	--[[
-		O tutorial nao se joga duas vezes: a partida dele e desenhada para ser vencida
-		uma vez e terminar no lobby, onde a segunda metade do roteiro espera. O
-		"PLAY AGAIN" fica trancado, e o passo do tutorial acende o "BACK TO LOBBY" ao
-		lado -- e por isso que o botao continua na tela em vez de sumir: ele mostra
-		que existe um caminho e que hoje nao e por ali.
+		The tutorial is not played twice: its match is designed to be won once and end in
+		the Lobby, where the second half of the script waits. "PLAY AGAIN" stays locked,
+		and the tutorial step lights "BACK TO LOBBY" next to it; that is why the button
+		stays on screen instead of vanishing: it shows there is a path and that today it
+		is not that one.
 	]]
 	local tutorial = self.Controllers.TutorialStepController
 	local isTutorial = tutorial ~= nil and tutorial:IsTutorial()
@@ -798,23 +799,24 @@ function ResultController:bindButtons()
 	end
 end
 
---[[ animacao ]]
+--[[ animation ]]
 
 --[[
-	Ponto unico da entrada da tela. A sequencia:
+	The single entry point for the screen. The sequence:
 
-	  1. tudo escondido, com a ScreenGui ainda desligada (sem flash)
+	  1. everything hidden, with the ScreenGui still disabled (no flash)
 	  2. BackgroundFrame  1 -> BACKDROP_TRANSPARENCY
-	  3. PANEL_DELAY de espera
-	  4. MainScreen       1 -> valor autoral
-	  5. RewardTitle, MVPText e o ViewportFrame do MVP entram em fade juntos
-	  6. RewardsContainer liga e cada label desliza de dentro do wrapper, um a cada
-	     REWARD_STAGGER
-	  7. ExpContainer, ExpAmount e ExpOrnament ligam e a barra enche do XP de antes ate o de agora
-	  8. PlayAgain e Lobby entram em fade
+	  3. PANEL_DELAY wait
+	  4. MainScreen       1 -> authored value
+	  5. RewardTitle, MVPText, and the MVP ViewportFrame fade in together
+	  6. RewardsContainer turns on and each label slides from inside its wrapper, one
+	     every REWARD_STAGGER
+	  7. ExpContainer, ExpAmount, and ExpOrnament turn on and the bar fills from the
+	     previous XP to the current one
+	  8. PlayAgain and Lobby fade in
 
-	Mudou o ritmo, o easing ou a ordem? E aqui e nas constantes do topo — nenhum
-	outro ponto do codigo conhece esses tweens.
+	Changing the rhythm, easing, or order? It is here and in the constants at the top;
+	no other part of the code knows these tweens.
 ]]
 function ResultController:playRevealAnimation(screen : ScreenGui, info)
 	if self.revealThread then
@@ -828,19 +830,19 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 	local panel = screen:FindFirstChild(PANEL_NAME)
 
 	if not panel then
-		warn(`ResultController: {SCREEN_NAME}.{PANEL_NAME} nao encontrado.`)
+		log:StudioWarn(`{SCREEN_NAME}.{PANEL_NAME} not found.`)
 	end
 
-	-- Antes do snapshot e de a GUI ligar: o painel ja entra com a arte do resultado.
+	-- Before the snapshot and before the GUI turns on: the panel enters already with the result's art.
 	self:applyPanelImage(panel, info.won ~= false)
 
-	-- A tela antiga nao participa de nada; se ainda existir, fica fora do caminho.
+	-- The old screen takes part in nothing; if it still exists, it stays out of the way.
 	local legacy = screen:FindFirstChild(LEGACY_PANEL_NAME)
 	if legacy and legacy:IsA("GuiObject") then
 		legacy.Visible = false
 	end
 
-	-- O backdrop nao usa snapshot: o alvo dele e a constante, e nao o valor autoral.
+	-- The backdrop does not use a snapshot: its target is the constant, not the authored value.
 	local backdropTarget = nil
 	if backdrop and backdrop:IsA("GuiObject") then
 		backdropTarget = {
@@ -861,7 +863,7 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 	local playAgain = panel and panel:FindFirstChild(PLAY_AGAIN_NAME)
 	local lobby = panel and panel:FindFirstChild(LOBBY_NAME)
 
-	-- Passo 1, sincrono: nada pode aparecer no frame em que a GUI liga.
+	-- Step 1, synchronous: nothing may appear on the frame the GUI turns on.
 	if backdropTarget then
 		self:setTransparent(backdropTarget)
 		backdropTarget.instance.Visible = false
@@ -876,8 +878,8 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 	local titleGroup = self:prepareGroup(title)
 	local mvpTextGroup = self:prepareGroup(mvpText)
 
-	-- O retrato e montado antes de a GUI ligar, para entrar junto com o fade e nao
-	-- pipocar depois. Sem MVP para mostrar, o quadro so fica fora da revelacao.
+	-- The portrait is built before the GUI turns on, so it enters with the fade instead
+	-- of popping in later. With no MVP to show, the frame just stays out of the reveal.
 	local viewportGroup = nil
 	if panel and self:populateMVP(panel, info) then
 		viewportGroup = self:prepareGroup(viewport)
@@ -925,8 +927,8 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 		self:revealGroup(mvpTextGroup)
 		self:revealGroup(viewportGroup)
 
-		-- Agora a GUI ja renderizou: o AbsoluteSize do quadro vale, e o enquadramento
-		-- pode ser refeito com o aspecto de verdade.
+		-- Now the GUI has rendered: the frame's AbsoluteSize is valid, and the framing
+		-- can be redone with the real aspect.
 		self:frameMVPCamera()
 
 		task.wait(ELEMENT_TIME + REWARD_DELAY)
@@ -960,17 +962,17 @@ function ResultController:playRevealAnimation(screen : ScreenGui, info)
 	end)
 end
 
--- A arte do painel na derrota. A da vitoria e a que veio autorada no Studio.
+-- The panel's art on defeat. Victory's is the one authored in Studio.
 local DEFEAT_PANEL_IMAGE = "rbxassetid://132074829939960"
 local AUTHORED_IMAGE_ATTRIBUTE = "AuthoredImage"
 
 --[=[
-	Troca a arte do `MainScreen` conforme o resultado: derrota usa
-	`DEFEAT_PANEL_IMAGE`, vitoria a autorada.
+	Swaps `MainScreen`'s art by the result: defeat uses `DEFEAT_PANEL_IMAGE`, victory the
+	authored one.
 
-	A autorada e guardada num atributo do proprio painel na primeira vez que a tela
-	abre. A mesma copia da ScreenGui atravessa um "jogar de novo" sem respawn, e uma
-	vitoria depois de uma derrota precisa ter para onde voltar.
+	The authored one is stored in an attribute on the panel itself the first time the
+	screen opens. The same ScreenGui copy survives a "play again" without a respawn,
+	and a victory after a defeat needs somewhere to return to.
 ]=]
 function ResultController:applyPanelImage(panel : Instance?, won : boolean)
 	if not panel or not panel:IsA("ImageLabel") then return end
@@ -994,7 +996,7 @@ function ResultController:Show(info)
 	self.leaving = false
 	self.showing = true
 
-	-- Nada de fantasma de posicionamento nem anel de selecao por cima da tela.
+	-- No placement ghost or selection ring over the screen.
 	local placement = self.Controllers.UnitPlacementController
 	if placement and placement.clearInteraction then
 		placement:clearInteraction()
@@ -1003,8 +1005,8 @@ function ResultController:Show(info)
 	self:setInterfaceEnabled(false)
 	self:bindButtons()
 
-	-- O estado da votacao pode ter chegado antes do RoundReward: a ordem entre os
-	-- dois eventos nao e garantida, entao reaplicamos o ultimo que veio.
+	-- The vote state may have arrived before RoundReward: the order between the
+	-- two events is not guaranteed, so we reapply the last one received.
 	self:applyPlayAgainState()
 	self:setLobbyButtonText(LOBBY_TEXT)
 
@@ -1038,13 +1040,13 @@ function ResultController:Hide()
 end
 
 --[=[
-	Toda copia nova da ScreenGui nasce desligada.
+	Every new copy of the ScreenGui starts disabled.
 
-	A ResultScreen tem `ResetOnSpawn`, entao a engine devolve a cada respawn uma
-	copia com o estado autorado -- e basta alguem deixar o `MainScreen.Visible`
-	ligado no Studio (para olhar a arte, por exemplo) para o painel aparecer por
-	cima da partida ate o fim do round. Desligar a copia na entrada tira a tela
-	dessa dependencia: quem a mostra e o `Show`, e mais ninguem.
+	ResultScreen has `ResetOnSpawn`, so on every respawn the engine hands back a copy
+	with the authored state, and it only takes someone leaving `MainScreen.Visible` on
+	in Studio (to look at the art, for example) for the panel to appear over the match
+	until the round ends. Disabling the copy on arrival frees the screen from that
+	dependency: `Show` shows it, and nothing else does.
 ]=]
 function ResultController:watchScreen()
 	local function hide(child : Instance)
@@ -1073,7 +1075,7 @@ function ResultController:construct()
 		self:applyPlayAgainState()
 	end)
 
-	-- O round recomecou: a tela sai e o HUD volta.
+	-- The round restarted: the screen leaves and the HUD returns.
 	Framework:Listen("RoundRestarted", function()
 		self:Hide()
 	end)

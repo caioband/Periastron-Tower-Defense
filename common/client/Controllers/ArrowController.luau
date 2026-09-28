@@ -9,72 +9,76 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 
 local Framework = Me.new()
+local log = Log.new("ArrowController")
 
 local Config = SharedConfig.IndicatorArrowConfig
 
 local TAU = math.pi * 2
 
 --[[
-	A seta que aponta um lugar no mundo.
+	The arrow that points at a place in the world.
 
 		local Arrow = Framework:Get("ArrowController")
 
-		local seta = Arrow:Point(unidade.Position)
-		seta:MoveTo(outraPosicao)
-		seta:Destroy()
+		local arrow = Arrow:Point(unit.Position)
+		arrow:MoveTo(otherPosition)
+		arrow:Destroy()
 
-	O modelo é o `Shared.Assets.VFX.IndicatorArrow`: uma seta apontando para baixo,
-	montada no place (o `Shared.Assets` não é sincronizado pelo Rojo) e já
-	configurada lá — partes ancoradas, soldadas e sem colisão, consulta ou toque.
+	The model is `Shared.Assets.VFX.IndicatorArrow`: a downward arrow, built in the
+	place (`Shared.Assets` is not synced by Rojo) and already configured there:
+	anchored, welded parts with no collision, query, or touch.
 
-	**A altura é medida, não presumida.** O controller mede, uma vez, a distância do
-	pivô do modelo até a ponta de baixo dele, e é essa medida que faz `Height`
-	significar "folga entre a ponta e o alvo" — e não "folga até um pivô que por
-	acaso está em tal lugar". Hoje o pivô está na ponta e a seta inteira fica acima
-	dele; amanhã alguém define um `PrimaryPart` (o que muda o pivô para o meio da
-	peça escolhida) ou arrasta o pivô no Studio, e a seta continua apontando o mesmo
-	lugar.
+	**Height is measured, not assumed.** The controller measures, once, the distance
+	from the model's pivot to its bottom tip, and that measurement is what makes
+	`Height` mean "gap between the tip and the target" instead of "gap to a pivot that
+	happens to be somewhere". Today the pivot is at the tip and the whole arrow sits
+	above it; tomorrow someone sets a `PrimaryPart` (which moves the pivot to the
+	middle of the chosen part) or drags the pivot in Studio, and the arrow still
+	points at the same place.
 
-	A seta **gira** em torno do próprio eixo e **sobe e desce** numa senoide. Cada
-	uma nasce com uma fase diferente: duas setas na tela subindo e descendo em
-	sincronia parecem uma coisa só piscando, e desencontradas parecem duas.
+	The arrow **spins** around its own axis and **bobs** on a sine wave. Each one
+	starts at a different phase: two arrows on screen bobbing in sync look like one
+	thing blinking, and out of sync they look like two.
 
-	**Uma conexão para todas.** O laço de animação liga quando a primeira seta
-	aparece e desliga quando a última sai — não existe um `RenderStepped` por seta,
-	e não existe um rodando à toa com a tela vazia.
+	**One connection for all.** The animation loop starts when the first arrow
+	appears and stops when the last one leaves: there is no `RenderStepped` per
+	arrow, and none running idle with an empty screen.
 
-	**O molde é conferido, não consertado.** As propriedades que uma seta de
-	indicação precisa ter (ancorada, sem colisão, sem consulta, sem toque) já estão
-	no modelo; o controller as reescreve **uma vez** num molde guardado fora da
-	árvore, porque um modelo que volte do Studio sem elas derrubaria a seta no chão
-	ou a poria num `Raycast` de mira — e o custo de garantir isso é quatro escritas
-	na vida da sessão, não quatro por seta.
+	**The template is checked, not repaired.** The properties an indicator arrow
+	needs (anchored, no collision, no query, no touch) are already on the model; the
+	controller rewrites them **once** on a template kept outside the tree, because a
+	model coming back from Studio without them would drop the arrow to the ground or
+	put it in an aiming `Raycast`, and ensuring it costs four writes per session, not
+	four per arrow.
 
-	Fica em `common/` porque as duas places têm o modelo — e as duas têm coisa para
-	apontar.
+	It lives in `common/` because both places have the model, and both have things
+	to point at.
+
+	See docs/common/ui-guidance.md.
 ]]
 
 local ArrowController = {
 	Controllers = {}
 }
 
--- O molde já preparado, fora da árvore. Nil até a primeira seta.
+-- The prepared template, outside the tree. Nil until the first arrow.
 ArrowController.Template = nil :: Model?
 
--- A distância do pivô do molde até a ponta de baixo dele, medida uma vez. Ver
+-- The distance from the template's pivot to its bottom tip, measured once. See
 -- `measureBottom`.
 ArrowController.PivotToBottom = 0
 
 ArrowController.Container = nil :: Folder?
 
--- As setas vivas. É esta lista que liga e desliga o laço de animação.
+-- The live arrows. This list is what starts and stops the animation loop.
 ArrowController.Arrows = {}
 
 ArrowController.Connection = nil :: RBXScriptConnection?
 
--- Uma fase por seta, para elas não subirem e descerem juntas.
+-- One phase per arrow, so they do not bob together.
 ArrowController.Spawned = 0
 
 ArrowController.Warned = false
@@ -82,24 +86,24 @@ ArrowController.Warned = false
 --[[ HANDLE ]]
 
 --[=[
-	Uma seta no mundo. Quem pediu segura isto e manda embora quando não precisar
-	mais.
+	An arrow in the world. The caller holds this and dismisses it when no longer
+	needed.
 ]=]
 local Arrow = {}
 Arrow.__index = Arrow
 
 export type Options = {
-	-- Folga entre a ponta da seta e o alvo, em studs.
+	-- Gap between the arrow's tip and the target, in studs.
 	Height : number?,
 
-	-- Voltas por segundo.
+	-- Turns per second.
 	Spin : number?,
 
-	-- Studs para cima e para baixo, e ciclos por segundo.
+	-- Studs up and down, and cycles per second.
 	Amplitude : number?,
 	BobSpeed : number?,
 
-	-- Tamanho em cima do autorado.
+	-- Size on top of the authored one.
 	Scale : number?,
 }
 
@@ -116,8 +120,8 @@ export type Arrow = typeof(setmetatable(
 ))
 
 --[=[
-	Manda a seta para outro lugar. É o que uma seta que segue alguma coisa chama a
-	cada passo — a animação continua de onde estava, sem recomeçar o giro.
+	Sends the arrow somewhere else. It is what an arrow following something calls at
+	every step: the animation continues where it was, without restarting the spin.
 ]=]
 function Arrow:MoveTo(position : Vector3) : Arrow
 	if self.Alive then
@@ -147,10 +151,10 @@ end
 --[[ INTERNAL ]]
 
 --[=[
-	O modelo original, se esta place o tiver.
+	The original model, if this place has it.
 
-	O `warn` é uma vez só: uma seta pedida num laço não pode virar mil linhas no
-	output por causa de um modelo que não está lá.
+	The warning happens only once: an arrow requested in a loop must not turn into a
+	thousand output lines because a model is missing.
 ]=]
 function ArrowController:source() : Model?
 	local current : Instance = Shared
@@ -180,20 +184,21 @@ function ArrowController:warnMissing()
 	if self.Warned then return end
 
 	self.Warned = true
-	warn(`[ArrowController]: nao achei o modelo "{Config.Asset.Name}" em Shared.{table.concat(Config.Asset.Path, ".")}.`)
+	log:StudioWarn(`could not find the model "{Config.Asset.Name}" in Shared.{table.concat(Config.Asset.Path, ".")}.`)
 end
 
 --[=[
-	O molde: uma cópia conferida, guardada fora da árvore.
+	The template: a checked copy, kept outside the tree.
 
-	O modelo já vem com tudo isto ligado do jeito certo. A reescrita continua aqui
-	porque ela é a diferença entre "a seta funciona" e "a seta cai no chão": o
-	modelo é autorado no Studio, fora do git, e uma cópia nova que chegue sem âncora
-	ou com colisão vira defeito em runtime — parte solta caindo, seta aparecendo num
-	`Raycast` de mira, `Touched` de armadilha disparando à toa.
+	The model already comes with all of this set correctly. The rewrite stays here
+	because it is the difference between "the arrow works" and "the arrow falls to
+	the ground": the model is authored in Studio, outside git, and a new copy that
+	arrives unanchored or with collision becomes a runtime bug: a loose part falling,
+	the arrow showing up in an aiming `Raycast`, a trap's `Touched` firing for
+	nothing.
 
-	`pivotToBottom` é a medida que faz o `Height` do config querer dizer o que ele
-	diz: a distância vertical do pivô até a ponta de baixo, seja ela qual for.
+	`pivotToBottom` is the measurement that makes the config's `Height` mean what it
+	says: the vertical distance from the pivot to the bottom tip, whatever it is.
 ]=]
 function ArrowController:template() : Model?
 	local template = self.Template
@@ -225,16 +230,16 @@ function ArrowController:template() : Model?
 end
 
 --[=[
-	Quanto o pivô do modelo está acima da ponta de baixo dele.
+	How far the model's pivot is above its bottom tip.
 
-	Hoje dá **negativo**: o pivô foi deixado na ponta e a seta inteira fica acima
-	dele, então a ponta está cerca de um stud *acima* do pivô. Definir um
-	`PrimaryPart` mudaria isso de uma vez (o pivô passaria a ser o centro da peça
-	escolhida, seis studs acima da ponta), e é justamente por isso que este número é
-	medido e não escrito no config.
+	Today it is **negative**: the pivot was left at the tip and the whole arrow sits
+	above it, so the tip is about one stud *above* the pivot. Setting a
+	`PrimaryPart` would change that at once (the pivot would become the center of the
+	chosen part, six studs above the tip), which is exactly why this number is
+	measured and not written in the config.
 
-	Medido com o modelo em repouso, sem rotação: a seta só gira em torno do próprio
-	eixo Y, e giro em Y não mexe em altura.
+	Measured with the model at rest, unrotated: the arrow only spins around its own Y
+	axis, and a Y spin does not change height.
 ]=]
 function ArrowController:measureBottom(model : Model) : number
 	local center, size = model:GetBoundingBox()
@@ -243,10 +248,10 @@ function ArrowController:measureBottom(model : Model) : number
 end
 
 --[=[
-	A pasta onde as setas vivem, criada na primeira.
+	The folder where arrows live, created with the first one.
 
-	Fora do `Workspace.Map`, que o `MapService` troca entre partidas — seta
-	pendurada lá sumiria no meio de um apontamento sem ninguém pedir.
+	Outside `Workspace.Map`, which `MapService` swaps between matches: an arrow hung
+	there would vanish mid-pointing without anyone asking.
 ]=]
 function ArrowController:container() : Folder
 	local container = self.Container
@@ -271,12 +276,12 @@ function ArrowController:container() : Folder
 end
 
 --[=[
-	Põe uma seta onde ela tem de estar **neste instante**.
+	Places an arrow where it must be **at this instant**.
 
-	`PivotTo` porque o modelo não tem `PrimaryPart` — e não precisa ter: o pivô é
-	levado até onde a **ponta** tem de ficar, usando a medida do molde. É o que faz
-	`Height` significar "esta folga entre a ponta e o alvo", em studs, doa a quem
-	doer o pivô.
+	`PivotTo` because the model has no `PrimaryPart`, and it does not need one: the
+	pivot is moved to where the **tip** must be, using the template's measurement.
+	That is what makes `Height` mean "this gap between the tip and the target", in
+	studs, wherever the pivot is.
 ]=]
 function ArrowController:place(arrow : Arrow, clock : number)
 	local options = arrow.Options
@@ -297,7 +302,7 @@ function ArrowController:place(arrow : Arrow, clock : number)
 end
 
 --[=[
-	Liga o laço de animação, se ele ainda não estiver ligado.
+	Starts the animation loop, if it is not running yet.
 ]=]
 function ArrowController:play()
 	if self.Connection then return end
@@ -312,9 +317,9 @@ function ArrowController:play()
 end
 
 --[=[
-	Tira a seta da lista e desliga o laço quando a última sai. Um `RenderStepped`
-	rodando para uma tela sem seta nenhuma é o tipo de coisa que ninguém vê e todo
-	mundo paga.
+	Removes the arrow from the list and stops the loop when the last one leaves. A
+	`RenderStepped` running for a screen with no arrows is the kind of thing nobody
+	sees and everybody pays for.
 ]=]
 function ArrowController:forget(arrow : Arrow)
 	self.Arrows[arrow] = nil
@@ -330,11 +335,11 @@ end
 --[[ API ]]
 
 --[=[
-	Aponta uma posição do mundo. Devolve a seta, ou `nil` se o modelo não existir
-	nesta place.
+	Points at a world position. Returns the arrow, or `nil` if the model does not
+	exist in this place.
 
-	Cada chamada é uma seta nova: apontar dois lugares ao mesmo tempo é pedir duas.
-	Para mover a que já existe, `seta:MoveTo(outraPosicao)`.
+	Each call is a new arrow: pointing at two places at once means asking for two. To
+	move an existing one, `arrow:MoveTo(otherPosition)`.
 ]=]
 function ArrowController:Point(position : Vector3, options : Options?) : Arrow?
 	local template = self:template()
@@ -349,8 +354,8 @@ function ArrowController:Point(position : Vector3, options : Options?) : Arrow?
 		model:ScaleTo(scale)
 	end
 
-	-- A medida do molde vale para o tamanho do molde: seta menor tem a ponta mais
-	-- perto do pivô, na mesma proporção.
+	-- The template's measurement applies to the template's size: a smaller arrow has
+	-- its tip closer to the pivot, in the same proportion.
 	local pivotToBottom = self.PivotToBottom * scale
 
 	self.Spawned += 1
@@ -361,15 +366,15 @@ function ArrowController:Point(position : Vector3, options : Options?) : Arrow?
 		Options = options or {},
 		PivotToBottom = pivotToBottom,
 
-		-- Meia volta de defasagem entre uma seta e a seguinte: duas subindo juntas
-		-- parecem uma coisa só piscando.
+		-- Half a turn of offset between one arrow and the next: two bobbing together
+		-- look like one thing blinking.
 		Phase = self.Spawned * 0.5,
 
 		Alive = true,
 	}, Arrow)
 
-	-- Posta antes de entrar na tela: sem isto ela aparece no lugar em que o modelo
-	-- foi salvo, e só no quadro seguinte pula para o alvo.
+	-- Positioned before entering the screen: without this it appears where the model
+	-- was saved, and only on the next frame jumps to the target.
 	self:place(arrow, os.clock())
 	model.Parent = self:container()
 
@@ -380,8 +385,8 @@ function ArrowController:Point(position : Vector3, options : Options?) : Arrow?
 end
 
 --[=[
-	Apaga todas as setas de uma vez. É o que uma troca de round ou o fim de um
-	tutorial chama sem precisar guardar quem apontou o quê.
+	Clears every arrow at once. It is what a round change or the end of a tutorial
+	calls without needing to track who pointed at what.
 ]=]
 function ArrowController:ClearAll()
 	for arrow in self.Arrows do
@@ -407,11 +412,11 @@ function ArrowController:Count() : number
 	return count
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function ArrowController:construct()
-	-- O servidor aponta por posição; sem posição, apaga. Um evento só para os dois
-	-- lados evita um segundo identificador para declarar e manter.
+	-- The server points by position; without a position, it clears. A single event for
+	-- both cases avoids a second identifier to declare and maintain.
 	Framework:Listen("ArrowPoint", function(position : any, options : any)
 		if typeof(position) ~= "Vector3" then
 			self:ClearAll()

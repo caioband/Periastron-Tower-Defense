@@ -13,6 +13,7 @@ local SharedConfig = require(Configs.SharedConfig)
 local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
+local Log = require(Shared.Util.Log)
 local Signal = require(Packages.Signal)
 
 local CrateConfig = SharedConfig.CrateConfig
@@ -25,6 +26,7 @@ local TutorialConfig = SharedConfig.TutorialConfig
 local UnitStats = SharedConfig.UnitStats
 
 local Framework = Me.new()
+local log = Log.new("CrateService")
 
 local CrateService = {
 	Services = {
@@ -81,13 +83,13 @@ end
 function CrateService:SetCrates(Player : Player, rarity : string, amount : number) : number?
 	local resolvedRarity = CrateConfig.resolveRarity(rarity)
 	if not resolvedRarity then
-		warn(string.format("[CrateService]: %q is not a valid crate rarity.", tostring(rarity)))
+		log:StudioWarn(string.format("%q is not a valid crate rarity.", tostring(rarity)))
 		return nil
 	end
 
 	local DataService = self.Services.DataService
 	if not DataService.Update then
-		warn("[CrateService]: DataService is not ready yet, ignoring crate change.")
+		log:Warn("DataService is not ready yet; ignoring the crate change.")
 		return nil
 	end
 
@@ -119,7 +121,7 @@ end
 function CrateService:GiveCrates(Player : Player, rarity : string, amount : number?) : number?
 	local resolvedRarity = CrateConfig.resolveRarity(rarity)
 	if not resolvedRarity then
-		warn(string.format("[CrateService]: %q is not a valid crate rarity.", tostring(rarity)))
+		log:StudioWarn(string.format("%q is not a valid crate rarity.", tostring(rarity)))
 		return nil
 	end
 
@@ -163,25 +165,25 @@ end
 --[=[
 	Rolls a unit rarity out of a crate's pool. Returns nil when the crate has no pool.
 
-	`profile` e o perfil de quem abriu, e ele so serve para a sorte: a gamepass
-	`+30% Luck` multiplica o peso das raridades de Epic para cima (ver
-	`GamepassConfig.LUCK_MIN_RARITY`). Sem perfil -- ou sem a pass -- o multiplicador
-	e 1 e a conta sai exatamente como saia antes.
+	`profile` is the opener's profile, and it only serves luck: the `+30% Luck` gamepass
+	multiplies the weight of rarities from Epic up (see `GamepassConfig.LUCK_MIN_RARITY`).
+	Without a profile (or without the pass) the multiplier is 1 and the math comes out
+	exactly as without it.
 
-	**A sorte levanta as de cima e nao mexe nas de baixo**, e isso ja basta: o sorteio
-	normaliza pela soma dos pesos, entao subir Epic+ empurra Common e Rare para baixo
-	sozinho. Mexer nos dois lados seria dois numeros para manter em sincronia.
+	**Luck raises the top ones and leaves the bottom ones alone**, and that is enough: the
+	draw normalizes by the sum of weights, so raising Epic+ pushes Common and Rare down on
+	its own. Touching both sides would be two numbers to keep in sync.
 
-	Ela tambem nao passa a chance publicada para tras: o `GetDisplayOdds` da loja
-	continua sendo o pool cru, que e o que o jogador **sem** pass recebe. Uma pass que
-	melhora o que ela promete nao torna o numero da loja mentira.
+	It also does not make the published chance false: the shop's `GetDisplayOdds` stays
+	the raw pool, which is what a player **without** the pass gets. A pass that improves
+	on what it promises does not make the shop number a lie.
 ]=]
 --[=[
-	Marca a próxima caixa deste jogador com uma raridade.
+	Marks this player's next crate with a rarity.
 
-	É de uso único e não é acumulável: marcar duas vezes continua valendo para uma
-	caixa só. Vale enquanto ele estiver no servidor — não é gravada no perfil,
-	porque ela é de um passo de tutorial e não de uma promessa do jogo.
+	It is single use and does not stack: marking twice still applies to one crate only. It
+	lasts while they are on the server; it is not saved on the profile, because it belongs
+	to a tutorial step, not a game promise.
 ]=]
 function CrateService:ForceRarity(Player : Player, rarity : string)
 	local resolved = RarityConfig.resolveRarity and RarityConfig.resolveRarity(rarity) or rarity
@@ -190,11 +192,11 @@ function CrateService:ForceRarity(Player : Player, rarity : string)
 	self.ForcedRarity = self.ForcedRarity or {}
 	self.ForcedRarity[Player.UserId] = resolved
 
-	print(`[CrateService]: proxima caixa de {Player.Name} vem {resolved} (tutorial).`)
+	log:Debug(`next crate for {Player.Name} will be {resolved} (tutorial).`)
 end
 
 --[=[
-	Lê e apaga a marca da próxima caixa, se houver.
+	Reads and clears the next-crate mark, if any.
 ]=]
 function CrateService:ConsumeForcedRarity(Player : Player) : string?
 	local forced = self.ForcedRarity and self.ForcedRarity[Player.UserId]
@@ -207,13 +209,13 @@ function CrateService:ConsumeForcedRarity(Player : Player) : string?
 end
 
 --[=[
-	A garantia de quem está começando: dentro das primeiras caixas da vida do
-	perfil, uma sai Epic ou melhor.
+	The newcomer's guarantee: within the profile's first crates ever, one comes out Epic or
+	better.
 
-	A conta é o `Stats.BoxesOpened`, que já existe e já conta abertura de verdade —
-	nenhuma chave nova. A garantia só entra na **última** das primeiras caixas
-	(a terceira, hoje) e só se nenhuma Epic tiver saído antes: quem teve sorte na
-	primeira não gasta a garantia, e quem não teve sai das três com uma.
+	The count is `Stats.BoxesOpened`, which already exists and already counts real
+	openings: no new key. The guarantee only applies on the **last** of the first crates
+	(the third, today) and only if no Epic came out before: someone lucky on the first
+	does not spend the guarantee, and someone unlucky leaves the three with one.
 ]=]
 function CrateService:_guaranteedRarity(profile : any) : string?
 	local guarantee = TutorialConfig.CrateGuarantee
@@ -224,7 +226,7 @@ function CrateService:_guaranteedRarity(profile : any) : string?
 	local stats = typeof(profile) == "table" and profile.Stats or nil
 	local opened = (typeof(stats) == "table" and tonumber(stats.BoxesOpened)) or 0
 
-	-- Esta abertura é a de número `opened + 1`.
+	-- This opening is number `opened + 1`.
 	if opened + 1 ~= guarantee.Crates then
 		return nil
 	end
@@ -249,14 +251,14 @@ end
 function CrateService:_rollRarity(crateRarity : string, profile : any) : string?
 	local guaranteed = self:_guaranteedRarity(profile)
 	if guaranteed then
-		print(`[CrateService]: garantia de inicio: {guaranteed} nesta abertura.`)
+		log:Debug(`starter guarantee: {guaranteed} on this opening.`)
 
 		return guaranteed
 	end
 
 	local pool = ServerConfig.Crate.POOLS[crateRarity]
 	if not pool then
-		warn(string.format("[CrateService]: crate %q has no pool in ServerConfig.Crate.", tostring(crateRarity)))
+		log:StudioWarn(string.format("crate %q has no pool in ServerConfig.Crate.", tostring(crateRarity)))
 		return nil
 	end
 
@@ -295,11 +297,11 @@ function CrateService:_rollRarity(crateRarity : string, profile : any) : string?
 end
 
 --[=[
-	As units de um tier que uma caixa pode realmente entregar.
+	The units of a tier a crate can actually deliver.
 
-	`RarityConfig.getUnitsOfRarity` continua sendo a lista honesta do tier -- é ela que
-	a carta, o deck e o balanceamento leem. O drop é que é menor: `EXCLUDED_UNITS`
-	tira daqui quem existe no jogo mas não sai mais de caixa (ver ServerConfig.Crate).
+	`RarityConfig.getUnitsOfRarity` stays the tier's honest list: the card, the deck, and
+	balance read it. The drop is what is smaller: `EXCLUDED_UNITS` removes from here units
+	that exist in the game but no longer drop from crates (see ServerConfig.Crate).
 ]=]
 local function unboxableUnitsOfRarity(rarity : string) : { string }
 	local excluded = ServerConfig.Crate.EXCLUDED_UNITS or {}
@@ -318,9 +320,9 @@ end
 	Picks the unit the player actually gets, among the units of that rarity a crate
 	can still give.
 
-	A tier with nothing left to give -- porque nenhuma unit foi marcada com ele
-	(Cosmic, as it stands) ou porque as que havia estão fora do drop -- walks down to
-	the closest tier that has one, so a roll never comes back empty-handed.
+	A tier with nothing left to give (because no unit was assigned to it (Cosmic, as it
+	stands) or because the ones it had are out of the drop) walks down to the closest tier
+	that has one, so a roll never comes back empty-handed.
 ]=]
 function CrateService:_rollUnit(rarity : string) : (string?, string?)
 	local currentRarity : string? = rarity
@@ -329,8 +331,8 @@ function CrateService:_rollUnit(rarity : string) : (string?, string?)
 		local units = unboxableUnitsOfRarity(currentRarity)
 		if #units > 0 then
 			if currentRarity ~= rarity then
-				warn(string.format(
-					"[CrateService]: no unit of rarity %q can drop from a crate, dropping a %s one instead.",
+				log:StudioWarn(string.format(
+					"no unit of rarity %q can drop from a crate, dropping a %s one instead.",
 					rarity,
 					currentRarity
 				))
@@ -342,17 +344,16 @@ function CrateService:_rollUnit(rarity : string) : (string?, string?)
 		currentRarity = RarityConfig.getLowerRarity(currentRarity)
 	end
 
-	warn("[CrateService]: no unit is left in the crate pool at any rarity.")
+	log:Warn("no unit is left in the crate pool at any rarity.")
 	return nil, nil
 end
 
 --[=[
-	A raridade que esta garantida na proxima abertura desta caixa, ou nil.
+	The rarity guaranteed on this crate's next opening, or nil.
 
-	Le as contas do `Pity` do perfil contra o limite de cada raridade
-	(`Crate.GetPityThreshold`), na ordem de `Crate.PITY_RARITIES`: se Cosmic e
-	Legendary venceram juntas, sai Cosmic agora e a Legendary continua vencida para a
-	abertura seguinte.
+	It reads the profile's `Pity` counts against each rarity's limit
+	(`Crate.GetPityThreshold`), in `Crate.PITY_RARITIES` order: if Cosmic and Legendary
+	come due together, Cosmic comes out now and Legendary stays due for the next opening.
 ]=]
 function CrateService:_dueRarity(crateRarity : string, profile : any) : string?
 	local CrateOdds = ServerConfig.Crate
@@ -372,15 +373,15 @@ function CrateService:_dueRarity(crateRarity : string, profile : any) : string?
 end
 
 --[=[
-	Atualiza as contas da garantia depois de uma abertura: zera a da raridade que saiu
-	e soma um nas outras.
+	Updates the guarantee counts after an opening: resets the one for the rarity that came
+	out and adds one to the others.
 
-	`gotRarity` e a raridade da unit que o jogador de fato recebeu -- a mesma do
-	resultado --, e nao a sorteada: um tier sem unit nenhuma desce um degrau no
-	`_rollUnit`, e essa abertura nao entregou o tier de cima.
+	`gotRarity` is the rarity of the unit the player actually received (the same as the
+	result), not the rolled one: a tier with no unit steps down in `_rollUnit`, and that
+	opening did not deliver the upper tier.
 
-	Caixa sem chance de uma raridade nao guarda conta dela: nao ha limite, e um
-	numero crescendo para sempre no perfil nao serviria para nada.
+	A crate with no chance of a rarity keeps no count for it: there is no limit, and a
+	number growing forever on the profile would serve no purpose.
 ]=]
 function CrateService:_recordPity(Player : Player, crateRarity : string, gotRarity : string?)
 	local CrateOdds = ServerConfig.Crate
@@ -418,18 +419,18 @@ export type UnboxingResult = {
 	Runs a crate opening end to end: upgrade chain, rarity out of the resulting pool,
 	then a unit of that rarity. Pure roll -- nothing is written or sent.
 
-	`profile` e de quem esta abrindo, e so a sorte o le (ver `_rollRarity`). Sem ele o
-	sorteio e o do jogador sem gamepass nenhuma -- e o que faz o `unbox` do Cmdr rolar
-	a caixa "de fabrica" quando ninguem passa um perfil.
+	`profile` belongs to the opener, and only luck reads it (see `_rollRarity`). Without
+	it the draw is that of a player with no gamepass at all: that is what makes Cmdr's
+	`unbox` roll the crate "stock" when nobody passes a profile.
 
-	`forcedRarity` e a garantia (ver `_dueRarity`): vindo, ela passa por cima do
-	sorteio da raridade. A evolucao continua rolando -- o carretel mostra a caixa
-	evoluindo do mesmo jeito --, so a raridade entregue e que ja estava decidida.
+	`forcedRarity` is the guarantee (see `_dueRarity`): when present, it overrides the
+	rarity draw. The upgrade still rolls (the reel shows the crate upgrading the same
+	way); only the delivered rarity was already decided.
 ]=]
 function CrateService:RollCrate(rarity : string, profile : any, forcedRarity : string?) : UnboxingResult?
 	local resolvedRarity = CrateConfig.resolveRarity(rarity)
 	if not resolvedRarity then
-		warn(string.format("[CrateService]: %q is not a valid crate rarity.", tostring(rarity)))
+		log:StudioWarn(string.format("%q is not a valid crate rarity.", tostring(rarity)))
 		return nil
 	end
 
@@ -453,11 +454,11 @@ function CrateService:RollCrate(rarity : string, profile : any, forcedRarity : s
 end
 
 --[=[
-	O perfil aberto do jogador, ou nil enquanto ele nao carregou.
+	The player's open profile, or nil while it has not loaded.
 
-	Quem le e a sorte do sorteio: sem perfil a caixa rola sem gamepass, que e o pior
-	caso para o jogador e o unico seguro para o jogo -- inventar uma pass que ele
-	talvez nao tenha e dar o beneficio de graca.
+	The draw's luck reads it: without a profile the crate rolls without a gamepass, which
+	is the worst case for the player and the only safe one for the game: inventing a pass
+	they may not have would give the benefit away for free.
 ]=]
 function CrateService:_profileOf(Player : Player) : any
 	local DataService = self.Services.DataService
@@ -468,14 +469,14 @@ function CrateService:_profileOf(Player : Player) : any
 end
 
 --[=[
-	Manda a abertura para o lobby inteiro, e não só para quem abriu.
+	Sends the opening to the whole Lobby, not only the opener.
 
-	`Owner` viaja junto porque é dele o personagem na frente do qual a caixa nasce, em
-	todas as telas -- e é o que separa quem abriu de quem está só assistindo: só a tela
-	do dono mostra o carretel e o nome da unidade, o resto vê a caixa e o prêmio.
+	`Owner` travels along because it is their character the crate appears in front of, on
+	every screen, and it is what separates the opener from those just watching: only the
+	owner's screen shows the reel and the unit's name; the rest see the crate and the prize.
 
-	Um `Fire` por jogador é como o resto do projeto transmite (`MobService`): o `Me`
-	só expõe o envio para um cliente de cada vez.
+	One `Fire` per player is how the rest of the project broadcasts (`MobService`): `Me`
+	only exposes sending to one client at a time.
 ]=]
 function CrateService:_broadcastUnboxing(Owner : Player, result : UnboxingResult)
 	for _, player in Players:GetPlayers() do
@@ -510,13 +511,13 @@ end
 function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResult?
 	local resolvedRarity = CrateConfig.resolveRarity(rarity)
 	if not resolvedRarity then
-		warn(string.format("[CrateService]: %q is not a valid crate rarity.", tostring(rarity)))
+		log:StudioWarn(string.format("%q is not a valid crate rarity.", tostring(rarity)))
 		return nil
 	end
 
 	local DataService = self.Services.DataService
 	if not DataService.Update then
-		warn("[CrateService]: DataService is not ready yet, ignoring crate opening.")
+		log:Warn("DataService is not ready yet; ignoring the crate opening.")
 		return nil
 	end
 
@@ -546,20 +547,20 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 	self.Signals.CrateAmountChanged:Fire(Player, resolvedRarity, remaining, -1)
 
 	--[[
-		A garantia: se alguma raridade venceu a conta desta caixa, ela ja esta decidida
-		antes do sorteio (`_dueRarity`). As contas so andam depois de o roll dar certo:
-		abertura que falhou devolve a caixa e nao conta.
+		The guarantee: if some rarity came due on this crate's count, it is already decided
+		before the draw (`_dueRarity`). The counts only move after the roll succeeds: a
+		failed opening returns the crate and does not count.
 
-		Nada entre ler as contas e escreve-las cede a thread, entao dois cliques
-		seguidos nao leem a mesma conta antes de ela andar.
+		Nothing between reading the counts and writing them yields the thread, so two clicks
+		in a row do not read the same count before it moves.
 	]]
 	local profile = self:_profileOf(Player)
 
 	--[[
-		A raridade que o tutorial deixou marcada para a próxima caixa deste jogador
-		passa na frente da garantia normal, e é **consumida** aqui: uma marca, uma
-		caixa. Quem a põe é o `TutorialService`, no servidor, quando abre o passo do
-		lobby — o cliente não pede raridade nenhuma, e por isso não há o que forjar.
+		The rarity the tutorial left marked for this player's next crate takes precedence
+		over the normal guarantee, and is **consumed** here: one mark, one crate.
+		`TutorialService` sets it, on the server, when it opens the Lobby step: the client
+		asks for no rarity, so there is nothing to forge.
 	]]
 	local dueRarity = self:ConsumeForcedRarity(Player) or self:_dueRarity(resolvedRarity, profile)
 
@@ -572,8 +573,8 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 
 	self:_recordPity(Player, resolvedRarity, result.Rarity)
 
-	-- A MOST BOXES OPENED conta daqui: so a caixa gasta e rolada de verdade. O
-	-- `PlayUnboxing` (o `unbox` do Cmdr) nao passa por aqui e nao conta.
+	-- MOST BOXES OPENED counts from here: only a crate actually spent and rolled. The
+	-- `PlayUnboxing` (Cmdr's `unbox`) does not go through here and does not count.
 	DataService:Update(Player, "Stats", function(stats)
 		stats.BoxesOpened = (tonumber(stats.BoxesOpened) or 0) + 1
 		return stats
@@ -586,15 +587,15 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 			return units
 		end)
 
-		-- Obter e o gatilho do Index: a unit entra no catalogo na primeira copia, e
-		-- fica la mesmo que ele venda todas depois.
+		-- Obtaining is the Index trigger: the unit enters the catalog on the first copy, and
+		-- stays there even if they sell all of them later.
 		local IndexService = self.Services.IndexService
 		if IndexService then
 			IndexService:UnlockUnit(Player, result.Unit)
 		end
 
-		-- "Unbox 2 Legendary Cards": a raridade e a da unidade que saiu, de qualquer
-		-- caixa. O summon nao passa por aqui e nao conta.
+		-- "Unbox 2 Legendary Cards": the rarity is that of the unit that came out, from any
+		-- crate. Summons do not go through here and do not count.
 		local ContractService = self.Services.ContractService
 		if ContractService then
 			ContractService:Record(Player, SharedConfig.ContractConfig.Events.Unbox, 1, { Rarity = result.Rarity })

@@ -7,11 +7,11 @@ local Me = require(Vendor:WaitForChild("Me"))
 local Framework = Me.new()
 
 --[[
-	Ver a caixa de fala funcionando sem depender de um NPC existir.
+	See the dialog box working without depending on an NPC existing.
 
-	O texto é o `DialogConfig.Demo`, e ele é fixo por um motivo: é uma frase que
-	exercita de uma vez a máquina de escrever, o efeito, a pausa, a quebra de linha
-	e o `[event=]`. Se algo do texto rico quebrar, quebra aqui na frente de alguém.
+	The text is `DialogConfig.Demo`, and it is fixed for a reason: it is a sentence
+	that exercises the typewriter, the effect, the pause, the line break, and
+	`[event=]` all at once. If rich text breaks, it breaks here in front of someone.
 ]]
 return function(_context, players : { Player }?, auto : boolean?)
 	local DialogService = Framework:Get("DialogService", false, true)

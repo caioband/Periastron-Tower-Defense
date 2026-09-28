@@ -15,19 +15,21 @@ local Framework = Me.new()
 local Config = SharedConfig.DialogConfig
 
 --[[
-	O servidor mandando falar.
+	The server telling the dialog to speak.
 
-	A caixa de fala é do cliente (`DialogController`), e quem decide o que ela diz
-	quase sempre também é — uma fala de NPC começa num toque, num portal, num botão.
-	Este service existe para o outro caso: a fala que o **servidor** provoca, porque
-	só ele sabe que ela é devida (um contrato completado, uma wave especial, o
-	tutorial da primeira partida).
+	The dialog box belongs to the client (`DialogController`), and the client almost
+	always decides what it says too: an NPC line starts with a touch, a portal, a
+	button. This service exists for the other case: a line the **server** triggers,
+	because only it knows the line is due (a completed contract, a special wave, the
+	first match's tutorial).
 
 		DialogService:Send(players, {
-			"A wave 8 traz [shake]NEVASCA[/shake].",
+			"Wave 8 brings a [shake]BLIZZARD[/shake].",
 		}, { Auto = true })
 
-	Fica em `common/` porque as duas places têm a caixa.
+	It lives in `common/` because both places have the box.
+
+	See docs/common/dialog.md.
 ]]
 
 local DialogService = {
@@ -41,17 +43,17 @@ export type SendOptions = {
 	Preset : string?,
 	Speed : number?,
 
-	-- Os botões da caixa, só na parte que é dado: texto e visibilidade. O que eles
-	-- fazem ao serem clicados é do cliente, porque callback não atravessa a rede.
+	-- The box's buttons, only the part that is data: text and visibility. What they
+	-- do when clicked belongs to the client, because callbacks do not cross the network.
 	Buttons : { { Text : string?, Visible : boolean? } }?,
 }
 
 --[=[
-	Manda a conversa para quem estiver na lista. `lines` é uma frase ou a lista
-	delas, com a marcação do `RichTextController` dentro.
+	Sends the conversation to everyone in the list. `lines` is one sentence or a list
+	of them, with `RichTextController` markup inside.
 
-	Sem `players`, fala para o servidor inteiro — é o que o Cmdr usa quando não
-	recebe alvo nenhum.
+	Without `players`, it speaks to the whole server: that is what Cmdr uses when it
+	gets no target.
 ]=]
 function DialogService:Send(players : { Player }?, lines : string | { string }, options : SendOptions?)
 	local list = if type(lines) == "table" then lines else { lines }
@@ -63,13 +65,13 @@ function DialogService:Send(players : { Player }?, lines : string | { string }, 
 end
 
 --[=[
-	A fala de teste do `DialogConfig.Demo`, que é por onde o comando `dialog` do
-	Cmdr entra. Vai com os dois botões acesos, para eles serem vistos sem ninguém
-	escrever código.
+	The test line from `DialogConfig.Demo`, which is how the Cmdr `dialog` command
+	gets in. It goes with both buttons on, so they can be seen without anyone
+	writing code.
 
-	A cópia é para o config não ser alterado por quem passar um `options` com
-	`Buttons` próprio — tabela de config é leitura, e quem a altera de longe estraga
-	a sessão inteira.
+	The copy keeps the config from being changed by a caller passing `options` with
+	their own `Buttons`: a config table is read-only, and changing it from afar
+	breaks the whole session.
 ]=]
 function DialogService:SendDemo(players : { Player }?, options : SendOptions?)
 	local merged : any = if options then table.clone(options) else {}
@@ -80,12 +82,12 @@ function DialogService:SendDemo(players : { Player }?, options : SendOptions?)
 	self:Send(players, Config.Demo, merged)
 end
 
---[[ CICLO DE VIDA ]]
+--[[ LIFECYCLE ]]
 
 function DialogService:construct()
-	-- O identificador do evento nasce no servidor: sem este `Listen` vazio, o
-	-- `Listen` do cliente ficaria dez segundos esperando um evento que ninguém
-	-- registrou — e levaria junto o resto do `construct` dele.
+	-- The event identifier is created on the server: without this empty `Listen`,
+	-- the client's `Listen` would wait ten seconds for an event nobody registered,
+	-- and take the rest of its `construct` down with it.
 	Framework:Listen("DialogPlay", function() end)
 end
 

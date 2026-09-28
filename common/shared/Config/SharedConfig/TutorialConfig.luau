@@ -1,33 +1,32 @@
 --[[
-	A oferta de tutorial: a primeira coisa que o jogo diz a quem nunca jogou.
+	The tutorial offer: the first thing the game says to someone who never played.
 
-	Quem decide que ela é devida é o servidor (`TutorialService`, olhando a chave
-	`Tutorial` do perfil); quem a põe na tela é o `TutorialController`, pela caixa de
-	fala de sempre. Aqui fica só o que se lê e se ajusta.
+	The server decides it is due (`TutorialService`, reading the profile's `Tutorial`
+	key); `TutorialController` puts it on screen through the usual dialog box. Only
+	what is read and tuned lives here.
 
-	As frases usam a marcação do `RichTextController` — `%s` é o nome do jogador, e
-	é o controller que o preenche (escapado, porque nome de jogador é texto de
-	jogador).
+	The lines use `RichTextController` markup; `%s` is the player's name, filled in
+	(escaped) by the controller.
+
+	See docs/common/tutorial.md and docs/game/tutorial-match.md.
 ]]
 
 local TutorialConfig = {}
 
 --[[
-	A fonte da oferta.
+	The offer's font.
 
-	Ela vive aqui, e não no `RichTextConfig.Defaults`, porque é escolha **desta**
-	tela: o resto do texto rico do jogo continua no padrão do módulo até alguém
-	decidir o contrário.
+	It lives here, not in `RichTextConfig.Defaults`, because it is **this** screen's
+	choice: the rest of the game's rich text keeps the module default.
 ]]
 TutorialConfig.Font = "rbxasset://fonts/families/PressStart2P.json"
 
 --[=[
-	O que a caixa de fala recebe junto das frases.
+	What the dialog box receives with the lines.
 
-	`Size` é a altura da linha na caixa (ver `RichTextConfig.Presets.Dialogue`), e
-	aqui ele é menor que o padrão de propósito: a Press Start 2P é quase
-	monoespaçada e ocupa perto do dobro da largura por caractere que a fonte de
-	antes — no mesmo 24 a saudação passaria do fim da caixa.
+	`Size` is the line height in the box (see `RichTextConfig.Presets.Dialogue`),
+	smaller than the default on purpose: Press Start 2P is almost monospaced and
+	takes about twice the width per character, so at 24 the greeting would overflow.
 ]=]
 TutorialConfig.Text = {
 	Preset = "Dialogue",
@@ -36,20 +35,19 @@ TutorialConfig.Text = {
 }
 
 --[=[
-	As opções de **qualquer** fala do tutorial: a fonte e o tamanho de `Text`, mais o
-	que a conversa daquele momento pedir (esconder ou não a UI, os botões da
-	escolha, o modo automático).
+	The options for **any** tutorial dialog: `Text`'s font and size, plus whatever
+	that moment's conversation asks for (hiding the UI or not, choice buttons,
+	automatic mode).
 
-	Existe porque a fonte é a mesma nos três lugares que falam pelo tutorial — a
-	oferta no lobby (`TutorialController`), os passos da partida
-	(`TutorialStepController`) e a volta depois da vitória (`TutorialShopController`)
-	— e eles vivem em places diferentes. Sem isto, trocar a fonte do tutorial seria
-	trocá-la em três arquivos e esquecer um.
+	It exists because the font is the same in the three places the tutorial speaks
+	(the Lobby offer in `TutorialController`, the match steps in
+	`TutorialStepController`, and the return after winning in `TutorialShopController`),
+	which live in different places. Without it, changing the tutorial font would mean
+	three files and forgetting one.
 
 		dialog:Play(lines, TutorialConfig.Speech({ Auto = true, Blur = false }))
 
-	O que quem chama passa **ganha** do que está em `Text`: a fala que quiser outro
-	tamanho pede e recebe.
+	What the caller passes **wins** over `Text`.
 ]=]
 function TutorialConfig.Speech(options : { [string] : any }?) : { [string] : any }
 	local resolved = table.clone(TutorialConfig.Text)
@@ -62,60 +60,52 @@ function TutorialConfig.Speech(options : { [string] : any }?) : { [string] : any
 end
 
 --[[
-	Quanto esperar, depois de o servidor mandar, antes de falar.
+	How long to wait, after the server sends it, before speaking.
 
-	O jogador acabou de cair no lobby: tem carregamento de UI, abertura e câmera
-	acontecendo. Falar por cima disso é o mesmo que não falar.
+	The player just arrived in the Lobby: UI loading, the intro, and the camera are
+	all happening. Speaking over that is the same as not speaking.
 ]]
 TutorialConfig.PromptDelay = 3
 
 --[=[
-	A trava de botões do tutorial, nas duas metades.
+	The tutorial button lock, in both halves.
 
-	O roteiro aponta uma coisa de cada vez, e **o que ele não aponta não é clicável**:
-	quem está aprendendo onde fica o botão de Ready não pode abrir o board de
-	dificuldade, vender a torre que o passo acabou de pedir ou pular a wave que o
-	passo está esperando. Quem desliga é o `ButtonGateController`; daqui sai só o que
-	é do tutorial.
+	The script points at one thing at a time, and **what it does not point at is not
+	clickable**: a player learning where the Ready button is must not open the
+	difficulty board, sell the tower the step just asked for, or skip the wave the
+	step is waiting on. `ButtonGateController` does the locking; only the
+	tutorial-specific parts live here.
 
-	Cada passo diz o que libera (ver `Buttons` em `Match.Steps`, e o alvo de cada
-	tempo do fluxo do lobby). Esta tabela é o que vale **em cima de qualquer passo**.
+	Each step says what it unlocks (see `Buttons` in `Match.Steps`, and each Lobby
+	flow beat's target). This table applies **on top of every step**.
 
-	> O nome é `ButtonGate`, e não `Buttons`, porque `TutorialConfig.Buttons` já é
-	> outra coisa: os dois botões da escolha da oferta. São assuntos diferentes com a
-	> mesma palavra, e o segundo a chegar apagaria o primeiro em silêncio.
+	> It is `ButtonGate`, not `Buttons`, because `TutorialConfig.Buttons` is already
+	> something else: the offer's two choice buttons.
 
-	  - `Always` — sempre clicável, em todo passo das duas places. Hoje é só a caixa
-	    de fala: um botão de escolha que não aceita clique é uma conversa sem saída, e
-	    a caixa é a mesma nas duas metades;
-	  - `Ignore` — telas em que a trava não pisa, por nome. O destaque já é ignorado
-	    sem precisar ser dito. As outras três:
+	  - `Always`: always clickable, in every step of both places. Today only the
+	    dialog box: a choice button that ignores clicks is a conversation with no exit.
+	  - `Ignore`: screens the lock never touches, by name. The highlight is ignored
+	    without saying so. The other three:
 
-	      `Cmdr` porque trancar o console é trancar a ferramenta com que se destrava o
-	      resto;
+	      `Cmdr`, because locking the console locks the tool that unlocks the rest;
 
-	      `TouchGui` e `MovementButtons` porque **movimento não é botão do roteiro**. É
-	      a mesma linha que faz a trava ser nos botões e não no `BlockInput` do
-	      destaque: o jogador continua dono da câmera e das próprias pernas enquanto
-	      aprende onde clicar. No celular, andar, correr, dar dash e pular são botões de
-	      tela — trancá-los junto seria travar o jogador no lugar, que é exatamente o
-	      que se estava evitando;
-	  - `Release` — a válvula, em segundos de passo **aberto**. Se a whitelist de um
-	    passo não cobrir o botão que ele pede, o jogador ficaria com a tela morta e
-	    ninguém para religá-la; passado o prazo a trava cai sozinha e o output diz por
-	    quê.
+	      `TouchGui` and `MovementButtons`, because **movement is not a script
+	      button**. The player keeps control of the camera and their legs while
+	      learning where to click; on phones, walking, running, dashing, and jumping
+	      are screen buttons, and locking them would freeze the player in place.
+	  - `Release`: the valve, in seconds of an **open** step. If a step's whitelist
+	    misses the button it asks for, the screen would be dead with nobody to
+	    re-enable it; after the deadline the lock drops and a warning says why.
 
-	    Quatro minutos, e é para ser exagerado. Válvula que dispara em partida normal
-	    não é válvula, é bug — e o piso não é o tempo que *eu* levo para cumprir o
-	    passo, é o que um jogador que nunca viu o jogo leva. O intervalo do preset de
-	    tutorial sozinho já são 45s (o passo do Ready fica aberto a contagem inteira
-	    mesmo com o clique no primeiro segundo), e 90s morria no meio do passo do
-	    Slingshot, com o jogador ainda lendo a fala e procurando o ponto no mapa.
+	    Four minutes, deliberately generous. A valve that fires in a normal match is a
+	    bug, and the floor is how long a first-time player takes, not a developer. The
+	    tutorial preset's intermission alone is 45 s (the Ready step stays open for the
+	    whole countdown), and 90 s ran out mid-Slingshot step, with the player still
+	    reading and looking for the spot.
 
-	    Ela só corre enquanto o passo está **aberto**: cumprido o passo, o prazo sai
-	    (`HoldRelease`) e a whitelist fica de pé até o passo seguinte — o jogador não
-	    está preso, só não tem o que clicar enquanto a wave corre. Passo que precise
-	    de outro prazo pede em `ButtonRelease`.
+	    It only runs while the step is **open**: once done, the deadline stops
+	    (`HoldRelease`) and the whitelist stays until the next step. A step that needs
+	    another deadline sets `ButtonRelease`.
 ]=]
 TutorialConfig.ButtonGate = {
 	Always = { "SharedUIs.DialogGUI.Container" },
@@ -124,14 +114,14 @@ TutorialConfig.ButtonGate = {
 }
 
 --[=[
-	As frases.
+	The lines.
 
-	1. Branco, nome em gradiente laranja, meio segundo de espera e o nome do jogo
-	   em dourado com brilho.
-	2. A pergunta, com "Tutorial" em gradiente verde animado.
+	1. White, the name in an orange gradient, half a second's pause, and the game's
+	   name in shiny gold.
+	2. The question, with "Tutorial" in an animated green gradient.
 
-	As paletas (`orange`, `green`) e o dourado (`gold`) moram em `RichTextConfig`,
-	então mudar a cor da saudação não passa por aqui.
+	The palettes (`orange`, `green`) and the gold (`gold`) live in `RichTextConfig`,
+	so changing the greeting's colors does not go through here.
 ]=]
 TutorialConfig.Lines = {
 	"[color=white]Hello, [/color][gradient=orange]%s[/gradient][pause=0.5][color=white], welcome to [/color][gold]Periastron Tower Defense[/gold]",
@@ -139,14 +129,14 @@ TutorialConfig.Lines = {
 }
 
 --[=[
-	Os dois botões da escolha.
+	The two choice buttons.
 
-	`AcceptIndex` e `DeclineIndex` são índices de `DialogConfig.Buttons.Names` — na
-	caixa de hoje, 1 é o botão da direita e 2 é o da esquerda. Aceitar à direita é o
-	que a maioria dos jogos faz, e trocar os dois é trocar os números aqui.
+	`AcceptIndex` and `DeclineIndex` are indices of `DialogConfig.Buttons.Names`; in
+	today's box, 1 is the right button and 2 the left. Accept on the right is what
+	most games do; swapping means swapping the numbers here.
 
-	Eles só aparecem quando a segunda frase termina de ser escrita: escolha no ar
-	antes da pergunta ser lida é convite a responder no automático.
+	They only appear when the second line finishes typing: a choice on screen before
+	the question is read invites answering on autopilot.
 ]=]
 TutorialConfig.Buttons = {
 	AcceptIndex = 1,
@@ -157,27 +147,27 @@ TutorialConfig.Buttons = {
 }
 
 --[=[
-	A partida de tutorial.
+	The tutorial match.
 
-	`Difficulty` é o nome do preset em `ServerScriptService.Config.Difficulty` — ele
-	está **fora** do `Order`, então não aparece na votação; quem o impõe é o
-	`TutorialMatchService`.
+	`Difficulty` is the preset name in `ServerScriptService.Config.Difficulty`; it is
+	**outside** `Order`, so it does not appear in the vote, and `TutorialMatchService`
+	imposes it.
 
-	`Deck` é o que o jogador leva para o mapa, **só nesta partida**: duas Archer e
-	uma Slasher, três cartas para os três `PlacementPoints` do mapa. O perfil não é
-	tocado — quem entra no tutorial com um deck montado o encontra intacto ao voltar
-	ao lobby.
+	`Deck` is what the player takes to the map, **only in this match**: one Slingshot
+	and two Archers, three cards for the map's three `PlacementPoints`. The profile
+	is untouched: a player who enters with a built deck finds it intact back in the
+	Lobby.
 
-	`Map` é o nome do mapa em `ServerStorage.Maps`, e é o que o Lobby manda no
-	TeleportData junto da flag.
+	`Map` is the map name in `ServerStorage.Maps`, and what the Lobby sends in the
+	TeleportData with the flag.
 ]=]
 TutorialConfig.Match = {
 	Map = "Tutorial",
 	Difficulty = "Tutorial",
 
 	--[[
-		Uma entrada por carta da hotbar, na ordem em que elas aparecem. É lista, e
-		não dicionário, porque `{ Archer = 2 }` não tem ordem — e a hotbar tem.
+		One entry per hotbar card, in the order they appear. A list, not a dictionary,
+		because `{ Archer = 2 }` has no order and the hotbar does.
 	]]
 	Deck = {
 		{ Unit = "Slingshot", Amount = 1 },
@@ -185,99 +175,91 @@ TutorialConfig.Match = {
 	},
 
 	--[=[
-		As únicas cartas que a mão aceita durante o tutorial.
+		The only cards the hand accepts during the tutorial.
 
-		O roteiro inteiro é sobre uma torre só: o jogador coloca a Slingshot na wave
-		1 e aprende clima, loja e velocidade com ela na tela. As outras ficam
-		trancadas — `Active = false` e apagadas — **até a última wave**, quando o
-		passo do fecho (`UnlocksDeck`) solta o deck para ele cobrir o mapa antes do
-		chefe.
+		The whole script is about one tower: the player places the Slingshot on wave 1
+		and learns weather, the shop, and speed with it on screen. The others stay
+		locked (`Active = false` and dimmed) **until the last wave**, when the closing
+		step (`UnlocksDeck`) releases the deck to cover the map before the boss.
 
-		A trava vale entre os passos também, e não só enquanto um está aberto: o
-		servidor recusa (`CanPlace`) e o cliente nem aceita o clique.
+		The lock holds between steps too, not only while one is open: the server
+		refuses (`CanPlace`) and the client does not accept the click.
 	]=]
 	AllowedUnits = { "Slingshot" },
 
 	--[=[
-		O roteiro, um passo por wave.
+		The script, one step per wave.
 
-		  - `Wave`   — em qual wave o passo acontece. O servidor o abre **antes** de a
-		               wave nascer. **Zero é o intervalo**, o tempo de preparo que
-		               corre antes da wave 1: é onde mora o passo do botão de Ready,
-		               e é a única wave do roteiro que não nasce ninguém.
-		  - `Kind`   — o que o jogador tem de fazer: `"Ready"` (o botão do intervalo),
-		               `"Place"`, `"Buy"` (a carta do RCS), `"Use"`, `"Speed"` (o 2x) e
-		               `"PlaceRest"`, o fecho da wave 5.
-		  - `Hold`   — `true` segura a wave até o passo ser cumprido. É o que impede a
-		               wave 1 de nascer com o mapa vazio.
-		  - `Unit`   — a única carta que a mão aceita enquanto o passo está aberto. As
-		               outras ficam apagadas no cliente **e** recusadas no servidor.
-		  - `Point`  — o nome da part em `Map.PlacementPoints` onde a unidade tem de
-		               entrar, e `Radius` é a tolerância em studs. O jogador arrasta
-		               para perto; não precisa acertar o pixel.
+		  - `Wave`   - which wave the step happens on. The server opens it **before**
+		               the wave spawns. **Zero is the intermission** before wave 1:
+		               where the Ready button step lives, the only script wave with no
+		               spawns.
+		  - `Kind`   - what the player must do: `"Ready"` (the intermission button),
+		               `"Place"`, `"Buy"` (the RCS card), `"Use"`, `"Speed"`, and
+		               `"PlaceRest"`, the wave 5 closer.
+		  - `Hold`   - `true` holds the wave until the step is done, so wave 1 does not
+		               spawn onto an empty map.
+		  - `Unit`   - the only card the hand accepts while the step is open. The others
+		               are dimmed on the client **and** refused on the server.
+		  - `Point`  - the name of the part in `Map.PlacementPoints` where the unit must
+		               go, and `Radius` is the tolerance in studs.
 
-		               **O raio tem de ser menor que a distância entre dois pontos**,
-		               que no mapa de hoje é 4.7 studs. Com 10, colocar no ponto 2
-		               passava como se fosse o 1 — o passo pedia um lugar e aceitava
-		               outro.
-		  - `Lines`  — o que a caixa de fala diz ao abrir o passo, com a marcação de
-		               sempre. Passo sem fala nenhuma vai direto ao destaque.
-		  - `Buttons` — **a whitelist de botões do passo**: o que o jogador pode clicar
-		               enquanto ele está aberto. Tudo o que não estiver aqui (nem for
-		               filho ou pai de algo que esteja, nem estiver em
-		               `TutorialConfig.ButtonGate.Always`) para de aceitar clique.
+		               **The radius must be smaller than the distance between two
+		               points**, 4.7 studs on today's map. With 10, placing on point 2
+		               passed as point 1.
+		  - `Lines`  - what the dialog box says when the step opens, with the usual
+		               markup. A step with no lines goes straight to the highlight.
+		  - `Buttons` - **the step's button whitelist**: what the player may click
+		               while it is open. Anything not here (and not a parent or child of
+		               something here, nor in `TutorialConfig.ButtonGate.Always`) stops
+		               accepting clicks.
 
-		               Cada entrada é um caminho de tela a partir da `PlayerGui` — o
-		               mesmo de `Highlight` — ou um dos apelidos que o controller
-		               resolve na hora, porque a peça só existe em runtime:
+		               Each entry is a screen path from `PlayerGui` (the same as
+		               `Highlight`) or an alias the controller resolves on the spot,
+		               because the piece only exists at runtime:
 
-		                 `@Highlight` o que o destaque está abraçando agora
-		                 `@Deck`      a hotbar inteira (`Interface.TowerContainer`)
-		                 `@Card`      a carta de `Unit` na hotbar
-		                 `@Hand`      a carta de round `Card` já na mão
-		                 `@Offer`     a carta `Card` na mesa da loja
+		                 `@Highlight` whatever the highlight wraps right now
+		                 `@Deck`      the whole hotbar (`Interface.TowerContainer`)
+		                 `@Card`      the `Unit` card in the hotbar
+		                 `@Hand`      the round `Card` already in hand
+		                 `@Offer`     the `Card` on the shop table
 
-		               **A whitelist sobrevive ao passo**: cumprido ele, ela continua de
-		               pé até o passo seguinte abrir. A trava é da partida, como a do
-		               deck (`AllowedUnits`) e a do `CanPlace` — sem isso o jogador
-		               destravaria a tela inteira no intervalo entre duas waves.
+		               **The whitelist outlives the step**: once done, it stays until
+		               the next step opens. The lock belongs to the match, like the deck
+		               lock (`AllowedUnits`) and `CanPlace`.
 
-		               Passo sem `Buttons` não tranca nada, e é assim que um roteiro
-		               antigo continua funcionando.
-		  - `BlockedButtons` — a subtração, para quando a whitelist é um painel inteiro
-		               e um botão de dentro dele não pode ser clicado. Ganha do
+		               A step without `Buttons` locks nothing, so old scripts still work.
+		  - `BlockedButtons` - a subtraction, for when the whitelist is a whole panel
+		               and one button inside it must not be clickable. Wins over
 		               `Buttons`.
-		  - `ButtonRelease` — o prazo da válvula **deste** passo, em segundos, quando o
-		               de `TutorialConfig.ButtonGate.Release` não serve.
-		  - `GrantCash` — quantos de dinheiro o passo **dá** ao abrir, para todo mundo.
-		               É presente, e não a rede do `Ensure`: entra inteiro, uma vez por
-		               passo, sem olhar quanto o jogador tem. É o que garante que o
-		               fecho do roteiro encontre a carteira cheia o bastante para as
-		               cartas que ele pede, mesmo depois de a partida inteira ter sido
-		               gasta em outra coisa.
-		  - `HideDeck` — `true` tira o `Interface.TowerContainer` inteiro da tela enquanto
-		               o passo está aberto, e o devolve quando ele fecha. Quem mexe no
-		               `Visible` é o `DifficultyController` (`HoldHotbar`).
+		  - `ButtonRelease` - **this** step's valve deadline, in seconds, when
+		               `TutorialConfig.ButtonGate.Release` does not fit.
+		  - `GrantCash` - how much cash the step **gives** when it opens, to everyone. A
+		               gift, not the `Ensure` safety net: it comes in whole, once per
+		               step, whatever the player has, so the closing step finds enough
+		               for the cards it asks for.
+		  - `HideDeck` - `true` hides the whole `Interface.TowerContainer` while the step
+		               is open and returns it when it closes. `DifficultyController`
+		               writes `Visible` (`HoldHotbar`).
 
-		A wave 1 pede a **Slingshot**, e ela é a única carta liberada até a wave 5
-		(ver `AllowedUnits`): o tutorial ensina clima, loja e velocidade com uma torre
-		só na tela, em vez de com um deck que o jogador ainda não sabe montar.
+		Wave 1 asks for the **Slingshot**, the only card unlocked until wave 5 (see
+		`AllowedUnits`): the tutorial teaches weather, the shop, and speed with one
+		tower on screen, not a deck the player does not know how to build yet.
 	]=]
 	Steps = {
 		--[[
-			O primeiro passo de todos, e o único que acontece fora de uma wave.
+			The very first step, and the only one outside a wave.
 
-			O intervalo antes da wave 1 já existe para todo mundo — é o tempo de
-			preparo, com a contagem e o botão de Ready no canto. O tutorial só o aponta:
-			a fala explica o botão, o destaque o abraça (`Interface.ReadyWave`, o
-			`ImageButton` que o `ReadyController` monta) e o passo fecha **quando a
-			contagem termina** — no tempo dela ou antes, porque todo mundo ficou pronto,
-			que numa partida de tutorial é o primeiro clique do jogador.
+			The intermission before wave 1 exists for everyone (the countdown and the
+			Ready button). The tutorial only points at it: the dialog explains the
+			button, the highlight wraps it (`Interface.ReadyWave`, the `ImageButton`
+			`ReadyController` builds), and the step closes **when the countdown ends**,
+			on time or earlier because everyone is ready, which in a tutorial is the
+			player's first click.
 
-			Sem `Hold`: quem segura aqui é a própria contagem do intervalo, e o passo
-			não tem o que esperar depois dela. Sem `BlockInput` também, como os outros
-			passos da partida — apontar o botão não pode tirar do jogador a câmera nem o
-			resto do HUD que ele está vendo pela primeira vez.
+			No `Hold`: the intermission countdown itself holds here. No `BlockInput`
+			either, like the other match steps: pointing at the button must not take the
+			camera or the rest of the HUD away.
 		]]
 		{
 			Id = "ClickReady",
@@ -287,19 +269,18 @@ TutorialConfig.Match = {
 			Highlight = "Interface.ReadyWave",
 
 			--[[
-				O botão de Ready e nada mais.
+				The Ready button and nothing else.
 
-				O `WeatherButton` fica de fora mesmo sendo inofensivo: o passo manda olhar
-				em volta e apertar um botão, e um segundo botão aceso no mesmo canto é
-				exatamente a dúvida que o passo existe para não criar. O clima aparece na
-				wave 3, com um passo só para ele.
+				`WeatherButton` stays out even though it is harmless: a second lit button
+				in the same corner is exactly the doubt this step exists to avoid. Weather
+				comes on wave 3, with a step of its own.
 			]]
 			Buttons = { "Interface.ReadyWave" },
 
 			--[[
-				O `Interface.TowerContainer` inteiro fora da tela enquanto este passo
-				está aberto, e de volta quando ele fecha (a contagem acabou). Ainda não há
-				o que colocar: as cartas só entram no passo seguinte, na wave 1.
+				The whole `Interface.TowerContainer` off screen while this step is open,
+				and back when it closes (the countdown ended). There is nothing to place
+				yet: cards only come in the next step, on wave 1.
 			]]
 			HideDeck = true,
 
@@ -319,12 +300,12 @@ TutorialConfig.Match = {
 			Radius = 3,
 
 			--[[
-				Só a carta que o passo pede.
+				Only the card the step asks for.
 
-				A hotbar já apaga as outras (`AllowedUnits`), mas apagada e desligada não
-				são a mesma coisa: `@Card` é o que garante que o clique numa carta apagada
-				não chegue a lugar nenhum. E o par das duas é o que faz a tela dizer a
-				mesma coisa que o servidor responderia (`CanPlace`).
+				The hotbar already dims the others (`AllowedUnits`), but dimmed and
+				disabled are not the same: `@Card` makes sure a click on a dimmed card
+				goes nowhere, so the screen says the same thing the server would answer
+				(`CanPlace`).
 			]]
 			Buttons = { "@Card" },
 
@@ -334,24 +315,23 @@ TutorialConfig.Match = {
 		},
 
 		--[[
-			A oferta de cartas de round.
+			The round card offer.
 
-			`OpenShop` é o que abre a loja nesta wave — e **esta é a única wave do
-			tutorial em que ela aparece**: o calendário do `RoundCardConfig.IsShopWave`
-			não vale aqui (ver `TutorialMatchService:ShopIsScripted`), então a oferta
-			não volta sozinha na wave 4 por cima do passo do 2x. `Card` é a carta que
-			entra na rotação na marra e a única que o passo aceita comprar — as outras
-			duas continuam na mesa, visíveis, e recusadas até ele comprar a certa.
+			`OpenShop` opens the shop on this wave, and **this is the only tutorial wave
+			it appears on**: the `RoundCardConfig.IsShopWave` calendar does not apply
+			here (see `TutorialMatchService:ShopIsScripted`), so the offer does not come
+			back on wave 4 over the speed step. `Card` is forced into the rotation and is
+			the only card the step accepts; the other two stay on the table, visible, and
+			refused until the right one is bought.
 
-			`Ensure` é a rede contra o beco sem saída: o passo **segura a wave** até a
-			compra, e um jogador sem os 300 do Weather Report ficaria preso para
-			sempre. Faltando dinheiro, o tutorial completa a diferença — uma vez, e só
-			até o preço.
+			`Ensure` is the safety net against a dead end: the step **holds the wave**
+			until the purchase, and a player without the 300 for Weather Report would be
+			stuck forever. If cash is short, the tutorial tops up the difference, once,
+			and only up to the price.
 
-			`ScheduleWeather` agenda um dos três climas para a wave seguinte. Agendar
-			aqui, e não lá, é de propósito: é assim que o aviso de clima aparece na
-			tela antes de o clima cair, que é a coisa que este passo está ensinando a
-			ler.
+			`ScheduleWeather` schedules one of three weathers for the next wave. Scheduling
+			here, not there, is on purpose: the weather warning shows before the weather
+			arrives, which is what this step teaches the player to read.
 		]]
 		{
 			Id = "BuyReport",
@@ -364,27 +344,26 @@ TutorialConfig.Match = {
 			Ensure = true,
 
 			--[[
-				O botão que abre a oferta, na beirada da tela
-				(`RoundCardConfig.Gui`: tela `RoundCardShop`, frame `RCSFrame`, botão
-				`CardShop`). O destaque começa nele; quando a loja abre, ele passa
-				sozinho para a carta que o passo exige — ver `awaitCard`.
+				The button that opens the offer, at the screen edge (`RoundCardConfig.Gui`:
+				screen `RoundCardShop`, frame `RCSFrame`, button `CardShop`). The highlight
+				starts on it; when the shop opens, it moves to the card the step requires;
+				see `awaitCard`.
 			]]
 			Highlight = "RoundCardShop.RCSFrame.CardShop",
 
 			ScheduleWeather = { "Drought", "Fog", "Rain" },
 
 			--[=[
-				O botão que abre a loja **e** a carta que o passo manda comprar.
+				The button that opens the shop **and** the card the step asks to buy.
 
-				Os dois, e não só o que o destaque está apontando no momento: o destaque
-				escorrega do botão para a carta quando a loja abre (ver `awaitCard`), e uma
-				whitelist que o seguisse deixaria o botão de fechar a loja mudo no meio do
-				passo — o jogador abriria a mesa e não teria como sair dela.
+				Both, not only what the highlight points at: the highlight slides from the
+				button to the card when the shop opens (see `awaitCard`), and a whitelist
+				that followed it would leave the close button dead mid-step.
 
-				As outras duas cartas da mesa continuam clicáveis de propósito: elas estão
-				dentro de `Background.RoundCardShop`, que não está liberado, então o clique
-				não passa — mas o `CanBuy` do servidor já recusava, e é ele quem manda. O
-				que muda aqui é o jogador não ficar tentando.
+				The other two cards on the table stay unclickable on purpose: they are
+				inside `Background.RoundCardShop`, which is not unlocked. The server's
+				`CanBuy` already refused them anyway, and it rules; this only stops the
+				player from trying.
 			]=]
 			Buttons = { "RoundCardShop.RCSFrame.CardShop", "@Offer" },
 
@@ -394,16 +373,16 @@ TutorialConfig.Match = {
 		},
 
 		--[[
-			O clima caiu. O passo pede o uso da carta comprada na wave anterior.
+			The weather arrived. The step asks to use the card bought on the previous wave.
 
-			`Hold` aqui **funciona** porque o clima entra antes do portão: quem o
-			aplica é o `WeatherRoundService`, no sinal `WaveStarted` que o `setWave`
-			dispara — e o portão do tutorial só fecha depois disso. Então a ordem que o
-			jogador vê é: o céu vira, a instrução aparece, ele usa a carta, e **só
-			então** os inimigos da wave nascem.
+			`Hold` **works** here because the weather enters before the gate:
+			`WeatherRoundService` applies it on the `WaveStarted` signal `setWave` fires,
+			and the tutorial gate only closes after that. So the player sees: the sky
+			changes, the instruction appears, they use the card, and **only then** do
+			the wave's enemies spawn.
 
-			A carta também não pode ser usada antes da hora: enquanto este passo não
-			abre, o `CanUse` a recusa (no servidor) e a mão não a aceita (no cliente).
+			The card cannot be used early either: until this step opens, `CanUse` refuses
+			it (server) and the hand does not accept it (client).
 		]]
 		{
 			Id = "UseReport",
@@ -413,8 +392,8 @@ TutorialConfig.Match = {
 
 			Card = "WeatherReport",
 
-			-- A carta comprada, que agora está na mão. A hotbar de unidades está vazia
-			-- (a Slingshot foi para o mapa na wave 1), então não há mais nada a liberar.
+			-- The card bought, now in hand. The unit hotbar is empty (the Slingshot went to
+			-- the map on wave 1), so there is nothing else to unlock.
 			Buttons = { "@Hand" },
 
 			Lines = {
@@ -424,26 +403,26 @@ TutorialConfig.Match = {
 		},
 
 		--[=[
-			O botão de velocidade.
+			The speed button.
 
-			`Hold` segura a wave 4 até o jogador acelerar a partida — o tempo fica parado,
-			como pedido. `Highlight` é o caminho da tela, a partir da `PlayerGui`, que o
-			destaque abraça.
+			`Hold` holds wave 4 until the player speeds up the match. `Highlight` is the
+			screen path, from `PlayerGui`, that the highlight wraps.
 
-			**`Index` é o degrau do `SpeedConfig`, e o degrau 2 é o 1,5x** — não o 2x. A
-			ordem lá é `1 = 1x`, `2 = 1,5x`, `3 = 2x`, e é de propósito que o roteiro pare
-			no segundo: **o 2x pede gamepass** (`Steps[3].Gamepass = "Speed"`), e um passo
-			que segura a wave atrás de uma compra é um beco sem saída para quem não a tem.
-			O 1,5x é de graça para todo mundo, e a lição — "dá para acelerar" — é a mesma.
+			**`Index` is the `SpeedConfig` step, and step 2 is 1.5x**, not 2x. The order
+			there is `1 = 1x`, `2 = 1.5x`, `3 = 2x`, and the script stops at the second on
+			purpose: **2x needs a game pass** (`Steps[3].Gamepass = "Speed"`), and a step
+			that holds the wave behind a purchase is a dead end for players without it.
+			1.5x is free, and the lesson ("you can speed up") is the same.
 
-			Trocar este número é trocar a fala junto: ela nomeia o degrau que o destaque
-			vai apontar.
+			Changing this number means changing the line too: it names the step the
+			highlight points at.
 
-			**O menu não é um painel.** O botão clona a si mesmo uma vez por degrau e
-			pendura os clones ao lado dele, no mesmo pai — eles não são filhos do botão.
-			Por isso a whitelist pede `@SpeedOptions` além do botão: sem isso o menu abre
-			e nenhuma opção aceita clique. Quando ele abre, o destaque escorrega do botão
-			para o degrau de `Index` (ver `watchSpeedOptions`).
+			**The menu is not a panel.** The button clones itself once per step and hangs
+			the clones next to it, under the same parent; they are not the button's
+			children. That is why the whitelist asks for `@SpeedOptions` besides the
+			button: without it the menu opens and no option accepts a click. When it
+			opens, the highlight slides from the button to step `Index` (see
+			`watchSpeedOptions`).
 		]=]
 		{
 			Id = "UseSpeed",
@@ -462,19 +441,19 @@ TutorialConfig.Match = {
 		},
 
 		--[[
-			O fecho: o resto do deck no chão, e então o chefe.
+			The closer: the rest of the deck on the ground, then the boss.
 
-			`Kind = "PlaceRest"` é o irmão do `Place` para quando o passo não quer uma
-			carta específica num ponto específico, e sim **todas as que sobraram** nos
-			**pontos que sobraram**. O passo fecha quando a mão esvazia.
+			`Kind = "PlaceRest"` is `Place`'s sibling for when the step wants **every
+			remaining card** on **the remaining points**, not a specific card on a
+			specific point. The step closes when the hand is empty.
 
-			`Points` são os pontos livres depois da wave 1. Qualquer carta em qualquer
-			um deles serve: a lição aqui é cobrir o mapa, não obedecer a um lugar.
+			`Points` are the free points after wave 1. Any card on any of them works: the
+			lesson is covering the map, not obeying a spot.
 
-			O chefe não precisa ser pedido: `Wave.HasBoss` é `wave >= MaxWaves`, e o
-			preset do tutorial tem `MaxWaves = 5` — a wave 5 já nasce com ele. E ele
-			nasce fraco pelo mesmo preset (`HealthMultiplier = 0.35`,
-			`BossAmountMultiplier = 1`), que é o "com menos vida que o normal" pedido.
+			The boss needs no request: `Wave.HasBoss` is `wave >= MaxWaves`, and the
+			tutorial preset has `MaxWaves = 5`, so wave 5 spawns with it. It spawns weak
+			through the same preset (`HealthMultiplier = 0.35`, `BossAmountMultiplier =
+			1`).
 		]]
 		{
 			Id = "PlaceRest",
@@ -482,17 +461,16 @@ TutorialConfig.Match = {
 			Kind = "PlaceRest",
 			Hold = true,
 
-			-- É aqui que o resto do deck destranca, e só aqui.
+			-- This is where the rest of the deck unlocks, and only here.
 			UnlocksDeck = true,
 
 			--[[
-				O dinheiro das cartas que este passo pede.
+				The cash for the cards this step asks for.
 
-				Duas Archer a 150 dão exatamente 300 — o passo paga o que ele cobra, e
-				o jogador não chega no fecho descobrindo que não tem com que cobrir os
-				pontos livres. É soma, não teto: quem economizou a partida inteira fica
-				com sobra, e sobra no último passo de uma partida que acaba na wave
-				seguinte não desequilibra nada.
+				Two Archers at 150 make exactly 300: the step pays what it charges, so the
+				player does not reach the closer finding they cannot cover the free points.
+				It adds, not caps: a player who saved all match keeps the extra, and extra
+				on the last step of a match that ends next wave unbalances nothing.
 			]]
 			GrantCash = 300,
 
@@ -500,9 +478,9 @@ TutorialConfig.Match = {
 			Radius = 3,
 
 			--[[
-				A hotbar inteira, e não uma carta: é o passo que solta o deck
-				(`UnlocksDeck`), e a lição aqui é cobrir o mapa com o que se tem. Qual
-				carta vale em qual ponto continua sendo conta do `CanPlace`.
+				The whole hotbar, not one card: this step releases the deck (`UnlocksDeck`),
+				and the lesson is covering the map with what you have. Which card counts on
+				which point is still `CanPlace`'s math.
 			]]
 			Buttons = { "@Deck" },
 
@@ -513,25 +491,23 @@ TutorialConfig.Match = {
 		},
 
 		--[=[
-			O fecho do fecho: a tela de resultado.
+			The last step: the result screen.
 
-			Não tem `Wave` porque não acontece em wave nenhuma — quem o abre é o
-			`onRoundEnded`, pelo `BeginFinal`, no mesmo instante em que a tela de
-			resultado é mandada. É o único passo do roteiro que vive depois da partida.
+			No `Wave`, because it happens on no wave: `onRoundEnded` opens it through
+			`BeginFinal`, at the same instant the result screen is sent. It is the only
+			step that lives after the match.
 
-			**Sem `Lines`**: a tela de resultado é o que o jogador tem de ler agora, e
-			uma caixa de fala por cima dela estaria cobrindo justamente o prêmio que ele
-			acabou de ganhar. O passo é só o holofote.
+			**No `Lines`**: the result screen is what the player must read now, and a
+			dialog over it would cover the reward they just earned. The step is only the
+			spotlight.
 
-			`HighlightWait` é maior que o padrão porque o botão nasce escondido e entra
-			no fim de uma coreografia longa (backdrop, painel, recompensas, barra de XP
-			— ver `ResultController`), e o destaque recusa alvo que ainda não está na
-			tela. O orçamento é generoso de propósito: errar para mais custa uma espera
-			que ninguém vê, e errar para menos custa o passo inteiro.
+			`HighlightWait` is longer than the default because the button spawns hidden and
+			enters at the end of a long choreography (backdrop, panel, rewards, XP bar;
+			see `ResultController`), and the highlight refuses a target not yet on screen.
+			Erring long costs an unseen wait; erring short costs the whole step.
 
-			Quem tranca o "PLAY AGAIN" ao lado é o `ResultController`: botão é assunto
-			de quem é dono da tela, e o tutorial só é perguntado se esta partida é a
-			dele.
+			`ResultController` locks the "PLAY AGAIN" next to it: buttons belong to the
+			screen's owner, and the tutorial is only asked whether this match is its own.
 		]=]
 		{
 			Id = "BackToLobby",
@@ -541,18 +517,15 @@ TutorialConfig.Match = {
 			HighlightWait = 20,
 
 			--[=[
-				Só o botão de voltar ao lobby.
+				Only the back-to-lobby button.
 
-				O "PLAY AGAIN" ao lado já é trancado pelo `ResultController` — botão é
-				assunto de quem é dono da tela —, e por isso ele nem chega a esta conta: a
-				trava não toca em botão que já estava desligado.
+				"PLAY AGAIN" next to it is already locked by `ResultController`, so it never
+				enters this math: the lock does not touch a button that was already off.
 
-				O prazo é o maior do roteiro, e o motivo não é a coreografia longa que faz o
-				botão nascer (backdrop, painel, recompensas, barra de XP): é que **este passo
-				não tem um seguinte**. Nos outros, uma válvula que dispara cedo demais é
-				corrigida pelo passo que abre na wave seguinte e tranca a tela de novo; aqui
-				não abre passo nenhum, e o que a válvula soltar fica solto até o teleporte.
-				Errar para mais custa nada, e errar para menos custa a tela inteira.
+				The deadline is the longest in the script, and not because of the long
+				choreography: **this step has no next one**. Elsewhere, a valve that fires
+				too early is corrected by the next step re-locking the screen; here nothing
+				opens, and whatever the valve releases stays released until the teleport.
 			]=]
 			Buttons = { "ResultScreen.MainScreen.Lobby" },
 			ButtonRelease = 600,
@@ -561,100 +534,97 @@ TutorialConfig.Match = {
 }
 
 --[=[
-	A segunda metade do tutorial: a que acontece **no lobby**, depois da vitória.
+	The second half of the tutorial: the part that happens **in the Lobby**, after
+	winning.
 
-	Ela não é gravada em lugar nenhum — o servidor da partida embarca `TutorialDone`
-	no teleporte de volta, e o lobby a roda naquela sessão. Acontece uma vez, logo
-	depois da partida, e some se o jogador sair. É um empurrãozinho, não um marco.
+	It is saved nowhere: the match server embeds `TutorialDone` in the teleport back,
+	and the Lobby runs it in that session. It happens once, right after the match, and
+	is gone if the player leaves.
 
-	**É um fluxo fechado**: cada passo aponta a única coisa clicável do momento, e o
-	destaque entra com `BlockInput` — os quatro frames em volta do buraco engolem
-	tudo o que estiver fora dele. Quem está aprendendo não tem como se perder no meio
-	do caminho, e não existe passo esperando por um clique que o jogador já deu em
-	outro lugar.
+	**It is a closed flow**: each beat points at the only clickable thing at that
+	moment, enforced by `ButtonGateController`, so a learning player cannot get lost
+	and no beat waits for a click the player already made elsewhere.
 
-	Os caminhos são de nome, a partir da `PlayerGui`, e o `HighlightController:Find`
-	anda em profundidade — por isso `HUDFrame.Wrapper.Shop` acha o wrapper certo
-	entre os vários irmãos de mesmo nome.
+	Paths are by name from `PlayerGui`, and `HighlightController:Find` walks in depth,
+	which is why `HUDFrame.Wrapper.Shop` finds the right wrapper among several
+	same-named siblings.
 ]=]
 TutorialConfig.Lobby = {
 	Lines = {
 		"[color=white]Nice work![/color][pause=0.4] Let's spend those coins — open the [gold]Shop[/gold].",
 	},
 
-	-- Passo 1: o botão da loja no HUD.
+	-- Beat 1: the shop button in the HUD.
 	ShopButton = "HUD.HUDFrame.Wrapper.Shop",
 
-	-- Passo 2: a caixa a comprar e o botão de compra **dentro** do container dela.
+	-- Beat 2: the crate to buy and the buy button **inside** its container.
 	Item = "CrateOfBeginnings",
 	BuyButton = "Buy",
 
-	-- Passo 3: a mochila, e a lista de caixas dentro dela. A caixa apontada é a
-	-- primeira da lista — é a que o jogador acabou de comprar.
+	-- Beat 3: the backpack, and the crate list inside it. The crate pointed at is the
+	-- first in the list, the one the player just bought.
 	BackpackButton = "HUD.HUDFrame.Wrapper.Backpack",
 
 	--[[
-		O **wrapper** das caixas, e não o `scrollcrates` que o embala: é ele que o
-		`CrateController` enche com uma entrada por raridade, clonadas do
-		`cratetemplate` — que fica ali dentro, escondido, para o designer poder
-		continuar editando.
+		The crates' **wrapper**, not the `scrollcrates` around it: `CrateController`
+		fills it with one entry per rarity, cloned from `cratetemplate`, which stays
+		inside, hidden, so the designer can keep editing it.
 
-		Apontar o scroll pegava o molde escondido em vez da caixa do jogador: um
-		destaque em cima de algo invisível parece destaque nenhum.
+		Pointing at the scroll caught the hidden template instead of the player's
+		crate: a highlight over something invisible looks like no highlight.
 	]]
 	CrateList = "crateui.Rectangle.scrollcrates.CrateWrapper",
 
 	--[[
-		O prefixo das entradas de verdade (`Crate_Common`, `Crate_Rare`, ...), que o
-		`CrateController` usa ao clonar o molde. Preferir o prefixo é o que separa a
-		caixa do jogador do molde, mesmo no quadro em que o molde ainda não foi
-		escondido — o `CrateController` o esconde no bind, e o fluxo pode chegar lá
-		antes.
+		The prefix of real entries (`Crate_Common`, `Crate_Rare`, ...) that
+		`CrateController` uses when cloning the template. Preferring the prefix tells
+		the player's crate from the template, even on the frame before the template is
+		hidden (`CrateController` hides it at bind, and the flow may get there first).
 	]]
 	CratePrefix = "Crate_",
 
-	-- A fala do fim, depois de o unboxing terminar.
+	-- The closing line, after the unboxing ends.
 	ClosingLines = {
 		"[color=white]That's a[/color] [gradient=green]new unit[/gradient][color=white] for your deck.[/color][pause=0.4] You're ready — good luck out there!",
 	},
 
 	--[[
-		De quanto em quanto tempo o fluxo confere se o jogador fez o que o passo
-		pedia (a loja abriu, a mochila abriu). É espera de gente clicando, não de
-		animação: um quinto de segundo é imperceptível para ele e não custa nada.
+		How often the flow checks whether the player did what the beat asked (the shop
+		opened, the backpack opened). It waits on people clicking, not animation: a
+		fifth of a second is imperceptible and costs nothing.
 	]]
 	PollInterval = 0.2,
 
 	--[[
-		Quanto esperar por uma peça de tela que ainda não existe — o botão de comprar
-		aparece quando a loja monta a lista, a caixa aparece quando a mochila abre.
-		Estourando, o passo segue sem destaque em vez de travar o jogador.
+		How long to wait for a screen piece that does not exist yet (the buy button
+		appears when the shop builds its list, the crate when the backpack opens). On
+		timeout, the beat continues without a highlight instead of trapping the player.
 	]]
 	WaitForUi = 5,
 
 	--[=[
-		Quantos segundos de espera **sem nada acontecer** antes de o fluxo soltar a
-		trava dos botões.
+		How many seconds of waiting **with nothing happening** before the flow releases
+		the button lock.
 
-		É a rede de segurança do "não deixe clicar em nada fora do passo": se o passo
-		não reconhecer o que o jogador fez — a loja que abriu por um caminho que o
-		fluxo não esperava, uma tela que mudou de nome —, a trava viraria um jogo
-		morto, com o botão certo desligado e ninguém para religá-lo. Passado o prazo,
-		os botões voltam (o destaque fica) e o jogador segue a vida.
+		The safety net for "nothing outside the beat is clickable": if the beat does not
+		recognize what the player did (the shop opened through an unexpected path, a
+		screen was renamed), the lock would become a dead game with the right button
+		off and nobody to turn it back on. After the deadline, buttons return (the
+		highlight stays) and the player moves on.
 	]=]
 	StallRelease = 25,
 }
 
 --[=[
-	A garantia de unit épica para quem está começando.
+	The epic unit guarantee for new players.
 
-	Dentro das **três primeiras** caixas abertas na vida do perfil, uma vem Epic ou
-	melhor. A conta é o `Stats.BoxesOpened`, que já existe e já conta abertura de
-	verdade (o `unbox` do Cmdr não entra) — nenhuma chave nova no perfil.
+	Within the profile's **first three** crates opened, one comes out Epic or better.
+	It counts `Stats.BoxesOpened`, which already exists and counts real openings (the
+	Cmdr `unbox` does not count), so no new profile key.
 
-	A garantia cai na terceira: as duas primeiras rolam normal, e é só quando a
-	terceira chega sem nenhuma Epic ter saído que o sorteio é forçado. Assim quem tem
-	sorte na primeira não "gasta" a garantia, e quem não tem sai das três com uma.
+	The guarantee lands on the third: the first two roll normally, and only when the
+	third arrives with no Epic yet is the draw forced. A lucky first crate does not
+	"spend" the guarantee, and an unlucky player leaves the three with one.
 ]=]
 TutorialConfig.CrateGuarantee = {
 	Crates = 3,
