@@ -25,12 +25,12 @@ local ClassConfig = {}
 	class for weather and another for the card.
 ]]
 ClassConfig.Icons = {
-	Melee = "rbxassetid://121357932673042",
-	Ranged = "rbxassetid://88082629531610",
-	Magic = "rbxassetid://92693595243994",
-	Fire = "rbxassetid://88305366355775",
-	Ice = "rbxassetid://133728117619416",
-	Electric = "rbxassetid://80013469031768",
+	Melee = "rbxassetid://137160359088504",
+	Ranged = "rbxassetid://122321965155100",
+	Magic = "rbxassetid://89146688963500",
+	Fire = "rbxassetid://98819707051764",
+	Ice = "rbxassetid://79233085029960",
+	Electric = "rbxassetid://75046416793583",
 }
 
 --[=[
