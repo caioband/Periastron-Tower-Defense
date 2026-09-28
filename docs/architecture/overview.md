@@ -11,7 +11,7 @@ Lobby/      the "Periastron Tower Defense" lobby place (only what is specific to
 docs/       this documentation
 ```
 
-See [Setup](setup.md) to build and sync the places.
+See the [development setup](../../README.md#development-setup) in the root README to install the tools and sync the places.
 
 ## How the shared code is mounted
 

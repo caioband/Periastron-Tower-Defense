@@ -12,6 +12,7 @@ type Shared = {
 	CrateConfig : typeof(require(script.CrateConfig)),
 	MapConfig : typeof(require(script.MapConfig)),
 	PortalConfig : typeof(require(script.PortalConfig)),
+	EnvironmentConfig : typeof(require(script.EnvironmentConfig)),
 	Mob : typeof(require(script.Mob)),
 	TargetPriority : typeof(require(script.TargetPriority)),
 	LevelConfig : typeof(require(script.LevelConfig)),

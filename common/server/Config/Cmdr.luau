@@ -42,9 +42,29 @@ return {
 	GROUP_MIN_RANK = 200,
 
 	--[[
+		Commands **every player** may run in the QA environment, keyed by the
+		command's `Name`. In QA everyone is a tester, so they can set up the state they
+		want to test (coins, shards, units, round cash) without an admin.
+
+		QA is its own universe with its own DataStores, so these commands, even aimed
+		at another player or an offline profile, never touch a production profile.
+		In Production this list does nothing. A command that does not exist in the
+		current place (`roundcash` in the Lobby) is simply not offered.
+
+		The environment comes from `Shared.Util.Environment`; see
+		docs/common/environments.md.
+	]]
+	QA_COMMANDS = {
+		cash = true,
+		shards = true,
+		units = true,
+		roundcash = true,
+	} :: { [string]: boolean },
+
+	--[[
 		Commands allowed for non-admins, by rank in a group.
 
-		**Empty on purpose: today only admins run commands.** With no command
+		**Empty on purpose: outside QA, only admins run commands.** With no command
 		accessible, `GetAccessibleCommands` returns an empty list and the console does
 		not even appear for them (see `CmdrService`).
 

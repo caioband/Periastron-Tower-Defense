@@ -37,7 +37,7 @@ Cmdr's built-in groups are registered too (`DEFAULT_COMMAND_GROUPS`: `DefaultUti
 
 ## Who may run commands
 
-Permission is decided on the server: the `BeforeRun` hook calls `CmdrService:IsAdmin` for every command, and the client only uses the same answer (through `RequestCmdrAccess`) to decide whether to show the console.
+Permission is decided on the server: the `BeforeRun` hook calls `CmdrService:CanRun` for every command, and the client only uses the same answer (through `RequestCmdrAccess`) to decide whether to show the console.
 Checked in this order:
 
 | Path | Configured by |
@@ -46,12 +46,31 @@ Checked in this order:
 | User id list | `ADMIN_USER_IDS` |
 | Place owner | automatic: the user, or rank ≥ `CREATOR_GROUP_MIN_RANK` in the owning group |
 | Extra group | `GROUP_ID` + `GROUP_MIN_RANK` |
+| Tester in QA (only `QA_COMMANDS`) | `QA_COMMANDS`, when `Environment.IsQA()` |
 
 This place belongs to a group, so `game.CreatorId` is the **group's** id; the owner check compares the player's rank in that group.
 `CREATOR_GROUP_MIN_RANK` is 255 (the group owner only); lower it to include the group's admins.
 
+### Testers in QA
+
+In the [QA environment](environments.md), **every player is a tester** and may run the commands in `QA_COMMANDS`, keyed by the command's `Name`:
+
+| Command | Place |
+| --- | --- |
+| `cash` | both |
+| `shards` | both |
+| `units` | both |
+| `roundcash` | Game |
+
+Testers can aim them at any player, online or offline, like admins.
+QA is a separate universe with its own DataStores, so this never touches a production profile.
+In Production, `QA_COMMANDS` does nothing.
+A tester's console shows only these commands (and only the ones registered in the current place), without `help`.
+
+### Other non-admins
+
 `COMMAND_PERMISSIONS` can open single commands to non-admins by group rank, keyed by the command's `Name` (not an alias or group).
-**It is empty on purpose: today only admins run commands.**
+**It is empty on purpose: outside QA, only admins run commands.**
 With no accessible command, `GetAccessibleCommands` returns an empty list and the console does not show for them.
 
 ## Currency and unit commands

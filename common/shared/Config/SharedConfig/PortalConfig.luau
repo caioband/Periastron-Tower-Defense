@@ -41,12 +41,8 @@ module.FLASH_TIME = 0.12
 -- cutscene instead of blinking after it. The scene runs at 60 fps.
 module.FLASH_LEAD_FRAMES = 5
 
--- Where the group lands: the "Periastron TD: Main Game" place. Public id.
-module.GAME_PLACE_ID = 109030368179494
-
--- The way back: the "Periastron Tower Defense" place, which is the lobby and the
--- start place of the universe. Used by the result screen's "back to lobby".
-module.LOBBY_PLACE_ID = 132304466547289
+-- Where the group lands (the Game place) depends on the environment, Production
+-- or QA: the id comes from `Shared.Util.Environment`, never from here.
 
 --[[ WORLD ]]
 

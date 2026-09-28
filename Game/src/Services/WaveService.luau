@@ -18,6 +18,7 @@ local GameClock = require(Shared.Util.GameClock)
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
 local Log = require(Shared.Util.Log)
+local Environment = require(Shared.Util.Environment)
 local Signal = require(Packages.Signal)
 
 local WaveConfig = ServerConfig.Wave
@@ -44,8 +45,6 @@ local BASE_WINNING_XP = DataConfig.BASE_WINNING_XP
 -- End-of-match coins and shards are each preset's full number
 -- (`WinCash`/`WinShards`), not a multiplied base; only XP still works that way.
 local DifficultyConfig = ServerConfig.Difficulty
-
-local PortalConfig = SharedConfig.PortalConfig
 
 --[[
 	Round states. `Finished` is the only one where the play-again vote accepts votes;
@@ -951,7 +950,7 @@ function WaveService:sendToLobby(player : Player)
 	end
 
 	local success, err = pcall(function()
-		TeleportService:TeleportAsync(PortalConfig.LOBBY_PLACE_ID, { player }, options)
+		TeleportService:TeleportAsync(Environment.GetPlaceId("Lobby"), { player }, options)
 	end)
 
 	if not success then

@@ -14,11 +14,11 @@ local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
 local Log = require(Shared.Util.Log)
+local Environment = require(Shared.Util.Environment)
 
 local Framework = Me.new()
 local log = Log.new("TutorialService")
 
-local PortalConfig = SharedConfig.PortalConfig
 local Config = SharedConfig.TutorialConfig
 local AnalyticsConfig = ServerConfig.Analytics
 
@@ -46,7 +46,8 @@ local AnalyticsConfig = ServerConfig.Analytics
 	**Lobby only.** The service is in `common/` because the game is a single
 	universe, but offering the tutorial to someone who just landed mid-match would
 	be worse than not offering it. The gate is `PlaceId` against
-	`PortalConfig.LOBBY_PLACE_ID`, the same id the "back to lobby" button uses.
+	the Lobby id of the current environment (`Environment.IsPlace("Lobby")`), so
+	the QA Lobby offers it too.
 
 	> In an unpublished place (a loose `.rbxl` in Studio) `PlaceId` is 0 and the
 	> offer does not appear on its own. To see the dialog in that case there is
@@ -115,7 +116,7 @@ end
 	Is this place the Lobby?
 ]=]
 function TutorialService:isLobby() : boolean
-	return game.PlaceId == PortalConfig.LOBBY_PLACE_ID
+	return Environment.IsPlace("Lobby")
 end
 
 --[=[
@@ -232,7 +233,7 @@ function TutorialService:Start(player : Player)
 	})
 
 	local success, result = pcall(function()
-		return TeleportService:TeleportAsync(PortalConfig.GAME_PLACE_ID, { player }, options)
+		return TeleportService:TeleportAsync(Environment.GetPlaceId("Game"), { player }, options)
 	end)
 
 	if not success then

@@ -13,10 +13,14 @@ local ServerConfig = require(ServerConfigs)
 
 local Me = require(Vendor.Me)
 local Cmdr = require(Packages:WaitForChild("Cmdr"))
+local Environment = require(Shared.Util.Environment)
 
 local CmdrConfig = ServerConfig.Cmdr
 
 local Framework = Me.new()
+
+-- In QA every player is a tester and runs `CmdrConfig.QA_COMMANDS`.
+local IS_QA = Environment.IsQA()
 
 local CmdrService = {
 	Packages = {
@@ -83,11 +87,16 @@ function CmdrService:IsAdmin(Player : Player?) : boolean
 end
 
 --[=[
-	Whether the player may run this specific command: admins run everything, others
-	only what `COMMAND_PERMISSIONS` allows for their role.
+	Whether the player may run this specific command: admins run everything, and in
+	QA every player runs `QA_COMMANDS`. Otherwise only what `COMMAND_PERMISSIONS`
+	allows for their role.
 ]=]
 function CmdrService:CanRun(Player : Player?, commandName : string) : boolean
 	if self:IsAdmin(Player) then
+		return true
+	end
+
+	if IS_QA and CmdrConfig.QA_COMMANDS[commandName] then
 		return true
 	end
 
@@ -107,10 +116,26 @@ function CmdrService:GetAccessibleCommands(Player : Player) : { string }
 		return Cmdr.Registry:GetCommandNames()
 	end
 
-	local commandNames = {}
+	-- A set first: a command can be in both `QA_COMMANDS` and `COMMAND_PERMISSIONS`.
+	local allowed : { [string]: boolean } = {}
+
+	if IS_QA then
+		for commandName in CmdrConfig.QA_COMMANDS do
+			allowed[commandName] = true
+		end
+	end
 
 	for commandName, rule in CmdrConfig.COMMAND_PERMISSIONS do
-		if Cmdr.Registry:GetCommand(commandName) and rankInGroup(Player, rule.groupId) >= rule.minRank then
+		if not allowed[commandName] and rankInGroup(Player, rule.groupId) >= rule.minRank then
+			allowed[commandName] = true
+		end
+	end
+
+	-- Only what is registered in this place: `roundcash` does not exist in the Lobby.
+	local commandNames = {}
+
+	for commandName in allowed do
+		if Cmdr.Registry:GetCommand(commandName) then
 			table.insert(commandNames, commandName)
 		end
 	end

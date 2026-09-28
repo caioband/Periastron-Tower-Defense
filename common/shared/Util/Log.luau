@@ -7,6 +7,7 @@ local RunService = game:GetService("RunService")
 		local log = Log.new("MapService")
 
 		log:Debug("loaded", mapName)            -- print, Studio only
+		log:Info("client loaded")               -- print, always (public)
 		log:StudioWarn("map has no SpawnLocation") -- warn, Studio only
 		log:Warn("teleport failed:", err)       -- warn, always
 		log:StudioWarnOnce(key, "...")          -- the same, at most once per key
@@ -19,7 +20,9 @@ local RunService = game:GetService("RunService")
 	monetization, teleports, and server failures that switch a feature off for
 	real players. Anything that only tells the person building the game that
 	something is missing or misconfigured is `StudioWarn`; anything that is just
-	information is `Debug`. See docs/common/logging.md.
+	information is `Debug`. `Info` is the rare line every player's console
+	should show, such as the client boot line; it is not for debugging.
+	See docs/common/logging.md.
 
 	It is a Util and not a Service of the `Me` framework because Services only
 	exist on the server, and because Roblox already has a built-in `LogService`.
@@ -30,6 +33,7 @@ local IS_STUDIO = RunService:IsStudio()
 export type Logger = {
 	Tag : string,
 	Debug : (self : Logger, ...any) -> (),
+	Info : (self : Logger, ...any) -> (),
 	StudioWarn : (self : Logger, ...any) -> (),
 	Warn : (self : Logger, ...any) -> (),
 	StudioWarnOnce : (self : Logger, key : any, ...any) -> (),
@@ -58,6 +62,10 @@ end
 
 function Logger:Debug(... : any)
 	if not IS_STUDIO then return end
+	print(self.Tag, ...)
+end
+
+function Logger:Info(... : any)
 	print(self.Tag, ...)
 end
 

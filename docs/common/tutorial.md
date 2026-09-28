@@ -33,7 +33,7 @@ While the choice is open, clicking elsewhere does not close the box (`DialogCont
 | `TutorialConfig` | `SharedConfig` | the lines, font, size, button text, the delay before speaking, and the match script |
 
 **Lobby only.**
-The gate is `PlaceId` against `PortalConfig.LOBBY_PLACE_ID`.
+The gate is `Environment.IsPlace("Lobby")`: `PlaceId` against the Lobby id of the current [environment](environments.md), so the QA Lobby offers it too.
 In an unpublished place `PlaceId` is 0 and the offer does not appear by itself; the `tutorial` [admin command](admin-commands.md) goes through the same `:Prompt` and writes nothing.
 
 **Where the tutorial starts.**

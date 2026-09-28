@@ -14,6 +14,7 @@ Each method decides whether to print based on `RunService:IsStudio()`, read once
 | Method | Prints in Studio | Prints in live servers | Output |
 | --- | --- | --- | --- |
 | `Debug(...)` | Yes | No | `print` |
+| `Info(...)` | Yes | Yes | `print` |
 | `StudioWarn(...)` | Yes | No | `warn` |
 | `Warn(...)` | Yes | Yes | `warn` |
 | `StudioWarnOnce(key, ...)` | Once per key | No | `warn` |
@@ -32,6 +33,7 @@ local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local log = Log.new("MapService")
 
 log:Debug("map loaded:", mapName)
+log:Info(`client loaded: Lobby, QA environment, place version 42`)
 log:StudioWarn(`map '{name}' has no SpawnLocation; no spawn fallback.`)
 log:Warn(string.format("teleport of %s to the lobby failed (%s).", player.Name, tostring(err)))
 log:StudioWarnOnce(assetName, `could not find '{assetName}' in Assets.UI.`)
@@ -48,6 +50,8 @@ A module can create more than one logger to split its output, as `UnitService` d
 See [Log messages](../architecture/conventions.md#log-messages) in the conventions for the rule.
 In short, `Warn` is reserved for data, monetization, teleports, and server failures that switch a feature off for real players.
 Everything else is `StudioWarn` or `Debug`.
+`Info` is for the few lines that every player's console should show on purpose, such as the client boot line (see [Environments](environments.md#client-boot-line)).
+It is not a debugging level: anything that only helps while building the game is `Debug`.
 
 ## Design notes
 

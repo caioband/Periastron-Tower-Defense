@@ -1,25 +1,8 @@
 # Setup
 
-How to install the toolchain, sync a place into Studio, and check that a structural change did not break loading.
+How to check that a structural change did not break loading.
 
-## Install and sync
-
-```bash
-aftman install                           # rojo 7.6.1 + wally 0.3.2
-cd Game  && wally install && rojo serve  # or
-cd Lobby && wally install && rojo serve
-```
-
-`aftman.toml` at the root lets you run `rojo` and `wally` from the root as well as from inside `Game/` and `Lobby/`.
-
-Wally generates `Packages/` inside each place, and git ignores it.
-Without `wally install`, the sync breaks.
-
-To build a place file instead of serving it:
-
-```bash
-cd Game && rojo build -o Game.rbxl
-```
+Installing the toolchain, syncing a place into Studio, and building a place file are covered in the [development setup](../../README.md#development-setup) in the root README.
 
 ## Check the load after changing the structure
 

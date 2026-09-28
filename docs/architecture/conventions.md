@@ -79,6 +79,7 @@ Do not call `print` or `warn` directly.
 | Method | When it prints | Use it for |
 | --- | --- | --- |
 | `log:Debug(...)` | Studio only | Information: what happened, values used to tune something. |
+| `log:Info(...)` | Always | A public line every player's console shows on purpose, such as the client boot line. Rare. |
 | `log:StudioWarn(...)` | Studio only | Something missing or misconfigured that the person building the game must fix. |
 | `log:Warn(...)` | Always | Problems a live server must report (see below). |
 | `log:StudioWarnOnce(key, ...)` / `log:WarnOnce(key, ...)` | Once per key | The same, for checks that run many times. |

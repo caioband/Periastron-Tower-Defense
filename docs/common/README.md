@@ -13,6 +13,7 @@ When a system also has place-specific parts, its page here covers the shared cor
 | [Controls](controls.md) | `PointerUtil` (mouse and touch) and the mobile button cluster |
 | [Data and profiles](data-and-profiles.md) | Profile sessions, `OnBeforeRelease`, editing profiles across servers |
 | [Dialog](dialog.md) | The dialog box |
+| [Environments](environments.md) | Production and QA: which universe the server is in, and the place ids teleports use |
 | [Footsteps](footsteps.md) | Footstep sounds by surface |
 | [Game passes and Robux purchases](gamepasses.md) | Passes, coin packs, and the Robux shop |
 | [Interface visibility](interface-visibility.md) | `InterfaceController`: named requests to hide the UI |

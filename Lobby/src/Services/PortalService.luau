@@ -14,6 +14,7 @@ local SharedConfig = require(Configs.SharedConfig)
 local Maid = require(Vendor.Maid)
 local Me = require(Vendor.Me)
 local Log = require(Shared.Util.Log)
+local Environment = require(Shared.Util.Environment)
 local Observers = require(Vendor.Observers)
 local Signal = require(Packages.Signal)
 
@@ -254,7 +255,7 @@ function PortalService:_teleportGroup(portal, group)
 	})
 
 	local success, result = pcall(function()
-		return TeleportService:TeleportAsync(PortalConfig.GAME_PLACE_ID, members, options)
+		return TeleportService:TeleportAsync(Environment.GetPlaceId("Game"), members, options)
 	end)
 
 	if not success then

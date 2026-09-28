@@ -4,7 +4,7 @@ Periastron Tower Defense is a Roblox tower defense game made of two places in on
 
 ## Where to start
 
-- New to the repository? Read [Repository overview](architecture/overview.md) and [Setup](architecture/setup.md).
+- New to the repository? Start with the [development setup](../README.md#development-setup) in the root README, then read [Repository overview](architecture/overview.md).
 - Writing code or docs? Follow the [Conventions](architecture/conventions.md).
 - Looking for a system? Use the index below; pages live where the code lives.
 
@@ -13,7 +13,7 @@ Periastron Tower Defense is a Roblox tower defense game made of two places in on
 | Page | What it covers |
 | --- | --- |
 | [Repository overview](architecture/overview.md) | Layout, how shared code is mounted, Rojo pitfalls, differences between places |
-| [Setup](architecture/setup.md) | Toolchain, syncing, checking the load after structural changes |
+| [Setup](architecture/setup.md) | Checking the load after structural changes (installing is in the root README) |
 | [The `Me` framework](architecture/me-framework.md) | Loading Services and Controllers, lifecycle, network events |
 | [Configuration](architecture/configuration.md) | Server-only and replicated config |
 | [Vendored libraries](architecture/vendor.md) | Third-party code, Wally packages, the `vfx` runtime and its local patch |
