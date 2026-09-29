@@ -1,11 +1,12 @@
 local EnemyWeatherChange = {}
 
 EnemyWeatherChange.Enemies = { "OverseerMage" }
-EnemyWeatherChange.GraceTime = 5 --delay before it ddoes the ability
+EnemyWeatherChange.GraceTime = 5
 EnemyWeatherChange.EnemyAnim = "Change"
-EnemyWeatherChange.ApplyDelay = 1 
+EnemyWeatherChange.VFX = "WeatherChangeVFX"
+EnemyWeatherChange.CastTime = 2 -- how long the cast lasts: the VFX stays this long (and the mage stops if StopWhileCasting)
+EnemyWeatherChange.ApplyDelay = 1
 EnemyWeatherChange.StopWhileCasting = false
-EnemyWeatherChange.CastTime = 2
 EnemyWeatherChange.Pool = "Map" -- "Map" or "All"
 EnemyWeatherChange.FallbackToAll = true
 EnemyWeatherChange.Exclude = {}

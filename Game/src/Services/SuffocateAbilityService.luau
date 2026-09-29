@@ -85,6 +85,13 @@ function SuffocateAbilityService:playCast(mobId : string, mob)
 		fireAll("MobPlayAnim", mobId, Settings.EnemyAnim)
 	end
 
+	-- The cast effect on the mage. Its length is `CastVFXTime` when set, otherwise
+	-- `CastTime`; the mage's pause above always uses `CastTime`.
+	local vfxTime = math.max(0, Settings.CastVFXTime or castTime)
+	if Settings.CastVFX and vfxTime > 0 then
+		fireAll("SuffocateCastVFX", mobId, Settings.CastVFX, Settings.CastPart or "Right Arm", vfxTime)
+	end
+
 	if stopping then
 		GameClock.Delay(castTime, function()
 			if mobService.ActiveMobs[mobId] ~= mob then
@@ -312,7 +319,8 @@ function SuffocateAbilityService:start()
 	end
 
 	self:guardDamage()
-
+	
+	Framework:Listen("SuffocateCastVFX", function() end)
 	Framework:Listen("UnitSuffocate", function() end)
 	Framework:Listen("UnitSuffocateEnd", function() end)
 	Framework:Listen("UnitSuffocateFade", function() end)

@@ -132,6 +132,7 @@ function EnemyWeatherChangeService:changeWeather() : boolean
 			end
 
 			self.Override = name
+			fireAll("EnemyWeatherOverride", name)
 			log:Debug(string.format("'%s' put in the sky (was %s).", name, tostring(current)))
 			return true
 		end
@@ -181,6 +182,10 @@ function EnemyWeatherChangeService:playCast(record)
 
 	if Settings.EnemyAnim then
 		fireAll("MobPlayAnim", mobId, Settings.EnemyAnim)
+	end
+
+	if Settings.VFX and castTime > 0 then
+		fireAll("EnemyWeatherChangeVFX", mobId, Settings.VFX, castTime)
 	end
 
 	if stopping then
@@ -298,6 +303,9 @@ function EnemyWeatherChangeService:start()
 	for _, enemy in Settings.Enemies do
 		self.EnemySet[enemy] = true
 	end
+
+	Framework:Listen("EnemyWeatherChangeVFX", function() end)
+	Framework:Listen("EnemyWeatherOverride", function() end)
 
 	self:installGuard()
 

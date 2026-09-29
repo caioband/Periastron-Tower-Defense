@@ -162,7 +162,7 @@ function SuffocateAbilityController:start()
 		local vfx = self.Controllers.VFXController
 		if vfx and typeof(vfxName) == "string" and vfxName ~= "" then
 			active.VFX = vfxName
-			vfx:playModelStatus(class.model, vfxName, vfxName .. "Highlight", duration)
+			vfx:PlayVictimVFX(class.model, vfxName, duration)
 		end
 	end)
 
@@ -182,7 +182,7 @@ function SuffocateAbilityController:start()
 		local model = active.Class.model
 		local vfx = self.Controllers.VFXController
 		if active.VFX and vfx and model and model.Parent then
-			vfx:stopModelStatus(model, active.VFX, active.VFX .. "Highlight")
+			vfx:StopVictimVFX(model, active.VFX)
 		end
 	end)
 

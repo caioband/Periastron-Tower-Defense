@@ -820,11 +820,7 @@ function VFXController:playModelStatus(mob : Model, assetName : string, highligh
 	end)
 end
 
---[=[
-	Removes a `playModelStatus` state early: the Highlight leaves immediately, and the Part
-	only after the last particles' tail, as in the normal end. The `Delay` created with the
-	state still fires later, and finds nothing left to touch.
-]=]
+
 function VFXController:stopModelStatus(mob : Model, assetName : string, highlightName : string)
 	local highlight = mob:FindFirstChild(highlightName)
 	if highlight then
@@ -871,6 +867,285 @@ end
 function VFXController:PlayBleeding(mobId : string, duration : number?)
 	self:playMobStatus(mobId, BLEED_VFX_NAME, BLEED_HIGHLIGHT_NAME, duration)
 end
+
+--suffocate logic
+
+local MOVED_MARK = "MovedVFXAsset"
+local function scaleSequence(sequence : NumberSequence, factor : number) : NumberSequence
+	local keypoints = {}
+	for _, key in sequence.Keypoints do
+		table.insert(keypoints, NumberSequenceKeypoint.new(key.Time, key.Value * factor, key.Envelope * factor))
+	end
+	return NumberSequence.new(keypoints)
+end
+
+local function prepareEmitter(emitter : ParticleEmitter, factor : number)
+	for _, tag in AUTO_VFX_TAGS do
+		emitter:RemoveTag(tag)
+	end
+
+	if factor ~= 1 then
+		emitter.Size = scaleSequence(emitter.Size, factor)
+	end
+
+	emitter.Enabled = true
+end
+
+-- Turns off every emitter in `root` (and `root` itself) and returns the longest tail.
+local function disableEmitters(root : Instance) : number
+	local longest = 0
+
+	local function visit(item : Instance)
+		if item:IsA("ParticleEmitter") then
+			item.Enabled = false
+			longest = math.max(longest, item.Lifetime.Max)
+		end
+	end
+
+	visit(root)
+	for _, descendant in root:GetDescendants() do
+		visit(descendant)
+	end
+
+	return longest
+end
+
+-- Stops what was moved, then destroys it after the last particles' tail.
+local function retireMoved(moved : { Instance })
+	local longest = 0
+
+	for _, instance in moved do
+		if not instance.Parent then continue end
+
+		-- A Highlight has no tail: it leaves at once.
+		if instance:IsA("Highlight") then
+			instance:Destroy()
+			continue
+		end
+
+		longest = math.max(longest, disableEmitters(instance))
+	end
+
+	task.delay(longest + 0.1, function()
+		for _, instance in moved do
+			if instance.Parent then
+				instance:Destroy()
+			end
+		end
+	end)
+end
+
+
+function VFXController:PlaySuffocateCast(mobId : string, assetName : string?, partName : string?, castTime : number?)
+	castTime = tonumber(castTime) or 0
+	if castTime <= 0 or not assetName then return end
+
+	-- Decorative, so the "VFX" setting silences it. See `effectsOn`.
+	if not self:effectsOn() then return end
+
+	local mobs = self.Controllers.MobController
+	local mob = mobs and mobs.SpawnedMobs and mobs.SpawnedMobs[mobId]
+	if not mob or not mob.Parent then return end
+
+	local template = self.Library[assetName]
+	if not template then
+		log:StudioWarn(`could not find VFX "{assetName}" in Assets.VFX.`)
+		return
+	end
+
+	local target = mob:FindFirstChild(partName or "Right Arm")
+	if not target or not target:IsA("BasePart") then
+		log:StudioWarn(`'{mob.Name}' has no Part named "{partName}" for "{assetName}".`)
+		return
+	end
+
+	-- A cast still playing on this mob is replaced, not stacked.
+	self:StopVictimVFX(mob, assetName)
+
+	local source = template:Clone()
+
+	local factor = 1
+	if source:IsA("BasePart") and source.Size.Y > 0 then
+		factor = target.Size.Y / source.Size.Y
+	end
+
+	local moved = {}
+
+	for _, descendant in source:GetDescendants() do
+		if not descendant:IsA("ParticleEmitter") then continue end
+
+		prepareEmitter(descendant, factor)
+
+		local holder = descendant.Parent
+		if holder and holder:IsA("Attachment") then
+			-- Travels with its Attachment so the offset along the arm survives.
+			if not holder:GetAttribute(MOVED_MARK) then
+				holder:SetAttribute(MOVED_MARK, assetName)
+				holder.Position = holder.Position * factor
+				holder.Parent = target
+				table.insert(moved, holder)
+			end
+		else
+			descendant:SetAttribute(MOVED_MARK, assetName)
+			descendant.Parent = target
+			table.insert(moved, descendant)
+		end
+	end
+
+	local highlight = source:FindFirstChildWhichIsA("Highlight")
+	if highlight then
+		highlight:SetAttribute(MOVED_MARK, assetName)
+		highlight.Adornee = target
+		highlight.Parent = target
+		table.insert(moved, highlight)
+	end
+
+	source:Destroy()
+
+	if #moved == 0 then
+		log:StudioWarn(`"{assetName}" had nothing to move onto '{mob.Name}'.`)
+		return
+	end
+
+	GameClock.Delay(castTime, function()
+		retireMoved(moved)
+	end)
+end
+
+
+function VFXController:PlayVictimVFX(model : Model, assetName : string, duration : number?)
+	duration = tonumber(duration) or 0
+	if duration <= 0 or not model or not model.Parent then return end
+
+	-- Decorative, so the "VFX" setting silences it. See `effectsOn`.
+	if not self:effectsOn() then return end
+
+	local template = self.Library[assetName]
+	if not template then
+		log:StudioWarn(`could not find VFX "{assetName}" in Assets.VFX.`)
+		return
+	end
+
+	local fallback = model:FindFirstChild(UNIT_ROOT_NAME) or model.PrimaryPart
+
+	-- The same state on top of another replaces the previous one.
+	self:StopVictimVFX(model, assetName)
+
+	local source = template:Clone()
+	local moved = {}
+
+	for _, part in source:GetChildren() do
+		if not part:IsA("BasePart") then continue end
+
+		local target = model:FindFirstChild(part.Name)
+		if not target or not target:IsA("BasePart") then
+			target = fallback
+		end
+		if not target then continue end
+
+		for _, child in part:GetChildren() do
+			if child:IsA("ParticleEmitter") then
+				prepareEmitter(child, 1)
+				child:SetAttribute(MOVED_MARK, assetName)
+				child.Parent = target
+				table.insert(moved, child)
+			end
+		end
+	end
+
+	source:Destroy()
+
+	if #moved == 0 then return end
+
+	GameClock.Delay(duration, function()
+		retireMoved(moved)
+	end)
+end
+
+function VFXController:StopVictimVFX(model : Model, assetName : string)
+	if not model or not model.Parent then return end
+
+	local moved = {}
+	for _, descendant in model:GetDescendants() do
+		if descendant:GetAttribute(MOVED_MARK) == assetName then
+			table.insert(moved, descendant)
+		end
+	end
+
+	if #moved > 0 then
+		retireMoved(moved)
+	end
+end
+
+
+
+function VFXController:PlayWeatherChangeCast(mobId : string, assetName : string?, castTime : number?)
+	castTime = tonumber(castTime) or 0
+	if castTime <= 0 or not assetName then return end
+
+	-- Decorative, so the "VFX" setting silences it. See `effectsOn`.
+	if not self:effectsOn() then return end
+
+	local mobs = self.Controllers.MobController
+	local mob = mobs and mobs.SpawnedMobs and mobs.SpawnedMobs[mobId]
+	if not mob or not mob.Parent then return end
+
+	local template = self.Library[assetName]
+	if not template then
+		log:StudioWarn(`could not find VFX "{assetName}" in Assets.VFX.`)
+		return
+	end
+
+	local source = template:Clone()
+	local emitters = {}
+
+	for _, part in source:GetChildren() do
+		if not part:IsA("BasePart") then continue end
+
+		local target = mob:FindFirstChild(part.Name)
+		if not target or not target:IsA("BasePart") then continue end
+
+		for _, child in part:GetChildren() do
+			if not child:IsA("ParticleEmitter") then continue end
+
+			for _, tag in AUTO_VFX_TAGS do
+				child:RemoveTag(tag)
+			end
+
+			child.Enabled = true
+			child.Parent = target
+			table.insert(emitters, child)
+		end
+	end
+
+	source:Destroy()
+
+	if #emitters == 0 then
+		log:StudioWarn(`"{assetName}" had no emitters matching the mob's parts.`)
+		return
+	end
+
+	GameClock.Delay(castTime, function()
+		local longest = 0
+
+		for _, emitter in emitters do
+			if emitter.Parent then
+				emitter.Enabled = false
+				longest = math.max(longest, emitter.Lifetime.Max)
+			end
+		end
+
+		task.delay(longest + 0.1, function()
+			for _, emitter in emitters do
+				if emitter.Parent then
+					emitter:Destroy()
+				end
+			end
+		end)
+	end)
+end
+
+
 
 -- The Archmage's two attacks that have visuals: the assets in `Assets.VFX`, the
 -- explosion Attachment inside the meteor, and the backup cleanup.
@@ -1104,6 +1379,15 @@ function VFXController:construct()
 	Framework:Listen("UnitStunned", function(unitId : string, duration : number, source : string?)
 		self:PlayFreeze(unitId, source, duration)
 	end)
+
+	Framework:Listen("SuffocateCastVFX", function(mobId : string, assetName : string, partName : string, castTime : number)
+		self:PlaySuffocateCast(mobId, assetName, partName, castTime)
+	end)
+
+	Framework:Listen("EnemyWeatherChangeVFX", function(mobId : string, assetName : string, castTime : number)
+		self:PlayWeatherChangeCast(mobId, assetName, castTime)
+	end)
+
 end
 
 function VFXController:start()
