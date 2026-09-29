@@ -27,19 +27,11 @@ local SuffocateAbilityService = {
 		UnitService = {},
 	},
 	Triggered = setmetatable({}, { __mode = "k" }),
-	Applicable = setmetatable({}, { __mode = "k" }),
 	Suffocations = {},
 }
 
--- Entity names are model names (see `SharedConfig.Mob`), so the list in
--- `Config.SuffocateAbility` names the enemies directly.
 function SuffocateAbilityService:appliesTo(mob) : boolean
-	local cached = self.Applicable[mob]
-	if cached == nil then
-		cached = table.find(Settings.Enemies, mob.Name) ~= nil
-		self.Applicable[mob] = cached
-	end
-	return cached
+	return table.find(Settings.Enemies, mob.Name) ~= nil
 end
 
 function SuffocateAbilityService:pickVictim()
@@ -55,32 +47,27 @@ function SuffocateAbilityService:pickVictim()
 	return pool[math.random(1, #pool)]
 end
 
-function SuffocateAbilityService:beginSuffocation(mobId : string, mob)
-	local entry = self:pickVictim()
-	if not entry then
-		return
-	end
-
+function SuffocateAbilityService:beginSuffocation(mobId : string, mob, entry)
 	local duration = math.max(0.1, Settings.Duration or 4)
+	local endsAt = GameClock.Now() + duration
+	local previousStun = entry.StunnedUntil or 0
+
 	entry.Suffocating = true
+	entry.StunnedUntil = math.max(previousStun, endsAt)
 
 	table.insert(self.Suffocations, {
 		MobId = mobId,
 		Mob = mob,
 		Entry = entry,
-		EndsAt = GameClock.Now() + duration,
+		EndsAt = endsAt,
+		PreviousStun = previousStun,
+		AppliedStun = entry.StunnedUntil,
 	})
 
-	fireAll("UnitSuffocate", entry.unitId, duration, Settings.UnitAnim or "Suffocated")
-
-	if Settings.StunUnit then
-		self.Services.UnitService:StunUnit(entry, duration)
-	end
+	fireAll("UnitSuffocate", entry.unitId, duration, Settings.UnitAnim or "Suffocated", Settings.UnitVFX or "")
 end
 
-function SuffocateAbilityService:beginCast(mobId : string, mob)
-	self.Triggered[mob] = true
-
+function SuffocateAbilityService:playCast(mobId : string, mob)
 	local mobService = self.Services.MobService
 	local castTime = math.max(0, Settings.CastTime or 0)
 	local stopping = castTime > 0 and Settings.StopWhileCasting ~= false
@@ -94,23 +81,28 @@ function SuffocateAbilityService:beginCast(mobId : string, mob)
 		fireAll("MobPlayAnim", mobId, Settings.EnemyAnim)
 	end
 
-	local function finish()
-		if mobService.ActiveMobs[mobId] ~= mob then
-			return
-		end
+	if stopping then
+		GameClock.Delay(castTime, function()
+			if mobService.ActiveMobs[mobId] ~= mob then
+				return
+			end
+			if (mob.StunnedUntil or 0) <= GameClock.Now() then
+				fireAll("UpdateMobSpeed", mobId, mob.CurrentSpeed)
+			end
+		end)
+	end
+end
 
-		if stopping and (mob.StunnedUntil or 0) <= GameClock.Now() then
-			fireAll("UpdateMobSpeed", mobId, mob.CurrentSpeed)
-		end
-
-		self:beginSuffocation(mobId, mob)
+function SuffocateAbilityService:trigger(mobId : string, mob) : boolean
+	local entry = self:pickVictim()
+	if not entry then
+		return false
 	end
 
-	if castTime > 0 then
-		GameClock.Delay(castTime, finish)
-	else
-		finish()
-	end
+	self.Triggered[mob] = true
+	self:beginSuffocation(mobId, mob, entry)
+	self:playCast(mobId, mob)
+	return true
 end
 
 function SuffocateAbilityService:Trigger(mobId : string) : boolean
@@ -118,11 +110,10 @@ function SuffocateAbilityService:Trigger(mobId : string) : boolean
 	if not mob or self.Triggered[mob] then
 		return false
 	end
-	self:beginCast(mobId, mob)
-	return true
+	return self:trigger(mobId, mob)
 end
 
-function SuffocateAbilityService:removeUnit(entry)
+function SuffocateAbilityService:removeUnit(entry, fadeTime : number)
 	local unitService = self.Services.UnitService
 
 	for index, placed in ipairs(unitService.PlacedUnits) do
@@ -133,7 +124,16 @@ function SuffocateAbilityService:removeUnit(entry)
 	end
 
 	unitService.UnitsById[entry.unitId] = nil
-	fireAll("RemoveUnit", entry.unitId)
+
+	local unitId = entry.unitId
+	if fadeTime > 0 then
+		fireAll("UnitSuffocateFade", unitId, fadeTime)
+		task.delay(fadeTime, function()
+			fireAll("RemoveUnit", unitId)
+		end)
+	else
+		fireAll("RemoveUnit", unitId)
+	end
 end
 
 -- Mirrors MobService:SpawnWave, for a single enemy placed mid-path.
@@ -145,7 +145,7 @@ function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 	local entityName = spawn.Entity
 	local definition = mobConfig.Entities[entityName]
 	if not definition then
-		warn("SuffocateAbilityService: Config.SuffocateAbility.Spawn.Entity '" .. tostring(entityName) .. "' is not an entity in SharedConfig.Mob")
+		warn("SuffocateAbilityService: unknown spawn entity '" .. tostring(entityName) .. "'")
 		return
 	end
 
@@ -170,30 +170,24 @@ function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 		return
 	end
 
-	--[[
-		The convert matches the wave it walks into: if the wave has its entity, it takes
-		that entry's health and speed from the table. Otherwise it takes its reference
-		stats (`Mob.Entities`) scaled like the enemy it came from.
-	]]
+	local maxHealth, baseSpeed, healthScale
 	local waveStats = mobService:GetWaveStats(entityName)
-	local baseSpeed, maxHealth, healthScale
-
 	if waveStats then
-		baseSpeed = waveStats.BaseSpeed
 		maxHealth = waveStats.MaxHealth
+		baseSpeed = waveStats.BaseSpeed
 		healthScale = waveStats.HealthScale
 	else
+		healthScale = sourceMob.HealthScale or 1
+		maxHealth = math.max(1, math.floor(((definition.Health or 10) * healthScale) + 0.5))
+
 		local sourceDefinition = mobConfig.Entities[sourceMob.Name]
 		local sourceBase = mobConfig.BaseSpeed * ((sourceDefinition and sourceDefinition.SpeedMultiplier) or 1)
 		local speedScale = if sourceBase > 0 then sourceMob.BaseSpeed / sourceBase else 1
-
 		baseSpeed = mobConfig.BaseSpeed * (definition.SpeedMultiplier or 1) * speedScale
-		healthScale = sourceMob.HealthScale or 1
-		maxHealth = math.max(1, math.floor(((definition.Health or 10) * healthScale) + 0.5))
 	end
 
 	local frozenUntil = mobService.FreezeUntil or 0
-	local spawnSpeed = baseSpeed * (mobService.WeatherSpeedScale or 1) * (mobService.CardSpeedScale or 1)
+	local spawnSpeed = baseSpeed * mobService.WeatherSpeedScale * (mobService.CardSpeedScale or 1)
 
 	local turnDistances = route.turnDistances or {}
 	local nextTurn = #turnDistances + 1
@@ -255,13 +249,20 @@ function SuffocateAbilityService:stepSuffocations()
 		elseif mobService.ActiveMobs[record.MobId] ~= record.Mob then
 			table.remove(self.Suffocations, index)
 			entry.Suffocating = nil
+
+			if (entry.StunnedUntil or 0) <= record.AppliedStun then
+				entry.StunnedUntil = record.PreviousStun
+			end
+
 			fireAll("UnitSuffocateEnd", entry.unitId)
 		elseif now >= record.EndsAt then
 			table.remove(self.Suffocations, index)
 
 			local position = entry.cf.Position
-			self:removeUnit(entry)
+			self:removeUnit(entry, math.max(0, Settings.FadeTime or 0))
 			self:spawnConverted(position, record.Mob)
+		elseif (entry.StunnedUntil or 0) < record.EndsAt then
+			entry.StunnedUntil = record.EndsAt
 		end
 	end
 end
@@ -280,11 +281,27 @@ function SuffocateAbilityService:step()
 			and mob.Health <= mob.MaxHealth * threshold
 			and self:appliesTo(mob)
 		then
-			self:beginCast(mobId, mob)
+			self:trigger(mobId, mob)
 		end
 	end
 
 	self:stepSuffocations()
+end
+
+function SuffocateAbilityService:guardDamage()
+	local unitService = self.Services.UnitService
+	if not unitService or not unitService.creditDamage or unitService.SuffocateGuarded then
+		return
+	end
+
+	local original = unitService.creditDamage
+	unitService.creditDamage = function(service, entry, ...)
+		if entry and entry.Suffocating then
+			return 0
+		end
+		return original(service, entry, ...)
+	end
+	unitService.SuffocateGuarded = true
 end
 
 function SuffocateAbilityService:start()
@@ -292,8 +309,11 @@ function SuffocateAbilityService:start()
 		self.Services[name] = Framework:Get(name)
 	end
 
+	self:guardDamage()
+
 	Framework:Listen("UnitSuffocate", function() end)
 	Framework:Listen("UnitSuffocateEnd", function() end)
+	Framework:Listen("UnitSuffocateFade", function() end)
 
 	RunService.Heartbeat:Connect(function()
 		self:step()

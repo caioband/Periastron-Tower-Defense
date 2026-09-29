@@ -1,4 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ContentProvider = game:GetService("ContentProvider")
+local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -9,20 +11,50 @@ local Me = require(Vendor.Me)
 
 local Framework = Me.new()
 
+local PRELOAD_NAME = "Suffocated"
+
 local SuffocateAbilityController = {
 	Controllers = {
 		UnitPlacementController = {},
+		VFXController = {},
 	},
-	Tracks = setmetatable({}, { __mode = "v" }),
+	Active = {},
 }
 
-function SuffocateAbilityController:getTrack(unitId : string, animationName : string)
+function SuffocateAbilityController:preload()
+	local list = {}
+
+	local units = Assets:FindFirstChild("Units")
+	if units then
+		for _, model in units:GetChildren() do
+			local animation = model:FindFirstChild(PRELOAD_NAME)
+			if animation and animation:IsA("Animation") then
+				table.insert(list, animation)
+			end
+		end
+	end
+
+	local animations = Assets:FindFirstChild("Animations")
+	local shared = animations and animations:FindFirstChild(PRELOAD_NAME)
+	if shared and shared:IsA("Animation") then
+		table.insert(list, shared)
+	end
+
+	if #list > 0 then
+		ContentProvider:PreloadAsync(list)
+	end
+end
+
+function SuffocateAbilityController:getClass(unitId : string)
 	local placement = self.Controllers.UnitPlacementController
 	local class = placement and placement.classesById[unitId]
 	if not class or not class.model or not class.model.Parent then
 		return nil
 	end
+	return class
+end
 
+function SuffocateAbilityController:getTrack(class, animationName : string)
 	class.loadedAnimations = class.loadedAnimations or {}
 
 	local track = class.loadedAnimations[animationName]
@@ -47,33 +79,100 @@ function SuffocateAbilityController:getTrack(unitId : string, animationName : st
 	return track
 end
 
+function SuffocateAbilityController:fadeOut(unitId : string, fadeTime : number)
+	local active = self.Active[unitId]
+	local class = (active and active.Class) or self:getClass(unitId)
+	local model = class and class.model
+	if not model or not model.Parent then
+		return
+	end
+
+	local track = active and active.Track
+	if track then
+		if not track.IsPlaying then
+			track:Play(0)
+		end
+		if track.Length > 0 then
+			track.TimePosition = math.max(0, track.Length - 0.03)
+		end
+		track:AdjustSpeed(0)
+	end
+
+	local skip = active and active.VFX
+	local info = TweenInfo.new(math.max(fadeTime, 0.05), Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+
+	for _, descendant in model:GetDescendants() do
+		if skip and (descendant.Name == skip or descendant:FindFirstAncestor(skip)) then
+			continue
+		end
+		if descendant:IsA("BasePart") or descendant:IsA("Decal") or descendant:IsA("Texture") then
+			TweenService:Create(descendant, info, { Transparency = 1 }):Play()
+		end
+	end
+end
+
 function SuffocateAbilityController:start()
 	for name in self.Controllers do
 		self.Controllers[name] = Framework:Get(name)
 	end
 
-	Framework:Listen("UnitSuffocate", function(unitId, duration, animationName)
-		if typeof(unitId) ~= "string" or typeof(animationName) ~= "string" then
+	task.spawn(function()
+		self:preload()
+	end)
+
+	Framework:Listen("UnitSuffocate", function(unitId, duration, animationName, vfxName)
+		if typeof(unitId) ~= "string" or typeof(duration) ~= "number" then
 			return
 		end
 
-		local track = self:getTrack(unitId, animationName)
-		if not track then
+		local class = self:getClass(unitId)
+		if not class then
 			return
 		end
 
-		track.Priority = Enum.AnimationPriority.Action4
-		track:Play(0.1)
-		track:AdjustSpeed(GameClock.GetScale())
-		self.Tracks[unitId] = track
+		local active = { Class = class }
+		self.Active[unitId] = active
+
+		if typeof(animationName) == "string" then
+			local track = self:getTrack(class, animationName)
+			if track then
+				track.Priority = Enum.AnimationPriority.Action4
+				track:Play(0)
+				track:AdjustSpeed(GameClock.GetScale())
+				active.Track = track
+			end
+		end
+
+		local vfx = self.Controllers.VFXController
+		if vfx and typeof(vfxName) == "string" and vfxName ~= "" then
+			active.VFX = vfxName
+			vfx:playModelStatus(class.model, vfxName, vfxName .. "Highlight", duration)
+		end
 	end)
 
 	Framework:Listen("UnitSuffocateEnd", function(unitId)
-		local track = self.Tracks[unitId]
-		if track then
-			track:Stop(0.2)
-			self.Tracks[unitId] = nil
+		local active = self.Active[unitId]
+		if not active then
+			return
 		end
+		self.Active[unitId] = nil
+
+		if active.Track then
+			active.Track:Stop(0.2)
+		end
+
+		local model = active.Class.model
+		local vfx = self.Controllers.VFXController
+		if active.VFX and vfx and model and model.Parent then
+			vfx:stopModelStatus(model, active.VFX, active.VFX .. "Highlight")
+		end
+	end)
+
+	Framework:Listen("UnitSuffocateFade", function(unitId, fadeTime)
+		if typeof(unitId) ~= "string" or typeof(fadeTime) ~= "number" then
+			return
+		end
+		self:fadeOut(unitId, fadeTime)
 	end)
 end
 

@@ -10,8 +10,9 @@ SuffocateAbility.StopWhileCasting = true
 SuffocateAbility.EnemyAnim = "Suffocate"
 
 SuffocateAbility.UnitAnim = "Suffocated"
+SuffocateAbility.UnitVFX = "BleedVFX"
 SuffocateAbility.Duration = 4
-SuffocateAbility.StunUnit = false
+SuffocateAbility.FadeTime = 0.6
 SuffocateAbility.ExceptUnits = {}
 
 SuffocateAbility.Spawn = {
