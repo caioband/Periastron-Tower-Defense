@@ -51,6 +51,7 @@ function SuffocateAbilityService:beginSuffocation(mobId : string, mob, entry)
 	local duration = math.max(0.1, Settings.Duration or 4)
 	local endsAt = GameClock.Now() + duration
 	local previousStun = entry.StunnedUntil or 0
+	local fadeTime = math.clamp(Settings.FadeTime or 0, 0, duration)
 
 	entry.Suffocating = true
 	entry.StunnedUntil = math.max(previousStun, endsAt)
@@ -60,6 +61,9 @@ function SuffocateAbilityService:beginSuffocation(mobId : string, mob, entry)
 		Mob = mob,
 		Entry = entry,
 		EndsAt = endsAt,
+		FadeTime = fadeTime,
+		FadeAt = endsAt - fadeTime,
+		Fading = false,
 		PreviousStun = previousStun,
 		AppliedStun = entry.StunnedUntil,
 	})
@@ -113,7 +117,7 @@ function SuffocateAbilityService:Trigger(mobId : string) : boolean
 	return self:trigger(mobId, mob)
 end
 
-function SuffocateAbilityService:removeUnit(entry, fadeTime : number)
+function SuffocateAbilityService:removeUnit(entry)
 	local unitService = self.Services.UnitService
 
 	for index, placed in ipairs(unitService.PlacedUnits) do
@@ -124,16 +128,7 @@ function SuffocateAbilityService:removeUnit(entry, fadeTime : number)
 	end
 
 	unitService.UnitsById[entry.unitId] = nil
-
-	local unitId = entry.unitId
-	if fadeTime > 0 then
-		fireAll("UnitSuffocateFade", unitId, fadeTime)
-		task.delay(fadeTime, function()
-			fireAll("RemoveUnit", unitId)
-		end)
-	else
-		fireAll("RemoveUnit", unitId)
-	end
+	fireAll("RemoveUnit", entry.unitId)
 end
 
 -- Mirrors MobService:SpawnWave, for a single enemy placed mid-path.
@@ -259,10 +254,17 @@ function SuffocateAbilityService:stepSuffocations()
 			table.remove(self.Suffocations, index)
 
 			local position = entry.cf.Position
-			self:removeUnit(entry, math.max(0, Settings.FadeTime or 0))
+			self:removeUnit(entry)
 			self:spawnConverted(position, record.Mob)
-		elseif (entry.StunnedUntil or 0) < record.EndsAt then
-			entry.StunnedUntil = record.EndsAt
+		else
+			if record.FadeTime > 0 and not record.Fading and now >= record.FadeAt then
+				record.Fading = true
+				fireAll("UnitSuffocateFade", entry.unitId, record.EndsAt - now)
+			end
+
+			if (entry.StunnedUntil or 0) < record.EndsAt then
+				entry.StunnedUntil = record.EndsAt
+			end
 		end
 	end
 end

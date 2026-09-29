@@ -81,32 +81,48 @@ end
 
 function SuffocateAbilityController:fadeOut(unitId : string, fadeTime : number)
 	local active = self.Active[unitId]
-	local class = (active and active.Class) or self:getClass(unitId)
-	local model = class and class.model
-	if not model or not model.Parent then
+	if not active then
+		local class = self:getClass(unitId)
+		if not class then
+			return
+		end
+		active = { Class = class }
+		self.Active[unitId] = active
+	end
+
+	local model = active.Class.model
+	if not model or not model.Parent or active.Faded then
 		return
 	end
 
-	local track = active and active.Track
-	if track then
-		if not track.IsPlaying then
-			track:Play(0)
-		end
-		if track.Length > 0 then
-			track.TimePosition = math.max(0, track.Length - 0.03)
-		end
-		track:AdjustSpeed(0)
-	end
+	local realTime = math.max(fadeTime / math.max(GameClock.GetScale(), 0.01), 0.05)
+	local info = TweenInfo.new(realTime, Enum.EasingStyle.Linear)
+	local skip = active.VFX
 
-	local skip = active and active.VFX
-	local info = TweenInfo.new(math.max(fadeTime, 0.05), Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	active.Faded = {}
 
 	for _, descendant in model:GetDescendants() do
 		if skip and (descendant.Name == skip or descendant:FindFirstAncestor(skip)) then
 			continue
 		end
 		if descendant:IsA("BasePart") or descendant:IsA("Decal") or descendant:IsA("Texture") then
+			active.Faded[descendant] = descendant.Transparency
 			TweenService:Create(descendant, info, { Transparency = 1 }):Play()
+		end
+	end
+end
+
+function SuffocateAbilityController:restore(active)
+	local faded = active.Faded
+	if not faded then
+		return
+	end
+	active.Faded = nil
+
+	local info = TweenInfo.new(0.2, Enum.EasingStyle.Linear)
+	for instance, original in faded do
+		if instance.Parent then
+			TweenService:Create(instance, info, { Transparency = original }):Play()
 		end
 	end
 end
@@ -156,6 +172,8 @@ function SuffocateAbilityController:start()
 			return
 		end
 		self.Active[unitId] = nil
+
+		self:restore(active)
 
 		if active.Track then
 			active.Track:Stop(0.2)
