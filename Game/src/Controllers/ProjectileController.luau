@@ -4,6 +4,10 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Assets = Shared:WaitForChild("Assets")
+local Vendor = Shared:WaitForChild("Vendor")
+
+local Me = require(Vendor.Me)
+local Framework = Me.new()
 
 local DEFAULT_SPEED = 60
 local MAX_FLIGHT_TIME = 3
@@ -42,6 +46,32 @@ local DEFAULT_EMIT_COUNT = 25
 
 local ProjectileController = {}
 ProjectileController.Library = {}
+
+--[=[
+	The player's "VFX" setting. Off, the projectile flies with only its shell: no
+	trail and no burst on impact. The shell stays because it is the attack itself,
+	the thing that shows who is shooting whom.
+]=]
+local function effectsOn() : boolean
+	local settings = Framework:Get("SettingsController", false, false)
+	return settings == nil or settings:Get("VFX")
+end
+
+--- A new projectile in the world, without its trail when the "VFX" setting is off.
+local function spawnProjectile(template : Instance) : Instance
+	local projectile = template:Clone()
+
+	if not effectsOn() then
+		for _, descendant in projectile:GetDescendants() do
+			if descendant:IsA("ParticleEmitter") or descendant:IsA("Trail")
+				or descendant:IsA("Beam") or descendant:IsA("Light") then
+				descendant.Enabled = false
+			end
+		end
+	end
+
+	return projectile
+end
 
 local function getRoot(instance)
 	if instance:IsA("Model") then
@@ -132,7 +162,7 @@ end
 	die; without one, it goes now.
 ]=]
 local function retire(instance)
-	local linger = burstImpact(instance)
+	local linger = if effectsOn() then burstImpact(instance) else nil
 	if not linger then
 		instance:Destroy()
 		return
@@ -185,7 +215,7 @@ function ProjectileController:_flyThrough(template, startPos, aimPos, config, fi
 	local maxDistance = config.PierceRange or PIERCE_DISTANCE
 	local impactAt = heading.Magnitude
 
-	local projectile = template:Clone()
+	local projectile = spawnProjectile(template)
 	local pos = startPos
 	setCFrame(projectile, CFrame.lookAt(pos, pos + direction))
 	projectile.Parent = Workspace
@@ -239,7 +269,7 @@ function ProjectileController:Fire(startPos, targetModel, config, onArrive, fall
 		return
 	end
 
-	local projectile = template:Clone()
+	local projectile = spawnProjectile(template)
 
 	local pos = startPos
 	setCFrame(projectile, CFrame.lookAt(pos, lastTarget))

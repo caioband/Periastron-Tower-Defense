@@ -90,6 +90,9 @@ local VFXController = {
 		UnitPlacementController = {},
 		WeatherController = {},
 
+		-- The "VFX" setting. See `effectsOn`.
+		SettingsController = {},
+
 		-- Where the enemy models come from, so the Electro's bolt ends on each one of
 		-- them. See `mobPoint`.
 		MobController = {}
@@ -137,6 +140,18 @@ local function getModelRoot(model)
 	return model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildWhichIsA("BasePart")
 end
 
+--[=[
+	The player's "VFX" setting. Off, the **decorative** bursts stop: attack
+	particles, the aura money, the round card burst, the Electro's arc, and the
+	particles of a status. What tells the player something stays: the status
+	Highlight, the meteor rock, the Archmage's line, and the weather bolts (a match
+	event that stuns a unit). Sounds inside the assets still play.
+]=]
+function VFXController:effectsOn() : boolean
+	local settings = self.Controllers.SettingsController
+	return settings == nil or settings:Get("VFX")
+end
+
 function VFXController:Play(effectName, target, options)
 	options = options or {}
 	local template = self.Library[effectName]
@@ -162,14 +177,20 @@ function VFXController:Play(effectName, target, options)
 		end
 	end
 
+	-- With the "VFX" setting off only the sound plays: it is the attack's feedback, not
+	-- decoration. See `effectsOn`.
+	local effects = self:effectsOn()
+
 	for _, descendant in clone:GetDescendants() do
 		if descendant:IsA("ParticleEmitter") then
-			local count = options.EmitCount or descendant:GetAttribute("EmitCount") or DEFAULT_EMIT_COUNT
-			descendant:Emit(count)
+			if effects then
+				local count = options.EmitCount or descendant:GetAttribute("EmitCount") or DEFAULT_EMIT_COUNT
+				descendant:Emit(count)
+			end
 		elseif descendant:IsA("Sound") then
 			descendant:Play()
 		elseif descendant:IsA("Light") then
-			descendant.Enabled = true
+			descendant.Enabled = effects
 		end
 	end
 
@@ -238,6 +259,8 @@ end
 	tweaking the emitter in Studio leaves no garbage behind.
 ]=]
 function VFXController:PlayAuraBonus(unitId : string)
+	if not self:effectsOn() then return end
+
 	local template = self.Library[MONEY_VFX_NAME]
 	if not template then
 		log:StudioWarn(`could not find VFX "{MONEY_VFX_NAME}" in Assets.VFX.`)
@@ -357,6 +380,12 @@ end
 ]=]
 function VFXController:EmitAttached(clone : Instance?, fallback : number?)
 	if not clone or not clone.Parent then return end
+
+	-- The "VFX" setting off: the clone was hung for a burst that will not come.
+	if not self:effectsOn() then
+		clone:Destroy()
+		return
+	end
 
 	VFX.emit(clone)
 	VFX.destroyAfter(clone, VFX.maxLifetime(clone) or fallback or DEFAULT_LIFETIME)
@@ -641,6 +670,9 @@ end
 function VFXController:PlayChainLightning(arc)
 	if typeof(arc) ~= "table" or typeof(arc.targets) ~= "table" then return end
 
+	-- Decorative: the enemies it hit are already painted yellow by `MobController`.
+	if not self:effectsOn() then return end
+
 	local from = self:chainPoint(arc.unitId, arc.origin)
 	if not from then return end
 
@@ -759,9 +791,13 @@ function VFXController:playModelStatus(mob : Model, assetName : string, highligh
 		highlight.Parent = mob
 	end
 
+	-- With the "VFX" setting off only the Highlight shows the state: it is what tells
+	-- the player, and the particles are decoration.
+	local effects = self:effectsOn()
+
 	for _, descendant in clone:GetDescendants() do
 		if descendant:IsA("ParticleEmitter") then
-			descendant.Enabled = true
+			descendant.Enabled = effects
 		end
 	end
 
@@ -912,7 +948,13 @@ function VFXController:PlayMeteor(unitId : string, aimPos : Vector3, fallTime : 
 	setClonePivot(meteor, CFrame.new(origin) * rotation)
 	meteor.Parent = VFX.temp
 
-	setEffectsEnabled(meteor, true, explosion)
+	-- With the "VFX" setting off only the rock falls: it is what shows where the damage
+	-- lands. The trail and the explosion are decoration.
+	local effects = self:effectsOn()
+
+	if effects then
+		setEffectsEnabled(meteor, true, explosion)
+	end
 
 	local duration = math.max(0.05, tonumber(fallTime) or 1)
 	local elapsed = 0
@@ -935,7 +977,7 @@ function VFXController:PlayMeteor(unitId : string, aimPos : Vector3, fallTime : 
 			meteor.Transparency = 1
 		end
 
-		if explosion then
+		if explosion and effects then
 			VFX.emit(explosion)
 		end
 

@@ -31,6 +31,9 @@ local Config = SharedConfig.WeatherConfig
 	the same in everyone's ear. The audio policy (which sound, which fade) lives
 	here; `VFXController` only provides the anchor.
 
+	It also applies the "Weather Effects" setting: with it off, the particles in
+	`workspace.Weather` stop on this client only. See `_watchEffects`.
+
 	It lives in `common/`, like `WeatherService`.
 
 	See docs/common/weather.md.
@@ -43,6 +46,121 @@ local WeatherController = {
 }
 
 WeatherController.Current = nil :: string?
+
+-- The "Weather Effects" setting. See `_watchEffects`.
+WeatherController._effects = true
+
+--[[
+	Marks on each stopped emitter, local to this client (an attribute written on the
+	client does not replicate). On the emitter, not in a table keyed by it: a Roblox
+	Instance's userdata is collected when no Lua code holds it, so a weak-keyed table
+	loses entries while the emitter is still alive, and the emitter would never come
+	back on.
+]]
+-- The `Enabled` the emitter had before the setting stopped it.
+local STOPPED_ATTRIBUTE = "SettingsWasEnabled"
+
+-- Already watched for `Enabled`, so stopping it twice does not connect twice.
+local WATCHED_ATTRIBUTE = "SettingsWatched"
+
+--[[ WEATHER EFFECTS ]]
+
+--[=[
+	Stops one of the weather's emitters and clears what it already emitted, keeping
+	the `Enabled` it had. Only while the setting is off.
+
+	Whoever turns the emitter on afterward (a tag of the `vfx` addon, a script in the
+	asset) is answered on the spot: what they wrote becomes what comes back later, and
+	the emitter goes off again.
+]=]
+function WeatherController:_stopEmitter(instance: Instance)
+	if self._effects or not instance:IsA("ParticleEmitter") then
+		return
+	end
+
+	local emitter = instance :: ParticleEmitter
+
+	if emitter:GetAttribute(STOPPED_ATTRIBUTE) == nil then
+		emitter:SetAttribute(STOPPED_ATTRIBUTE, emitter.Enabled)
+	end
+
+	if emitter:GetAttribute(WATCHED_ATTRIBUTE) ~= true then
+		emitter:SetAttribute(WATCHED_ATTRIBUTE, true)
+
+		emitter:GetPropertyChangedSignal("Enabled"):Connect(function()
+			if self._effects or not emitter.Enabled then
+				return
+			end
+
+			emitter:SetAttribute(STOPPED_ATTRIBUTE, true)
+			emitter.Enabled = false
+		end)
+	end
+
+	emitter.Enabled = false
+	emitter:Clear()
+end
+
+--- Gives every stopped emitter in the weather the `Enabled` it had.
+function WeatherController:_restoreEmitters()
+	local container = workspace:FindFirstChild(Config.ContainerName)
+	if not container then return end
+
+	for _, descendant in container:GetDescendants() do
+		local enabled = descendant:GetAttribute(STOPPED_ATTRIBUTE)
+
+		if enabled ~= nil and descendant:IsA("ParticleEmitter") then
+			descendant:SetAttribute(STOPPED_ATTRIBUTE, nil)
+			descendant.Enabled = enabled == true
+		end
+	end
+end
+
+--[=[
+	The "Weather Effects" setting. The weather is the server's clone in
+	`workspace.<ContainerName>`, replicated to everyone; turning its emitters off on the
+	client changes nothing for anyone else, and the next weather arrives new and is
+	stopped as it comes in.
+
+	Only particles: the weather's lighting (fog, color) is the map's look, and the
+	lightning bolt is a match event that stuns a unit.
+]=]
+function WeatherController:_watchEffects()
+	local settings = Framework:Get("SettingsController", false, true)
+
+	local function onContainer(child: Instance)
+		if child.Name ~= Config.ContainerName then return end
+
+		child.DescendantAdded:Connect(function(descendant)
+			self:_stopEmitter(descendant)
+		end)
+
+		for _, descendant in child:GetDescendants() do
+			self:_stopEmitter(descendant)
+		end
+	end
+
+	workspace.ChildAdded:Connect(onContainer)
+	for _, child in workspace:GetChildren() do
+		onContainer(child)
+	end
+
+	settings:Observe("WeatherEffects", function(enabled: boolean)
+		self._effects = enabled
+
+		if enabled then
+			self:_restoreEmitters()
+			return
+		end
+
+		local container = workspace:FindFirstChild(Config.ContainerName)
+		if container then
+			for _, descendant in container:GetDescendants() do
+				self:_stopEmitter(descendant)
+			end
+		end
+	end)
+end
 
 --[=[
 	The weather this client is seeing, or nil.
@@ -148,7 +266,9 @@ function WeatherController:construct()
 	Framework:Fire("RequestWeather")
 end
 
-function WeatherController:start() end
+function WeatherController:start()
+	self:_watchEffects()
+end
 
 function WeatherController:init()
 	for Controller, _ in self.Controllers do

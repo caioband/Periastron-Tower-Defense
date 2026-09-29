@@ -20,9 +20,10 @@ When a system also has place-specific parts, its page here covers the shared cor
 | [Leaderboards](leaderboards.md) | Global leaderboards and the stats that feed them |
 | [Lighting](lighting.md) | Lighting presets and client-side interpolation |
 | [Logging](logging.md) | The `Log` module |
-| [Proximity panel](proximity-panel.md) | Walk-up panels in the Lobby |
+| [Proximity panel](proximity-panel.md) | Walk-up panels in the Lobby, and panels opened by a button |
 | [Rich text](rich-text.md) | `RichTextController`: markup, presets, text fitting |
 | [Screen warnings](screen-warnings.md) | The center-screen warning and the server restart warning |
+| [Settings](settings.md) | The settings panel: audio, graphics, and VFX toggles |
 | [Tutorial](tutorial.md) | The tutorial offer, the Lobby shop flow, the button gate, and the analytics funnel |
 | [UI guidance](ui-guidance.md) | The highlight and the indicator arrow |
 | [Weather](weather.md) | Turning weather on and off, and its sound |

@@ -54,8 +54,12 @@ Sound:PlaySFX("Thunder", { FadeOut = 1 })                 -- smoothed tail at th
 | Music | `Play`, `Transition`, `PushTrack` / `PopTrack` / `IsPushed`, `Stop`, `StopAll`, `Pause`, `Resume`, `TogglePause`, `Restart`, `Seek`, `SetSpeed`, `GetCurrent`, `IsPlaying` |
 | Playlists | `PlayPlaylist(names, { Shuffle, Loop, Fade, Volume })`, `Next`, `PlayRandom` |
 | Volume | `SetVolume`, `GetVolume`, `Mute`, `Unmute`, `ToggleMute`, `IsMuted`, `Duck`, `Unduck` |
-| SFX | `PlaySFX(name, options)`, `StopSFX(key, fade)`, `PreloadSFX(names)`, `SetSFXVolume`, `GetSFXVolume` |
+| SFX | `PlaySFX(name, options)`, `StopSFX(key, fade)`, `PreloadSFX(names)`, `SetSFXVolume`, `GetSFXVolume`, `SetSFXMuted`, `IsSFXMuted` |
 | Lookup | `GetTrack`, `GetSFX`, `GetTrackNames`, `GetFolder`, `GetSFXFolder` |
+
+`SetSFXVolume` only reaches the next `PlaySFX`.
+`SetSFXMuted` is wider: it silences **every** sound that is not music (footsteps, weather, VFX assets, what the server plays) through a local `SoundGroup` at volume 0, for the [Settings](settings.md) "Sound Effects" toggle.
+The "Music" toggle uses `Mute`/`Unmute`.
 
 `PlayOptions`: `Fade`, `Volume`, `Looped` (default `true`), `Speed`, `StartTime`, `Restart`.
 `SFXOptions`: `Parent` (a Part or Attachment makes it 3D; default `SoundService`, 2D), `Key`, `Fade`, `FadeOut`, `Looped`, `Volume`, and more; see the exported types in the module.

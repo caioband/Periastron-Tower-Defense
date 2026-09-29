@@ -18,6 +18,7 @@ local Framework = Me.new()
 local log = Log.new("LightingController")
 
 local Config = SharedConfig.LightingConfig
+local SettingsConfig = SharedConfig.SettingsConfig
 
 --[[
 	Lighting transitions, client only.
@@ -46,6 +47,10 @@ local Config = SharedConfig.LightingConfig
 	the server. In practice: using the same names across presets is what makes the
 	transition complete.
 
+	The player's "Shadows" and "Post Effects" settings live here too, because this is
+	who writes Lighting on the client: a setting that wrote on its own would be undone
+	by the next transition. See `_write`.
+
 	It lives in `common/` because both places use it.
 
 	See docs/common/lighting.md.
@@ -54,6 +59,12 @@ local Config = SharedConfig.LightingConfig
 -- How long to wait for the new preset's instances to replicate before giving up
 -- on interpolating them.
 local CHILD_WAIT = 0.5
+
+-- The classes the "Post Effects" setting turns off. See `_forced`.
+local POST_EFFECTS = {}
+for _, className in SettingsConfig.POST_EFFECT_CLASSES do
+	POST_EFFECTS[className] = true
+end
 
 local LightingController = {
 	Controllers = {},
@@ -74,11 +85,194 @@ LightingController._root = nil :: Folder?
 -- The plan of the transition in progress, or nil. See `_freeze` and `Skip`.
 LightingController._plan = nil :: any
 
+--[[
+	The player's settings (`SettingsController`): `false` forces shadows or the post
+	effects off on this client. See `_forced`.
+]]
+LightingController._shadows = true
+LightingController._postEffects = true
+
+--[[
+	What each forced property **should** be, per instance: the value the server or the
+	preset wanted, kept while a setting writes something else on top.
+
+	Strong keys, cleaned on `Destroying` (see `_watchSettings`): a weak-keyed table of
+	Instances loses entries while the Instance is still alive, because its userdata is
+	collected when no Lua code holds it, and a lost truth is an effect that never
+	comes back on.
+]]
+LightingController._truth = {} :: { [Instance]: { [string]: any } }
+
+--[[ SETTINGS ]]
+
+--[=[
+	The value a setting forces on this property, or nil when it is free.
+
+	Shadows off forces `Lighting.GlobalShadows`; post effects off forces `Enabled` on
+	the `SettingsConfig.POST_EFFECT_CLASSES`. What carries `KeepAttribute` is left
+	alone: it belongs to another system (the panels' `UIBlur`).
+]=]
+function LightingController:_forced(instance: Instance, property: string): any
+	if instance == Lighting then
+		if property == "GlobalShadows" and not self._shadows then
+			return false
+		end
+
+		return nil
+	end
+
+	if property == "Enabled" and not self._postEffects and POST_EFFECTS[instance.ClassName]
+		and instance:GetAttribute(Config.KeepAttribute) ~= true then
+		return false
+	end
+
+	return nil
+end
+
+--[=[
+	**Every write this controller makes to Lighting goes through here.** A forced
+	property keeps the value it was asked for as the truth and gets the forced one
+	instead, so no transition frame shows the effect the player turned off. The truth
+	is what `_readLive` reports and what comes back when the setting is turned on.
+]=]
+function LightingController:_write(instance: Instance, property: string, value: any)
+	local forced = self:_forced(instance, property)
+
+	if forced ~= nil then
+		local truth = self._truth[instance]
+		if not truth then
+			truth = {}
+			self._truth[instance] = truth
+		end
+
+		truth[property] = value
+		value = forced
+	end
+
+	(instance :: any)[property] = value
+end
+
+--[=[
+	Puts one property back under its setting after someone else wrote it: the server's
+	replication, which does not go through `_write`. What arrived is the new truth.
+]=]
+function LightingController:_enforce(instance: Instance, property: string)
+	local forced = self:_forced(instance, property)
+	if forced == nil then return end
+
+	local ok, value = pcall(function()
+		return (instance :: any)[property]
+	end)
+
+	if not ok or value == forced then return end
+
+	pcall(function()
+		self:_write(instance, property, value)
+	end)
+end
+
+function LightingController:_enforceAll()
+	self:_enforce(Lighting, "GlobalShadows")
+
+	for _, child in Lighting:GetChildren() do
+		if POST_EFFECTS[child.ClassName] then
+			self:_enforce(child, "Enabled")
+		end
+	end
+end
+
+--- Gives the truth back to every property no setting forces anymore.
+function LightingController:_releaseAll()
+	for instance, truth in self._truth do
+		-- A ghost or an effect gone without `Destroying` reaching us: nothing to give back.
+		if instance ~= Lighting and not instance.Parent then
+			self._truth[instance] = nil
+			continue
+		end
+
+		for property, value in truth do
+			if self:_forced(instance, property) ~= nil then continue end
+
+			truth[property] = nil
+
+			if instance == Lighting or instance.Parent then
+				pcall(function()
+					(instance :: any)[property] = value
+				end)
+			end
+		end
+
+		if next(truth) == nil then
+			self._truth[instance] = nil
+		end
+	end
+end
+
+--- Read values with the truth in place of what a setting forced.
+function LightingController:_withTruth(instance: Instance, values: { [string]: any }): { [string]: any }
+	local truth = self._truth[instance]
+	if not truth then
+		return values
+	end
+
+	for property, value in truth do
+		if values[property] ~= nil then
+			values[property] = value
+		end
+	end
+
+	return values
+end
+
+--[=[
+	Follows the settings and whatever the server writes over them. Replication does not
+	go through `_write`, so each forced property is watched: shadows on `Lighting`,
+	`Enabled` on each post effect, including the ones the next preset creates.
+]=]
+function LightingController:_watchSettings()
+	local settings = Framework:Get("SettingsController", false, true)
+
+	Lighting:GetPropertyChangedSignal("GlobalShadows"):Connect(function()
+		self:_enforce(Lighting, "GlobalShadows")
+	end)
+
+	local function onChild(child: Instance)
+		if not POST_EFFECTS[child.ClassName] then return end
+
+		-- The connections die with the effect: the server destroys it on the next preset.
+		child:GetPropertyChangedSignal("Enabled"):Connect(function()
+			self:_enforce(child, "Enabled")
+		end)
+
+		child.Destroying:Connect(function()
+			self._truth[child] = nil
+		end)
+
+		self:_enforce(child, "Enabled")
+	end
+
+	Lighting.ChildAdded:Connect(onChild)
+	for _, child in Lighting:GetChildren() do
+		onChild(child)
+	end
+
+	local function apply()
+		self._shadows = settings:Get("Shadows")
+		self._postEffects = settings:Get("PostEffects")
+
+		self:_enforceAll()
+		self:_releaseAll()
+	end
+
+	settings:Observe("Shadows", apply)
+	settings:Observe("PostEffects", apply)
+end
+
 --[[ STATE ]]
 
 function LightingController:_readLive()
 	local state = {
-		Lighting = LightingUtil.ReadInstance(Lighting),
+		Lighting = self:_withTruth(Lighting, LightingUtil.ReadInstance(Lighting)),
 		Children = {},
 	}
 
@@ -103,7 +297,7 @@ function LightingController:_readLive()
 
 		state.Children[child.Name] = {
 			ClassName = child.ClassName,
-			Values = LightingUtil.ReadInstance(child),
+			Values = self:_withTruth(child, LightingUtil.ReadInstance(child)),
 		}
 	end
 
@@ -165,7 +359,7 @@ function LightingController:_collect(instance: Instance, from, to, plan)
 
 		if interpolate then
 			local ok = pcall(function()
-				(instance :: any)[propertyName] = origin
+				self:_write(instance, propertyName, origin)
 			end)
 
 			if ok then
@@ -185,12 +379,12 @@ function LightingController:_collect(instance: Instance, from, to, plan)
 		-- the rest (turning on, swapping a texture) goes in right away, or there would be nothing to see.
 		if target == false then
 			pcall(function()
-				(instance :: any)[propertyName] = origin
+				self:_write(instance, propertyName, origin)
 			end)
 			table.insert(plan.deferred, { instance = instance, property = propertyName, value = target })
 		else
 			local ok = pcall(function()
-				(instance :: any)[propertyName] = target
+				self:_write(instance, propertyName, target)
 			end)
 
 			if ok then
@@ -309,7 +503,7 @@ function LightingController:_fadeOut(name: string, previous, plan)
 	ghost.Name = name
 	for propertyName, value in previous.Values do
 		pcall(function()
-			(ghost :: any)[propertyName] = value
+			self:_write(ghost, propertyName, value)
 		end)
 	end
 	ghost.Parent = Lighting
@@ -380,13 +574,13 @@ function LightingController:_transition(toName: string, duration: number)
 
 		for _, entry in plan.entries do
 			pcall(function()
-				(entry.instance :: any)[entry.property] = entry.to
+				self:_write(entry.instance, entry.property, entry.to)
 			end)
 		end
 
 		for _, entry in plan.deferred do
 			pcall(function()
-				(entry.instance :: any)[entry.property] = entry.value
+				self:_write(entry.instance, entry.property, entry.value)
 			end)
 		end
 
@@ -470,7 +664,9 @@ function LightingController:construct()
 	Framework:Fire("RequestLighting")
 end
 
-function LightingController:start() end
+function LightingController:start()
+	self:_watchSettings()
+end
 
 function LightingController:init()
 	for Controller, _ in self.Controllers do

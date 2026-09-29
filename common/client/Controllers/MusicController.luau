@@ -1,4 +1,5 @@
 local ContentProvider = game:GetService("ContentProvider")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
@@ -48,6 +49,9 @@ local log = Log.new("MusicController")
 --]]
 
 local SHARED_SOUNDS = "SharedSounds"
+-- The local SoundGroup that silences sound effects (`SetSFXMuted`). Created on the
+-- client only, so it never replicates and never touches another player.
+local SFX_MUTE_GROUP = "SettingsSFXMute"
 local MUSICS_FOLDER = "Musics"
 local SFX_FOLDER = "SFX"
 
@@ -109,6 +113,14 @@ MusicController._Fades = {} :: { [Sound]: Tween }
 MusicController._Master = 1
 MusicController._Duck = 1
 MusicController._Muted = false
+
+-- The sound effects switch. See `SetSFXMuted`.
+MusicController._SFXMuted = false
+MusicController._SFXMuteGroup = nil :: SoundGroup?
+MusicController._SFXMuteConns = {} :: { RBXScriptConnection }
+-- [Sound] = the SoundGroup it had before the mute, only for sounds that had one
+-- (none today). Strong keys on purpose: see `SetSFXMuted`.
+MusicController._SFXOriginalGroups = {} :: { [Sound]: SoundGroup }
 MusicController._EndedConn = nil :: RBXScriptConnection?
 MusicController._Playlist = nil :: { string }?
 MusicController._PlaylistIndex = 0
@@ -836,6 +848,11 @@ function MusicController:PlaySFX(name: string, options: SFXOptions?): Sound?
 	sound.PlaybackSpeed = opts.Speed or template.PlaybackSpeed
 	sound.Looped = if opts.Looped == nil then template.Looped else opts.Looped
 	sound.Parent = opts.Parent or SoundService
+
+	-- Before the Play: `DescendantAdded` would only reach it at the end of the frame,
+	-- one frame after it started sounding.
+	self:_silenceSFX(sound)
+
 	sound:Play()
 
 	if fadeIn > 0 then
@@ -931,6 +948,128 @@ end
 
 function MusicController:GetSFXVolume(): number
 	return self._SFXMaster
+end
+
+--[[ SFX MUTE ]]
+
+-- The music is the Musics folder's own instances (see the header); everything else is an effect.
+function MusicController:_isMusic(sound: Sound): boolean
+	local sharedSounds = SoundService:FindFirstChild(SHARED_SOUNDS)
+	local musics = sharedSounds and sharedSounds:FindFirstChild(MUSICS_FOLDER)
+
+	return musics ~= nil and sound:IsDescendantOf(musics)
+end
+
+-- Puts one sound in the mute group, keeping the group it had. Only while muted.
+function MusicController:_silenceSFX(instance: Instance)
+	local group = self._SFXMuteGroup
+	if not self._SFXMuted or not group or not instance:IsA("Sound") then
+		return
+	end
+
+	if instance.SoundGroup == group or self:_isMusic(instance) then
+		return
+	end
+
+	if instance.SoundGroup then
+		self._SFXOriginalGroups[instance] = instance.SoundGroup
+	end
+
+	instance.SoundGroup = group
+end
+
+-- The places a sound can play from: where the mute looks, and where unmuting looks too.
+function MusicController:_sfxRoots(): { Instance }
+	local roots = { workspace, SoundService }
+
+	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if playerGui then
+		table.insert(roots, playerGui)
+	end
+
+	return roots
+end
+
+function MusicController:_getSFXMuteGroup(): SoundGroup
+	local group = self._SFXMuteGroup
+	if group and group.Parent then
+		return group
+	end
+
+	group = Instance.new("SoundGroup")
+	group.Name = SFX_MUTE_GROUP
+	group.Volume = 0
+	group.Parent = SoundService
+
+	self._SFXMuteGroup = group
+	return group
+end
+
+--[=[
+	Silences **every** sound that is not music, or brings them back: the Settings
+	"Sound Effects" toggle.
+
+	`SetSFXVolume` only reaches `PlaySFX`, and much of the game's sound goes around
+	it: footsteps, the weather, the sounds inside VFX assets, what the server plays.
+	So muting is not a multiplier here: every `Sound` under the Workspace,
+	SoundService, and PlayerGui (the places a sound can play from) goes into a local
+	`SoundGroup` at volume 0, and new ones follow while the mute lasts. Unmuting
+	gives each sound back the group it had, and stops watching.
+
+	**Unmuting searches the same places again** for whoever is in the mute group,
+	instead of walking a list of the sounds it muted. A weak-keyed list loses entries:
+	a Roblox Instance's userdata is collected when no Lua code holds it, even with the
+	Instance alive, and the `PlaySFX` templates are exactly that. A lost template
+	stayed muted, and every clone of it was born muted. The search also catches the
+	clones made during the mute, which copied the group from the template.
+
+	The music is left alone: it is `Mute`'s business.
+]=]
+function MusicController:SetSFXMuted(muted: boolean)
+	if self._SFXMuted == muted then
+		return
+	end
+
+	self._SFXMuted = muted
+
+	for _, connection in self._SFXMuteConns do
+		connection:Disconnect()
+	end
+	table.clear(self._SFXMuteConns)
+
+	if not muted then
+		local group = self._SFXMuteGroup
+
+		if group then
+			for _, root in self:_sfxRoots() do
+				for _, descendant in root:GetDescendants() do
+					if descendant:IsA("Sound") and descendant.SoundGroup == group then
+						descendant.SoundGroup = self._SFXOriginalGroups[descendant]
+					end
+				end
+			end
+		end
+
+		table.clear(self._SFXOriginalGroups)
+
+		return
+	end
+
+	self:_getSFXMuteGroup()
+
+	for _, root in self:_sfxRoots() do
+		for _, descendant in root:GetDescendants() do
+			self:_silenceSFX(descendant)
+		end
+
+		table.insert(self._SFXMuteConns, root.DescendantAdded:Connect(function(descendant)
+			self:_silenceSFX(descendant)
+		end))
+	end
+end
+
+function MusicController:IsSFXMuted(): boolean
+	return self._SFXMuted
 end
 
 --[[ STATE ]]

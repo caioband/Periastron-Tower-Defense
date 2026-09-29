@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -31,8 +32,9 @@ local Log = require(script.Parent.Log)
 	and opens, or the exit would never happen and the panel would stay on screen.
 
 	**No map spot works too.** A panel with no place in the world (the Robux shop,
-	only a HUD button) has no `GetReference`: distance is never measured, and it
-	lives on `Open`/`Close`/`Toggle` and the X. Everything else stays the same.
+	only a HUD button; the settings panel, only a TopbarPlus icon) has no
+	`GetReference`: distance is never measured, and it lives on
+	`Open`/`Close`/`Toggle` and the X. Everything else stays the same.
 
 	**The outer frame (`Wrapper`) comes and goes**, not the ScreenGui: `ShopUI` holds
 	several shops, and each lights its own frame. `CanDisable` is the other side:
@@ -45,11 +47,17 @@ local Log = require(script.Parent.Log)
 	HUD and with a blurred background.
 
 	Cascade exists only in the Lobby place, so it is looked up the first time a panel
-	opens, not at the top of the file: the Game also mounts this module and has no
-	runtime. See docs/common/proximity-panel.md.
+	binds, not at the top of the file: the Game also mounts this module and has no
+	runtime. There, a panel that asks for an `Animation` gets a plain scale tween on
+	its frame instead (the settings panel, which lives in every place).
+
+	**The ScreenGui may live in a folder** (`Folder`): `SharedUIs` is a folder that
+	StarterGui copies whole, and a screen inside it is not a direct child of
+	`PlayerGui`. See docs/common/proximity-panel.md.
 ]]
 
 local CHARACTER_ROOT = "HumanoidRootPart"
+local CASCADE_RUNTIME = "CascadeRuntimeEngine"
 local CLOSE_BUTTON_NAME = "Close"
 local WAIT_TIMEOUT = 10
 
@@ -62,22 +70,36 @@ local BLUR_EASING_DIRECTION = Enum.EasingDirection.Out
 
 local DEFAULT_INTERVAL = 0.2
 
+-- The scale tween used in place of the Cascade animation where the place has no
+-- Cascade. It grows the whole frame (`Wrapper`), not only the art, so an X authored
+-- next to the art grows with it.
+local FALLBACK_OPEN_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local FALLBACK_CLOSE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local FALLBACK_SCALE_NAME = "PanelScale"
+
 export type Options = {
 	-- The name shown in warnings.
 	Name : string,
 
-	-- `PlayerGui.<ScreenGui>.<Wrapper>.<Panel>`. `Panel` is the art the animation
-	-- writes to (`UIScale/Scale` and `ImageTransparency`).
+	-- `PlayerGui.<Folder?>.<ScreenGui>.<Wrapper>.<Panel>`. `Panel` is the art the
+	-- animation writes to (`UIScale/Scale` and `ImageTransparency`). `Folder` is only
+	-- for a ScreenGui that lives inside a folder (`SharedUIs`).
+	Folder : string?,
 	ScreenGui : string,
 	Wrapper : string,
 	Panel : string,
 
-	-- The Cascade animation name. Without it the panel only turns on and off.
+	-- The Cascade animation name. Without it the panel only turns on and off. In a
+	-- place without Cascade it becomes the fallback scale tween.
 	Animation : string?,
 
 	-- The request name for `InterfaceController`. Unique per panel: sharing the name
 	-- would let one panel give back the screen another requested.
 	HideReason : string,
+
+	-- Other ScreenGuis that stay on screen while the panel is open, besides its own
+	-- (the TopbarPlus bar, when the panel opens from an icon there).
+	Except : { string }?,
 
 	-- The radius center, reread on every measurement (the map may swap the part).
 	-- Absent means "no place in the world": nothing is measured, it only opens by hand.
@@ -97,15 +119,27 @@ export type Options = {
 local ProximityPanel = {}
 ProximityPanel.__index = ProximityPanel
 
-local AnimationService = nil
+-- nil until looked up; false when the place has no Cascade.
+local AnimationService : any = nil
 
-local function getAnimationService()
+--[=[
+	The Cascade runtime, or nil in a place without one.
+
+	The lookup waits for the game to load: only then has everything the place ships
+	in ReplicatedStorage arrived, and "not found" means "this place has no Cascade"
+	instead of "not replicated yet".
+]=]
+local function getAnimationService() : any?
 	if AnimationService == nil then
-		local runtime = ReplicatedStorage:WaitForChild("CascadeRuntimeEngine")
-		AnimationService = require(runtime:WaitForChild("AnimationService"))
+		if not game:IsLoaded() then
+			game.Loaded:Wait()
+		end
+
+		local runtime = ReplicatedStorage:FindFirstChild(CASCADE_RUNTIME)
+		AnimationService = if runtime then require(runtime:WaitForChild("AnimationService")) else false
 	end
 
-	return AnimationService
+	return AnimationService or nil
 end
 
 function ProximityPanel.new(options : Options)
@@ -129,10 +163,20 @@ function ProximityPanel.new(options : Options)
 		OpenChanged = Signal.new(),
 	}
 
+	-- What the hide request leaves on screen: the panel's own ScreenGui, plus `Except`.
+	self.Except = { options.ScreenGui }
+	for _, name in options.Except or {} do
+		table.insert(self.Except, name)
+	end
+
 	self.ScreenGui = nil
 	self.Wrapper = nil
 	self.Panel = nil
 	self.Track = nil
+
+	-- The fallback when there is no Cascade: the frame's `UIScale` and its tween.
+	self.Scale = nil
+	self.ScaleTween = nil
 
 	self.IsOpenState = false
 	self.InRange = false
@@ -225,6 +269,39 @@ function ProximityPanel:_playTrack(reverse : boolean)
 	track:Play()
 end
 
+--[=[
+	The fallback for a place without Cascade: the frame grows from nothing on open and
+	shrinks back on close. Each tween starts from wherever the last one got, so closing
+	mid-open does not jump; the frame leaves only when a closing tween finishes.
+]=]
+function ProximityPanel:_playScale(open : boolean)
+	local scale = self.Scale
+	if not scale then
+		return
+	end
+
+	if self.ScaleTween then
+		self.ScaleTween:Cancel()
+	end
+
+	local tween = TweenService:Create(scale, if open then FALLBACK_OPEN_INFO else FALLBACK_CLOSE_INFO, {
+		Scale = if open then 1 else 0,
+	})
+
+	tween.Completed:Connect(function(state : Enum.PlaybackState)
+		if state ~= Enum.PlaybackState.Completed or open or self.IsOpenState then
+			return
+		end
+
+		if self.ScreenGui and self.ScreenGui.Parent then
+			self:_hide()
+		end
+	end)
+
+	self.ScaleTween = tween
+	tween:Play()
+end
+
 function ProximityPanel:_bind(screenGui : ScreenGui)
 	local options = self.Options
 
@@ -257,8 +334,30 @@ function ProximityPanel:_bind(screenGui : ScreenGui)
 	end
 
 	self.Track = nil
+	self.Scale = nil
+	self.ScaleTween = nil
 
-	if options.Animation then
+	local animationService = if options.Animation then getAnimationService() else nil
+
+	if options.Animation and not animationService then
+		-- No Cascade in this place: the frame's own `UIScale`, or one made for it.
+		local scale = wrapper:FindFirstChildWhichIsA("UIScale")
+		if not scale then
+			scale = Instance.new("UIScale")
+			scale.Name = FALLBACK_SCALE_NAME
+			scale.Parent = wrapper
+		end
+
+		scale.Scale = 0
+		self.Scale = scale
+
+		self.BindMaid:GiveTask(function()
+			if self.ScaleTween then
+				self.ScaleTween:Cancel()
+				self.ScaleTween = nil
+			end
+		end)
+	elseif animationService then
 		--[[
 			`OpenShop` writes `UIScale/Scale`. A panel without an authored `UIScale`
 			would appear by fading, without growing; creating one is harmless for
@@ -271,7 +370,7 @@ function ProximityPanel:_bind(screenGui : ScreenGui)
 			scale.Parent = panel
 		end
 
-		self.Track = getAnimationService().CreateTrack(panel, options.Animation)
+		self.Track = animationService.CreateTrack(panel, options.Animation)
 
 		if self.Track then
 			local connection = self.Track.Completed:Connect(function()
@@ -325,9 +424,12 @@ end
 
 --[[ API ]]
 
---- Starts following `PlayerGui` and the distance. Call once, in `construct`.
-function ProximityPanel:Start()
-	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+--[=[
+	Binds every copy of the ScreenGui that shows up in `container`. The connection
+	goes to `maid`, which is the panel's own for `PlayerGui` and the folder's for a
+	`Folder`.
+]=]
+function ProximityPanel:_watchScreens(container : Instance, maid : any)
 	local screenName = self.Options.ScreenGui
 
 	local function onChild(child : Instance)
@@ -336,10 +438,66 @@ function ProximityPanel:Start()
 		end
 	end
 
+	maid:GiveTask(container.ChildAdded:Connect(onChild))
+
+	for _, child in container:GetChildren() do
+		task.spawn(onChild, child)
+	end
+end
+
+--[=[
+	For a ScreenGui inside a folder: follows each copy of the folder in `PlayerGui`
+	and, inside it, the ScreenGui. Each folder has its own maid, cleaned when the
+	folder leaves, so a folder StarterGui copies again does not leave a connection
+	behind on the old one.
+]=]
+function ProximityPanel:_watchFolders(playerGui : Instance)
+	local folderName = self.Options.Folder
+
+	-- [folder] = Maid
+	local folders = {}
+
+	local function onChild(child : Instance)
+		if child.Name ~= folderName or child:IsA("LayerCollector") or folders[child] then
+			return
+		end
+
+		local maid = Maid.new()
+		folders[child] = maid
+
+		self:_watchScreens(child, maid)
+	end
+
 	self.Maid:GiveTask(playerGui.ChildAdded:Connect(onChild))
+	self.Maid:GiveTask(playerGui.ChildRemoved:Connect(function(child : Instance)
+		local maid = folders[child]
+		if maid then
+			folders[child] = nil
+			maid:DoCleaning()
+		end
+	end))
+
+	self.Maid:GiveTask(function()
+		for _, maid in folders do
+			maid:DoCleaning()
+		end
+
+		table.clear(folders)
+	end)
 
 	for _, child in playerGui:GetChildren() do
-		task.spawn(onChild, child)
+		onChild(child)
+	end
+end
+
+--- Starts following `PlayerGui` and the distance. Call once, in `construct`.
+function ProximityPanel:Start()
+	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+	if self.Options.Folder then
+		self:_watchFolders(playerGui)
+	else
+		self:_watchScreens(playerGui, self.Maid)
 	end
 
 	-- A panel with no map spot measures nothing: without this, Heartbeat would run
@@ -375,11 +533,12 @@ function ProximityPanel:Open()
 
 	--[[
 		The panel is the only thing on screen while open. `Except` is its own
-		ScreenGui, or the request would hide the panel it is opening.
+		ScreenGui, or the request would hide the panel it is opening, plus whatever
+		the controller asked to keep.
 	]]
 	local interface = self.Options.InterfaceController
 	if interface then
-		interface:Hide(self.Options.HideReason, { Except = { self.Options.ScreenGui } })
+		interface:Hide(self.Options.HideReason, { Except = self.Except })
 	end
 
 	--[[
@@ -402,6 +561,8 @@ function ProximityPanel:Open()
 
 	if self.Track then
 		self:_playTrack(false)
+	elseif self.Scale then
+		self:_playScale(true)
 	end
 
 	self:_playBlur(true)
@@ -423,6 +584,9 @@ function ProximityPanel:Close()
 	if self.Track then
 		-- The panel leaves when the reversed animation ends (see `_bind`).
 		self:_playTrack(true)
+	elseif self.Scale then
+		-- The same, when the shrinking tween ends (see `_playScale`).
+		self:_playScale(false)
 	else
 		self:_hide()
 	end

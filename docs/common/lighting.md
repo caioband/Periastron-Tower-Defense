@@ -56,6 +56,8 @@ The property list per class is maintained by hand, because Roblox has no runtime
 A class not in the list still enters `Lighting` normally; it is just not interpolated.
 In Studio, the controller logs how many properties entered each transition, because "interpolated little" and "did not interpolate" look the same on screen.
 
+The player's "Shadows" and "Post Effects" [settings](settings.md#shadows-and-post-effects) are applied here too: every write goes through `_write`, which keeps the preset's value as the truth and writes the forced one while the setting is off.
+
 ## Usage
 
 ```lua

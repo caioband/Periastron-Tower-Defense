@@ -220,6 +220,10 @@ local function shockMob(mob, duration : number)
 end
 
 local function spawnDamageNumber(mobOrPosition, damage)
+	-- The player's "Damage Numbers" setting. The health bar still shows the hit.
+	local settings = Framework:Get("SettingsController", false, false)
+	if settings and not settings:Get("DamageNumbers") then return end
+
 	local rootPart = nil
 	local worldPos = nil
 

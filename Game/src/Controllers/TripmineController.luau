@@ -26,7 +26,10 @@ local EXPLOSION_LIFETIME = 5
 local TripmineController = {
 	Controllers = {
 		UnitPlacementController = {},
-		MusicController = {}
+		MusicController = {},
+
+		-- The "VFX" setting: off, the explosion keeps its sound and loses its particles.
+		SettingsController = {},
 	},
 	Mines = {},
 	MinesByUnit = {},
@@ -169,8 +172,11 @@ function TripmineController:triggerMine(unitId, mineId)
 
 	local root = mine.PrimaryPart or mine:FindFirstChildWhichIsA("BasePart")
 	if root then
+		local settings = self.Controllers.SettingsController
+		local effects = settings == nil or settings:Get("VFX")
+
 		for _, descendant in mine:GetDescendants() do
-			if descendant:IsA("ParticleEmitter") then
+			if descendant:IsA("ParticleEmitter") and effects then
 				descendant:Emit(descendant:GetAttribute("EmitCount") or 15)
 			elseif descendant:IsA("BasePart") then
 				descendant.Transparency = 1

@@ -64,6 +64,9 @@ Sound is local to each client, and `WeatherController` handles it by listening t
 
 On the client, `WeatherController:GetCurrent()` is the current weather.
 
+With the "Weather Effects" [setting](settings.md) off, `WeatherController` stops the `ParticleEmitter`s in `workspace.Weather` on that client only, and gives each back the `Enabled` it had when the setting returns.
+The weather's lighting and the lightning bolts stay.
+
 ## Usage
 
 ```lua
