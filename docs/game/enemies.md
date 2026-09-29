@@ -1,95 +1,79 @@
 # Enemies
 
-Each difficulty dresses the same nine enemy entities in its own set of models, and a gimmick can belong to one set only.
+Every enemy model is its own entity: the name the wave tables use is the model's name, and its gimmicks live on it.
 
 **Runs in:** Game
-**Code:** [`MobService`](../../Game/src/Services/MobService.luau), [`MobController`](../../Game/src/Controllers/MobController.luau), [`SharedConfig.Mob`](../../common/shared/Config/SharedConfig/Mob.luau), [`Config.Difficulty`](../../common/server/Config/Difficulty.luau)
+**Code:** [`MobService`](../../Game/src/Services/MobService.luau), [`MobController`](../../Game/src/Controllers/MobController.luau), [`SharedConfig.Mob`](../../common/shared/Config/SharedConfig/Mob.luau), [`Config.Waves`](../../common/server/Config/Waves/init.luau)
 
 ## How it works
 
-### Model sets: a reskin per slot
+### One entity per model
 
-Enemy models live in `ReplicatedStorage.Shared.Assets.Entities.Difficulties.<set>`, one folder per set:
+Enemy models live in `ReplicatedStorage.Shared.Assets.Entities.Difficulties.<folder>`, one folder per cast:
 
-| Set | Theme | Models |
-| --- | --- | --- |
-| `Hard` | Redcliff | 9 |
-| `Easy` | Astral | 8 |
-| `Medium` | Sky | 8 |
-| `Impossible` | Korblox | 9 |
-| `Nightmare` | Overseer | 9 |
+| Folder | Cast | Models | Used by |
+| --- | --- | --- | --- |
+| `Hard` | Redcliff | 9 | Hard, Tutorial |
+| `Easy` | Astral | 8 | Easy |
+| `Medium` | Sky | 8 | Medium |
+| `Impossible` | Korblox | 9 | Impossible |
+| `Nightmare` | Overseer | 9 | Nightmare |
 
-The nine entities in `SharedConfig.Mob.Entities` are the source of truth for the match: health, speed, and gimmicks come from there on every difficulty.
-The set only says which model to draw in place of each entity.
-That allows a new visual theme without touching the wave tables, the balance, or `IsBoss`.
+`SharedConfig.Mob.Entities` has one entry per model, keyed by the model's name, with:
 
-`SharedConfig.Mob.ModelSets` maps entity to model for each set.
-An entity missing from the table uses its own name, which is the case for eight of the nine in `Hard`; the exception is `WingedSquire`, whose model is named `WingedRedcliff`.
+- `Folder`: which folder above holds the model.
+- `Health` and `SpeedMultiplier`: the **reference** stats. What an enemy spawns with comes from its [wave table](waves.md); the reference is what the damage reward and the Deathspeaker's converts measure against.
+- `Boss`: whether it is a boss (boss music, the boss contract).
+- `Gimmicks`: its moves.
 
-| Slot (`SPAWN_ORDER`) | Hard | Easy | Medium | Impossible | Nightmare |
+`MobService` sends only the entity name in `SpawnClientMob`.
+`MobController.resolveMobModel` looks the name up in its `Folder`; a missing model shows up as `EnemyRig` with a warning in Studio, and the match goes on.
+
+Nothing ties a folder to a difficulty: a wave table can list any entity, so a difficulty can borrow another cast's enemy.
+
+### Slots across casts
+
+The casts were built as reskins of the same nine slots, and the entities still follow that line: slots that do the same job share their reference stats, reward, spawn delay, and gimmick.
+
+| Slot | Redcliff | Astral | Sky | Korblox | Overseer |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Traveler | AstralInitiate | SkyBirdWarrior | KorbloxMage | OverseerMinion |
 | 2 | RedcliffPawn | AstralWizard | SkyLeader | KorbloxSkeleton | OverseerWanderer |
 | 3 | RedcliffSquire | AstralKnight | SkyWindAxe | KorbloxGeneral | OverseerOrb |
 | 4 | RedcliffGuard | AstralGuardia | SkyStealther | KorbloxGremlin | OverseerGuard |
-| 5 | WallSmasher | AstralNecromancer | SkyFlyingGoon | KorbloxImperium | OverseerCharger |
-| 6 | CourageBearer | AstralSentry | SkyMage | KorbloxSkeletonDefender | OverseerWingwalker |
-| 7 | WingedSquire | AstralAdventurer | SkyGuardian | KorbloxElder | OverseerMage |
-| 8 | RedcliffEnforcer | AstralAdventurer | SkyGuardian | KorbloxDeathspeaker | OverseerKnight |
-| 9 | RedcliffChampion | AstralSentinel | SkyKnight | KorbloxDeathRaider | OverseerKing |
+| 5 (charger) | WallSmasher | AstralNecromancer | SkyFlyingGoon | KorbloxImperium | OverseerCharger |
+| 6 (sprinter) | CourageBearer | AstralSentry | SkyMage | KorbloxSkeletonDefender | OverseerWingwalker |
+| 7 (winged) | WingedRedcliff | AstralAdventurer | SkyGuardian | KorbloxElder | OverseerMage |
+| 8 (elite) | RedcliffEnforcer | AstralAdventurer | SkyGuardian | KorbloxDeathspeaker | OverseerKnight |
+| 9 (boss) | RedcliffChampion | AstralSentinel | SkyKnight | KorbloxDeathRaider | OverseerKing |
 
-`Easy` and `Medium` have eight models for nine slots, so one repeats in each, always the **lower** step (slot 8, the Enforcer).
-The Enforcer and the Champion appear together in the last wave, and giving the boss's model to the Enforcer would take away the one moment the boss must be unmistakable.
+Astral and Sky have eight models, so `AstralAdventurer` and `SkyGuardian` fill both the winged and the elite slot.
+They are one entity each, with the winged slot's reference stats; the wave entries that stand in for the elite carry an explicit `Reward` and `SpawnDelay` with the elite's values.
+The repeat is on the lower step so the boss keeps the one moment it must be unmistakable: the elite and the boss appear together in the last wave.
 
-The order of each set follows the ruler drawn by the `Workspace.Weakest` and `Workspace.Strongest` parts: models are lined up between them from weakest to strongest.
+Each cast is declared weakest to strongest in `Mob.Entities`, the order the `Workspace.Weakest` and `Workspace.Strongest` parts line the models up in.
 **The ruler is art documentation only; nothing reads it at runtime.**
-To reorder a set, edit `ModelSets`.
 
-### Which set a match uses
+### Gimmicks
 
-Each difficulty names its set in `Difficulty.ModelSet`.
-Easy, Medium, Impossible, and Nightmare have their own; Hard and the Tutorial use `Mob.DefaultModelSet` (`"Hard"`).
-`MobService:SpawnWave` reads it once per wave and sends the set name in the `SpawnClientMob` payload, next to the entity name.
+Gimmicks are declared on the entity, so each model has exactly the moves listed on it.
+The moves several casts share are declared once at the top of `Mob.luau` and referenced from each entity; they are only read at runtime (per-enemy state stays in `GimmickState`), so sharing the table is safe.
+`Mob.GetGimmicks(entity)` returns them, and `SpawnWave` calls it **once per wave entry**.
 
-The set name travels instead of the client asking for the difficulty, because `Config.Difficulty` is server config.
-It is the **set name** and not the resolved model name, so the `Name` the client gets is still the entity's, which the rest of `MobController` (such as `getAverageSpeed`) relies on.
+| Move | Entities |
+| --- | --- |
+| `PerTurnSpeedMultiplier` +30% (charger) | WallSmasher, AstralNecromancer, SkyFlyingGoon, KorbloxImperium, OverseerCharger |
+| `PerTurnSpeedMultiplier` −15% (sprinter) | CourageBearer, AstralSentry, SkyMage, KorbloxSkeletonDefender, OverseerWingwalker |
+| `HealthThresholdStunRandomUnit` | RedcliffChampion, SkyKnight, KorbloxDeathRaider, OverseerKing |
+| `HealthThresholdRush` | AstralSentinel |
 
-`MobController.resolveMobModel` falls back in three steps: the requested set, the default set, then `EnemyRig`.
-An incomplete set is an art mistake: the enemy shows up wearing another model with a warning in Studio, and the match goes on.
+The Korblox Deathspeaker's Suffocate is not a gimmick: it is `SuffocateAbilityService`, configured in `Config.SuffocateAbility` by entity name.
 
-### Gimmicks scoped to a set
-
-A gimmick can carry a set filter.
-`Mob.GetGimmicks(set, entity)` applies it, called by `SpawnWave` **once per wave entry**; per-enemy state stays in `GimmickState`.
-This lets every enemy in every set have its own move, on any of the nine slots, and keeps the exception visible on the entity instead of inside a handler.
-
-| Key | Applies | Use it for |
-| --- | --- | --- |
-| `ModelSet` | **only** in the named sets | a move that belongs to one set |
-| `ExceptModelSet` | in every set **except** the named ones | the entity's default move, which some set replaced |
-
-Both accept a name or a list.
-
-> **Rule of thumb:** a move a set gained is `ModelSet`; a move a set lost is `ExceptModelSet` on the old move.
-> Never a growing list of the sets that inherit it.
-
-The filter is by set, not by difficulty.
-With `ModelSet` only, a difficulty that gets its own folder leaves the `Hard` fallback and silently loses every move scoped there; that happened three times in a row (Nightmare, Medium, Impossible).
-Written the negative way, a new set **inherits** the entity's move until someone says it has its own.
-
-Scoping one move does not unscope another: a new `Easy` move *coexists* with an unscoped one.
-For an enemy to **swap** moves between sets, both moves need a key, as the boss's two do.
-
-| Entity | Move | Scope |
-| --- | --- | --- |
-| WallSmasher | `PerTurnSpeedMultiplier` | every set |
-| CourageBearer | `PerTurnSpeedMultiplier` | every set |
-| RedcliffChampion | `HealthThresholdStunRandomUnit` | every set except `Easy` |
-| RedcliffChampion | `HealthThresholdRush` | `Easy` only |
+To give an enemy its own move, change its `Gimmicks` list; no other entity is affected.
 
 ### `HealthThresholdRush` (the Astral Sentinel's dash)
 
-At half health, the `Easy` boss plays `Rush` and dashes: **double speed for 3 seconds**, starting at the animation's `Action` marker.
+At half health, the Astral Sentinel plays `Rush` and dashes: **double speed for 3 seconds**, starting at the animation's `Action` marker.
 The field is `Amount`, applied as `RushScale = 1 + Amount`, so `1` means double.
 
 The server times the dash with `MarkerTime` (0.5667 s of the 3.25 s animation `rbxassetid://98921075157550`), the same way the Champion's stun uses `AnimTime = 1.3`.
@@ -104,20 +88,20 @@ One-off animations reach the client through `MobPlayAnim(mobId, name)` and `play
 
 | Key | Where | Effect |
 | --- | --- | --- |
-| `Mob.Entities` | `SharedConfig.Mob` | The nine entities: health, speed, boss flag, gimmicks |
-| `Mob.ModelSets` | `SharedConfig.Mob` | Entity → model name per set |
-| `Mob.DefaultModelSet` | `SharedConfig.Mob` | `"Hard"`: the fallback set |
-| `ModelSet` | `Config.Difficulty` presets | The set each difficulty uses |
+| `Mob.Entities` | `SharedConfig.Mob` | One entry per model: folder, reference health and speed, boss flag, gimmicks |
+| `ENTITY_DATA` | `Config.Wave` | Cash per kill and spawn delay per entity |
+| `Enemies`, `Spawn.Entity` | `Config.SuffocateAbility` | Who casts Suffocate and what the convert becomes |
 
 ## Studio setup
 
-A model added to any set needs:
+A new model needs an entry in `Mob.Entities` with its name and `Folder`, plus a reward and spawn delay in `Config.Wave`'s `ENTITY_DATA`.
+The model itself needs:
 
 - **An R6 rig** with the usual part names (`Head`, `Torso`, `Left Arm`…) and `HumanoidRootPart` as `PrimaryPart`.
   `createEntity` unanchors everything but the root, removes the `Humanoid`, and moves the model by its pivot.
 - **A walk animation:** either the `SlowWalk` + `FastWalk` pair (so `updateWalkAnimation` switches stride with speed, as the Wall Smasher and Courage Bearer do) or a single `Walk`.
   Without either, the generic `Entities.Walk` plays, so the enemy never slides across the map in a T-pose.
-- **`Attack`**, if the slot has a gimmick that plays an attack (today only the Champion).
+- **`Attack`**, if the entity has a gimmick that plays an attack (the boss stun).
 - **A compatible bounding box.**
   Height can vary (`PathOffsetY` is computed at runtime), but a model that is too wide is removed by `checkIsOnGrid` in the movement loop.
 
@@ -126,10 +110,10 @@ Use `KeyframeSequenceProvider:GetKeyframeSequenceAsync(id)` and find the `Keyfra
 
 ## Known issues
 
-- Three bosses still inherit the Champion's stun: Sky Knight, Korblox Death Raider, and Overseer King.
+- Three bosses still use the Champion's stun: Sky Knight, Korblox Death Raider, and Overseer King.
   None of them has an `Attack` animation, so the 1.3 s pause plays with no gesture.
-  Each should leave the inheritance once it gets its own move, as the Astral Sentinel did.
+  Each should get its own move, as the Astral Sentinel did.
 - Many new models have no published `Animation` and fall back to the generic walk.
-  At the last count, per slot: 4 of 9 in `Easy`, 8 of 9 in `Medium` (only `SkyKnight` has its own), 8 of 9 in `Impossible` (only `KorbloxDeathRaider`), and 7 of 9 in `Nightmare`.
+  At the last count, per folder: 4 of 8 in `Easy`, 7 of 8 in `Medium` (only `SkyKnight` has its own), 8 of 9 in `Impossible` (only `KorbloxDeathRaider`), and 7 of 9 in `Nightmare`.
   Publishing and attaching the animation is art work; no code changes are needed.
-- None of the models in the newer sets has the `SlowWalk`/`FastWalk` pair.
+- None of the models outside the `Hard` folder has the `SlowWalk`/`FastWalk` pair.

@@ -31,38 +31,15 @@ local SuffocateAbilityService = {
 	Suffocations = {},
 }
 
-function SuffocateAbilityService:getModelSet() : string
-	local preset = self.Services.MobService:getDifficulty()
-	return (preset and preset.ModelSet) or SharedConfig.Mob.DefaultModelSet
-end
-
+-- Entity names are model names (see `SharedConfig.Mob`), so the list in
+-- `Config.SuffocateAbility` names the enemies directly.
 function SuffocateAbilityService:appliesTo(mob) : boolean
 	local cached = self.Applicable[mob]
 	if cached == nil then
-		local modelName = SharedConfig.Mob.GetModelName(self:getModelSet(), mob.Name)
-		cached = table.find(Settings.Enemies, modelName) ~= nil
+		cached = table.find(Settings.Enemies, mob.Name) ~= nil
 		self.Applicable[mob] = cached
 	end
 	return cached
-end
-
-function SuffocateAbilityService:entityForModel(modelSet : string, modelName : string) : string?
-	local mobConfig = SharedConfig.Mob
-
-	local matches = {}
-	for entityName in mobConfig.Entities do
-		if mobConfig.GetModelName(modelSet, entityName) == modelName then
-			table.insert(matches, entityName)
-		end
-	end
-
-	table.sort(matches)
-
-	if #matches > 1 then
-		warn("SuffocateAbilityService: model '" .. modelName .. "' is worn by several entities in set '" .. modelSet .. "'; using " .. matches[1])
-	end
-
-	return matches[1]
 end
 
 function SuffocateAbilityService:pickVictim()
@@ -165,11 +142,10 @@ function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 	local mobConfig = SharedConfig.Mob
 	local spawn = Settings.Spawn
 
-	local modelSet = self:getModelSet()
-	local entityName = self:entityForModel(modelSet, spawn.Model)
-	local definition = entityName and mobConfig.Entities[entityName]
-	if not entityName or not definition then
-		warn("SuffocateAbilityService: no entity wears model '" .. tostring(spawn.Model) .. "' in set '" .. modelSet .. "'")
+	local entityName = spawn.Entity
+	local definition = mobConfig.Entities[entityName]
+	if not definition then
+		warn("SuffocateAbilityService: Config.SuffocateAbility.Spawn.Entity '" .. tostring(entityName) .. "' is not an entity in SharedConfig.Mob")
 		return
 	end
 
@@ -194,12 +170,27 @@ function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 		return
 	end
 
-	local sourceDefinition = mobConfig.Entities[sourceMob.Name]
-	local sourceBase = mobConfig.BaseSpeed * ((sourceDefinition and sourceDefinition.SpeedMultiplier) or 1)
-	local speedScale = if sourceBase > 0 then sourceMob.BaseSpeed / sourceBase else 1
-	local baseSpeed = mobConfig.BaseSpeed * (definition.SpeedMultiplier or 1) * speedScale
+	--[[
+		The convert matches the wave it walks into: if the wave has its entity, it takes
+		that entry's health and speed from the table. Otherwise it takes its reference
+		stats (`Mob.Entities`) scaled like the enemy it came from.
+	]]
+	local waveStats = mobService:GetWaveStats(entityName)
+	local baseSpeed, maxHealth, healthScale
 
-	local maxHealth = math.max(1, math.floor(((definition.Health or 10) * (mobService.HealthScale or 1)) + 0.5))
+	if waveStats then
+		baseSpeed = waveStats.BaseSpeed
+		maxHealth = waveStats.MaxHealth
+		healthScale = waveStats.HealthScale
+	else
+		local sourceDefinition = mobConfig.Entities[sourceMob.Name]
+		local sourceBase = mobConfig.BaseSpeed * ((sourceDefinition and sourceDefinition.SpeedMultiplier) or 1)
+		local speedScale = if sourceBase > 0 then sourceMob.BaseSpeed / sourceBase else 1
+
+		baseSpeed = mobConfig.BaseSpeed * (definition.SpeedMultiplier or 1) * speedScale
+		healthScale = sourceMob.HealthScale or 1
+		maxHealth = math.max(1, math.floor(((definition.Health or 10) * healthScale) + 0.5))
+	end
 
 	local frozenUntil = mobService.FreezeUntil or 0
 	local spawnSpeed = baseSpeed * (mobService.WeatherSpeedScale or 1) * (mobService.CardSpeedScale or 1)
@@ -230,9 +221,10 @@ function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 		PathLength = route.smooth.length,
 		TurnDistances = route.turnDistances,
 		NextTurnIndex = nextTurn,
-		Gimmicks = mobConfig.GetGimmicks(modelSet, entityName),
+		Gimmicks = mobConfig.GetGimmicks(entityName),
 		GimmickState = {},
 		Reward = math.max(0, spawn.Reward or 0),
+		HealthScale = healthScale,
 	}
 	mobService.ActiveMobCount += 1
 
@@ -242,7 +234,6 @@ function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 		Speed = if frozenUntil > GameClock.Now() then 0 else spawnSpeed,
 		MaxHealth = maxHealth,
 		Route = routeIndex,
-		ModelSet = modelSet,
 	})
 
 	if startDistance > 0 then

@@ -450,10 +450,8 @@ TutorialConfig.Match = {
 			`Points` are the free points after wave 1. Any card on any of them works: the
 			lesson is covering the map, not obeying a spot.
 
-			The boss needs no request: `Wave.HasBoss` is `wave >= MaxWaves`, and the
-			tutorial preset has `MaxWaves = 5`, so wave 5 spawns with it. It spawns weak
-			through the same preset (`HealthMultiplier = 0.35`, `BossAmountMultiplier =
-			1`).
+			The boss needs no request: wave 5 of the tutorial's wave table
+			(`Config.Waves.Tutorial`) is the boss alone, with little health.
 		]]
 		{
 			Id = "PlaceRest",

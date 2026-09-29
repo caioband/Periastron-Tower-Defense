@@ -211,7 +211,9 @@ local MobService = {
 	BaseHealth = BASE_MAX_HEALTH,
 	MaxBaseHealth = BASE_MAX_HEALTH,
 	ActiveMobCount = 0,
-	HealthScale = 1,
+
+	-- What the last wave spawned each entity with; see `GetWaveStats`.
+	WaveStats = {},
 
 	-- The active weather and what it does to enemy speed. Health has no
 	-- equivalent field because it only applies at spawn; see `SpawnWave`.
@@ -1066,6 +1068,7 @@ function MobService:ResetRound()
 	table.clear(self.SessionDamage)
 	table.clear(self.SessionStats)
 	table.clear(self.BonusRemainder)
+	table.clear(self.WaveStats)
 	self.ActiveMobCount = 0
 	self.AllMobsSpawned = false
 
@@ -1207,32 +1210,45 @@ function MobService:SpawnWave(waveNumber)
 	local mobConfig = SharedConfig.Mob
 	local preset = self:getDifficulty()
 	local spawnList = WaveConfig.GetSpawns(waveNumber, preset.Name)
-	local modelSet = preset.ModelSet or mobConfig.DefaultModelSet
-	local healthScale = preset.HealthMultiplier * (preset.HealthGrowth ^ (waveNumber - 1))
 
 	--[[
-		Weather health goes into the same scale as difficulty, which is why it also
-		discounts the damage reward (see `awardDamageReward`): without that, drought would
-		make hitting enemies pay 40% more, and the weather meant to squeeze would become an
-		economy bonus.
-
-		Read once, at the start of the wave: the weather in effect for the first enemy
-		applies to all of the wave's, even if it leaves mid-walk.
+		Health and speed come ready from the wave table (`Config.Waves`); the only thing
+		on top is the weather's health, read once at the start of the wave: the weather in
+		effect for the first enemy applies to all of the wave's, even if it leaves
+		mid-walk. Weather speed is not here: it enters in `computeSpeed`, so it can leave
+		later without taking along what the gimmicks added.
 	]]
-	healthScale *= SharedConfig.WeatherConfig.GetMobMultiplier(self.Weather, "Health")
-
-	-- Stored because the cash-per-damage reward discounts this same scale.
-	self.HealthScale = healthScale
+	local weatherHealth = SharedConfig.WeatherConfig.GetMobMultiplier(self.Weather, "Health")
 
 	--[[
-		Speed also rises with the wave, but with a cap: without `SpeedGrowthCap` a long
-		preset would end with enemies too fast for towers to keep up, and the gimmicks that
-		already multiply speed (the Wall Smasher gains 30% per turn) would stack on top.
+		Final health and the damage-reward scale, per entry, before the first spawn:
+		`WaveStats` must know every entity of the wave from the start, not only the ones
+		the spawn loop has reached (see `GetWaveStats`).
 	]]
-	local speedScale = math.min(
-		preset.SpeedMultiplier * (preset.SpeedGrowth ^ (waveNumber - 1)),
-		preset.SpeedMultiplier * (preset.SpeedGrowthCap or math.huge)
-	)
+	self.WaveStats = {}
+
+	for _, spawnEntry in spawnList do
+		local entityDefinition = mobConfig.Entities[spawnEntry.Entity]
+		if entityDefinition then
+			local maxHealth = math.max(1, math.floor((spawnEntry.Health * weatherHealth) + 0.5))
+
+			spawnEntry.MaxHealth = maxHealth
+
+			--[[
+				How much beefier than its reference health (`Mob.Entities`) the table and the
+				weather made this enemy. The damage reward divides by it (see
+				`awardDamageReward`): without that, income would grow with enemy health, and
+				drought would make hitting enemies pay 40% more.
+			]]
+			spawnEntry.HealthScale = maxHealth / (entityDefinition.Health or maxHealth)
+
+			self.WaveStats[spawnEntry.Entity] = {
+				MaxHealth = maxHealth,
+				BaseSpeed = spawnEntry.Speed,
+				HealthScale = spawnEntry.HealthScale,
+			}
+		end
+	end
 
 	self.Routes = nil
 	self.NodeDistances = nil
@@ -1257,23 +1273,9 @@ function MobService:SpawnWave(waveNumber)
 			if entityDefinition then
 				-- Once per wave entry, not per enemy: the list is the same for all of
 				-- this type, and what is per enemy (`GimmickState`) is the other table.
-				local gimmicks = mobConfig.GetGimmicks(modelSet, spawnEntry.Entity)
-				-- Without weather: it enters in `computeSpeed`, so it can leave later without
-				-- taking along what the gimmicks added.
-				local baseSpeed = mobConfig.BaseSpeed * (entityDefinition.SpeedMultiplier or 1) * speedScale
-
-				--[[
-					The boss can have a scale of its own (`BossHealthMultiplier`), on top of the
-					difficulty's. That is what lets the tutorial have a real boss (with its
-					gimmick, its slowness, its bar) without it being the nine-hundred-health wall
-					it is in a real match.
-				]]
-				local entityScale = healthScale
-				if WaveConfig.IsBoss(spawnEntry.Entity) then
-					entityScale *= (preset.BossHealthMultiplier or 1)
-				end
-
-				local maxHealth = math.max(1, math.floor(((entityDefinition.Health or 10) * entityScale) + 0.5))
+				local gimmicks = mobConfig.GetGimmicks(spawnEntry.Entity)
+				local baseSpeed = spawnEntry.Speed
+				local maxHealth = spawnEntry.MaxHealth
 
 				for i = 1, (spawnEntry.Amount or 1) do
 					if self.BaseHealth <= 0 then break end
@@ -1310,6 +1312,7 @@ function MobService:SpawnWave(waveNumber)
 						Gimmicks = gimmicks,
 						GimmickState = {},
 						Reward = spawnEntry.Reward,
+						HealthScale = spawnEntry.HealthScale,
 					}
 					self.ActiveMobCount += 1
 
@@ -1320,17 +1323,6 @@ function MobService:SpawnWave(waveNumber)
 							Speed = if frozenUntil > GameClock.Now() then 0 else spawnSpeed,
 							MaxHealth = maxHealth,
 							Route = routeIndex,
-
-							--[[
-								Which `Assets.Entities.Difficulties` folder the client takes the model
-								from. The entity name stays the same on every difficulty (it carries
-								health, speed, and gimmick), and only the outfit changes.
-
-								It goes in the payload instead of the client asking for the difficulty
-								because `Config.Difficulty` is server-only: what crosses is the set's
-								alias, which is the name of a folder the client already sees.
-							]]
-							ModelSet = modelSet,
 						})
 					end
 					GameClock.Wait(spawnEntry.SpawnDelay or 1)
@@ -1344,6 +1336,18 @@ function MobService:SpawnWave(waveNumber)
 			self.Services.WaveService.Signals.Ended:Fire()
 		end
 	end)
+end
+
+--[=[
+	What the current wave spawns `entityName` with: `MaxHealth` (weather included),
+	`BaseSpeed` (without weather), and `HealthScale`. Nil if the wave does not have
+	that entity; if it has it in more than one entry, the last one wins.
+
+	For enemies born outside the spawn loop, such as the Deathspeaker's converts
+	(`SuffocateAbilityService`), which should match the wave they walk into.
+]=]
+function MobService:GetWaveStats(entityName : string)
+	return self.WaveStats[entityName]
 end
 
 function MobService:getMobPosition(mobId)
@@ -1572,11 +1576,12 @@ end
 --[=[
 	Pays the damage that landed, discounting the wave's health inflation.
 
-	Enemy health grows by difficulty and by wave (`HealthScale`), and without the discount
-	income would grow with it: on Impossible, wave 27 has enemies 24x beefier than wave 1,
-	so hitting them would pay 24x more for the same work, and damage would become the
-	whole economy again. Dividing by the same scale, a point of damage is worth the same on
-	any wave and any preset.
+	Enemy health grows by difficulty and by wave, and without the discount income would
+	grow with it: on Impossible, wave 27 has enemies 24x beefier than wave 1, so hitting
+	them would pay 24x more for the same work, and damage would become the whole economy
+	again. Dividing by the enemy's own `HealthScale` (its health over the entity's
+	reference health, set at spawn), a point of damage is worth the same on any wave and
+	any preset.
 ]=]
 --[=[
 	Adds the Entrepreneur aura's bonus to a reward, without losing the fractional part.
@@ -1618,12 +1623,12 @@ function MobService:applyCashBonus(player, amount : number, bonus : number?, sca
 	return whole
 end
 
-function MobService:awardDamageReward(killerUserId, damage, bonus : number?, cashScale : number?)
+function MobService:awardDamageReward(killerUserId, damage, bonus : number?, cashScale : number?, healthScale : number?)
 	if not killerUserId then return end
 	local player = Players:GetPlayerByUserId(killerUserId)
 	if not player then return end
 
-	local scale = self.HealthScale
+	local scale = healthScale
 	if not scale or scale <= 0 then scale = 1 end
 
 	local reward = math.max(1, math.floor((damage * ServerConfig.Data.CASH_PER_DAMAGE) / scale))
@@ -1682,7 +1687,7 @@ function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?, 
 	self:addDamageStat(killerUserId, effectiveDamage)
 
 	mob.Health -= incoming
-	self:awardDamageReward(killerUserId, effectiveDamage, cashBonus, cashScale)
+	self:awardDamageReward(killerUserId, effectiveDamage, cashBonus, cashScale, mob.HealthScale)
 
 	self:processDamageGimmicks(mobId, mob)
 

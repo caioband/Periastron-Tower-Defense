@@ -25,6 +25,7 @@ Commands that depend on a Game-only service live here and not in `common/`.
 | [Unit placement](unit-placement.md) | Where a unit may be placed, mouse and touch controls, the placement ghost |
 | [Units](units.md) | Attacks, projectiles, damage over time, chained lightning, the Entrepreneur farm |
 | [Enemies](enemies.md) | Model sets per difficulty, gimmicks, the contract for a new enemy model |
+| [Waves](waves.md) | The hard-coded wave tables per difficulty: order, count, health, and speed |
 | [Upgrade card](upgrade-card.md) | The upgrade panel, next-level preview, target priority |
 | [Hotbar](hotbar.md) | The deck brought from the Lobby and the card arc |
 | [Difficulty vote](difficulty-vote.md) | The `DifficultyBoard` vote |

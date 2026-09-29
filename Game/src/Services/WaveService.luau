@@ -218,8 +218,9 @@ end
 	concentrates on those who get close to the end.
 ]=]
 --[=[
-	How many waves the match has. Each difficulty sets its own (`MaxWaves`);
-	`DataConfig.MAX_WAVES` is only a fallback for a preset without the field.
+	How many waves the match has. Each difficulty has its own (`MaxWaves`, the size
+	of its table in `Config.Waves`); `DataConfig.MAX_WAVES` is only a fallback for
+	when no preset is selected.
 ]=]
 --[=[
 	Pays the wave-completion reward to every player in the match.

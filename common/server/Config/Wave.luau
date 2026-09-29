@@ -1,115 +1,113 @@
+-- This module lives in ServerScriptService.Config, so the path to the shared
+-- config must be absolute.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local SharedConfig = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("SharedConfig")
+local Mob = require(SharedConfig:WaitForChild("Mob"))
+
 local Difficulty = require(script.Parent.Difficulty)
+local Waves = require(script.Parent.Waves)
 
 local Wave = {}
 
 --[[
-	Each wave's composition.
+	What each wave spawns, read from the hard-coded tables in `Config.Waves`.
 
-	The table below is the Hard spreadsheet ("PTD - Hard Difficulty - Redcliff
-	Knights", kept outside the repo) transcribed: 25 hand-designed waves, with the
-	count of each enemy per wave. It is the source of truth for composition: Hard
-	uses the spreadsheet row by row, without multiplying any count.
+	Each difficulty has its own module there, with every wave written out: which
+	entities, in what order, how many, and with what health and speed. This module
+	only fills in what the tables leave to the entity (cash per kill and the delay
+	between spawns) and answers the questions the rest of the server asks: what the
+	wave spawns, whether it has a boss, and what each wave pays.
 
-	The spreadsheet's total-health column, however, is only the floor: each enemy's
-	health still grows with the wave (see item 3 below), so Hard's wave 25 weighs
-	more than the 1,925 the spreadsheet adds up to.
-
-	The other difficulties come from this same table in two ways, and only these:
-
-	  1. Length. Each preset has its own `MaxWaves`, and wave N of a preset with M
-	     waves reads position `1 + (N-1)/(M-1) * 24` of the table. Easy crosses the
-	     25 rows in 15 waves (skipping compositions), Nightmare in 35 (interpolating
-	     between neighboring rows). The ends always match: wave 1 is row 1 and the
-	     last wave is row 25, the boss row.
-
-	  2. The preset multipliers: `AmountMultiplier` on count and `RewardMultiplier`
-	     on cash per kill.
-
-	  3. Health, which MobService computes separately: `HealthMultiplier *
-	     HealthGrowth^(wave-1)`. Growth is per wave, so the same table row weighs
-	     more at the end of the match than at the start, and more still on the hard
-	     presets, which grow faster.
-
-	See docs/game/enemies.md.
+	See docs/game/waves.md.
 ]]
 
-local BOSS_ENTITY = "RedcliffChampion"
-
 --[[
-	Spawn order within a wave. MobService's loop walks the entries in sequence, so
-	this list decides who enters first: weakest to strongest, with the boss last.
-]]
-local SPAWN_ORDER = {
-	"Traveler",
-	"RedcliffPawn",
-	"RedcliffSquire",
-	"RedcliffGuard",
-	"WallSmasher",
-	"CourageBearer",
-	"WingedSquire",
-	"RedcliffEnforcer",
-	"RedcliffChampion",
-}
+	Cash per kill and the interval between one spawn and the next, per entity. A
+	wave entry can override either with its own `Reward` or `SpawnDelay`; without
+	that, the value here is scaled by the preset's `RewardMultiplier` and
+	`SpawnDelayMultiplier`.
 
---[[
-	Cash per kill and the interval between one spawn and the next, per enemy.
+	Slots that do the same job across casts pay the same: fodder 3-5, the Guard 9,
+	the charger and the sprinter 7, the winged 18, the elite 45, the boss 250. The
+	Astral and Sky casts have no elite model of their own, so their waves list the
+	winged model in the elite's place with an explicit `Reward` and `SpawnDelay`.
 
 	Rewards are the main source of income (damage pays 0.15 per effective point; see
 	`Config.Data`), and they are tuned for Hard to yield about 9,000 cash over the
 	25 waves: enough for about ten upgraded units, starting from the initial 400.
 ]]
 local ENTITY_DATA = {
+	-- Redcliff
 	Traveler = { Reward = 3, SpawnDelay = 0.35 },
 	RedcliffPawn = { Reward = 5, SpawnDelay = 0.35 },
 	RedcliffSquire = { Reward = 4, SpawnDelay = 0.3 },
 	RedcliffGuard = { Reward = 9, SpawnDelay = 0.4 },
 	WallSmasher = { Reward = 7, SpawnDelay = 0.32 },
 	CourageBearer = { Reward = 7, SpawnDelay = 0.32 },
-	WingedSquire = { Reward = 18, SpawnDelay = 0.32 },
+	WingedRedcliff = { Reward = 18, SpawnDelay = 0.32 },
 	RedcliffEnforcer = { Reward = 45, SpawnDelay = 0.45 },
 	RedcliffChampion = { Reward = 250, SpawnDelay = 1 },
+
+	-- Astral
+	AstralInitiate = { Reward = 3, SpawnDelay = 0.35 },
+	AstralWizard = { Reward = 5, SpawnDelay = 0.35 },
+	AstralKnight = { Reward = 4, SpawnDelay = 0.3 },
+	AstralGuardia = { Reward = 9, SpawnDelay = 0.4 },
+	AstralNecromancer = { Reward = 7, SpawnDelay = 0.32 },
+	AstralSentry = { Reward = 7, SpawnDelay = 0.32 },
+	AstralAdventurer = { Reward = 18, SpawnDelay = 0.32 },
+	AstralSentinel = { Reward = 250, SpawnDelay = 1 },
+
+	-- Sky
+	SkyBirdWarrior = { Reward = 3, SpawnDelay = 0.35 },
+	SkyLeader = { Reward = 5, SpawnDelay = 0.35 },
+	SkyWindAxe = { Reward = 4, SpawnDelay = 0.3 },
+	SkyStealther = { Reward = 9, SpawnDelay = 0.4 },
+	SkyFlyingGoon = { Reward = 7, SpawnDelay = 0.32 },
+	SkyMage = { Reward = 7, SpawnDelay = 0.32 },
+	SkyGuardian = { Reward = 18, SpawnDelay = 0.32 },
+	SkyKnight = { Reward = 250, SpawnDelay = 1 },
+
+	-- Korblox
+	KorbloxMage = { Reward = 3, SpawnDelay = 0.35 },
+	KorbloxSkeleton = { Reward = 5, SpawnDelay = 0.35 },
+	KorbloxGeneral = { Reward = 4, SpawnDelay = 0.3 },
+	KorbloxGremlin = { Reward = 9, SpawnDelay = 0.4 },
+	KorbloxImperium = { Reward = 7, SpawnDelay = 0.32 },
+	KorbloxSkeletonDefender = { Reward = 7, SpawnDelay = 0.32 },
+	KorbloxElder = { Reward = 18, SpawnDelay = 0.32 },
+	KorbloxDeathspeaker = { Reward = 45, SpawnDelay = 0.45 },
+	KorbloxDeathRaider = { Reward = 250, SpawnDelay = 1 },
+
+	-- Overseer
+	OverseerMinion = { Reward = 3, SpawnDelay = 0.35 },
+	OverseerWanderer = { Reward = 5, SpawnDelay = 0.35 },
+	OverseerOrb = { Reward = 4, SpawnDelay = 0.3 },
+	OverseerGuard = { Reward = 9, SpawnDelay = 0.4 },
+	OverseerCharger = { Reward = 7, SpawnDelay = 0.32 },
+	OverseerWingwalker = { Reward = 7, SpawnDelay = 0.32 },
+	OverseerMage = { Reward = 18, SpawnDelay = 0.32 },
+	OverseerKnight = { Reward = 45, SpawnDelay = 0.45 },
+	OverseerKing = { Reward = 250, SpawnDelay = 1 },
 }
 
 --[[
-	Count of each enemy per wave, straight from the Hard spreadsheet. The boss only
-	appears on the last row, and the preset's `BossAmountMultiplier` decides how many
-	of it actually enter.
+	`Config.Waves` only knows `SharedConfig.Mob`, so an entity that exists there but
+	not here would pass its check and then spawn with no reward. Checked at load,
+	like the tables themselves; an entry with both overrides needs no data here.
 ]]
-local WAVE_TABLE = {
-	{ Traveler = 4, RedcliffSquire = 2 },
-	{ Traveler = 6, RedcliffSquire = 3 },
-	{ Traveler = 8, RedcliffPawn = 2, RedcliffSquire = 4 },
-	{ Traveler = 8, RedcliffPawn = 3, RedcliffSquire = 6 },
-	{ Traveler = 6, RedcliffPawn = 4, RedcliffSquire = 6, RedcliffGuard = 2 },
-	{ Traveler = 4, RedcliffPawn = 5, RedcliffSquire = 5, RedcliffGuard = 4 },
-	{ Traveler = 5, RedcliffPawn = 6, RedcliffSquire = 5, RedcliffGuard = 5 },
-	{ Traveler = 6, RedcliffPawn = 7, RedcliffSquire = 6, RedcliffGuard = 6 },
-	{ Traveler = 7, RedcliffPawn = 8, RedcliffSquire = 7, RedcliffGuard = 7 },
-	{ Traveler = 8, RedcliffPawn = 9, RedcliffSquire = 8, RedcliffGuard = 8 },
-	{ Traveler = 6, RedcliffPawn = 9, RedcliffSquire = 8, RedcliffGuard = 7, WallSmasher = 1, CourageBearer = 2 },
-	{ Traveler = 5, RedcliffPawn = 10, RedcliffSquire = 9, RedcliffGuard = 8, WallSmasher = 2, CourageBearer = 2 },
-	{ Traveler = 4, RedcliffPawn = 11, RedcliffSquire = 9, RedcliffGuard = 9, WallSmasher = 2, CourageBearer = 3 },
-	{ Traveler = 3, RedcliffPawn = 12, RedcliffSquire = 10, RedcliffGuard = 10, WallSmasher = 3, CourageBearer = 3 },
-	{ Traveler = 2, RedcliffPawn = 12, RedcliffSquire = 11, RedcliffGuard = 11, WallSmasher = 4, CourageBearer = 3, WingedSquire = 1 },
-	{ Traveler = 2, RedcliffPawn = 13, RedcliffSquire = 11, RedcliffGuard = 12, WallSmasher = 4, CourageBearer = 4, WingedSquire = 2 },
-	{ Traveler = 1, RedcliffPawn = 14, RedcliffSquire = 12, RedcliffGuard = 13, WallSmasher = 5, CourageBearer = 4, WingedSquire = 2 },
-	{ RedcliffPawn = 15, RedcliffSquire = 13, RedcliffGuard = 14, WallSmasher = 5, CourageBearer = 4, WingedSquire = 3, RedcliffEnforcer = 1 },
-	{ RedcliffPawn = 15, RedcliffSquire = 13, RedcliffGuard = 14, WallSmasher = 6, CourageBearer = 5, WingedSquire = 3, RedcliffEnforcer = 1 },
-	{ RedcliffPawn = 16, RedcliffSquire = 14, RedcliffGuard = 15, WallSmasher = 6, CourageBearer = 5, WingedSquire = 4, RedcliffEnforcer = 2 },
-	{ RedcliffPawn = 16, RedcliffSquire = 14, RedcliffGuard = 15, WallSmasher = 5, CourageBearer = 4, WingedSquire = 3, RedcliffEnforcer = 2 },
-	{ RedcliffPawn = 17, RedcliffSquire = 15, RedcliffGuard = 16, WallSmasher = 7, CourageBearer = 6, WingedSquire = 4, RedcliffEnforcer = 3 },
-	{ RedcliffPawn = 17, RedcliffSquire = 15, RedcliffGuard = 16, WallSmasher = 6, CourageBearer = 5, WingedSquire = 4, RedcliffEnforcer = 3 },
-	{ RedcliffPawn = 18, RedcliffSquire = 16, RedcliffGuard = 17, WallSmasher = 8, CourageBearer = 7, WingedSquire = 5, RedcliffEnforcer = 3 },
-	{ RedcliffPawn = 9, RedcliffSquire = 10, RedcliffGuard = 12, WallSmasher = 2, CourageBearer = 3, WingedSquire = 5, RedcliffEnforcer = 3, RedcliffChampion = 1 },
-}
+for difficultyName in Difficulty.Presets do
+	for waveNumber, wave in Waves.Get(difficultyName) or {} do
+		for index, entry in wave do
+			if not ENTITY_DATA[entry.Entity] and (entry.Reward == nil or entry.SpawnDelay == nil) then
+				error(`Config.Waves.{difficultyName}: wave {waveNumber}, entry {index}: `
+					.. `{entry.Entity} has no Reward/SpawnDelay in Config.Wave's ENTITY_DATA`, 0)
+			end
+		end
+	end
+end
 
-local TABLE_LENGTH = #WAVE_TABLE
-
---[=[
-	Where the wave falls in the table. Returns a fractional number between 1 and 25:
-	the integer part is the row, and the fraction is how far it has moved toward the
-	next.
-]=]
 --[[
 	The reward per completed wave, paid to ALL players in the match.
 
@@ -155,117 +153,61 @@ function Wave.GetWaveCash(waveNumber : number?) : number
 	return total
 end
 
---[=[
-	Where this wave falls in the composition table.
-
-	The normal math spreads the preset's waves over the **whole** table: wave 1 is
-	the first row and the last wave is the last row, with the middle interpolated.
-	That is what makes Easy (15 waves) and Nightmare (35) walk the same curve at
-	different paces.
-
-	`TableRows` shortens the stretch used. It is for a short preset that is **not** a
-	whole game sped up: the tutorial has 5 waves, and without this its wave 2 would
-	land on table row 7, twelve enemies with Guard and Pawn in the second minute of
-	someone who has never played. With `TableRows = 5`, the five waves are the first
-	five rows, in order, which is the ramp the table was designed to have.
-]=]
-local function tablePosition(waveNumber : number, preset)
-	local total = preset.MaxWaves or TABLE_LENGTH
-	local rows = math.clamp(preset.TableRows or TABLE_LENGTH, 1, TABLE_LENGTH)
-
-	if total <= 1 then
-		return rows
-	end
-
-	local clamped = math.clamp(waveNumber, 1, total)
-	return 1 + ((clamped - 1) / (total - 1)) * (rows - 1)
+local function getWave(waveNumber : number, difficultyName : string?)
+	local preset = Difficulty.Get(difficultyName)
+	local waves = Waves.Get(preset.Name)
+	return (waves and waves[waveNumber]), preset
 end
 
 --[=[
-	How many enemies of this type the wave brings, interpolating between the two
-	neighboring table rows. Zero means the type does not appear in this wave.
-]=]
-local function amountAt(entity : string, position : number, preset, scale : number?) : number
-	local lower = math.clamp(math.floor(position), 1, TABLE_LENGTH)
-	local upper = math.min(lower + 1, TABLE_LENGTH)
-	local alpha = position - lower
-
-	local from = WAVE_TABLE[lower][entity] or 0
-	local to = WAVE_TABLE[upper][entity] or 0
-	local interpolated = from + ((to - from) * alpha)
-
-	return math.max(0, math.floor((interpolated * (preset.AmountMultiplier or 1) * (scale or 1)) + 0.5))
-end
-
-local function buildSpawnEntry(entity : string, amount : number, preset)
-	local data = ENTITY_DATA[entity]
-	return {
-		Entity = entity,
-		Amount = amount,
-		Reward = math.max(1, math.floor((data.Reward * preset.RewardMultiplier) + 0.5)),
-		SpawnDelay = math.max(0.05, data.SpawnDelay * preset.SpawnDelayMultiplier),
-	}
-end
-
---[=[
-	Whether the wave brings the boss. The client does not see this config (it is
+	Whether the wave brings a boss (an entity with `Boss = true` in
+	`SharedConfig.Mob`). The client does not see the wave tables (they are
 	server-only), so whoever needs to know gets the answer along with the `SetWave`
 	event; the boss music depends on it.
 
-	The boss closes the match: it is the table's last row, and every preset's last
-	wave lands on it.
+	It reads the wave itself, so a boss placed mid-match switches the music too.
 ]=]
-function Wave.HasBoss(waveNumber : number, difficultyName : string?)
-	local preset = Difficulty.Get(difficultyName)
-	return waveNumber >= (preset.MaxWaves or TABLE_LENGTH)
-end
+function Wave.HasBoss(waveNumber : number, difficultyName : string?) : boolean
+	local wave = getWave(waveNumber, difficultyName)
+	if not wave then return false end
 
---- Whether the entity is the boss. `MobService` asks, since it counts the bosses
---- each player took down (the "Defeat 70 bosses" contract).
-function Wave.IsBoss(entityName : string?) : boolean
-	return entityName == BOSS_ENTITY
-end
-
-function Wave.GetSpawns(waveNumber : number, difficultyName : string?)
-	local preset = Difficulty.Get(difficultyName)
-	local position = tablePosition(waveNumber, preset)
-	local spawns = {}
-
-	--[[
-		`BossWaveOnly` leaves the boss wave with **only** the boss.
-
-		It is for the tutorial: its last wave is the first time the player sees a boss,
-		and teaching that amid ten regular enemies teaches two things at once. On
-		normal presets the escort is part of the challenge, which is why the key is
-		optional instead of a rule.
-	]]
-	local bossOnly = preset.BossWaveOnly == true and Wave.HasBoss(waveNumber, difficultyName)
-
-	if not bossOnly then
-		for _, entity in SPAWN_ORDER do
-			if entity == BOSS_ENTITY then
-				continue
-			end
-
-			--[[
-				`WaveAmountScale` is the weight of **one** wave, on top of the curve. It
-				exists for scripted waves: the tutorial's wave 3 coincides with the
-				player's first weather ever, and the curve plus the weather debuff made it
-				the hardest of the five.
-			]]
-			local scale = preset.WaveAmountScale and preset.WaveAmountScale[waveNumber]
-			local amount = amountAt(entity, position, preset, scale)
-			if amount > 0 then
-				table.insert(spawns, buildSpawnEntry(entity, amount, preset))
-			end
+	for _, entry in wave do
+		if Mob.IsBoss(entry.Entity) then
+			return true
 		end
 	end
 
-	if Wave.HasBoss(waveNumber, difficultyName) then
-		local bossAmount = math.max(1, math.floor(((WAVE_TABLE[TABLE_LENGTH][BOSS_ENTITY] or 1)
-			* (preset.BossAmountMultiplier or 1)) + 0.5))
+	return false
+end
 
-		table.insert(spawns, buildSpawnEntry(BOSS_ENTITY, bossAmount, preset))
+--- Whether the entity is a boss. `MobService` asks, since it counts the bosses each
+--- player took down (the "Defeat 70 bosses" contract).
+function Wave.IsBoss(entityName : string?) : boolean
+	return Mob.IsBoss(entityName)
+end
+
+--[=[
+	What the wave spawns, in spawn order: the table's entries with `Reward` and
+	`SpawnDelay` filled in. A wave the difficulty does not have returns an empty
+	list.
+]=]
+function Wave.GetSpawns(waveNumber : number, difficultyName : string?)
+	local wave, preset = getWave(waveNumber, difficultyName)
+	local spawns = {}
+
+	for _, entry in wave or {} do
+		local data = ENTITY_DATA[entry.Entity]
+
+		table.insert(spawns, {
+			Entity = entry.Entity,
+			Amount = entry.Amount,
+			Health = entry.Health,
+			Speed = entry.Speed,
+			Reward = entry.Reward
+				or math.max(1, math.floor((data.Reward * preset.RewardMultiplier) + 0.5)),
+			SpawnDelay = entry.SpawnDelay
+				or math.max(0.05, data.SpawnDelay * preset.SpawnDelayMultiplier),
+		})
 	end
 
 	return spawns

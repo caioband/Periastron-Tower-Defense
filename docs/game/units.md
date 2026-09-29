@@ -326,7 +326,7 @@ Landing records `armedAt`, and `stepTripmines` applies `mineChargeFactor` on top
 
 An enemy moves `CurrentSpeed * dt` per frame, and `dt` is already scaled by the match speed.
 At high speed and a low server frame rate, one frame's step is longer than the trigger's diameter (`TriggerRadius`, 2.5 studs), and an enemy could walk through a mine untouched.
-The fastest enemy moves about 57 studs/s (the `CourageBearer` on Nightmare with its turn gimmick fully stacked); at 3x and 20 fps that is 8.6 studs per frame.
+The fastest enemy moves about 57 studs/s (the Nightmare sprinter, `OverseerWingwalker`, with its turn gimmick fully stacked); at 3x and 20 fps that is 8.6 studs per frame.
 
 `MobService:GetMobCrossing` asks **who passed near the mine this frame**, testing the distance from the mine to the segment the enemy walked.
 `MobService` stores `mob.LastDistance` at the start of each Heartbeat, and the previous position is cached per frame, like the current one, so the cost stays linear.

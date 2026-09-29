@@ -5,7 +5,7 @@ Anything secret or server-only stays out of `ReplicatedStorage`.
 
 | | Where | Contents |
 | --- | --- | --- |
-| **Server only** | `ServerScriptService.Config` ← `common/server/Config` | `Analytics`, `Badges` (name → BadgeId), `Cmdr` (`ADMIN_USER_IDS`, `GROUP_ID`, `ALLOW_IN_STUDIO`…), `Crate` (drop odds and pools), `Data` (`PROFILE_KEY` and the profile template), `Difficulty`, `Leaderboard`, `Summon`, `Wave` |
+| **Server only** | `ServerScriptService.Config` ← `common/server/Config` | `Analytics`, `Badges` (name → BadgeId), `Cmdr` (`ADMIN_USER_IDS`, `GROUP_ID`, `ALLOW_IN_STUDIO`…), `Crate` (drop odds and pools), `Data` (`PROFILE_KEY` and the profile template), `Difficulty`, `Leaderboard`, `Summon`, `Wave`, `Waves` (one wave table per difficulty) |
 | **Replicated** | `ReplicatedStorage.Shared.Config` ← `common/shared/Config` | `Client`, and `SharedConfig` with one module per system: unit stats and upgrades, crates, maps, weather, lighting, round cards, shops, tutorial, the cosmetic part of `Cmdr`, and so on |
 
 `Summon` in the server config is not used by the Game; it stays for consistency between the places.

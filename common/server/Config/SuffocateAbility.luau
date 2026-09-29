@@ -15,7 +15,7 @@ SuffocateAbility.StunUnit = false
 SuffocateAbility.ExceptUnits = {}
 
 SuffocateAbility.Spawn = {
-	Model = "KorbloxSkeleton",
+	Entity = "KorbloxSkeleton",
 	Reward = 0,
 }
 

@@ -15,6 +15,7 @@
 type ServerConfig = {
 	Data : typeof(require(script.Data)),
 	Wave : typeof(require(script.Wave)),
+	Waves : typeof(require(script.Waves)),
 	Difficulty : typeof(require(script.Difficulty)),
 	Summon : typeof(require(script.Summon)),
 	Crate : typeof(require(script.Crate)),

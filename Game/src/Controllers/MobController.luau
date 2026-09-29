@@ -69,37 +69,20 @@ local function shakeScreen()
 end
 
 --[=[
-	The model this enemy wears in this match.
+	The model this enemy wears: the model with the entity's own name, in the folder
+	the entity names (`Folder` in `SharedConfig.Mob`).
 
-	Two questions in one: **from which folder** (the set the server sent, or the
-	default) and **under which name** (`ModelSets` translates the entity name to the
-	model's; see `SharedConfig.Mob`). The entity name does not change by difficulty,
-	so everything else on the client keeps talking about it.
-
-	It walks down the ladder until it finds something: requested set, default set,
-	`EnemyRig`. An incomplete set is an art mistake, and the right answer to it is the
-	enemy showing up dressed as another with a warning in the console, not the match
-	stopping. A bare `or Mobs.CourageBearer` would not do that: with the models one
-	folder down, it errors instead of falling back.
+	A missing model is an art mistake, and the right answer to it is the enemy
+	showing up as `EnemyRig` with a warning in the console, not the match stopping.
 ]=]
-local function resolveMobModel(setName : string?, entityName : string) : Instance?
-	local requested = setName and MobSets:FindFirstChild(setName) or nil
-	local fallback = MobSets:FindFirstChild(MobConfig.DefaultModelSet)
+local function resolveMobModel(entityName : string) : Instance?
+	local entity = MobConfig.Entities[entityName]
+	local folder = entity and MobSets:FindFirstChild(entity.Folder or "")
+	local model = folder and folder:FindFirstChild(entityName)
+	if model then return model end
 
-	if requested then
-		local model = requested:FindFirstChild(MobConfig.GetModelName(requested.Name, entityName))
-		if model then return model end
-
-		log:StudioWarn(string.format("'%s' has no model in set '%s'; using '%s'.",
-			entityName, requested.Name, MobConfig.DefaultModelSet))
-	end
-
-	if fallback then
-		local model = fallback:FindFirstChild(MobConfig.GetModelName(fallback.Name, entityName))
-		if model then return model end
-	end
-
-	log:StudioWarn(string.format("'%s' has no model in any set; using EnemyRig.", entityName))
+	log:StudioWarn(string.format("'%s' has no model in Difficulties.%s; using EnemyRig.",
+		entityName, tostring(entity and entity.Folder)))
 
 	return Mobs:FindFirstChild("EnemyRig")
 end
@@ -416,7 +399,7 @@ function MobController:createEntity(entityData)
 	local speed = entityData.Speed or 6
 	local mobId = entityData.Id
 
-	local mobModel = resolveMobModel(entityData.ModelSet, mobName)
+	local mobModel = resolveMobModel(mobName)
 	if not mobModel then
 		log:StudioWarn(string.format("no model at all for '%s'; not drawing it.", mobName))
 		return
@@ -571,9 +554,9 @@ end
 	same track again, not two overlapping tracks.
 
 	A model without the animation leaves quietly. That is the normal case, not an
-	error: the gimmick that asks for `Rush` only applies to the set that has the
-	animation (see `Mob.GetGimmicks`), and reaching here without it is already the path
-	of someone who mixed a set with a gimmick. The `IsA` is there because
+	error: the gimmick that asks for `Rush` belongs to the entity whose model has the
+	animation (see `SharedConfig.Mob`), and reaching here without it is already the
+	path of someone who gave a gimmick to the wrong entity. The `IsA` is there because
 	`FindFirstChild` matches by name, and a Part called `Rush` would pass straight
 	through until it errored in `LoadAnimation`.
 ]=]
