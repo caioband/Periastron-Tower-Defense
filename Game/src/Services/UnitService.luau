@@ -429,6 +429,93 @@ function UnitService:MoveUnit(unitId : any, position : any, rotation : number?)
 	return entry
 end
 
+--[[ BORROWED TOWERS (Endless card shop) ]]
+
+function UnitService:_owns(player : Player, unitName : string) : boolean
+	local dataService = self.Services.DataService
+	local profiles = dataService and dataService.Profiles
+	local entry = profiles and profiles[player]
+	local owned = entry and entry.Profile.Data.Units
+
+	return typeof(owned) == "table" and (owned[unitName] or 0) > 0
+end
+
+function UnitService:CanPlaceLoan(player : Player, unitName : any, position : Vector3, rotation : number?) : (boolean, string?)
+	if typeof(unitName) ~= "string" or not SharedConfig.UnitStats[unitName] then
+		return false, "unknown unit"
+	end
+
+	if not Units:FindFirstChild(unitName) then
+		return false, "unit has no model"
+	end
+
+	if not self:_owns(player, unitName) then
+		return false, "unit not owned"
+	end
+
+	local cf = CFrame.new(position) * CFrame.Angles(0, rotation or 0, 0)
+	if not self:isSpotFree(cf, unitName, player.Name) then
+		return false, "spot is taken"
+	end
+
+	return true
+end
+
+--- Places a tower with no cash and no deck count; it is removed when its last wave ends.
+function UnitService:PlaceLoanedUnit(player : Player, unitName : string, position : Vector3, rotation : number?, waves : number?)
+	local ok, reason = self:CanPlaceLoan(player, unitName, position, rotation)
+	if not ok then
+		return nil, reason
+	end
+
+	local cf = CFrame.new(position) * CFrame.Angles(0, rotation or 0, 0)
+	local unitId = HttpService:GenerateGUID(false)
+
+	local waveService = self.Services.WaveService
+	local currentWave = (waveService and waveService.WaveCount) or 0
+
+	local entry = {
+		unitId = unitId,
+		unitName = unitName,
+		cf = cf,
+		ownerUserId = player.UserId,
+		upgrades = 0,
+		invested = 0, -- selling a loan refunds nothing
+		lastAttack = 0,
+		priority = TargetPriority.Default,
+		loanUntilWave = currentWave + math.max(1, waves or 1) - 1,
+	}
+
+	table.insert(self.PlacedUnits, entry)
+	self.UnitsById[unitId] = entry
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		Framework:Fire("ReplicateUnit", plr, unitName, cf, player.UserId, unitId, 0, entry.priority)
+	end
+
+	self.Signals.UnitPlaced:Fire(player, unitName)
+
+	return entry
+end
+
+--- Called when a wave starts: removes loans whose last wave was before it.
+function UnitService:ExpireLoans(waveNumber : number)
+	for index = #self.PlacedUnits, 1, -1 do
+		local entry = self.PlacedUnits[index]
+
+		if entry.loanUntilWave and entry.loanUntilWave < waveNumber then
+			table.remove(self.PlacedUnits, index)
+			self.UnitsById[entry.unitId] = nil
+			self.DamageDirty[entry.unitId] = nil
+
+			for _, plr in ipairs(Players:GetPlayers()) do
+				Framework:Fire("RemoveUnit", plr, entry.unitId)
+			end
+		end
+	end
+end
+
+
 --[=[
 	Credits damage to a unit. The value is what actually hit the enemy (`DamageMob`
 	returns it), not the hit's full damage, so the card's `DmgDone` adds up to the health
@@ -827,7 +914,9 @@ function UnitService:construct()
 		end
 
 		self.Services.MobService:addCash(player, refund)
-		self:incrementCardCount(player, entry.unitName)
+		if not entry.loanUntilWave then
+			self:incrementCardCount(player, entry.unitName)
+		end
 	end)
 
 	Framework:Listen("UpgradeUnit", function(player, unitId)

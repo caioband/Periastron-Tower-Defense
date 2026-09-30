@@ -7,6 +7,7 @@ local Mob = require(SharedConfig:WaitForChild("Mob"))
 
 local Difficulty = require(script.Parent.Difficulty)
 local Waves = require(script.Parent.Waves)
+local EndlessWaves = require(script.Parent.EndlessWaves)
 
 local Wave = {}
 
@@ -155,6 +156,11 @@ end
 
 local function getWave(waveNumber : number, difficultyName : string?)
 	local preset = Difficulty.Get(difficultyName)
+
+	if preset.Endless then
+		return EndlessWaves.Get(waveNumber, preset), preset
+	end
+
 	local waves = Waves.Get(preset.Name)
 	return (waves and waves[waveNumber]), preset
 end

@@ -268,7 +268,7 @@ function WaveService:computeReward(preset, lost : boolean?)
 	-- the same the `or 1` multipliers gave when the base was Medium's.
 	preset = preset or DifficultyConfig.Get(nil)
 
-	local maxWaves = self:getMaxWaves(preset)
+	local maxWaves = preset.RewardWaves or self:getMaxWaves(preset)
 	local wavesSurvived = math.clamp(self.WaveCount or 0, 0, maxWaves)
 	local progress = maxWaves > 0 and (wavesSurvived / maxWaves) or 0
 
@@ -405,11 +405,11 @@ end
 
 function WaveService:onRoundEnded(won : boolean)
 	local preset = self.Difficulty or self.Services.DifficultyService:GetSelected()
-	local maxWaves = self:getMaxWaves(preset)
+	local maxWaves = if preset.Endless then math.max(1, self.WaveCount or 0) else self:getMaxWaves(preset)
 
 	-- Here the match is over, so "did not win" means defeat, not "still
 	-- running", which is `GrantLeaveReward`'s case.
-	local rewards = self:computeReward(preset, not won)
+	local rewards = self:computeReward(preset, not won and not preset.Endless)
 	local dataService = self.Services.DataService
 
 	local mobService = self.Services.MobService

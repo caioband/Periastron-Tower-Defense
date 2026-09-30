@@ -70,6 +70,7 @@ RoundCardConfig.Intervals = {
 	Hard = 5,
 	Impossible = 6,
 	Nightmare = 6,
+	Endless = 3,
 }
 
 RoundCardConfig.DefaultInterval = 4
@@ -120,6 +121,8 @@ RoundCardConfig.Use = {
 	Unit = "Unit",
 	Area = "Area",
 	Move = "Move",
+	Place = "Place",
+
 }
 
 --[=[
@@ -965,11 +968,85 @@ RoundCardConfig.Cards = {
 	},
 }
 
+
+--[[ ENDLESS SHOP: BORROWED TOWERS AND WEATHER ]]
+
+local UnitStats = require(script.Parent:WaitForChild("UnitStats"))
+
+RoundCardConfig.TowerLoan = {
+	PriceRatio = 0.6, -- share of the tower's normal placement cost
+	Waves = 1,        -- how many waves the borrowed tower stays
+	Weight = 0.6,
+}
+
+RoundCardConfig.TowerCards = {}
+
+for unitName, stats in UnitStats do
+	-- Income towers are left out: a loan that pays itself back would be free money.
+	if typeof(stats) ~= "table" or typeof(stats.Cost) ~= "number" or stats.Farm then
+		continue
+	end
+
+	table.insert(RoundCardConfig.TowerCards, {
+		Id = "Tower:" .. unitName,
+		Title = string.upper(unitName),
+		Description = "",
+		Price = math.floor(stats.Cost * RoundCardConfig.TowerLoan.PriceRatio + 0.5),
+		Weight = RoundCardConfig.TowerLoan.Weight,
+		Use = RoundCardConfig.Use.Place,
+		Effect = "LoanUnit",
+		Tower = true,
+		Params = { Unit = unitName, Waves = RoundCardConfig.TowerLoan.Waves },
+	})
+end
+
+table.sort(RoundCardConfig.TowerCards, function(a, b)
+	return a.Id < b.Id
+end)
+
+local WEATHER_CARDS = {
+	{ Weather = "Rain",      Title = "SUMMON RAIN",       Noun = "rain" },
+	{ Weather = "Snow",      Title = "SUMMON BLIZZARD",   Noun = "a blizzard" },
+	{ Weather = "Wind",      Title = "SUMMON WIND",       Noun = "wind" },
+	{ Weather = "Fog",       Title = "SUMMON FOG",        Noun = "fog" },
+	{ Weather = "Thunder",   Title = "SUMMON THUNDER",    Noun = "thunder" },
+	{ Weather = "Sandstorm", Title = "SUMMON SANDSTORM",  Noun = "a sandstorm" },
+	{ Weather = "Drought",   Title = "SUMMON DROUGHT",    Noun = "a drought" },
+}
+
+RoundCardConfig.WeatherCards = {}
+
+for _, data in WEATHER_CARDS do
+	table.insert(RoundCardConfig.WeatherCards, {
+		Id = "Weather:" .. data.Weather,
+		Title = data.Title,
+		Description = "Calls down " .. data.Noun .. " for 2 waves",
+		Price = 300,
+		Weight = 1,
+		Use = RoundCardConfig.Use.Instant,
+		Effect = "SummonWeather",
+		Params = { Weather = data.Weather, Waves = 2 },
+	})
+end
+
+
+
 --[[ API ]]
 
 local byId = {}
-for _, card in RoundCardConfig.Cards do
-	byId[card.Id] = card
+for _, list in { RoundCardConfig.Cards, RoundCardConfig.TowerCards, RoundCardConfig.WeatherCards } do
+	for _, card in list do
+		byId[card.Id] = card
+	end
+end
+
+--- The loan card for a unit name, or nil.
+function RoundCardConfig.GetTowerCard(unitName : any)
+	if typeof(unitName) ~= "string" then
+		return nil
+	end
+
+	return byId["Tower:" .. unitName]
 end
 
 --- The card for the `Id`, or nil. The `Id` comes from the network, so it can be anything.

@@ -17,6 +17,7 @@ local log = Log.new("CardShopService")
 
 local RoundCardConfig = SharedConfig.RoundCardConfig
 local RoundCardShopConfig = SharedConfig.RoundCardShopConfig
+local WeatherConfig = SharedConfig.WeatherConfig
 
 --[[
 	How far `EffectDelay` may drift from the animation marker before it becomes a
@@ -319,6 +320,37 @@ CardShopService.Effects = {
 
 		return "clear sky this wave"
 	end,
+
+	--[[ Endless shop: borrow one of the player's own towers. ]]
+	LoanUnit = function(self, player : Player, params, context)
+		local unitService = self.Services.UnitService
+		if not unitService then return "no UnitService" end
+
+		local target = context.Target
+		if not target or not target.Position then return "no spot picked" end
+
+		local entry, reason = unitService:PlaceLoanedUnit(player, params.Unit, target.Position, target.Rotation, params.Waves)
+		if not entry then
+			return string.format("loan refused (%s)", tostring(reason))
+		end
+
+		return string.format("%s loaned to %s", entry.unitName, player.Name)
+	end,
+
+	--[[ Endless shop: put a weather on now. ]]
+	SummonWeather = function(self, player : Player, params)
+		local weatherRound = self.Services.WeatherRoundService
+		if not weatherRound then return "no WeatherRoundService" end
+
+		local ok, reason = weatherRound:Summon(params.Weather, params.Waves)
+		if not ok then
+			return string.format("weather refused (%s)", tostring(reason))
+		end
+
+		return string.format("%s for %d wave(s)", params.Weather, params.Waves or 1)
+	end,
+
+
 }
 
 --[[ INTERNAL ]]
@@ -350,6 +382,93 @@ function CardShopService:_pool()
 
 	return pool
 end
+
+
+-- endless
+
+function CardShopService:_isEndless() : boolean
+	return self:_difficultyName() == "Endless"
+end
+
+--- Loan cards for the towers this player owns (profile `Units`).
+function CardShopService:_ownedTowerCards(player : Player) : { any }
+	local dataService = self.Services.DataService
+	local profiles = dataService and dataService.Profiles
+	local entry = profiles and profiles[player]
+	local owned = entry and entry.Profile.Data.Units
+
+	if typeof(owned) ~= "table" then return {} end
+
+	local cards = {}
+	for unitName, amount in owned do
+		if typeof(amount) == "number" and amount > 0 then
+			local card = RoundCardConfig.GetTowerCard(unitName)
+			if card then
+				table.insert(cards, card)
+			end
+		end
+	end
+
+	return cards
+end
+
+--- Weather cards for the weathers this map can actually roll.
+function CardShopService:_weatherCards() : { any }
+	local weatherRound = self.Services.WeatherRoundService
+	local mapName = weatherRound and weatherRound:GetMapName()
+
+	local allowed = {}
+	for _, name in WeatherConfig.GetPool(mapName) do
+		allowed[name] = true
+	end
+
+	local cards = {}
+	for _, card in RoundCardConfig.WeatherCards do
+		if allowed[card.Params.Weather] then
+			table.insert(cards, card)
+		end
+	end
+
+	return cards
+end
+
+--[=[
+	The Endless offer: one tower and one weather when available, the rest from the normal
+	pool plus whatever tower/weather cards are left. Shuffled so slot 1 isn't always a tower.
+]=]
+function CardShopService:_drawEndless(candidates : { any }, towers : { any }, weathers : { any }) : { any }
+	local picks = {}
+
+	local function take(list : { any })
+		local card = RoundCardConfig.Draw(1, list)[1]
+		if not card then return end
+
+		table.insert(picks, card)
+		table.remove(list, table.find(list, card))
+	end
+
+	take(towers)
+	take(weathers)
+
+	local rest = {}
+	for _, list in { candidates, towers, weathers } do
+		for _, card in list do
+			table.insert(rest, card)
+		end
+	end
+
+	for _, card in RoundCardConfig.Draw(RoundCardConfig.DrawCount - #picks, rest) do
+		table.insert(picks, card)
+	end
+
+	for index = #picks, 2, -1 do
+		local swap = math.random(1, index)
+		picks[index], picks[swap] = picks[swap], picks[index]
+	end
+
+	return picks
+end
+
 
 --[=[
 	Is the card timed?
@@ -545,7 +664,7 @@ function CardShopService:_checkTarget(player : Player, card, target : any)
 		checked.UnitId = target.UnitId
 	end
 
-	if use == RoundCardConfig.Use.Area or use == RoundCardConfig.Use.Move then
+	if use == RoundCardConfig.Use.Area or use == RoundCardConfig.Use.Move or use == RoundCardConfig.Use.Place then
 		local position = target.Position
 
 		if typeof(position) ~= "Vector3" then
@@ -574,7 +693,7 @@ function CardShopService:_checkTarget(player : Player, card, target : any)
 		goes through the same three tests as the position (being a number, not NaN, and not
 		infinite) before being wrapped to one turn.
 	]]
-	if use == RoundCardConfig.Use.Move and target.Rotation ~= nil then
+	if (use == RoundCardConfig.Use.Move or use == RoundCardConfig.Use.Place) and target.Rotation ~= nil then
 		local rotation = target.Rotation
 
 		if typeof(rotation) ~= "number" or rotation ~= rotation or math.abs(rotation) == math.huge then
@@ -593,6 +712,20 @@ function CardShopService:_checkTarget(player : Player, card, target : any)
 		reaching this branch is a tampered client or a real race: two area cards used on the
 		same frame, the second on top of the first.
 	]]
+
+	if use == RoundCardConfig.Use.Place then
+		local unitService = self.Services.UnitService
+		if not unitService then
+			return nil, "no UnitService"
+		end
+
+		local ok, reason = unitService:CanPlaceLoan(player, card.Params and card.Params.Unit, checked.Position, checked.Rotation)
+		if not ok then
+			return nil, reason
+		end
+	end
+
+
 	if use == RoundCardConfig.Use.Area then
 		local modifiers = self.Services.CardModifierService
 		local overlap = modifiers and modifiers:FindZoneOverlap(
@@ -677,18 +810,29 @@ function CardShopService:Open(players : { Player }?, waveNumber : number?)
 
 	local opened = false
 
+-- new
+	local endless = self:_isEndless()
+
 	for _, player in (players or Players:GetPlayers()) do
 		local candidates = self:_poolFor(player, pool)
+		local towers = if endless then self:_ownedTowerCards(player) else {}
+		local weathers = if endless then self:_weatherCards() else {}
 
-		if #candidates == 0 then
+		if #candidates == 0 and #towers == 0 and #weathers == 0 then
 			self.Offers[player.UserId] = nil
 			self:_sendState(player)
 
 			continue
 		end
 
-		local drawn = RoundCardConfig.Draw(RoundCardConfig.DrawCount, candidates)
+		local drawn
+		if endless then
+			drawn = self:_drawEndless(candidates, towers, weathers)
+		else
+			drawn = RoundCardConfig.Draw(RoundCardConfig.DrawCount, candidates)
+		end
 
+				-- The offer and the client work with card ids, not the full card tables.
 		local cards = {}
 		for _, card in drawn do
 			table.insert(cards, card.Id)
@@ -1070,13 +1214,13 @@ function CardShopService:construct()
 
 	if waveService and waveService.Signals and waveService.Signals.WaveStarted then
 		waveService.Signals.WaveStarted:Connect(function(waveNumber, preset)
-			--[[
-				The tutorial opens the shop on the wave its script says (the wave 2 step, which
-				is exactly learning to buy) and **only** there: in the tutorial the calendar
-				does not count (`ShopIsScripted`). Without this, wave 4 would fall on
-				`RoundCardConfig`'s interval of 4 and the offer would come back on its own in
-				the middle of the 2x step, without the script asking.
-			]]
+			-- Borrowed towers whose wave is over leave before the next wave's shop opens.
+			local unitService = self.Services.UnitService
+			if unitService and unitService.ExpireLoans then
+				unitService:ExpireLoans(waveNumber)
+			end
+
+
 			local scripted = tutorial and tutorial:ShopIsScripted()
 			local forced = tutorial and tutorial:ShouldOpenShop(waveNumber)
 

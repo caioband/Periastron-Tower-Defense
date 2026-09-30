@@ -55,6 +55,7 @@ Difficulty.Order = {
 	"Hard",
 	"Impossible",
 	"Nightmare",
+	"Endless",
 }
 
 Difficulty.Presets = {
@@ -176,10 +177,33 @@ Difficulty.Presets = {
 		IntermissionTime = 30,
 		WaveInterval = 1.25,
 	},
+
+		Endless = {
+		Endless = true,
+		RewardWaves = 50, 	
+		WeatherChance = 0.30,
+		RewardMultiplier = 0.85,
+		WinCash = 900,
+		WinShards = 5,
+		WinXpMultiplier = 2.5,
+		SpawnDelayMultiplier = 0.9,
+		StartingCash = 400,
+		BaseHealth = 100,
+		MobDamage = 25,
+		IntermissionTime = 40,
+		WaveInterval = 1.25,
+	},
+
+
 }
 
 for name, preset in Difficulty.Presets do
 	preset.Name = name
+
+	if preset.Endless then
+		preset.MaxWaves = math.huge
+		continue
+	end
 
 	-- The match is as long as its wave table; see `Config.Waves`.
 	preset.MaxWaves = Waves.Count(name)

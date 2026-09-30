@@ -332,6 +332,42 @@ function WeatherRoundService:SkipCurrentWave() : boolean
 end
 
 --[=[
+	Puts a weather in the sky right now for `waves` waves (this one included).
+	`CardShopService` calls it (the Endless shop's weather cards). It replaces whatever is
+	active or announced.
+]=]
+function WeatherRoundService:Summon(weatherName : string, waves : number?) : (boolean, string?)
+	local weatherService = self.Services.WeatherService
+	if not weatherService or not weatherService:GetWeather(weatherName) then
+		return false, "unknown weather"
+	end
+
+	local ok, message = weatherService:Apply(weatherName, RoundConfig.TransitionTime)
+	if not ok then
+		return false, message
+	end
+
+	local waveService = self.Services.WaveService
+	local current = (waveService and waveService.WaveCount) or 0
+
+	self.Scheduled = nil
+	self.ScheduledWave = nil
+	self.SkippedWave = nil
+
+	self.Active = weatherName
+	self.ActiveUntilWave = current + math.max(1, waves or 1) - 1
+
+	self:broadcastDuration()
+	self.Signals.WeatherStarted:Fire(weatherName)
+
+	return true
+end
+
+
+
+
+
+--[=[
 	A wave's step. Called by `WaveService`'s `WaveStarted` signal.
 
 	Order matters: the old weather leaves and the new one enters **before** the die, so

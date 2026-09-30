@@ -53,6 +53,7 @@ module.REQUIREMENTS = {
 	Hard = { Wins = 4, WinsIn = "Medium", Level = 3 },
 	Impossible = { Wins = 4, WinsIn = "Hard", Level = 6 },
 	Nightmare = { Wins = 6, WinsIn = "Impossible", Level = 12 },
+	Endless = { Wins = 2, WinsIn = "Nightmare", Level = 15 },
 } :: { [string] : Requirement }
 
 --[[ API ]]

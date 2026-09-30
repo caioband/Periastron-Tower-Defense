@@ -428,8 +428,13 @@ function RoundCardShopController:_writeCard(card : GuiObject, definition, showPr
 
 	-- A card without its own art keeps the template's authored art: a card with the wrong
 	-- art beats an invisible card.
-	if definition.Image and (card:IsA("ImageLabel") or card:IsA("ImageButton")) then
-		card.Image = definition.Image
+	local image = definition.Image
+	if not image and definition.Tower then
+		image = SharedConfig.CardConfig.GetImage(definition.Params.Unit)
+	end
+
+	if image and (card:IsA("ImageLabel") or card:IsA("ImageButton")) then
+		card.Image = image
 	end
 end
 
@@ -928,6 +933,13 @@ function RoundCardShopController:_requestUse(uid : string, cardId : string)
 	end
 
 	local use = RoundCardConfig.GetUse(cardId)
+
+	if use == USE.Place then
+		self:_beginTargeting(uid, cardId, use)
+		self:_beginPlacePlacement()
+		return
+	end
+
 
 	if use == USE.Instant then
 		self:_sendUse(uid, nil)
@@ -1706,6 +1718,47 @@ function RoundCardShopController:_beginMovePlacement(unitModel : Model, unitId :
 		self:_cancelTargeting()
 	end
 end
+
+--[[
+	Endless shop towers: clicking the card in the hotbar brings up the unit ghost, exactly
+	like a deck card. Confirming sends the spot to the server as this card's use.
+]]
+function RoundCardShopController:_beginPlacePlacement()
+	local targeting = self.Targeting
+	if not targeting then return end
+
+	local placement = self.Controllers.UnitPlacementController
+	if not placement then return end
+
+	local definition = RoundCardConfig.Get(targeting.CardId)
+	local unitName = definition and definition.Params and definition.Params.Unit
+	if not unitName then
+		self:_cancelTargeting()
+		return
+	end
+
+	local uid = targeting.Uid
+
+	placement:visualize(unitName, {
+		OnConfirm = function(cf : CFrame)
+			local _, spin = cf:ToEulerAnglesYXZ()
+
+			self:_sendUse(uid, { Position = cf.Position, Rotation = spin })
+		end,
+
+		OnCancel = function()
+			self:_cancelTargeting()
+		end,
+	})
+
+	targeting.Placement = placement.isPlacing == true
+
+	if not targeting.Placement then
+		self:_cancelTargeting()
+	end
+end
+
+
 
 --- Collects what aiming drew and returns clicks to placement.
 function RoundCardShopController:_stopTargeting()
