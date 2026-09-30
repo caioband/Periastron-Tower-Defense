@@ -57,6 +57,7 @@
       "Services": {
         "$className": "Folder",
         "$ignoreUnknownInstances": false,
+        "$attributes": { "Place": "Lobby" },
 
         "Common": { "$path": "../common/server/Services" },
         "Lobby": { "$path": "src/Services" }

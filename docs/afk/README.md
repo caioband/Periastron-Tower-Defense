@@ -1,0 +1,44 @@
+# AFK place
+
+The AFK place: a third place in the universe, next to the Lobby and the Game.
+For now it only boots the shared code and loads the player's profile; it has no place-specific gameplay yet.
+
+For the repository layout and what is shared between the places, see [Repository overview](../architecture/overview.md).
+
+## What is specific to this place
+
+| Folder | Mounted at | Contents |
+| --- | --- | --- |
+| `src/ClientBoot/` | `StarterPlayerScripts.Client` | Entry LocalScript |
+
+There are no place-specific services, controllers, or Cmdr definitions yet, so the project has no `Services.Afk`, `Controllers.Afk`, `Commands.Afk`, or `Types.Afk` node.
+Add the node when the first file goes into that folder: a node that points at a folder git does not track breaks a fresh clone.
+
+## Loading
+
+The AFK place loads the same way as the Lobby:
+
+- `ClientBoot` fires `Framework:Fire("Loaded", true)` 1.2 seconds after the client starts.
+- The shared `DataService` runs with the `Afk` entry of `Config.Data.Places`, the same settings as the Lobby: `Get` waits for the `Loaded` tag before handing out the profile (see [Data and profiles](../common/data-and-profiles.md#what-changes-per-place)).
+
+When the client finishes loading, the Output shows:
+
+```text
+[Periastron] client loaded: AFK, QA environment, place version 0
+```
+
+## Shared systems here
+
+Every Service in `common/server/Services` and every Controller in `common/client/Controllers` loads here too.
+Systems that need content from the place (a board, a part reference, a GUI) log a warning and stay idle when it is missing, as they do in the other places.
+
+- **Playtime.** `PlaytimeService` tells the Lobby apart by the `Services.Lobby` folder, not by the `Place` attribute, so it treats this place like the Game: `AfkConfig.PausePlaytime.Game` applies, and `Stats.TimePlayed` keeps counting while the player is AFK.
+- **Teleports.** `Environment` does not know this place yet: `EnvironmentConfig` has no `Afk` id, so nothing can teleport here until the place is published and its ids are added.
+
+## Wally
+
+The same four dependencies as the other places, with `wally.lock` pinned to the same resolved versions (Cmdr 1.12.0, Signal 2.0.3).
+
+## Outside the repository
+
+Everything that is not code (the map, GUIs, sounds, `ReplicatedStorage.Shared.Assets`) lives only in the published place, as in the other two.

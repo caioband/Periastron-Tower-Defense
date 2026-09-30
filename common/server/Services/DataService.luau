@@ -27,6 +27,21 @@ local Replica = require(ServerVendor.ReplicaServer)
 local Framework = Me.new()
 local log = Log.new("DataService")
 
+--[[
+	What changes between places (`Config.Data.Places`). The place comes from the
+	`Place` attribute each Rojo project sets on `ServerScriptService.Services`, not from
+	`PlaceId`, so QA copies behave like the place itself.
+
+	An unknown place answers `Get` right away: waiting on a tag that nobody sets would
+	hand out no profile at all.
+]]
+local PLACE_NAME = ServerScriptService:WaitForChild("Services"):GetAttribute("Place")
+local PLACE = ServerConfig.Data.Places[PLACE_NAME]
+if not PLACE then
+	log:Warn(`no Config.Data.Places entry for place '{tostring(PLACE_NAME)}'; Get will not wait for the client.`)
+	PLACE = { ReadyTag = "Loaded", WaitForClient = false }
+end
+
 local DataService = {
 	Signals = {
 		PlayerDataLoaded = Signal.new(),
@@ -204,14 +219,29 @@ local function awaitPlayerTag(player: Player, tagName: string): boolean
 	return coroutine.yield()
 end
 
+--[=[
+	Calls `callbackFunc(data)` once the player's profile is open. Where the place has
+	`WaitForClient` (`Config.Data.Places`), it also waits for the client to fire
+	`Loaded`; without it, a profile that is already open is handed out on the spot.
+	Gives up silently after `MAX_DATA_TIME_OUT` seconds.
+]=]
 function DataService:Get(Player : Player, callbackFunc)
+	local function deliver()
+		if PLACE.WaitForClient and not awaitPlayerTag(Player, PLACE.ReadyTag) then
+			return
+		end
+
+		if self.Profiles[Player] then
+			callbackFunc(self.Profiles[Player].Profile.Data)
+		end
+	end
+
 	if self.Profiles[Player] then
-		task.spawn(function()
-			local success = awaitPlayerTag(Player, "Loaded")
-			if success and self.Profiles[Player] then
-				callbackFunc(self.Profiles[Player].Profile.Data)
-			end
-		end)
+		if PLACE.WaitForClient then
+			task.spawn(deliver)
+		else
+			deliver()
+		end
 		return
 	end
 
@@ -221,10 +251,7 @@ function DataService:Get(Player : Player, callbackFunc)
 			waitConnection:Disconnect()
 			waitConnection = nil
 
-			local success = awaitPlayerTag(Player, "Loaded")
-			if success and self.Profiles[Player] then
-				callbackFunc(self.Profiles[Player].Profile.Data)
-			end
+			deliver()
 		end
 	end)
 
@@ -238,7 +265,7 @@ end
 
 --[=[
 	Registers something to happen with the profile still open, right before the session
-	closes. The same hook as Game's `DataService`.
+	closes: for example, crediting the reward of a player who leaves mid-round.
 
 	Every exit path goes through `Destroy`: the `PlayerRemoving` of a player who leaves
 	and the server shutdown's `BindToClose`. Registering here covers both at once and does
@@ -247,8 +274,8 @@ end
 
 	`order` (0 by default) is for code that needs to **read** the profile after everyone
 	else that still writes to it: they run lowest to highest, in registration order within
-	the same number. `LeaderboardService` uses 1 to get the profile with
-	`PlaytimeService`'s final playtime already in.
+	the same number. `LeaderboardService` uses 1 to get the profile with the leave reward
+	and `PlaytimeService`'s final playtime already in.
 ]=]
 function DataService:OnBeforeRelease(callback : (Player) -> (), order : number?)
 	if not self.BeforeRelease then
@@ -323,7 +350,7 @@ end
 	it is a `pcall`: the receipt comes back as `NotProcessedYet` and Roblox retries, which
 	beats confirming a delivery that was not saved.
 
-	Both places need it: developer products are sold in the Lobby too (the card shop
+	Every place needs it: developer products are sold in the Lobby too (the card shop
 	reroll is one), and without this method `ProcessReceipt` would error in here and no
 	purchase would be credited.
 ]=]
@@ -365,7 +392,7 @@ function DataService:init()
 	end)
 
 	Framework:Listen("Loaded", function(Player : Player)
-		Player:AddTag("Loaded")
+		Player:AddTag(PLACE.ReadyTag)
 	end)
 end
 

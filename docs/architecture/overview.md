@@ -1,13 +1,14 @@
 # Repository overview
 
-This repository holds both places of Periastron Tower Defense.
-Code used by both places lives at the root; each place folder keeps only what belongs to it.
+This repository holds every place of Periastron Tower Defense: the Lobby, the Game, and the AFK place.
+Code used by more than one place lives at the root; each place folder keeps only what belongs to it.
 
 ```text
-common/     first-party code shared by both places
+common/     first-party code shared by every place
 vendor/     third-party libraries that do not come from Wally
 Game/       the "Periastron TD: Main Game" place (only what is specific to it)
 Lobby/      the "Periastron Tower Defense" lobby place (only what is specific to it)
+Afk/        the AFK place (only what is specific to it)
 docs/       this documentation
 ```
 
@@ -15,7 +16,7 @@ See the [development setup](../../README.md#development-setup) in the root READM
 
 ## How the shared code is mounted
 
-Each place has its own `default.project.json`, and both point back to the root with `../` paths.
+Each place has its own `default.project.json`, and all of them point back to the root with `../` paths.
 Where a folder mixes shared code and place code, it becomes a Folder with two subfolders.
 The [`Me` framework](me-framework.md) loads modules with `GetDescendants()`, so modules load the same way and `Framework:Get("ModuleName")` keeps working.
 
@@ -53,6 +54,10 @@ ReplicatedStorage
 ```
 
 The Game has no place-specific Cmdr types, so its project has no `Types/Game` node.
+The AFK place has no place-specific code yet besides `ClientBoot`, so it has no `Controllers/Afk`, `Services/Afk`, `Commands/Afk`, or `Types/Afk` node.
+
+The `Services` node of each project sets a `Place` attribute (`Lobby`, `Game`, or `Afk`).
+Shared server code that behaves differently per place reads it (see [Data and profiles](../common/data-and-profiles.md#what-changes-per-place)).
 A node that points at a folder git does not track would break a fresh clone.
 
 Module names must be unique across `Common` and the place folder, because `Framework:Get` looks them up by name only.
@@ -73,13 +78,13 @@ The place pages list what is specific to each place, its Wally dependencies, and
 
 - [Game](../game/README.md)
 - [Lobby](../lobby/README.md)
+- [AFK](../afk/README.md)
 
 ## Differences between the places (on purpose)
 
 | File | Why |
 | --- | --- |
-| `src/ClientBoot/init.client.luau` | The Lobby fires `Framework:Fire("Loaded", true)` from the boot script; in the Game, `WaveController` fires it. |
-| `src/Services/DataService.luau` | The Lobby waits for the `Loaded` tag before handing out the profile; the Game answers right away. |
+| `src/ClientBoot/init.client.luau` | The Lobby and the AFK place fire `Framework:Fire("Loaded", true)` from the boot script; in the Game, `WaveController` fires it. |
 | `src/Controllers/UILibraryController/` | The two places have different UIs. |
 
 ## Related pages

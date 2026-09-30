@@ -2,13 +2,15 @@
 
 A Roblox tower defense game made of two places: the **Lobby**, where players build their deck, open crates, and pick a map, and the **Game** ("Main Game"), where they play the match.
 Both places are published to two experiences, Production and QA (see [Environments](docs/common/environments.md)).
-This monorepo holds both places; code they share lives at the root.
+A third place, the **AFK** place, is being set up (see [AFK place](docs/afk/README.md)).
+This monorepo holds every place; code they share lives at the root.
 
 ```text
-common/     first-party code shared by both places
+common/     first-party code shared by every place
 vendor/     third-party libraries that do not come from Wally
 Game/       the "Periastron TD: Main Game" place (only what is specific to it)
 Lobby/      the "Periastron Tower Defense" lobby place (only what is specific to it)
+Afk/        the AFK place (only what is specific to it)
 docs/       documentation
 ```
 
@@ -46,7 +48,7 @@ aftman install
 
 `aftman install` downloads Rojo 7.6.1 and Wally 0.3.2 as listed in `aftman.toml`.
 The first time, it asks you to trust each tool; answer yes.
-The root `aftman.toml` lets you run `rojo` and `wally` from the root and from inside `Game/` and `Lobby/`.
+The root `aftman.toml` lets you run `rojo` and `wally` from the root and from inside `Game/`, `Lobby/`, and `Afk/`.
 
 Check the versions:
 
@@ -57,11 +59,12 @@ wally --version   # wally 0.3.2
 
 ### 3. Install the packages
 
-Each place has its own `wally.toml` and its own `Packages/` folder, so install both:
+Each place has its own `wally.toml` and its own `Packages/` folder, so install each one:
 
 ```bash
 cd Game  && wally install && cd ..
 cd Lobby && wally install && cd ..
+cd Afk   && wally install && cd ..
 ```
 
 Git ignores `Packages/`.
@@ -89,6 +92,7 @@ Use the QA places for day-to-day work:
 | --- | --- | --- | --- |
 | Lobby | `80434020174775` | `132304466547289` | `Lobby/` |
 | Main Game | `131924395601623` | `109030368179494` | `Game/` |
+| AFK | not published yet | not published yet | `Afk/` |
 
 Start the server from the matching folder:
 
@@ -99,7 +103,7 @@ cd Lobby && rojo serve
 In Studio, open the Rojo plugin and select **Connect**.
 The default port is `34872`.
 
-To work on both places at the same time, give the second server another port and set the same port in that Studio window's Rojo plugin:
+To work on two places at the same time, give the second server another port and set the same port in that Studio window's Rojo plugin:
 
 ```bash
 cd Game && rojo serve --port 34873
@@ -142,6 +146,6 @@ Git ignores `sourcemap.json`.
 All documentation is in [`docs/`](docs/README.md):
 
 - [Repository overview](docs/architecture/overview.md) and [setup](docs/architecture/setup.md)
-- [Game place](docs/game/README.md) and [Lobby place](docs/lobby/README.md)
+- [Game place](docs/game/README.md), [Lobby place](docs/lobby/README.md), and [AFK place](docs/afk/README.md)
 - [Shared systems](docs/common/README.md)
 - [Conventions](docs/architecture/conventions.md) for code, comments, logs, and docs

@@ -23,7 +23,8 @@ Periastron Tower Defense is a Roblox tower defense game made of two places in on
 
 - [Game place](game/README.md): maps, units, enemies, placement, the match UI, round cards, weather in a match, rewards, and the tutorial match.
 - [Lobby place](lobby/README.md): HUD, maps panel, deck, crates, and shops.
+- [AFK place](afk/README.md): the AFK place; boots the shared code and loads the profile, no gameplay yet.
 
 ## Shared systems
 
-[Shared systems](common/README.md) run in both places: admin commands, audio, badges, contracts, controls, data, dialog, footsteps, game passes, interface visibility, leaderboards, lighting, logging, proximity panels, rich text, screen warnings, tutorial, UI guidance, and weather.
+[Shared systems](common/README.md) run in every place: admin commands, audio, badges, contracts, controls, data, dialog, footsteps, game passes, interface visibility, leaderboards, lighting, logging, proximity panels, rich text, screen warnings, tutorial, UI guidance, and weather.

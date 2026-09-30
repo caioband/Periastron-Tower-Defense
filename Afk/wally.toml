@@ -1,0 +1,16 @@
+[package]
+name = "periastron/afk"
+version = "0.1.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+
+# The same dependencies and versions as the Lobby and the Game: the shared code in
+# common/ requires them, so every place that mounts it needs them.
+#
+# Me / Warp / Maid / Spring / Observers / ReplicaClient are NOT wally: they live in
+# vendor/shared and are mounted at ReplicatedStorage.Shared.Vendor.
+[dependencies]
+Promise = "evaera/promise@4.0.0"
+Signal = "sleitnick/signal@2.0.1"
+topbarplus = "1foreverhd/topbarplus@3.4.0"
+Cmdr = "evaera/cmdr@1.11.0"

@@ -3,7 +3,7 @@
 What a match pays: round cash for every finished wave, the player list columns, and the coins, shards, and XP that go to the profile at the end of the match or when a player leaves early.
 
 **Runs in:** Game
-**Code:** [`WaveService`](../../Game/src/Services/WaveService.luau), [`LeaderstatsService`](../../Game/src/Services/LeaderstatsService.luau), [`DataService`](../../Game/src/Services/DataService.luau), [`Config.Wave`](../../common/server/Config/Wave.luau), [`Config.Difficulty`](../../common/server/Config/Difficulty.luau), [`Config.Data`](../../common/server/Config/Data.luau)
+**Code:** [`WaveService`](../../Game/src/Services/WaveService.luau), [`LeaderstatsService`](../../Game/src/Services/LeaderstatsService.luau), [`DataService`](../../common/server/Services/DataService.luau), [`Config.Wave`](../../common/server/Config/Wave.luau), [`Config.Difficulty`](../../common/server/Config/Difficulty.luau), [`Config.Data`](../../common/server/Config/Data.luau)
 
 ## Wave cash
 

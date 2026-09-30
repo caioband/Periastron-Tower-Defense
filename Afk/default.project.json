@@ -1,0 +1,88 @@
+{
+  "name": "Periastron-Tower-Defense-Afk",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "$ignoreUnknownInstances": true,
+
+      "Packages": {
+        "$path": "Packages"
+      },
+
+      "ReplicaShared": {
+        "$path": "../vendor/ReplicaShared"
+      },
+
+      "Shared": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+
+        "Vendor": { "$path": "../vendor/shared" },
+        "Config": { "$path": "../common/shared/Config" },
+        "Util": { "$path": "../common/shared/Util" },
+        "Classes": { "$path": "../common/shared/Classes" }
+      }
+    },
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "$ignoreUnknownInstances": true,
+
+      "Server": { "$path": "../common/server/Server" },
+      "Config": { "$path": "../common/server/Config" },
+      "Vendor": { "$path": "../vendor/server" },
+
+      "CmdrDefinitions": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": false,
+
+        "Types": {
+          "$className": "Folder",
+          "$ignoreUnknownInstances": false,
+
+          "Common": { "$path": "../common/server/CmdrDefinitions/Types" }
+        },
+
+        "Commands": {
+          "$className": "Folder",
+          "$ignoreUnknownInstances": false,
+
+          "Common": { "$path": "../common/server/CmdrDefinitions/Commands" }
+        }
+      },
+
+      "Services": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": false,
+        "$attributes": { "Place": "Afk" },
+
+        "Common": { "$path": "../common/server/Services" }
+      }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "$ignoreUnknownInstances": true,
+
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "$ignoreUnknownInstances": true,
+
+        "Client": {
+          "$path": "src/ClientBoot",
+
+          "Satchel": { "$path": "../common/client/Satchel" },
+
+          "Controllers": {
+            "$className": "Folder",
+            "$ignoreUnknownInstances": false,
+
+            "Common": { "$path": "../common/client/Controllers" }
+          }
+        }
+      }
+    }
+  }
+}

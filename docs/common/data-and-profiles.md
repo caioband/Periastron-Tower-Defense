@@ -1,9 +1,9 @@
 # Data and profiles
 
-Each place has its own `DataService`, and both follow the same rules: one ProfileStore session per player, replicated to that player through Replica, and a single hook for anything that must happen before the session closes.
+Every place runs the same `DataService`, from `common/server/Services`: one ProfileStore session per player, replicated to that player through Replica, and a single hook for anything that must happen before the session closes.
 
-**Runs in:** Game · Lobby
-**Code:** [`DataService` (Lobby)](../../Lobby/src/Services/DataService.luau), [`DataService` (Game)](../../Game/src/Services/DataService.luau), [`ProfileEditService`](../../common/server/Services/ProfileEditService.luau), [`DataController`](../../common/client/Controllers/DataController.luau), [`Config.Data`](../../common/server/Config/Data.luau)
+**Runs in:** AFK · Game · Lobby
+**Code:** [`DataService`](../../common/server/Services/DataService.luau), [`ProfileEditService`](../../common/server/Services/ProfileEditService.luau), [`DataController`](../../common/client/Controllers/DataController.luau), [`Config.Data`](../../common/server/Config/Data.luau)
 
 ## How it works
 
@@ -14,7 +14,7 @@ The profile is reconciled against `Config.Data.Template`: missing keys are creat
 A Replica (`PlayerData`) carries the data to the player's client, where `DataController` exposes it (`ReplicaLoaded`).
 
 - A player who leaves while the profile is loading has the session released at once, instead of it staying locked until the server closes.
-- Both `DataService`s register a `MessageHandler` on every session, which is how edits from other servers arrive (see below).
+- `DataService` registers a `MessageHandler` on every session, which is how edits from other servers arrive (see below).
 - If the session ends while the player is still on the server (another server took the profile), the player is **kicked** with "Your data was opened somewhere else. Please rejoin."
   Otherwise they would keep playing without anything being saved.
   This does not fire during shutdown, where `BindToClose` closes the sessions.
@@ -30,7 +30,23 @@ end)
 ```
 
 `Update` warns and does nothing if the profile is not loaded, and keeps the existing data if the callback returns `nil`.
-In the Lobby, `Get` also waits for the player's `Loaded` tag, set when the client fires `Loaded`; in the Game it answers right away.
+Every write through `Update` also fires `Signals.DataUpdated(player, key, value)`; server code that reacts to a change listens there instead of watching the profile.
+
+### What changes per place
+
+The place comes from the `Place` attribute that each place's `default.project.json` sets on `ServerScriptService.Services` (`Lobby`, `Game`, or `Afk`), not from `PlaceId`, so QA copies behave like the place itself.
+`Config.Data.Places` holds two settings per place:
+
+| Place | `ReadyTag` | `WaitForClient` |
+| --- | --- | --- |
+| Lobby | `Loaded` | `true` |
+| Game | `ClientReady` | `false` |
+| AFK | `Loaded` | `true` |
+
+- `ReadyTag` is the tag `DataService` puts on the player when their client fires `Loaded`. The Game's `WaveService`, `DifficultyService`, and others wait on `ClientReady`.
+- With `WaitForClient`, `Get` only hands out the profile after the player has `ReadyTag`, for up to `MAX_DATA_TIME_OUT` seconds. Without it, `Get` answers as soon as the profile is open.
+
+A place with no entry in `Config.Data.Places` logs a warning and answers `Get` right away, since waiting on a tag nobody sets would never hand out the profile.
 
 ### Before the session closes: `OnBeforeRelease`
 

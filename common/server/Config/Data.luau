@@ -16,9 +16,9 @@ return {
 		in the DataStore under the old key, and nobody reads them anymore; every
 		player starts with the `Template` below.
 
-		Both places read this same line (the Lobby's `DataService` and Game's), so
-		they can never point at different stores: that would be the same player with
-		two profiles, one in each place.
+		Every place reads this same line (`DataService` is shared), so they can never
+		point at different stores: that would be the same player with one profile in
+		each place.
 	]]
 	PROFILE_KEY = "PROD_KEY_2",
 	Template = {
@@ -263,6 +263,26 @@ return {
 	CASH_PER_KILL_MIN = 6,
 	CASH_PER_KILL_MAX = 12,
 	MAX_DATA_TIME_OUT = 20,
+
+	--[[
+		What `DataService` does differently in each place. The place is the `Place`
+		attribute that each place's Rojo project sets on `ServerScriptService.Services`.
+
+		  - `ReadyTag`: the tag `DataService` puts on the player when their client fires
+		    `Loaded`. The Game's services wait on `ClientReady`; the Lobby's `Get` waits
+		    on `Loaded`.
+		  - `WaitForClient`: `DataService:Get` only hands out the profile after the
+		    player has `ReadyTag` (up to `MAX_DATA_TIME_OUT` seconds). With `false`, it
+		    answers as soon as the profile is open.
+
+		Who fires `Loaded`: each place's `ClientBoot` in the Lobby and the AFK place,
+		`WaveController` in the Game.
+	]]
+	Places = {
+		Lobby = { ReadyTag = "Loaded", WaitForClient = true },
+		Game = { ReadyTag = "ClientReady", WaitForClient = false },
+		Afk = { ReadyTag = "Loaded", WaitForClient = true },
+	},
 
 	--[[
 		How long inside a round before it counts toward `Stats.MatchesPlayed`: the

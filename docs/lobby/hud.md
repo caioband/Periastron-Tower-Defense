@@ -94,7 +94,7 @@ The service listens to it (filtering `Stats`) and to `PlayerDataLoaded`, so the 
 The folder is parented to the `Player` **after** the three values are inside, so the list never flashes an empty row, and without an open profile the folder is not created at all.
 
 Only the Lobby has this.
-To add it to the Game, move the file to `common/server/Services` and add `DataUpdated` to the Game's `DataService`.
+To add it to the Game, move the file to `common/server/Services`; `DataService` is shared, so `DataUpdated` already fires there.
 The Game has its own session columns (see [Rewards](../game/rewards.md#leaderstats-damage-and-cash)).
 
 ## Welcome badge

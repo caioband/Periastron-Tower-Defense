@@ -11,7 +11,7 @@ For the repository layout and what is shared between the places, see [Repository
 | --- | --- | --- |
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | Entry LocalScript |
 | `src/Controllers/` | `Client.Controllers.Game` | BaseHealth, Card, CardModifier, Difficulty, Loading, Mob, Projectile, Ready, Result, RoundCardShop, SkipPrompt, Speed, Targeting, Tripmine, TutorialStep, UILibrary, UnitPlacement, VFX, Wave, WeatherFeedback, WeatherIndicator, WeatherWarning |
-| `src/Services/` | `ServerScriptService.Services.Game` | CardModifier, CardShop, Collision, ContractTracker, Data, Difficulty, Leaderstats, Map, MatchStats, Mob, Skip, Snow, Speed, Thunder, TutorialMatch, Unit, Wave, WeatherRound |
+| `src/Services/` | `ServerScriptService.Services.Game` | CardModifier, CardShop, Collision, ContractTracker, Difficulty, Leaderstats, Map, MatchStats, Mob, Skip, Snow, Speed, Thunder, TutorialMatch, Unit, Wave, WeatherRound |
 | `src/CmdrDefinitions/Commands/` | `ServerScriptService.CmdrDefinitions.Commands.Game` | `roundcash`, `roundshop`, `strike` |
 
 Commands that depend on a Game-only service live here and not in `common/`.
