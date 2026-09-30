@@ -85,6 +85,21 @@ function LevelConfig:GetXPForLevel(level : number) : number
 end
 
 --[=[
+	The accumulated XP at the start of `level` (zero progress in it): the inverse of
+	`Resolve`. Clamped to 1..MAX_LEVEL.
+]=]
+function LevelConfig:GetTotalXPForLevel(level : number) : number
+	level = math.clamp(math.floor(tonumber(level) or 1), 1, self.MAX_LEVEL)
+
+	local total = 0
+	for current = 1, level - 1 do
+		total += self:GetXPForLevel(current)
+	end
+
+	return total
+end
+
+--[=[
 	Splits the profile's accumulated XP into level + progress within it.
 ]=]
 function LevelConfig:Resolve(totalXP : number?) : LevelState

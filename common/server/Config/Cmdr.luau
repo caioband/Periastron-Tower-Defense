@@ -44,7 +44,7 @@ return {
 	--[[
 		Commands **every player** may run in the QA environment, keyed by the
 		command's `Name`. In QA everyone is a tester, so they can set up the state they
-		want to test (coins, shards, units, round cash) without an admin.
+		want to test (coins, shards, units, level, round cash) without an admin.
 
 		QA is its own universe with its own DataStores, so these commands, even aimed
 		at another player or an offline profile, never touch a production profile.
@@ -58,6 +58,7 @@ return {
 		cash = true,
 		shards = true,
 		units = true,
+		level = true,
 		roundcash = true,
 	} :: { [string]: boolean },
 

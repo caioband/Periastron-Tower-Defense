@@ -4,20 +4,28 @@ local HttpService = game:GetService("HttpService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
+local Configs = Shared:WaitForChild("Config")
 
+local SharedConfig = require(Configs:WaitForChild("SharedConfig"))
 local Me = require(Vendor.Me)
 local Log = require(Shared.Util.Log)
 
 local Framework = Me.new()
 local log = Log.new("ProfileEditService")
 
+local LevelConfig = SharedConfig.LevelConfig
+
 --[[
-	Profile editing for admin commands (`cash`, `shards`, `units`), with the player
-	anywhere: on this server, on another one, or offline.
+	Profile editing for admin commands (`cash`, `shards`, `units`, `level`), with the
+	player anywhere: on this server, on another one, or offline.
 
 	An edit is an **operation**: `{ Key, Field, Action, Amount }`, changing
-	`Data[Key][Field]`, a number. Today there are two keys: `Stats` (Cash and Shards)
-	and `Units` (how many of each unit).
+	`Data[Key][Field]`, a number. Today there are two keys: `Stats` (Cash, Shards, and
+	Level) and `Units` (how many of each unit).
+
+	`Stats.Level` is the one field that is not stored: the level is always derived
+	from `Stats.XP` (see `LevelConfig`), so the operation is done in levels and
+	written back as XP (`editLevel`).
 
 	**Which way it goes.**
 	  1. The player is on this server → `DataService:Update`, immediately, and the
@@ -48,7 +56,8 @@ local OFFLINE_SESSION_TIMEOUT = 15
 -- What each key accepts, and whether zero leaves the table.
 local KEYS = {
 	-- A currency at zero stays on the profile as `0`: that is the template's format.
-	Stats = { Fields = { Cash = true, Shards = true }, DropZero = false },
+	-- `Level` is virtual: it is written as `XP` (see `editLevel`).
+	Stats = { Fields = { Cash = true, Shards = true, Level = true }, DropZero = false },
 
 	-- A unit at zero leaves the table: that is what a profile that never had the unit
 	-- looks like, and `DeckConfig` reads both cases with the same `or 0`.
@@ -78,11 +87,34 @@ local function applyAction(action : string, current : number, amount : number) :
 end
 
 --[=[
+	`Stats.Level`: the operation in levels, clamped to 1..MAX_LEVEL, and the result
+	written to `Stats.XP` as the start of that level (zero progress in it).
+
+	When the level does not change (a `remove` at level 1, an `add` at the max) the
+	XP is left alone, so the progress in the level survives; a `set` always writes,
+	which is how to zero it.
+]=]
+local function editLevel(tbl : { [string] : number }, op) : ({ [string] : number }, number, number)
+	local previous = LevelConfig:Resolve(tbl.XP).Level
+	local updated = math.clamp(applyAction(op.Action, previous, math.floor(op.Amount)), 1, LevelConfig.MAX_LEVEL)
+
+	if updated ~= previous or op.Action == "set" then
+		tbl.XP = LevelConfig:GetTotalXPForLevel(updated)
+	end
+
+	return tbl, previous, updated
+end
+
+--[=[
 	Applies the operation to a `{ [Field] = number }` table and returns
 	`(table, previous, new)`. It is the only math: all three paths go through here.
 ]=]
 local function editTable(tbl : { [string] : number }?, op) : ({ [string] : number }, number, number)
 	tbl = if typeof(tbl) == "table" then tbl else {}
+
+	if op.Key == "Stats" and op.Field == "Level" then
+		return editLevel(tbl, op)
+	end
 
 	local previous = tonumber(tbl[op.Field]) or 0
 	local updated = applyAction(op.Action, previous, op.Amount)

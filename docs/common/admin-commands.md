@@ -19,6 +19,7 @@ Commands that depend on a service from one place only live in that place's folde
 | `cash` | `money`, `coins` | `<action> <players> <amount>` | both | Saved Cash (`Stats.Cash`, the Lobby currency); the player may be offline |
 | `shards` | `shard` | `<action> <players> <amount>` | both | Saved Shards (`Stats.Shards`, the premium currency) |
 | `units` | `unit`, `giveunit`, `inventory` | `<action> <players> <unit> [amount]` | both | The saved unit inventory (`Units` in the profile) |
+| `level` | `levels`, `setlevel`, `lvl` | `<action> <players> <amount>` | both | The profile's level, written as `Stats.XP` (see [`level`](#level)) |
 | `viewdata` | `inspectdata`, `olddata` | `<player> [store] [date]` | both | Reads a saved profile (read-only; the player may be offline) |
 | `dialog` | `testdialog` | `[players] [auto]` | both | Plays the test line in the dialog box; players omitted = everyone; `auto` advances by itself |
 | `richtext` | `textlab` | `[players]` | both | Opens the rich text workbench (run again to close); players omitted = you |
@@ -60,6 +61,7 @@ In the [QA environment](environments.md), **every player is a tester** and may r
 | `cash` | both |
 | `shards` | both |
 | `units` | both |
+| `level` | both |
 | `roundcash` | Game |
 
 Testers can aim them at any player, online or offline, like admins.
@@ -73,7 +75,7 @@ A tester's console shows only these commands (and only the ones registered in th
 **It is empty on purpose: outside QA, only admins run commands.**
 With no accessible command, `GetAccessibleCommands` returns an empty list and the console does not show for them.
 
-## Currency and unit commands
+## Currency, unit, and level commands
 
 There are **three** currencies, and two of them are the same account in different places:
 
@@ -87,7 +89,7 @@ The action is `set`, `add`, or `remove`, with tab completion (`s`, `a`, and `r` 
 None of them goes below zero: a `remove` that would pass zero stops at zero.
 The reply shows each player's before and after, so a `remove` that hit the floor and a `set` to the current value do not look like "nothing happened".
 
-`cash`, `shards`, and `units` write through `ProfileEditService`, which reads and writes in the same operation (`CurrencyService:Apply` for currencies), so `add` adds to the value that is there now.
+`cash`, `shards`, `units`, and `level` write through `ProfileEditService`, which reads and writes in the same operation (`CurrencyService:Apply` for currencies), so `add` adds to the value that is there now.
 `roundcash` goes through `MobService`'s `addCash`/`spendCash` instead of writing the table, because they fire `UpdateCash`; otherwise the on-screen counter would stay stale until the next kill.
 
 ### `units`
@@ -108,9 +110,21 @@ In the Lobby the effect is immediate: the deck reads the profile on every replic
 
 The `unitName` argument type lives in `common/server/CmdrDefinitions/Types` because it only reads `UnitStats`; `strike` uses it too.
 
+### `level`
+
+The level is never saved: it is always derived from the accumulated `Stats.XP` through `LevelConfig:Resolve`.
+So `level` does the math in levels and writes XP: `ProfileEditService` (`editLevel`) resolves the current level, applies the action, clamps the result to 1..`LevelConfig.MAX_LEVEL`, and sets `Stats.XP` to the start of that level (`LevelConfig:GetTotalXPForLevel`, zero progress in it).
+
+- `level set me 10` puts the player at the start of level 10, even when they are already at 10 (the way to zero the progress).
+- `level add me 3` from level 5 at 80% lands at the start of level 8: the progress in the old level is not carried over.
+- When the level does not change (`remove` at level 1, `add` at the max) the XP stays as it was.
+
+Everything that depends on level (deck slots, difficulty unlocks, the HUD bar, the HIGHEST LEVEL leaderboard) reads `Stats.XP`, so it follows by itself.
+The reply shows levels, not XP: `caioband Stats.Level 5 -> 8`.
+
 ### Players on another server or offline
 
-`cash`, `shards`, and `units` accept a **username or `#UserId`** (the Cmdr `playerIds` type), whether the player is on this server, another one, or offline.
+`cash`, `shards`, `units`, and `level` accept a **username or `#UserId`** (the Cmdr `playerIds` type), whether the player is on this server, another one, or offline.
 `me`, `all`, and `others` still work for players on this server.
 `ProfileEditService` picks the path:
 

@@ -27,7 +27,7 @@ These are the callers:
 | `PortalService` (Lobby) | Sends a portal group to `GetPlaceId("Game")` |
 | `TutorialService` | Sends the player to the tutorial match at `GetPlaceId("Game")`, and offers the tutorial only when `IsPlace("Lobby")` |
 | `WaveService` (Game) | Sends the player back to `GetPlaceId("Lobby")` |
-| `CmdrService` | Lets every player run `QA_COMMANDS` (currencies and units) when `IsQA()`; see [Admin commands](admin-commands.md#testers-in-qa) |
+| `CmdrService` | Lets every player run `QA_COMMANDS` (currencies, units, and level) when `IsQA()`; see [Admin commands](admin-commands.md#testers-in-qa) |
 
 ### Unknown universes
 
