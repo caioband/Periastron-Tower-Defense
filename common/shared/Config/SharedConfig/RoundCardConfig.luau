@@ -975,7 +975,7 @@ local UnitStats = require(script.Parent:WaitForChild("UnitStats"))
 
 RoundCardConfig.TowerLoan = {
 	PriceRatio = 0.6, -- share of the tower's normal placement cost
-	Waves = 1,        -- how many waves the borrowed tower stays
+	Waves = 5,        -- how many waves the borrowed tower stays
 	Weight = 0.6,
 }
 

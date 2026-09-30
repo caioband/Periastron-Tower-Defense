@@ -435,12 +435,21 @@ function CardShopService:_weatherCards() : { any }
 	return cards
 end
 
+-- Endless draw odds. Tune these.
+local ENDLESS_MIN_NORMAL = 2        -- normal (buff) cards guaranteed per offer, when the player has them
+local ENDLESS_WEATHER_CHANCE = 0.15 -- chance an offer includes a weather card (0.15 = 15%)
+local ENDLESS_TOWER_CHANCE = 0.6    -- chance an offer includes a tower loan
+
 --[=[
-	The Endless offer: one tower and one weather when available, the rest from the normal
-	pool plus whatever tower/weather cards are left. Shuffled so slot 1 isn't always a tower.
+	The Endless offer: mostly normal cards, with a tower loan and a weather card as
+	occasional extras. Normal cards take at least `ENDLESS_MIN_NORMAL` slots, so the
+	extras only compete for what is left. Weather is rolled first, then the tower.
+	If the player has too few normal cards, the empty slots fall back to towers, then
+	weather, so the offer is never short. Shuffled so slot 1 isn't always a normal card.
 ]=]
 function CardShopService:_drawEndless(candidates : { any }, towers : { any }, weathers : { any }) : { any }
 	local picks = {}
+	local drawCount = RoundCardConfig.DrawCount
 
 	local function take(list : { any })
 		local card = RoundCardConfig.Draw(1, list)[1]
@@ -450,18 +459,28 @@ function CardShopService:_drawEndless(candidates : { any }, towers : { any }, we
 		table.remove(list, table.find(list, card))
 	end
 
-	take(towers)
-	take(weathers)
+	-- Slots the extras may use: whatever the guaranteed normal cards leave free.
+	local maxExtras = math.max(0, drawCount - math.min(ENDLESS_MIN_NORMAL, #candidates))
 
-	local rest = {}
-	for _, list in { candidates, towers, weathers } do
-		for _, card in list do
-			table.insert(rest, card)
-		end
+	if #picks < maxExtras and math.random() < ENDLESS_WEATHER_CHANCE then
+		take(weathers)
 	end
 
-	for _, card in RoundCardConfig.Draw(RoundCardConfig.DrawCount - #picks, rest) do
-		table.insert(picks, card)
+	if #picks < maxExtras and math.random() < ENDLESS_TOWER_CHANCE then
+		take(towers)
+	end
+
+	-- Fill the rest: normal cards first, then leftover towers, then weather.
+	while #picks < drawCount do
+		if #candidates > 0 then
+			take(candidates)
+		elseif #towers > 0 then
+			take(towers)
+		elseif #weathers > 0 then
+			take(weathers)
+		else
+			break
+		end
 	end
 
 	for index = #picks, 2, -1 do

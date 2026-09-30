@@ -105,6 +105,7 @@ local function getAverageSpeed(mobName)
 end
 
 local healthBarTweens = {}
+local alwaysShowHealthBars = false
 
 local function getHealthBillboard(mob)
 	local attachment = mob:FindFirstChild("HealthAttachment")
@@ -435,7 +436,7 @@ function MobController:createEntity(entityData)
 
 	local healthBillboard = HealthBarAttach:FindFirstChildOfClass("BillboardGui")
 	if healthBillboard then
-		healthBillboard.Enabled = false
+		healthBillboard.Enabled = alwaysShowHealthBars
 	end
 
 	mobClone.Parent = workspace
@@ -752,7 +753,7 @@ function MobController:startHoverLoop()
 		if hovered ~= self.hoveredMob then
 			if self.hoveredMob and self.hoveredMob.Parent then
 				local bb = getHealthBillboard(self.hoveredMob)
-				if bb then bb.Enabled = false end
+					if bb then bb.Enabled = alwaysShowHealthBars end
 			end
 			self.hoveredMob = hovered
 			if hovered then
@@ -953,8 +954,25 @@ function MobController:clearAllMobs()
 	table.clear(self.MobLastPosition)
 end
 
-function MobController:start()
+--- Applies the "Always Show Health Bars" setting to every enemy already on the map.
+function MobController:setAlwaysShowHealthBars(enabled : boolean)
+	alwaysShowHealthBars = enabled
 
+	for _, mob in self.SpawnedMobs do
+		if mob and mob.Parent and mob ~= self.hoveredMob then
+			local bb = getHealthBillboard(mob)
+			if bb then bb.Enabled = enabled end
+		end
+	end
+end
+
+function MobController:start()
+	local settings = Framework:Get("SettingsController", false, false)
+	if settings then
+		settings:Observe("HealthBars", function(enabled : boolean)
+			self:setAlwaysShowHealthBars(enabled)
+		end)
+	end
 end
 
 function MobController:init()

@@ -104,6 +104,8 @@ SettingsConfig.List = {
 	{ Key = "PostEffects", Label = "Post Effects", Default = true },
 	{ Key = "WeatherEffects", Label = "Weather Effects", Default = true },
 	{ Key = "DamageNumbers", Label = "Damage Numbers", Default = true, Requires = "MobController" },
+	{ Key = "HealthBars", Label = "Always Show Health Bars", Default = true, Requires = "MobController" },
+
 }
 
 --[=[
