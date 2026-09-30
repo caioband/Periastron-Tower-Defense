@@ -44,9 +44,18 @@ local TWEEN_DIRECTION = Enum.EasingDirection.Out
 	each opening comes with a new `token` from the server, and a token this client has
 	not dismissed shows up again normally.
 
+	**AutoSkip.** With the "AutoSkip" setting on, `_autoVote` sends `VoteSkip(true)`
+	the first time each opening shows up, and the prompt is not shown. It is the same
+	vote as the button: in a room with several players the server still needs the
+	majority (`SkipConfig.RequiredVotes`).
+
 	See docs/game/skip-wave.md.
 ]=]
-local SkipPromptController = {}
+local SkipPromptController = {
+	Controllers = {
+		SettingsController = {},
+	},
+}
 
 --[[ INTERNAL ]]
 
@@ -200,19 +209,68 @@ function SkipPromptController:_updateCount()
 end
 
 --[=[
+	Casts the player's vote by itself when AutoSkip is on.
+
+	Once per opening (`token`): the server rebroadcasts `SkipState` on every vote,
+	join, and leave, and each of those would otherwise send another `VoteSkip`.
+	A Cancel counts for the opening it was clicked in, the same as the prompt:
+	`DismissedToken` wins, and the next opening votes again.
+]=]
+function SkipPromptController:_autoVote()
+	local state = self.State
+	if not self.AutoSkip or not state or not state.active then return end
+	if state.voted then return end
+	if self.DismissedToken == state.token then return end
+	if self.AutoVotedToken == state.token then return end
+
+	self.AutoVotedToken = state.token
+	Framework:Fire("VoteSkip", true)
+end
+
+--[=[
+	Follows the "AutoSkip" setting. Turning it on in the middle of an open vote votes
+	right away. Turning it off takes back the vote it cast, so the player is not left
+	with a vote they can no longer see or cancel (the prompt is hidden while it is on).
+]=]
+function SkipPromptController:_bindAutoSkip()
+	local settings = self.Controllers.SettingsController
+	if not settings then
+		log:StudioWarn("SettingsController not found -- AutoSkip stays off.")
+		return
+	end
+
+	settings:Observe("AutoSkip", function(enabled : boolean)
+		local wasOn = self.AutoSkip
+		self.AutoSkip = enabled
+
+		local state = self.State
+		if wasOn and not enabled
+			and state and state.active and state.voted
+			and self.AutoVotedToken == state.token then
+			self.AutoVotedToken = nil
+			Framework:Fire("VoteSkip", false)
+		end
+
+		self:_apply()
+	end)
+end
+
+--[=[
 	The latest state from the server, on screen.
 
 	The prompt only appears if the player has not dismissed **this** vote: the
 	`token` changes on every opening, so Cancel applies to the vote it was clicked in
-	and not to the next ones.
+	and not to the next ones. With AutoSkip on it does not appear at all: the vote is
+	already cast, and in a solo match it would only flash in and out.
 ]=]
 function SkipPromptController:_apply()
 	local state = self.State
 	if not state or not self.Prompt then return end
 
 	self:_updateCount()
+	self:_autoVote()
 
-	if state.active and self.DismissedToken ~= state.token then
+	if state.active and self.DismissedToken ~= state.token and not self.AutoSkip then
 		self:_show()
 	else
 		self:_hide()
@@ -284,6 +342,11 @@ function SkipPromptController:construct()
 end
 
 function SkipPromptController:start()
+	for Controller, _ in self.Controllers do
+		self.Controllers[Controller] = Framework:Get(Controller, false, true)
+	end
+
+	self:_bindAutoSkip()
 end
 
 function SkipPromptController:init()
@@ -292,6 +355,14 @@ function SkipPromptController:init()
 	self.DismissedToken = nil
 	self.State = nil
 	self.Fades = {}
+
+	-- The "AutoSkip" setting, mirrored here by `_bindAutoSkip`. A field instead of
+	-- asking `SettingsController` each time: `SkipState` can arrive in `init`,
+	-- before `start` has resolved the controller.
+	self.AutoSkip = false
+
+	-- The vote `token` this client last cast an automatic vote in: one per opening.
+	self.AutoVotedToken = nil
 
 	self:construct()
 end

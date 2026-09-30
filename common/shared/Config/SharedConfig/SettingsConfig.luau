@@ -97,6 +97,7 @@ SettingsConfig.KEEP_ON_SCREEN = { "TopbarStandard", "TopbarCentered" }
 	- `DamageNumbers`: the numbers over enemies, in `MobController`.
 ]=]
 SettingsConfig.List = {
+	{ Key = "AutoSkip", Label = "Auto Skip Waves", Default = false, Requires = "SkipPromptController" },
 	{ Key = "Music", Label = "Music", Default = true },
 	{ Key = "SoundEffects", Label = "Sound Effects", Default = true },
 	{ Key = "VFX", Label = "VFX", Default = true, Requires = "VFXController" },
