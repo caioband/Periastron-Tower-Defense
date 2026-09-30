@@ -10,7 +10,7 @@ SuffocateAbility.StopWhileCasting = true
 SuffocateAbility.EnemyAnim = "Suffocate"
 
 SuffocateAbility.CastVFX = "SuffocateCast"
-SuffocateAbility.CastPart = "Right Arm"
+SuffocateAbility.CastPart = "Right Arm"	
 
 
 SuffocateAbility.CastVFXTime = 1
