@@ -386,8 +386,11 @@ end
 
 -- endless
 
+--- By the preset's `Endless` flag, not its name, like `WaveService`.
 function CardShopService:_isEndless() : boolean
-	return self:_difficultyName() == "Endless"
+	local preset = self:_difficulty()
+
+	return preset ~= nil and preset.Endless == true
 end
 
 --- Loan cards for the towers this player owns (profile `Units`).
@@ -742,13 +745,12 @@ function CardShopService:_checkTarget(player : Player, card, target : any)
 	return checked
 end
 
---- The difficulty in use, by name. It decides the shop interval.
-function CardShopService:_difficultyName() : string?
+--- The difficulty preset in use, or nil.
+function CardShopService:_difficulty()
 	local waveService = self.Services.WaveService
-	local preset = (waveService and waveService.Difficulty)
-		or (self.Services.DifficultyService and self.Services.DifficultyService:GetSelected())
 
-	return preset and preset.Name
+	return (waveService and waveService.Difficulty)
+		or (self.Services.DifficultyService and self.Services.DifficultyService:GetSelected())
 end
 
 --- The cards this player has in hand, as a list of `{ Uid, Id }`.

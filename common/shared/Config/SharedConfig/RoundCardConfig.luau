@@ -1069,7 +1069,10 @@ function RoundCardConfig.GetUse(id : any) : string
 	local card = RoundCardConfig.Get(id)
 	local use = card and card.Use
 
-	--[[ ENDLESS PRICE SCALING ]]
+	return RoundCardConfig.Use[use] or RoundCardConfig.Use.Instant
+end
+
+--[[ ENDLESS PRICE SCALING ]]
 
 -- Each wave adds this fraction of the base price. 0.04 = +4% of base per wave.
 RoundCardConfig.EndlessPriceGrowth = 0.45
@@ -1080,11 +1083,6 @@ function RoundCardConfig.GetPrice(card, wave : number?, endless : boolean?) : nu
 	if not endless then return base end
 
 	return math.floor(base * (1 + RoundCardConfig.EndlessPriceGrowth * (wave or 0)) + 0.5)
-end
-
-
-
-	return RoundCardConfig.Use[use] or RoundCardConfig.Use.Instant
 end
 
 --- This card's ring radius, for aiming and for the zone it leaves.
