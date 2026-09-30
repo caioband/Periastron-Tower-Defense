@@ -1,7 +1,7 @@
 # AFK place
 
 The AFK place: a third place in the universe, next to the Lobby and the Game.
-For now it only boots the shared code and loads the player's profile; it has no place-specific gameplay yet.
+Players stay here idle and earn coins for the time they spend; a button sends them back to the Lobby.
 
 For the repository layout and what is shared between the places, see [Repository overview](../architecture/overview.md).
 
@@ -10,9 +10,24 @@ For the repository layout and what is shared between the places, see [Repository
 | Folder | Mounted at | Contents |
 | --- | --- | --- |
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | Entry LocalScript |
+| `src/Controllers/` | `Client.Controllers.Afk` | AfkArea, CoinCount |
+| `src/Services/` | `ServerScriptService.Services.Afk` | AfkArea |
+| `src/Shared/` | `ReplicatedStorage.Afk` | `AfkRewards`: config the server and the client both read |
 
-There are no place-specific services, controllers, or Cmdr definitions yet, so the project has no `Services.Afk`, `Controllers.Afk`, `Commands.Afk`, or `Types.Afk` node.
+There are no place-specific Cmdr definitions yet, so the project has no `Commands.Afk` or `Types.Afk` node.
 Add the node when the first file goes into that folder: a node that points at a folder git does not track breaks a fresh clone.
+
+### Why `ReplicatedStorage.Afk` and not `Shared`
+
+`ReplicatedStorage.Shared` is a Roblox Package (it has a `PackageLink`) shared with the Lobby and the Game.
+Anything added inside it goes to the other places the next time the package is published.
+Replicated code and config that only this place uses go in `ReplicatedStorage.Afk` instead.
+
+## Pages
+
+| Page | What it covers |
+| --- | --- |
+| [AFK area](afk-area.md) | The time-in-area timer, coin rewards, the HUD, and the button back to the Lobby |
 
 ## Loading
 
@@ -34,6 +49,7 @@ Systems that need content from the place (a board, a part reference, a GUI) log 
 
 - **Playtime.** `PlaytimeService` tells the Lobby apart by the `Services.Lobby` folder, not by the `Place` attribute, so it treats this place like the Game: `AfkConfig.PausePlaytime.Game` applies, and `Stats.TimePlayed` keeps counting while the player is AFK.
 - **Teleports.** `Environment` does not know this place yet: `EnvironmentConfig` has no `Afk` id, so nothing can teleport here until the place is published and its ids are added.
+  Going back works: `AfkAreaService` teleports to `Environment.GetPlaceId("Lobby")`.
 
 ## Wally
 

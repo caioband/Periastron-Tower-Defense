@@ -25,7 +25,7 @@ StarterPlayerScripts.Client (LocalScript)   <- <place>/src/ClientBoot
 ├── Satchel                                 <- common/client/Satchel
 └── Controllers
     ├── Common                              <- common/client/Controllers
-    └── Game | Lobby                        <- <place>/src/Controllers
+    └── Game | Lobby | Afk                  <- <place>/src/Controllers
 
 ServerScriptService
 ├── Server (Script)                         <- common/server/Server
@@ -40,11 +40,12 @@ ServerScriptService
 │       └── Game | Lobby                    <- <place>/src/CmdrDefinitions/Commands
 └── Services
     ├── Common                              <- common/server/Services
-    └── Game | Lobby                        <- <place>/src/Services
+    └── Game | Lobby | Afk                  <- <place>/src/Services
 
 ReplicatedStorage
 ├── Packages                                <- <place>/Packages (Wally)
 ├── ReplicaShared                           <- vendor/ReplicaShared
+├── Afk                                     <- Afk/src/Shared            [AFK place only]
 └── Shared
     ├── Vendor                              <- vendor/shared
     ├── Config                              <- common/shared/Config
@@ -54,7 +55,8 @@ ReplicatedStorage
 ```
 
 The Game has no place-specific Cmdr types, so its project has no `Types/Game` node.
-The AFK place has no place-specific code yet besides `ClientBoot`, so it has no `Controllers/Afk`, `Services/Afk`, `Commands/Afk`, or `Types/Afk` node.
+The AFK place has no place-specific Cmdr definitions, so it has no `Commands/Afk` or `Types/Afk` node.
+Its replicated config lives in `ReplicatedStorage.Afk` (`Afk/src/Shared`), outside the `Shared` package (see [AFK place](../afk/README.md#why-replicatedstorageafk-and-not-shared)).
 
 The `Services` node of each project sets a `Place` attribute (`Lobby`, `Game`, or `Afk`).
 Shared server code that behaves differently per place reads it (see [Data and profiles](../common/data-and-profiles.md#what-changes-per-place)).

@@ -15,6 +15,10 @@
         "$path": "../vendor/ReplicaShared"
       },
 
+      "Afk": {
+        "$path": "src/Shared"
+      },
+
       "Shared": {
         "$className": "Folder",
         "$ignoreUnknownInstances": true,
@@ -58,7 +62,8 @@
         "$ignoreUnknownInstances": false,
         "$attributes": { "Place": "Afk" },
 
-        "Common": { "$path": "../common/server/Services" }
+        "Common": { "$path": "../common/server/Services" },
+        "Afk": { "$path": "src/Services" }
       }
     },
 
@@ -79,7 +84,8 @@
             "$className": "Folder",
             "$ignoreUnknownInstances": false,
 
-            "Common": { "$path": "../common/client/Controllers" }
+            "Common": { "$path": "../common/client/Controllers" },
+            "Afk": { "$path": "src/Controllers" }
           }
         }
       }

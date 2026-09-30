@@ -30,6 +30,7 @@ The docs follow the code:
 | `common/` | `docs/common/` |
 | `Game/src/` | `docs/game/` |
 | `Lobby/src/` | `docs/lobby/` |
+| `Afk/src/` | `docs/afk/` |
 | Repository layout, Rojo, the `Me` framework, config, vendored libraries | `docs/architecture/` |
 
 When a system is split between `common/` and a place, the page in `docs/common/` describes the shared core and the place page describes only what is specific to that place.
