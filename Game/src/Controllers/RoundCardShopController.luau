@@ -405,7 +405,7 @@ end
 	Writes a card's texts and art on the clone. `showPrice` is false for a card already
 	paid for and on its way to the hotbar.
 ]=]
-function RoundCardShopController:_writeCard(card : GuiObject, definition, showPrice : boolean)
+function RoundCardShopController:_writeCard(card : GuiObject, definition, showPrice : boolean, priceOverride : number?)
 	local title = card:FindFirstChild(GUI.Title)
 	if title and title:IsA("TextLabel") then
 		title.Text = definition.Title or definition.Id
@@ -422,7 +422,7 @@ function RoundCardShopController:_writeCard(card : GuiObject, definition, showPr
 
 		local label = price:FindFirstChild(GUI.PriceLabel)
 		if label and label:IsA("TextLabel") then
-			label.Text = "$" .. tostring(definition.Price or 0)
+			label.Text = "$" .. tostring(priceOverride or definition.Price or 0)
 		end
 	end
 
@@ -492,8 +492,8 @@ function RoundCardShopController:_renderCards()
 			continue
 		end
 
-		self:_writeCard(card, definition, true)
-
+		self:_writeCard(card, definition, true, offer.prices and offer.prices[cardId])
+		
 		--[[
 			Read from the untouched clone: this is where the animation's second half takes
 			everything back. It must come **before** any transparency write, or the target
@@ -858,7 +858,8 @@ function RoundCardShopController:_buy(cardId : string)
 	local definition = RoundCardConfig.Get(cardId)
 	if not definition then return end
 
-	if self.Cash < (definition.Price or 0) then return end
+	local price = (offer.prices and offer.prices[cardId]) or definition.Price or 0
+	if self.Cash < price then return end
 
 	Framework:Fire("BuyRoundCard", offer.token, cardId)
 
@@ -1864,7 +1865,7 @@ function RoundCardShopController:_applyState(state)
 		end
 	end
 
-	local offer = if state.token and state.cards then { token = state.token, cards = state.cards } else nil
+	local offer = if state.token and state.cards then { token = state.token, cards = state.cards, prices = state.prices or {} } else nil
 	local sameOffer = self.Offer and offer and self.Offer.token == offer.token
 
 	self.Offer = offer

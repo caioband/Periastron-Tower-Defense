@@ -778,6 +778,7 @@ function CardShopService:_sendState(player : Player)
 		token = offer and offer.Token or nil,
 		wave = offer and offer.Wave or nil,
 		cards = offer and offer.Cards or nil,
+		prices = offer and offer.Prices or nil,
 		owned = self:_ownedList(player),
 	})
 end
@@ -850,10 +851,20 @@ function CardShopService:Open(players : { Player }?, waveNumber : number?)
 			cards[1] = forcedCard
 		end
 
+		-- Prices are fixed when the offer opens, so the client and the charge always agree.
+		local prices = {}
+		for _, cardId in cards do
+			local card = RoundCardConfig.Get(cardId)
+			if card then
+				prices[cardId] = RoundCardConfig.GetPrice(card, wave, endless)
+			end
+		end
+
 		self.Offers[player.UserId] = {
 			Token = self.Token,
 			Wave = wave,
 			Cards = cards,
+			Prices = prices,
 		}
 
 		self:_sendState(player)
@@ -904,7 +915,7 @@ function CardShopService:Buy(player : Player, token : any, cardId : any)
 		return nil, "no MobService"
 	end
 
-	local price = math.max(0, card.Price or 0)
+	local price = math.max(0, (offer.Prices and offer.Prices[cardId]) or card.Price or 0)
 	if mobService:getCash(player) < price then
 		return nil, "not enough cash"
 	end

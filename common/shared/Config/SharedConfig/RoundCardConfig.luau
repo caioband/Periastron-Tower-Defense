@@ -1069,6 +1069,21 @@ function RoundCardConfig.GetUse(id : any) : string
 	local card = RoundCardConfig.Get(id)
 	local use = card and card.Use
 
+	--[[ ENDLESS PRICE SCALING ]]
+
+-- Each wave adds this fraction of the base price. 0.04 = +4% of base per wave.
+RoundCardConfig.EndlessPriceGrowth = 0.45
+
+--- The price of a card on a given wave. Only Endless scales; everything else is the base price.
+function RoundCardConfig.GetPrice(card, wave : number?, endless : boolean?) : number
+	local base = math.max(0, card.Price or 0)
+	if not endless then return base end
+
+	return math.floor(base * (1 + RoundCardConfig.EndlessPriceGrowth * (wave or 0)) + 0.5)
+end
+
+
+
 	return RoundCardConfig.Use[use] or RoundCardConfig.Use.Instant
 end
 
