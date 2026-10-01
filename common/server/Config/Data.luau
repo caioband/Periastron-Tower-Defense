@@ -84,6 +84,7 @@ return {
 			TimeInMatches = 0,
 			TimePlayed = 0,
 			TimeInAfkArea = 0,
+			EndlessBestWave = 0,
 		},
 
 		Inventory = {

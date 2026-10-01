@@ -54,7 +54,9 @@ return {
 		{ Model = "MostMatchesPlayedLB", Store = "MatchesPlayed", Path = { "Stats", "MatchesPlayed" }, Format = "Number" },
 		{ Model = "MostTimeInMatchesLB", Store = "TimeInMatches", Path = { "Stats", "TimeInMatches" }, Format = "Time" },
 		{ Model = "MostTimePlayedLB", Store = "TimePlayed", Path = { "Stats", "TimePlayed" }, Format = "Time" },
+		{ Model = "HighestEndlessLB", Store = "EndlessWave", Path = { "Stats", "EndlessBestWave" }, Format = "Number" },
 		-- MOST AFK TIME, on the AFK place's map.
 		{ Model = "MostAfkTimeLB", Store = "TimeInAfkArea", Path = { "Stats", "TimeInAfkArea" }, Format = "Time", Place = "Afk" },
 	},
 }
+ 

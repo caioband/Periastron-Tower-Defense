@@ -15,4 +15,7 @@
 return {
 	-- First time in the game. Awarded by the Lobby's `WelcomeBadgeService` on join.
 	Welcome = 4332443148752915,
+	Endless50 = 2249316883951209,
+	Endless100 = 3646245258483763,
+	Endless500 = 3294432140963604,
 }

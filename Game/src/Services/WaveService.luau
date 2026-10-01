@@ -60,6 +60,13 @@ local ROUND_STATE = {
 -- exposes `ResetRound()`; anything added to this list gets reset along with it.
 local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService", "WeatherRoundService", "SpeedService", "CardShopService" }
 
+
+local ENDLESS_BADGES = {
+	[50] = "Endless50",
+	[100] = "Endless100",
+	[500] = "Endless500",
+}
+
 local WaveService = {
 	Services = {
 		MobService = {},
@@ -70,6 +77,7 @@ local WaveService = {
 		SpeedService = {},
 		CardShopService = {},
 		TutorialMatchService = {}
+		BadgeService = {},
 	},
 	Signals = {
 		Ended = Signal.new(),
@@ -246,6 +254,19 @@ function WaveService:payWaveCash()
 	end
 end
 
+function WaveService:awardEndlessMilestones(clearedWave : number)
+	local badgeName = ENDLESS_BADGES[clearedWave]
+	if not badgeName then return end
+
+	local badgeService = self.Services.BadgeService
+	if not badgeService then return end
+
+	for _, player in Players:GetPlayers() do
+		task.spawn(badgeService.Award, badgeService, player, badgeName)
+	end
+end
+
+
 function WaveService:getMaxWaves(preset)
 	preset = preset or self.Difficulty
 	return (preset and preset.MaxWaves) or MAX_WAVES
@@ -371,6 +392,23 @@ function WaveService:grantReward(player : Player, rewards) : boolean
 
 	return true
 end
+
+--[=[
+	Raises the player's Endless best (`Stats.EndlessBestWave`, the Highest Endless
+	leaderboard). It only goes up: a worse run never lowers it.
+]=]
+function WaveService:recordEndlessBest(player : Player, waveNumber : number)
+	local dataService = self.Services.DataService
+	if not dataService then return end
+
+	dataService:Update(player, "Stats", function(stats)
+		if waveNumber > (tonumber(stats.EndlessBestWave) or 0) then
+			stats.EndlessBestWave = math.floor(waveNumber)
+		end
+		return stats
+	end)
+end
+
 
 --[=[
 	The reward for someone leaving before the end, by choice or because the server is
@@ -656,7 +694,14 @@ function WaveService:runRound(generation : number)
 
 		-- Real time, like the arrow wait just above: `SkipService` counts from here the
 		-- seconds until offering the skip vote.
-		self.WaveStartedAt = os.clock()
+		self.WaveStartedAt = os.clock() --.
+
+		if preset.Endless then
+			for _, player in Players:GetPlayers() do
+				self:recordEndlessBest(player, self.WaveCount)
+			end
+		end
+
 		self.Services.MobService:SpawnWave(self.WaveCount)
 
 		if not self:awaitWaveEnd(generation) then return end
@@ -665,6 +710,10 @@ function WaveService:runRound(generation : number)
 		-- Before the victory check on purpose: the last wave is also a completed
 		-- wave, and it pays like the others.
 		self:payWaveCash()
+
+		if preset.Endless then
+			self:awardEndlessMilestones(self.WaveCount)
+		end
 
 		if self.WaveCount >= self:getMaxWaves(preset) then
 			won = true
