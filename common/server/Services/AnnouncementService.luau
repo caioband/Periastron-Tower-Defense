@@ -24,9 +24,9 @@ local AnnouncementService = {
 AnnouncementService.LastSent = 0
 AnnouncementService.Subscribed = false
 
-function AnnouncementService:Deliver(username : string, message : string)
+function AnnouncementService:Deliver(username : string, userId : number, message : string)
 	for _, player in Players:GetPlayers() do
-		Framework:Fire("GlobalAnnouncement", player, username, message)
+		Framework:Fire("GlobalAnnouncement", player, username, userId, message)
 	end
 end
 
@@ -70,12 +70,12 @@ function AnnouncementService:Broadcast(username : string, userId : number, messa
 
 	self.LastSent = os.clock()
 
-	local payload = { Username = username, Message = message }
+	local payload = { Username = username, UserId = userId, Message = message }
 
 	local published = pcall(MessagingService.PublishAsync, MessagingService, TOPIC, payload)
 
 	if not (published and self.Subscribed) then
-		self:Deliver(username, message)
+		self:Deliver(username, userId, message)
 	end
 
 	if published then
@@ -97,8 +97,9 @@ function AnnouncementService:start()
 
 				if typeof(data) ~= "table" then return end
 				if typeof(data.Username) ~= "string" or typeof(data.Message) ~= "string" then return end
+				if typeof(data.UserId) ~= "number" then return end
 
-				self:Deliver(data.Username, data.Message)
+				self:Deliver(data.Username, data.UserId, data.Message)
 			end)
 		end)
 

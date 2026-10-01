@@ -13,7 +13,7 @@ local Me = require(Vendor.Me)
 local Framework = Me.new()
 
 local GUI_NAME = "GlobalAnnouncementBanner"
-local MARKUP = "[gradient=purple]%s: %s[/gradient]"
+local MARKUP = "[img=rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150] [gradient=purple]%s: %s[/gradient]"
 
 local POSITION = UDim2.fromScale(0.5, 0.15)
 local SIZE = UDim2.fromScale(0.7, 0.12)
@@ -82,7 +82,7 @@ local function build()
 	return gui, band, container
 end
 
-function AnnouncementController:show(username : string, message : string)
+function AnnouncementController:show(username : string, userId : number, message : string)
 	local rich = self.Controllers.RichTextController
 	if not rich then return end
 
@@ -102,7 +102,7 @@ function AnnouncementController:show(username : string, message : string)
 		BackgroundTransparency = BAND_TRANSPARENCY,
 	}):Play()
 
-	local text = string.format(MARKUP, rich:Escape(username), rich:Escape(message))
+	local text = string.format(MARKUP, userId, rich:Escape(username), rich:Escape(message))
 	local handle = rich:Write(container, text, OPTIONS)
 
 	if self.Token ~= token then return end
@@ -136,11 +136,11 @@ function AnnouncementController:start()
 		self.Controllers[name] = Framework:Get(name)
 	end
 
-	Framework:Listen("GlobalAnnouncement", function(username : any, message : any)
-		if typeof(username) ~= "string" or typeof(message) ~= "string" then return end
+	Framework:Listen("GlobalAnnouncement", function(username : any, userId : any, message : any)
+		if typeof(username) ~= "string" or typeof(userId) ~= "number" or typeof(message) ~= "string" then return end
 
 		task.spawn(function()
-			self:show(username, message)
+			self:show(username, userId, message)
 		end)
 	end)
 end
