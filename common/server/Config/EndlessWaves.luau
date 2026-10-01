@@ -6,7 +6,8 @@ local Mob = require(SharedConfig:WaitForChild("Mob"))
 local EndlessWaves = {}
 
 --[[ TUNING ]]
-local HEALTH = { Start = 0.4, EarlyGrowth = 0.76, LateFrom = 25, LateGrowth = 0.95 }
+-- Growth factors must stay above 1: below it, health shrinks each wave and clamps to 1.
+local HEALTH = { Start = 0.4, EarlyGrowth = 1.08, LateFrom = 25, LateGrowth = 1.05 }
 local SPEED = { Start = 0.9, PerWave = 0.03, Max = 2.6 }
 local BOSS_INTERVAL = 5       -- boss waves repeat every N waves after the first boss wave
 local BOSS_EXTRA_EVERY = 10   -- +1 boss per faction every N waves after its first
