@@ -17,11 +17,17 @@ local LevelConfig = SharedConfig.LevelConfig
 
 --[[
 	Profile editing for admin commands (`cash`, `shards`, `units`, `level`), with the
-	player anywhere: on this server, on another one, or offline.
+	player anywhere: on this server, on another one, or offline. The Lobby's
+	`FriendInviteService` uses it too, to credit an accepted invite to whoever sent it.
 
 	An edit is an **operation**: `{ Key, Field, Action, Amount }`, changing
 	`Data[Key][Field]`, a number. Today there are two keys: `Stats` (Cash, Shards, and
 	Level) and `Units` (how many of each unit).
+
+	The other shape is `{ Key, Action = "increment", Path, Counters }`: it walks
+	`Data[Key]` down `Path` (a list of names, created when missing) and adds each
+	`Counters[name]` to the number there. Only keys with `Increment = true` take it,
+	and they take nothing else (`FriendInvites`).
 
 	`Stats.Level` is the one field that is not stored: the level is always derived
 	from `Stats.XP` (see `LevelConfig`), so the operation is done in levels and
@@ -62,7 +68,14 @@ local KEYS = {
 	-- A unit at zero leaves the table: that is what a profile that never had the unit
 	-- looks like, and `DeckConfig` reads both cases with the same `or 0`.
 	Units = { Fields = nil, DropZero = true },
+
+	-- Nested counters, only through `increment` (see `editCounters`):
+	-- `FriendInvites.Accepted[UserId] = { System, Manual, Total }`.
+	FriendInvites = { Fields = nil, DropZero = false, Increment = true },
 }
+
+-- The deepest `Path` an `increment` may walk.
+local MAX_PATH = 4
 
 local ProfileEditService = {
 	Services = {
@@ -106,10 +119,51 @@ local function editLevel(tbl : { [string] : number }, op) : ({ [string] : number
 end
 
 --[=[
+	The `increment` action: adds each counter at the end of `op.Path`, creating the
+	tables on the way. Never below zero, like the other actions.
+
+	Returns `(table, previous, new)` with the counters written as text
+	(`"System 0, Total 0"`), which is all the reply line needs.
+]=]
+local function editCounters(tbl : any, op) : (any, string, string)
+	tbl = if typeof(tbl) == "table" then tbl else {}
+
+	local node = tbl
+	for _, part in op.Path do
+		if typeof(node[part]) ~= "table" then
+			node[part] = {}
+		end
+		node = node[part]
+	end
+
+	local names = {}
+	for name in op.Counters do
+		table.insert(names, name)
+	end
+	table.sort(names)
+
+	local before, after = {}, {}
+	for _, name in names do
+		local previous = tonumber(node[name]) or 0
+		local updated = math.max(previous + op.Counters[name], 0)
+		node[name] = updated
+
+		table.insert(before, `{name} {previous}`)
+		table.insert(after, `{name} {updated}`)
+	end
+
+	return tbl, table.concat(before, ", "), table.concat(after, ", ")
+end
+
+--[=[
 	Applies the operation to a `{ [Field] = number }` table and returns
 	`(table, previous, new)`. It is the only math: all three paths go through here.
 ]=]
-local function editTable(tbl : { [string] : number }?, op) : ({ [string] : number }, number, number)
+local function editTable(tbl : any, op) : (any, any, any)
+	if op.Action == "increment" then
+		return editCounters(tbl, op)
+	end
+
 	tbl = if typeof(tbl) == "table" then tbl else {}
 
 	if op.Key == "Stats" and op.Field == "Level" then
@@ -133,6 +187,31 @@ local function validate(op) : string?
 	if not rule then
 		return `'{op.Key}' is not an editable key.`
 	end
+
+	if op.Action == "increment" or rule.Increment then
+		if op.Action ~= "increment" or not rule.Increment then
+			return `'{op.Key}' does not take '{op.Action}'.`
+		end
+		if typeof(op.Path) ~= "table" or #op.Path == 0 or #op.Path > MAX_PATH then
+			return `path must be a list of 1 to {MAX_PATH} names.`
+		end
+		for _, part in op.Path do
+			if typeof(part) ~= "string" then
+				return "path must be a list of names."
+			end
+		end
+		if typeof(op.Counters) ~= "table" or next(op.Counters) == nil then
+			return "counters must be a { [name] = number } table."
+		end
+		for name, amount in op.Counters do
+			if typeof(name) ~= "string" or typeof(amount) ~= "number" or amount ~= amount then
+				return "counters must be a { [name] = number } table."
+			end
+		end
+
+		return nil
+	end
+
 	if rule.Fields and not rule.Fields[op.Field] then
 		return `'{op.Field}' is not editable in {op.Key}.`
 	end
@@ -144,6 +223,21 @@ local function validate(op) : string?
 	end
 
 	return nil
+end
+
+-- `(label, change)` for the reply line: `Stats.Cash`, `add 10`.
+local function describe(op) : (string, string)
+	if op.Action == "increment" then
+		local parts = {}
+		for name, amount in op.Counters do
+			table.insert(parts, `{name} +{amount}`)
+		end
+		table.sort(parts)
+
+		return `{op.Key}.{table.concat(op.Path, ".")}`, table.concat(parts, ", ")
+	end
+
+	return `{op.Key}.{op.Field}`, `{op.Action} {op.Amount}`
 end
 
 local function displayName(userId : number) : string
@@ -283,7 +377,7 @@ function ProfileEditService:Edit(userId : number, op) : string
 		return "DataService unavailable."
 	end
 
-	local label = `{op.Key}.{op.Field}`
+	local label, change = describe(op)
 
 	-- 1. On this server.
 	local player = Players:GetPlayerByUserId(userId)
@@ -324,7 +418,7 @@ function ProfileEditService:Edit(userId : number, op) : string
 
 	-- 2. Session open on another server (or from a server that crashed).
 	if snapshot.Session then
-		return `{name} {label}: {op.Action} {op.Amount} sent to their server (online elsewhere; applies in a few seconds, or on next join).`
+		return `{name} {label}: {change} sent to their server (online elsewhere; applies in a few seconds, or on next join).`
 	end
 
 	-- 3. No session.
@@ -333,7 +427,7 @@ function ProfileEditService:Edit(userId : number, op) : string
 		return `{name} {label} {previous} -> {updated} (offline, saved)`
 	end
 
-	return `{name} {label}: {op.Action} {op.Amount} queued (profile busy; applies on next join).`
+	return `{name} {label}: {change} queued (profile busy; applies on next join).`
 end
 
 --[=[

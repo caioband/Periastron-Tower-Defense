@@ -209,6 +209,32 @@ return {
 			settles it.
 		]]
 		Tutorial = false,
+
+		--[[
+			The Lobby's "your friend is online" suggestion (`FriendInviteService`),
+			keyed by the friend's `UserId` **as a string** (a DataStore cannot save
+			sparse numeric keys):
+
+			  - `Invited`: `{ [UserId] = times }`, how many times the player clicked
+			    `Invite` for that friend on the notification.
+			  - `Accepted`: `{ [UserId] = { System, Manual, Total } }`, how many
+			    invites from this player that friend accepted (joined the Lobby
+			    through): `System` from our notification, `Manual` any other invite
+			    (Roblox menu, share link), `Total` both. Written by the server the
+			    friend joins, through `ProfileEditService`, even with this player
+			    elsewhere or offline.
+			  - `Shown`: `{ [UserId] = os.time() }`, when the friend was last
+			    suggested; they stay out of the draw for an hour. Expired entries are
+			    removed on the next write.
+
+			The draw prefers the most accepted, then the most `Invited`.
+			Older profiles get the keys through DataService's reconcile.
+		]]
+		FriendInvites = {
+			Invited = {},
+			Accepted = {},
+			Shown = {},
+		},
 	},
 
 	STARTING_CASH = 500,

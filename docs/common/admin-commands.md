@@ -33,6 +33,8 @@ Commands that depend on a service from one place only live in that place's folde
 | `strike` | `lightning`, `thunderstrike` | `[unit]` | Game | Drops a lightning bolt on a placed unit |
 | `setcrates` | `setcrate` | `<players> <rarity> <amount>` | Lobby | Sets how many crates of a rarity a player owns |
 | `unbox` | `openbox` | `<players> <rarity>` | Lobby | Rolls a crate and plays the unboxing for the whole server |
+| `friendinvite` | `invitefriend` | `[players] [ignoreCooldown]` | Lobby | Sends the [friend invite suggestion](../lobby/friend-invite.md) now; players omitted = you |
+| `friendinvitestats` | `invitestats` | `[player]` | Lobby | Prints the player's invite history: clicks and accepted invites (System, Manual, Total) per friend |
 
 Cmdr's built-in groups are registered too (`DEFAULT_COMMAND_GROUPS`: `DefaultUtil`, `DefaultAdmin`, `DefaultDebug`, `Help`).
 
@@ -63,6 +65,8 @@ In the [QA environment](environments.md), **every player is a tester** and may r
 | `units` | both |
 | `level` | both |
 | `roundcash` | Game |
+| `friendinvite` | Lobby |
+| `friendinvitestats` | Lobby |
 
 Testers can aim them at any player, online or offline, like admins.
 QA is a separate universe with its own DataStores, so this never touches a production profile.

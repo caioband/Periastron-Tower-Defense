@@ -77,6 +77,10 @@ Admin commands (`cash`, `shards`, `units`) edit profiles through `ProfileEditSer
 
 Invalid edit messages are discarded (and logged).
 
+Besides `set`/`add`/`remove` on a number, an operation can be `increment`: it walks a nested path under the key and adds to several counters at once.
+Only keys marked `Increment = true` in its `KEYS` take it, and they take nothing else.
+The [friend invite suggestion](../lobby/friend-invite.md) uses it to credit an accepted invite to the inviter (`FriendInvites.Accepted`).
+
 ## Configuration
 
 | Key | Where | Effect |

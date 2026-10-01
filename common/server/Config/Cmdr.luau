@@ -60,6 +60,8 @@ return {
 		units = true,
 		level = true,
 		roundcash = true,
+		friendinvite = true,
+		friendinvitestats = true,
 	} :: { [string]: boolean },
 
 	--[[

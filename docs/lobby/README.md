@@ -9,9 +9,9 @@ For the repository layout and what is shared between the places, see [Repository
 | Folder | Mounted at | Contents |
 | --- | --- | --- |
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | Entry LocalScript |
-| `src/Controllers/` | `Client.Controllers.Lobby` | ChooseMaps, Contract, Crate, CrateUI, Deck, HUD, HUDBadge, HUDButton, LobbyMusic, PlayButton, Portal, RobuxShop, RoundCardShop, Shop, ShopKeeper, UILibrary, Unboxing |
-| `src/Services/` | `ServerScriptService.Services.Lobby` | Crate, Deck, Leaderstats, Portal, RoundCardShop, Shop, Summoning, WelcomeBadge |
-| `src/CmdrDefinitions/Commands/` | `ServerScriptService.CmdrDefinitions.Commands.Lobby` | `setcrates`, `unbox` |
+| `src/Controllers/` | `Client.Controllers.Lobby` | ChooseMaps, Contract, Crate, CrateUI, Deck, FriendInvite, HUD, HUDBadge, HUDButton, LobbyMusic, PlayButton, Portal, RobuxShop, RoundCardShop, Shop, ShopKeeper, UILibrary, Unboxing |
+| `src/Services/` | `ServerScriptService.Services.Lobby` | Crate, Deck, FriendInvite, Leaderstats, Portal, RoundCardShop, Shop, Summoning, WelcomeBadge |
+| `src/CmdrDefinitions/Commands/` | `ServerScriptService.CmdrDefinitions.Commands.Lobby` | `friendinvite`, `friendinvitestats`, `setcrates`, `unbox` |
 | `src/CmdrDefinitions/Types/` | `ServerScriptService.CmdrDefinitions.Types.Lobby` | `crateRarity` |
 
 ## Pages
@@ -24,6 +24,7 @@ For the repository layout and what is shared between the places, see [Repository
 | [Crates and unboxing](crates-and-unboxing.md) | Crate names, odds, and the shared unboxing |
 | [Crate shop](shop.md) | The crate shop and the shopkeeper |
 | [Card shop](round-card-shop.md) | Unlocking round cards with shards |
+| [Friend invite suggestion](friend-invite.md) | The "your friend is online" notification and the `friendinvite` command |
 
 Systems that also run here are documented in [common](../common/README.md): [contracts](../common/contracts.md), [game passes and the Robux shop](../common/gamepasses.md), [leaderboards](../common/leaderboards.md), [the proximity panel](../common/proximity-panel.md), and [the tutorial](../common/tutorial.md).
 
