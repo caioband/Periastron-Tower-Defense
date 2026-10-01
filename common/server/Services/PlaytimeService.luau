@@ -18,7 +18,8 @@ local log = Log.new("PlaytimeService")
 local AfkConfig = SharedConfig.AfkConfig
 
 --[[
-	Playtime on the profile (`Stats.TimePlayed`, in seconds), in both places.
+	Playtime on the profile (`Stats.TimePlayed`, in seconds), in the Lobby and the
+	Game.
 
 	It counts from profile load until the session closes; before that there is
 	nowhere to write, and the difference is seconds. Teleporting between Lobby and
@@ -32,6 +33,10 @@ local AfkConfig = SharedConfig.AfkConfig
 
 	The fractional remainder is not lost: `Since` advances only by the whole seconds
 	written, and the fraction goes into the next minute.
+
+	**The AFK place does not count.** Time there goes to its own counter,
+	`Stats.TimeInAfkArea` (`AfkAreaService`), and stays out of MOST TIME PLAYED;
+	here the service does nothing.
 
 	**AFK time does not count** where `AfkConfig.PausePlaytime` says so (the Lobby).
 	When `AfkService` reports the player AFK, `PausedAt` freezes the clock; when
@@ -56,10 +61,11 @@ local PlaytimeService = {
 	PausedAt = {},
 }
 
--- The place comes from the Rojo tree (`Services.Lobby` or `Services.Game`), not
--- from `PlaceId`, so QA copies of a place behave like the place itself.
-local IS_LOBBY = ServerScriptService:WaitForChild("Services"):FindFirstChild("Lobby") ~= nil
-local PAUSES_WHEN_AFK = AfkConfig.PausePlaytime[if IS_LOBBY then "Lobby" else "Game"] == true
+-- The place comes from the `Place` attribute each Rojo project sets on `Services`,
+-- not from `PlaceId`, so QA copies of a place behave like the place itself.
+local PLACE_NAME = ServerScriptService:WaitForChild("Services"):GetAttribute("Place")
+local COUNTS_HERE = PLACE_NAME ~= "Afk"
+local PAUSES_WHEN_AFK = AfkConfig.PausePlaytime[PLACE_NAME] == true
 
 --[[ INTERNAL ]]
 
@@ -128,6 +134,8 @@ end
 --[[ LIFECYCLE ]]
 
 function PlaytimeService:construct()
+	if not COUNTS_HERE then return end
+
 	local dataService = self.Services.DataService
 	if not dataService then
 		log:Warn("no DataService; playtime will not be counted.")

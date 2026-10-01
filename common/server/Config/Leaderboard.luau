@@ -1,12 +1,14 @@
 --[[
-	The Lobby's global leaderboards (`Workspace.Leaderboards`).
+	The global leaderboards (`Workspace.Leaderboards` of each place).
 
 	Each `Boards` entry links a map model to a profile number. `LeaderboardService`
-	(common) reads it: in both places it **writes** each player's number to an
-	OrderedDataStore; in the Lobby, where the folder exists, it also **reads** the
-	top and draws it.
+	(common) reads it: in every place it **writes** each player's number to an
+	OrderedDataStore; in the place named by `Place`, it also **reads** the top and
+	draws it.
 
 	  - `Model`:  the model name inside `Workspace.Leaderboards`.
+	  - `Place`:  the place that draws it (the `Place` attribute on
+	              `ServerScriptService.Services`). Missing means `"Lobby"`.
 	  - `Store`:  the OrderedDataStore suffix. Changing it resets the board.
 	  - `Path`:   where the number lives in the profile (`Data`), key by key.
 	  - `Format`: how the number shows on the row:
@@ -35,8 +37,8 @@ return {
 		How often each server sends its players' numbers (only those that changed) and
 		how often the Lobby redraws the top.
 
-		The write limit is 60 + 10 per player per minute, per server. With 8 boards and
-		120s, the worst case (all changed) is 4 per player per minute, and the usual
+		The write limit is 60 + 10 per player per minute, per server. With 9 boards and
+		120s, the worst case (all changed) is 4.5 per player per minute, and the usual
 		case is 2, for both intervals.
 	]]
 	WRITE_INTERVAL = 120,
@@ -52,5 +54,7 @@ return {
 		{ Model = "MostMatchesPlayedLB", Store = "MatchesPlayed", Path = { "Stats", "MatchesPlayed" }, Format = "Number" },
 		{ Model = "MostTimeInMatchesLB", Store = "TimeInMatches", Path = { "Stats", "TimeInMatches" }, Format = "Time" },
 		{ Model = "MostTimePlayedLB", Store = "TimePlayed", Path = { "Stats", "TimePlayed" }, Format = "Time" },
+		-- MOST AFK TIME, on the AFK place's map.
+		{ Model = "MostAfkTimeLB", Store = "TimeInAfkArea", Path = { "Stats", "TimeInAfkArea" }, Format = "Time", Place = "Afk" },
 	},
 }

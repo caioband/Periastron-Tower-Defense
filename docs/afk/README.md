@@ -47,7 +47,8 @@ When the client finishes loading, the Output shows:
 Every Service in `common/server/Services` and every Controller in `common/client/Controllers` loads here too.
 Systems that need content from the place (a board, a part reference, a GUI) log a warning and stay idle when it is missing, as they do in the other places.
 
-- **Playtime.** `PlaytimeService` tells the Lobby apart by the `Services.Lobby` folder, not by the `Place` attribute, so it treats this place like the Game: `AfkConfig.PausePlaytime.Game` applies, and `Stats.TimePlayed` keeps counting while the player is AFK.
+- **Playtime.** `PlaytimeService` does nothing here: time in this place goes only to `Stats.TimeInAfkArea` (MOST AFK TIME) and stays out of `Stats.TimePlayed` (MOST TIME PLAYED, in the Lobby).
+- **Leaderboards.** `LeaderboardService` draws the boards whose `Place` is `Afk`: today only MOST AFK TIME (`Stats.TimeInAfkArea`). See [AFK area](afk-area.md#saved-time-and-the-leaderboard).
 - **Teleports.** `Environment` does not know this place yet: `EnvironmentConfig` has no `Afk` id, so nothing can teleport here until the place is published and its ids are added.
   Going back works: `AfkAreaService` teleports to `Environment.GetPlaceId("Lobby")`.
 

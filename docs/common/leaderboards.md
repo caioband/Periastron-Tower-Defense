@@ -1,26 +1,28 @@
 # Leaderboards
 
-Eight global leaderboards on the Lobby map (`Workspace.Leaderboards`), fed by both places.
+Global leaderboards: eight on the Lobby map and one on the AFK place's map, each in that place's `Workspace.Leaderboards`, fed by every place.
 
-**Runs in:** Game · Lobby (both write; only the Lobby displays)
-**Code:** [`LeaderboardService`](../../common/server/Services/LeaderboardService.luau), [`PlaytimeService`](../../common/server/Services/PlaytimeService.luau), [`MatchStatsService`](../../Game/src/Services/MatchStatsService.luau), [`CurrencyService`](../../common/server/Services/CurrencyService.luau), [`Config.Leaderboard`](../../common/server/Config/Leaderboard.luau)
+**Runs in:** Game · Lobby · AFK (all write; the Lobby and the AFK place display)
+**Code:** [`LeaderboardService`](../../common/server/Services/LeaderboardService.luau), [`PlaytimeService`](../../common/server/Services/PlaytimeService.luau), [`AfkAreaService`](../../Afk/src/Services/AfkAreaService.luau), [`MatchStatsService`](../../Game/src/Services/MatchStatsService.luau), [`CurrencyService`](../../common/server/Services/CurrencyService.luau), [`Config.Leaderboard`](../../common/server/Config/Leaderboard.luau)
 
 ## How it works
 
 Each board is a model with `Main > SurfaceGui > ScrollingFrame > Frame`.
 The `Frame` is the **template**: the server removes it and clones one row per position (`Position` = `1st`, `Username`, `Value`), up to `TOP` (50).
 The list of boards is `Config.Leaderboard.Boards` (server only).
+Each entry's `Place` says which place draws it (the `Place` attribute on `ServerScriptService.Services`); an entry without it is drawn in the Lobby.
 
-| Model | Profile value | Format |
-| --- | --- | --- |
-| `HighestLevelLB` | `Stats.XP` (shown as level) | `25` |
-| `MostCoinsLB` | `Stats.CoinsEarned` (total earned, not the balance) | `1.25M` |
-| `MostMatchesWonLB` | `Stats.Wins` | `1.25M` |
-| `NightmareWinsLB` | `Stats.DifficultyWins.Nightmare` | `1.25M` |
-| `MostBoxesOpened` | `Stats.BoxesOpened` | `1.25M` |
-| `MostMatchesPlayedLB` | `Stats.MatchesPlayed` | `1.25M` |
-| `MostTimeInMatchesLB` | `Stats.TimeInMatches` (seconds) | `DD:HH:MM` |
-| `MostTimePlayedLB` | `Stats.TimePlayed` (seconds) | `DD:HH:MM` |
+| Model | Place | Profile value | Format |
+| --- | --- | --- | --- |
+| `HighestLevelLB` | Lobby | `Stats.XP` (shown as level) | `25` |
+| `MostCoinsLB` | Lobby | `Stats.CoinsEarned` (total earned, not the balance) | `1.25M` |
+| `MostMatchesWonLB` | Lobby | `Stats.Wins` | `1.25M` |
+| `NightmareWinsLB` | Lobby | `Stats.DifficultyWins.Nightmare` | `1.25M` |
+| `MostBoxesOpened` | Lobby | `Stats.BoxesOpened` | `1.25M` |
+| `MostMatchesPlayedLB` | Lobby | `Stats.MatchesPlayed` | `1.25M` |
+| `MostTimeInMatchesLB` | Lobby | `Stats.TimeInMatches` (seconds) | `DD:HH:MM` |
+| `MostTimePlayedLB` | Lobby | `Stats.TimePlayed` (seconds) | `DD:HH:MM` |
+| `MostAfkTimeLB` (MOST AFK TIME) | AFK | `Stats.TimeInAfkArea` (seconds) | `DD:HH:MM` |
 
 HIGHEST LEVEL stores **XP**, not the level: the order is the same, and XP breaks ties among max-level players.
 
@@ -33,7 +35,7 @@ Each store is named `<PROFILE_KEY>_LB_<Store>`, so changing `PROFILE_KEY` resets
 
 ### Who writes, and when
 
-Both places write (the Game changes XP, coins, wins, and matches; the Lobby changes coins, crates, and time), so the service is in `common/`.
+Every place writes (the Game changes XP, coins, wins, and matches; the Lobby changes coins, crates, and time; the AFK place changes time in the AFK area), so the service is in `common/`.
 Each server sends its own players' numbers:
 
 - when the profile loads (everything that is not zero);
@@ -47,20 +49,21 @@ Players with a negative UserId (Studio test clients) are not written.
 
 ### Who reads
 
-Only where `Workspace.Leaderboards` exists, which today is the Lobby.
-Every `READ_INTERVAL` (120 s) it reads the eight boards, resolves names in one batch (`UserService:GetUserInfosByUserIdsAsync`, cached), and rewrites the rows.
+Each place reads only its own boards (`Place`), and only if it has `Workspace.Leaderboards`.
+Every `READ_INTERVAL` (120 s) it reads them, resolves names in one batch (`UserService:GetUserInfosByUserIdsAsync`, cached), and rewrites the rows.
 Rows are reused between reads, and extra rows are hidden.
 The SurfaceGui is in the Workspace, so what the server writes replicates to everyone.
 
 ### The counters
 
-`BoxesOpened`, `TimePlayed`, `TimeInMatches`, and `MatchesPlayed` start at **zero for everyone**, including existing players; old profiles get the keys through the reconcile.
+`BoxesOpened`, `TimePlayed`, `TimeInMatches`, `MatchesPlayed`, and `TimeInAfkArea` start at **zero for everyone**, including existing players; old profiles get the keys through the reconcile.
 
 | Key | Written by | Rule |
 | --- | --- | --- |
 | `BoxesOpened` | `CrateService:OpenCrate` (Lobby) | a crate spent and rolled; the `unbox` command does not count |
-| `TimePlayed` | `PlaytimeService` (common) | from profile load until leave, in both places, minus time AFK in the Lobby (see [AFK detection](afk.md)); written every minute |
+| `TimePlayed` | `PlaytimeService` (common) | from profile load until leave, in the Lobby and the Game (not the AFK place), minus time AFK in the Lobby (see [AFK detection](afk.md)); written every minute |
 | `TimeInMatches` | `MatchStatsService` (Game) | real time with `WaveService` `Running`, from waiting for players to the last wave |
+| `TimeInAfkArea` | `AfkAreaService` (AFK) | from profile load until leave in the AFK place, AFK or not (see [AFK area](../afk/afk-area.md)); written every minute |
 | `MatchesPlayed` | `MatchStatsService` (Game) | +1 when the player's time in that round passes `Data.MIN_MATCH_SECONDS` (180 s): win, loss, or leaving midway |
 
 `MatchStatsService` starts a clock per player on `WaveService.Signals.RoundStarted` (or when they join a running round) and stops it on `RoundClosed` or on leave.
@@ -78,4 +81,4 @@ With the key in the template, the reconcile would create it at zero first, and o
 
 ## Studio setup
 
-Each board is a model in `Workspace.Leaderboards` named as in the table, with `Main > SurfaceGui > ScrollingFrame > Frame` and the `Position`, `Username`, and `Value` labels inside the `Frame`.
+Each board is a model in the `Workspace.Leaderboards` of its place, named as in the table, with `Main > SurfaceGui > ScrollingFrame > Frame` and the `Position`, `Username`, and `Value` labels inside the `Frame`.

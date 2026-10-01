@@ -1,6 +1,6 @@
 # AFK area
 
-Pays players for time spent in the AFK place, shows that time over every head, and sends players back to the Lobby when they ask.
+Pays players for time spent in the AFK place, saves that time to the profile for the MOST AFK TIME leaderboard, shows it over every head, and sends players back to the Lobby when they ask.
 
 **Runs in:** AFK
 **Code:** [`AfkAreaService`](../../Afk/src/Services/AfkAreaService.luau), [`AfkAreaController`](../../Afk/src/Controllers/AfkAreaController.luau), [`CoinCountController`](../../Afk/src/Controllers/CoinCountController.luau), [`AfkRewards`](../../Afk/src/Shared/AfkRewards.luau)
@@ -16,6 +16,15 @@ Every second, the service writes the time in the area, as `HH:MM:SS`, on the `Ti
 Every player sees everyone's time.
 
 Being AFK (see [AFK detection](../common/afk.md)) does not stop the timer: the area exists for idle players.
+
+### Saved time and the leaderboard
+
+The same timer is added to `Stats.TimeInAfkArea`, in seconds, every 60 seconds and once more before the profile is released.
+Only whole seconds are written; the fraction goes in with the next write, so nothing is lost between writes.
+A server that crashes loses at most the last minute.
+
+`LeaderboardService` copies the counter to the `TimeInAfkArea` store and draws it on `Workspace.Leaderboards.MostAfkTimeLB` (MOST AFK TIME), in this place only.
+See [Leaderboards](../common/leaderboards.md).
 
 ### Rewards
 
@@ -67,10 +76,11 @@ The service skips an entry with a missing `Id`, a non-positive `Amount` or `Inte
 | `StarterGui.ScreenGui.RewardFrame.TimerLabel` | `TextLabel` for the countdown |
 | `StarterGui.ScreenGui.RewardFrame.CoinCount.CoinAmountText` | `TextLabel` for the coins |
 | `StarterGui.ScreenGui.ReturnFrame.ReturnButton` | `ImageButton`, with a `ButtonText` `TextLabel` child |
+| `Workspace.Leaderboards.MostAfkTimeLB` | Leaderboard model with `Main > SurfaceGui > ScrollingFrame > Frame` (see [Leaderboards](../common/leaderboards.md#studio-setup)) |
 
 The controllers match these elements by name and parent name, anywhere under `PlayerGui`.
 
 ## Known issues
 
 - `EnvironmentConfig` has no `Afk` place id yet, so nothing can teleport players into this place.
-- The timer starts over on every visit; time in the area is not saved.
+- The billboard and the reward countdown start over on every visit; only `Stats.TimeInAfkArea` adds up across visits.

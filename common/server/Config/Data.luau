@@ -52,7 +52,7 @@ return {
 			XP = 0,
 
 			--[[
-				Counters that exist for the Lobby leaderboards (`Config.Leaderboard`).
+				Counters that exist for the leaderboards (`Config.Leaderboard`).
 				None of them changes the game: they only count.
 
 				  - `BoxesOpened`:   crates actually opened (`CrateService:OpenCrate`);
@@ -60,8 +60,10 @@ return {
 				  - `MatchesPlayed`: matches where the player stayed at least
 				                     `MIN_MATCH_SECONDS` (`MatchStatsService`, Game).
 				  - `TimeInMatches`: seconds inside a running round (same).
-				  - `TimePlayed`:    seconds with the profile open, in both places
-				                     (`PlaytimeService`).
+				  - `TimePlayed`:    seconds with the profile open, in the Lobby and the
+				                     Game, not the AFK place (`PlaytimeService`).
+				  - `TimeInAfkArea`: seconds in the AFK place, AFK or not
+				                     (`AfkAreaService`, AFK place only).
 
 				Times are in whole **seconds**; `DD:HH:MM` is only for the screen.
 
@@ -81,6 +83,7 @@ return {
 			MatchesPlayed = 0,
 			TimeInMatches = 0,
 			TimePlayed = 0,
+			TimeInAfkArea = 0,
 		},
 
 		Inventory = {

@@ -39,6 +39,13 @@ local log = Log.new("AfkAreaService")
 	The payout does **not** touch `Stats.CoinsEarned`: that counter is the MOST COINS
 	leaderboard, meant for coins earned by playing matches.
 
+	  - **The saved time.** The same timer goes into `Stats.TimeInAfkArea` (the MOST
+	    AFK TIME leaderboard) every `SAVE_TIME_SECONDS` and once more before the
+	    profile is released. Only whole seconds are written (`Written`); the fraction
+	    goes in with the next write. Writing during the session, not only on leave,
+	    is what lets the leaderboard move while the player is still here, and a
+	    crashed server loses at most the last minute.
+
 	AFK state (`AfkService`) is irrelevant here on purpose: this area exists for
 	people who are idle, so being away from the keyboard still counts as time in it.
 ]]
@@ -49,6 +56,9 @@ local TIME_SPENT_GUI = "TimeSpent"
 
 -- Seconds between timer updates.
 local TICK_SECONDS = 1
+
+-- Seconds between writes of the time in the area to `Stats.TimeInAfkArea`.
+local SAVE_TIME_SECONDS = 60
 
 -- Player attribute holding when the timer started (`workspace:GetServerTimeNow()`); the client reads it for the reward countdown.
 local ENTERED_ATTRIBUTE = AfkRewards.EnteredAttribute
@@ -67,6 +77,9 @@ local AfkAreaService = {
 
 	-- [Player] = { [reward Id] = payouts already made }.
 	Granted = {},
+
+	-- [Player] = whole seconds of this visit already added to `Stats.TimeInAfkArea`.
+	Written = {},
 
 	-- [Player] = the `TextLabel` of the billboard on their current character.
 	Labels = {},
@@ -95,6 +108,7 @@ function AfkAreaService:_track(player : Player)
 
 	self.Entered[player] = os.clock()
 	self.Granted[player] = {}
+	self.Written[player] = 0
 	player:SetAttribute(ENTERED_ATTRIBUTE, workspace:GetServerTimeNow())
 
 	log:Debug(player.Name, "entered the area.")
@@ -103,6 +117,7 @@ end
 function AfkAreaService:_forget(player : Player)
 	self.Entered[player] = nil
 	self.Granted[player] = nil
+	self.Written[player] = nil
 	self.Labels[player] = nil
 	self.Leaving[player] = nil
 	player:SetAttribute(ENTERED_ATTRIBUTE, nil)
@@ -148,6 +163,22 @@ function AfkAreaService:_payRewards(player : Player, elapsed : number)
 			self.Services.DataService:Save(player)
 		end)
 	end
+end
+
+--- Adds the whole seconds not yet written to `Stats.TimeInAfkArea`.
+function AfkAreaService:_saveTime(player : Player)
+	local written = self.Written[player]
+	if not written or not self:_hasProfile(player) then return end
+
+	local seconds = math.floor(self:GetTimeInArea(player)) - written
+	if seconds <= 0 then return end
+
+	self.Written[player] = written + seconds
+
+	self.Services.DataService:Update(player, "Stats", function(stats)
+		stats.TimeInAfkArea = (tonumber(stats.TimeInAfkArea) or 0) + seconds
+		return stats
+	end)
 end
 
 function AfkAreaService:_step(player : Player)
@@ -272,8 +303,11 @@ function AfkAreaService:construct()
 		end
 	end
 
-	-- Stop paying before the profile closes: a payout after `EndSession` would be lost.
+	-- Stop paying before the profile closes: a payout after `EndSession` would be
+	-- lost. The last seconds go in first; order 0 runs before LeaderboardService's
+	-- final snapshot.
 	dataService:OnBeforeRelease(function(player : Player)
+		self:_saveTime(player)
 		self:_forget(player)
 	end)
 
@@ -282,6 +316,19 @@ function AfkAreaService:construct()
 		task.defer(function()
 			self:_forget(player)
 		end)
+	end)
+
+	task.spawn(function()
+		while true do
+			task.wait(SAVE_TIME_SECONDS)
+
+			for player in self.Entered do
+				local ok, err = pcall(self._saveTime, self, player)
+				if not ok then
+					log:Warn(string.format("could not save time for %s: %s", player.Name, tostring(err)))
+				end
+			end
+		end
 	end)
 
 	task.spawn(function()

@@ -25,11 +25,12 @@ local LevelConfig = SharedConfig.LevelConfig
 --[[
 	The global leaderboards: one OrderedDataStore per board (`Config.Leaderboard`).
 
-	It lives in `common` because both places **write**: Game changes XP, coins, wins,
+	It lives in `common` because every place **writes**: Game changes XP, coins, wins,
 	matches, and time in match; the Lobby changes coins (purchases), crates opened,
-	and playtime. Only the Lobby **draws**, and not by configuration: it is the only
-	place with `Workspace.Leaderboards`, and without the folder the reading half
-	never starts.
+	and playtime; the AFK place changes time in the AFK area. Each board is **drawn**
+	by one place (`Place` in the config, the Lobby by default), from that place's
+	`Workspace.Leaderboards`; a place without the folder, or with no board of its
+	own, never starts the reading half.
 
 	**Writing.** The profile is still the source; the store is a sorted copy of it.
 	Each server sends its own players' numbers when the profile loads, every
@@ -75,6 +76,11 @@ local WARN_COOLDOWN = 600
 
 local UNKNOWN_NAME = "???"
 
+-- The place this server runs, as each Rojo project sets it on `Services`. Boards
+-- with no `Place` are drawn in the Lobby.
+local PLACE_NAME = ServerScriptService:WaitForChild("Services"):GetAttribute("Place")
+local DEFAULT_PLACE = "Lobby"
+
 local LeaderboardService = {
 	Services = {
 		DataService = {},
@@ -93,7 +99,7 @@ local LeaderboardService = {
 	-- [UserId] = Username
 	Names = {},
 
-	-- The map's boards (Lobby only): { Config, List, Template, Rows }
+	-- This place's boards on the map: { Config, List, Template, Rows }
 	Boards = {},
 
 	-- [key] = `os.clock()` of the last warning
@@ -277,7 +283,7 @@ end
 
 --[[ READING AND DRAWING ]]
 
---- Links each board in the config to its model on the map. Returns whether there are any.
+--- Links each of this place's boards to its model on the map. Returns whether there are any.
 function LeaderboardService:_bindBoards() : boolean
 	local folder = workspace:FindFirstChild(LeaderboardConfig.FOLDER_NAME)
 	if not folder then
@@ -285,6 +291,10 @@ function LeaderboardService:_bindBoards() : boolean
 	end
 
 	for _, config in LeaderboardConfig.Boards do
+		if (config.Place or DEFAULT_PLACE) ~= PLACE_NAME then
+			continue
+		end
+
 		local model = folder:FindFirstChild(config.Model)
 		local main = model and model:FindFirstChild("Main")
 		local surface = main and main:FindFirstChildWhichIsA("SurfaceGui")

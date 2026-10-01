@@ -28,7 +28,8 @@ Where `PausePlaytime` is `true`, `PlaytimeService` freezes the player's clock wh
 The time spent AFK is never written; nothing is written on the switch itself, so going AFK and back does not touch the profile.
 The leaderboard keeps its one-minute write.
 
-`PlaytimeService` tells the Lobby from the Game by the place folder Rojo mounts (`ServerScriptService.Services.Lobby` or `.Game`), not by `PlaceId`, so QA copies of the Lobby pause too.
+`PlaytimeService` tells the places apart by the `Place` attribute each Rojo project sets on `ServerScriptService.Services`, not by `PlaceId`, so QA copies of the Lobby pause too.
+In the AFK place it does not count at all: time there goes to `Stats.TimeInAfkArea` (see [AFK area](../afk/afk-area.md)).
 
 ## Configuration
 
