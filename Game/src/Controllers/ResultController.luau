@@ -703,14 +703,18 @@ function ResultController:populateMVP(panel : Instance, info) : boolean
 			-- `StepAnimations` advances it. Step zero already applies the idle's first pose, so
 			-- even without the loop the portrait stands in a standing pose, not the frozen pose
 			-- from the instant the round ended.
-			pcall(function()
+			-- StepAnimations is plugin-only in live games. Test it once: if Roblox refuses it,
+			-- don't start the per-frame loop (it would error on every frame for nothing).
+			local canStep = pcall(function()
 				animator:StepAnimations(0)
 			end)
 
-			self.mvpStep = RunService.RenderStepped:Connect(function(delta)
-				if not clone.Parent then return end
-				animator:StepAnimations(delta)
-			end)
+			if canStep then
+				self.mvpStep = RunService.RenderStepped:Connect(function(delta)
+					if not clone.Parent then return end
+					animator:StepAnimations(delta)
+				end)
+			end
 		end
 	end
 

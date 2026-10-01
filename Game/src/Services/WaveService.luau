@@ -76,7 +76,7 @@ local WaveService = {
 		WeatherRoundService = {},
 		SpeedService = {},
 		CardShopService = {},
-		TutorialMatchService = {}
+		TutorialMatchService = {},
 		BadgeService = {},
 	},
 	Signals = {
