@@ -243,6 +243,9 @@ RichTextConfig.Gradients = {
 	gold = { Colors = "255,240,170;225,165,40", MoveSpeed = 0.3 },
 	ice = { Colors = "200,245,255;70,160,255", MoveSpeed = 0.25 },
 	override = { Colors = "40,220,110;0,0,0;255,255,255;0,0,0;40,220,110", MoveSpeed = 0.8 },
+	purple = { Colors = "150,70,255;255,255,255;150,70,255", MoveSpeed = 0.3 },
+
+
 }
 
 --[=[
