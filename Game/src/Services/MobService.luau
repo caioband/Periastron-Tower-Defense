@@ -1364,13 +1364,13 @@ end
 	The enemy the unit picks within range, by the criterion its owner left on the card's
 	`Priority` button. The comparison lives in `TargetPriority`, shared with the client;
 	see the module.
+
+	Progress is `mob.Distance`, the exact distance walked along its route. The client
+	rebuilds the same number in `MobController:GetPathDistance`.
 ]=]
 function MobService:GetBestMobInRange(position : Vector3, range : number, priority : string?)
 	local bestId = nil
 	local best = nil
-
-	-- Only `Farthest` looks at the path; the other modes do not even build the list.
-	local nodeDistances = TargetPriority.UsesPathProgress(priority) and self:getNodeDistances() or nil
 
 	for mobId, mob in self.ActiveMobs do
 		local pos = self:getMobPosition(mobId)
@@ -1379,11 +1379,11 @@ function MobService:GetBestMobInRange(position : Vector3, range : number, priori
 		local dist = (pos - position).Magnitude
 		if dist > range then continue end
 
-		local candidate = { distance = dist, health = mob.Health or 0 }
-
-		if nodeDistances then
-			candidate.progress = self:getMobPathProgress(mob, pos, nodeDistances)
-		end
+		local candidate = {
+			distance = dist,
+			health = mob.Health or 0,
+			progress = mob.Distance or 0,
+		}
 
 		if TargetPriority.IsBetter(priority, candidate, best) then
 			best = candidate
@@ -1397,7 +1397,7 @@ end
 -- With no priority at all: the nearest. Callers that only want "who is there" (the
 -- mine asking who stepped on it) still call through here.
 function MobService:GetNearestMobInRange(position : Vector3, range : number)
-	return self:GetBestMobInRange(position, range, TargetPriority.Default)
+	return self:GetBestMobInRange(position, range, TargetPriority.Nearest)
 end
 
 --[=[

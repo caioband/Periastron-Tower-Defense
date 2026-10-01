@@ -399,6 +399,27 @@ function MobController:getNodeDistances()
 	return self.NodeDistances
 end
 
+function MobController:GetPathDistance(mobModel : Instance) : number?
+	local mobId = mobModel:GetAttribute("MobID")
+	local movement = mobId and self.MobMovement[mobId]
+	if not movement then return nil end
+
+	local smooth = movement.smooth
+	local previous = movement.pointIndex - 1
+	local from = smooth.points[previous]
+
+	if not from then
+		return smooth.length
+	end
+
+	local pathPos = movement.pathPos or from
+
+	return (smooth.cumulative[previous] or 0) + (pathPos - from).Magnitude
+end
+
+
+
+
 function MobController:createEntity(entityData)
 	local mobName = entityData.Name or "CourageBearer"
 	local speed = entityData.Speed or 6
