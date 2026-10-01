@@ -23,6 +23,9 @@ return {
 	]]
 	ADMIN_USER_IDS = {
 		[46871391] = true,   -- caioband
+		[4133615556] = true,   -- authoryl
+
+		
 	},
 
 	--[[
