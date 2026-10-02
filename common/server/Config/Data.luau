@@ -239,7 +239,12 @@ return {
 			Accepted = {},
 			Shown = {},
 		},
+
+		Settings = {},
+
 	},
+
+
 
 	STARTING_CASH = 500,
 

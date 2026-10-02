@@ -31,6 +31,10 @@ local HIDE_REASON = "Settings"
 -- The `UIScale` the click pop needs, created when the template does not ship one.
 local PRESS_SCALE_NAME = "PressScale"
 
+-- The event `SettingsService` listens to, and the profile key it saves under.
+local SAVE_EVENT = "SettingChanged"
+local DATA_KEY = "Settings"
+
 -- [key] = the `SettingsConfig.List` entry
 local DEFINITIONS = {}
 for _, entry in SettingsConfig.List do
@@ -52,8 +56,12 @@ end
 	damage numbers). Music and sound effects are the exception and are applied here,
 	because `MusicController` is lower level and depends on nobody.
 
-	**Nothing is saved yet.** The values start from `SettingsConfig.List` in every
-	place, and a teleport between the Lobby and the Game resets them.
+	**Settings are saved.** A click on a toggle fires `SettingChanged`;
+	`SettingsService` validates it and writes it to `Profile.Settings`, which holds
+	only the values the player changed. On start, `_loadSaved` reads that table from
+	the replica and applies it through `Set`, so the observers react exactly as if
+	the player had just clicked. Anything not saved falls back to
+	`SettingsConfig.List`'s `Default`.
 
 	**The icon and the panel always agree.** The icon asks, the panel answers, and
 	the icon is set back to whatever the panel ended up as: closing with the X
@@ -66,6 +74,7 @@ local SettingsController = {
 	Controllers = {
 		InterfaceController = {},
 		MusicController = {},
+		DataController = {},
 	},
 }
 
@@ -179,13 +188,50 @@ function SettingsController:_renderRow(key : string)
 	end
 end
 
+--- Tells the server to save one setting. Only player clicks go through here; `Set`
+--- stays a plain in-memory write so loading the saved values never writes them back.
+function SettingsController:_persist(key : string, value : boolean)
+	Framework:Fire(SAVE_EVENT, key, value)
+end
+
+--[=[
+	Applies what the profile saved. Goes through `Set`, so every observer reacts as
+	if the player had just clicked, and a row already on screen is re-rendered.
+
+	It yields until the replica arrives, so `start` runs it on its own thread.
+	Unknown keys (a setting removed from the list) and non-boolean values are
+	skipped.
+]=]
+function SettingsController:_loadSaved()
+	local dataController = self.Controllers.DataController
+	if not dataController then
+		return
+	end
+
+	local replica = dataController:GetReplica()
+	local saved = replica and replica.Data and replica.Data[DATA_KEY]
+
+	if typeof(saved) ~= "table" then
+		return
+	end
+
+	for key, value in saved do
+		if DEFINITIONS[key] and typeof(value) == "boolean" then
+			self:Set(key, value)
+		end
+	end
+end
+
 --[=[
 	The click on a toggle. The value changes **before** the sound: turning sound
 	effects off gives a silent click, and turning them on gives one you hear, instead
 	of the reverse.
 ]=]
 function SettingsController:_onRowClicked(key : string)
-	self:Set(key, not self:Get(key))
+	local value = not self:Get(key)
+
+	self:Set(key, value)
+	self:_persist(key, value)
 
 	local music = self.Controllers.MusicController
 	if music then
@@ -409,6 +455,10 @@ function SettingsController:start()
 	end
 
 	self:construct()
+
+	task.spawn(function()
+		self:_loadSaved()
+	end)
 end
 
 function SettingsController:init()
