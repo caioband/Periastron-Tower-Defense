@@ -1089,6 +1089,8 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	local currentGroundY = groundSurfaceY
 
 	local placementRing = UIAssets.AOE.Ring:Clone()
+
+
 	local ringPart = placementRing:FindFirstChild("Renge")
 	if ringPart then
 		local currentDiameter = ringPart.Size.X
@@ -1103,6 +1105,25 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	local ringOrigin = characterPosition or Vector3.zero
 	placementRing:PivotTo(CFrame.new(ringOrigin.X, groundSurfaceY + placementRing:GetExtentsSize().Y / 2, ringOrigin.Z))
 	placementRing.Parent = workspace.CurrentCamera
+
+	local FOOTPRINT_LIFT = 0.05
+	local footprintRing : BasePart? = nil
+	local footprintThickness = 0.15
+
+	-- The same blue disc a placed tower shows under itself, sized to the tower's width
+	-- (the width the spacing rule uses).
+	local blueCircleTemplate = UIAssets.AOE.DottedLine:FindFirstChild("BlueCircle")
+	if blueCircleTemplate then
+		footprintRing = blueCircleTemplate:Clone()
+		footprintThickness = blueCircleTemplate.Size.X
+		footprintRing.Size = Vector3.new(footprintThickness, unitSizeX, unitSizeX)
+		footprintRing.CFrame = CFrame.new(
+			ringOrigin.X,
+			groundSurfaceY + footprintThickness / 2 + FOOTPRINT_LIFT,
+			ringOrigin.Z
+		) * CFrame.Angles(0, 0, math.pi / 2)
+		footprintRing.Parent = workspace.CurrentCamera
+	end
 
 	local ringScaleValue = Instance.new("NumberValue")
 	ringScaleValue.Value = 0.001
@@ -1320,6 +1341,14 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 
 		local ghostPos = ghostCF.Position
 		placementRing:PivotTo(CFrame.new(ghostPos.X, currentGroundY + placementRing:GetExtentsSize().Y / 2, ghostPos.Z))
+		if footprintRing then
+			footprintRing.CFrame = CFrame.new(
+				ghostPos.X,
+				currentGroundY + footprintThickness / 2 + FOOTPRINT_LIFT,
+				ghostPos.Z
+			) * CFrame.Angles(0, 0, math.pi / 2)
+			footprintRing.Color = currentColor
+		end
 	end))
 
 	local function rotateGhost()
@@ -1611,16 +1640,19 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		end
 	end
 
-	maid:GiveTask(function()
-		restoreGridParts(paintedGridParts)
-		if placementRing and placementRing.Parent then
-			placementRing:Destroy()
-		end
-		if ghost and ghost.Parent then
-			ghost:Destroy()
-		end
-		self.isPlacing = false
-		self._maid = nil
+maid:GiveTask(function()
+	if footprintRing and footprintRing.Parent then
+		footprintRing:Destroy()
+	end
+	restoreGridParts(paintedGridParts)
+	if placementRing and placementRing.Parent then
+		placementRing:Destroy()
+	end
+	if ghost and ghost.Parent then
+		ghost:Destroy()
+	end
+	self.isPlacing = false
+	self._maid = nil
 	end)
 end
 
