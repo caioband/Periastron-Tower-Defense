@@ -93,9 +93,10 @@ return {
 		},
 
 		--[[
-			The high-rarity unboxing guarantee: `{ [crate] = { [rarity] = openings in
-			a row without it } }`. It starts empty and each crate gets its count on its
-			first opening. See `ServerScriptService.Config.Crate.PITY_RARITIES`.
+			The high-rarity unboxing guarantee: `{ [rarity] = openings in a row
+			without it }`, shared by every crate. It starts empty and fills on the first
+			opening. Old profiles hold one table per crate, converted on the next opening.
+			See `SharedConfig.CrateConfig.PITY_RARITIES`.
 		]]
 		Pity = {},
 

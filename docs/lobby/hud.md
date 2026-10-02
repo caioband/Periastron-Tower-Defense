@@ -62,8 +62,8 @@ One rule per button:
 **`HUDFrame.Shop` has no badge**: the crate shop always sells the same `ShopConfig.ITEMS`, so there is nothing new to announce, and its button has no label.
 
 - **Opening the panel clears the badge.**
-  Each panel calls `NoteSeen` when it opens: the `ProximityPanel`'s `BeforeOpen` for the three in the world (contracts, Robux shop, card shop), and `_setOpen` in the backpack (`CrateUIController`) and the loadout (`DeckController`).
-  It lives in `_setOpen`, not the click, because both also open through `Open()`.
+  Each panel calls `NoteSeen` when it opens: the `ProximityPanel`'s `BeforeOpen` for the contracts, the Robux shop, the card shop, and the backpack (`CrateUIController`), and `_setOpen` in the loadout (`DeckController`).
+  It lives in the open path, not the click, because every panel also opens through `Open()`.
 - The backpack and loadout badges are **reset** there, not turned off: whatever arrives after the look lights the badge again.
 - **A pending claim is state, not news**: the contracts badge insists while a completed contract is unclaimed, even after the board opens.
 - **The card shop turn is clock math** (`RoundCardShopConfig.rotationIndex`, checked every five seconds): the block turns at the same time for everyone.

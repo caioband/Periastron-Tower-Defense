@@ -171,4 +171,70 @@ function module.getOrderedRarities(): { string }
 	return ordered
 end
 
+--[[ PITY ]]
+
+--[=[
+	The guarantee (pity) for high rarities, in priority order: **one count per rarity,
+	shared by every crate**. The profile's `Pity` counts how many openings in a row,
+	of any crate, came out **without** that rarity; when the count reaches its limit
+	(`PITY_THRESHOLDS`), the next opening delivers it, whatever the crate. The count
+	resets whenever the rarity comes out, guaranteed or not.
+
+	The counts are independent: pulling Cosmic does not reset Legendary's, and pulling
+	Legendary does not reset Epic's. The guarantee delivers **exactly** its rarity: a
+	due Epic comes out as Epic even where the draw could have given more. If several
+	come due on the same opening, the first in this list wins, and the others wait for
+	the next openings, because their counts stay at the limit.
+
+	It is here, not with the odds on the server, because the limits are not chances:
+	the backpack shows them as they are. `CrateService:OpenCrate` applies it; Cmdr's
+	`unbox` does not open a real crate and touches no count.
+]=]
+module.PITY_RARITIES = { "Cosmic", "Legendary", "Epic" }
+
+-- Openings in a row without the rarity, in any crate, that make the next one guaranteed.
+module.PITY_THRESHOLDS = {
+	Cosmic = 450,
+	Legendary = 125,
+	Epic = 25,
+}
+
+function module.getPityThreshold(rarity: string): number?
+	return module.PITY_THRESHOLDS[rarity]
+end
+
+--[=[
+	The profile's `Pity` as `{ [rarity] = count }`, from either shape it may have.
+
+	Today it is `{ Legendary = 37, Cosmic = 210 }`. Profiles from before the shared
+	count still hold one table per crate (`{ Common = { Legendary = 80 }, ... }`); for
+	those, each rarity starts from its **highest** crate count, so nobody loses the
+	progress they had. The next opening rewrites it in the new shape.
+]=]
+function module.readPity(pity: any): { [string]: number }
+	local counts = {}
+	if typeof(pity) ~= "table" then
+		return counts
+	end
+
+	for _, rarity in module.PITY_RARITIES do
+		local value = pity[rarity]
+
+		if typeof(value) == "number" then
+			counts[rarity] = value
+		else
+			local highest = 0
+			for _, counters in pity do
+				if typeof(counters) == "table" then
+					highest = math.max(highest, tonumber(counters[rarity]) or 0)
+				end
+			end
+
+			counts[rarity] = highest
+		end
+	end
+
+	return counts
+end
+
 return module

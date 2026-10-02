@@ -3,7 +3,7 @@
 Crates are bought in the [shop](shop.md), kept in the backpack, and opened with an unboxing the whole Lobby can see.
 
 **Runs in:** Lobby
-**Code:** [`CrateService`](../../Lobby/src/Services/CrateService.luau), [`CrateController`](../../Lobby/src/Controllers/CrateController.luau), [`CrateUIController`](../../Lobby/src/Controllers/CrateUIController.luau), [`UnboxingController`](../../Lobby/src/Controllers/UnboxingController.luau), [`CrateConfig`](../../common/shared/Config/SharedConfig/CrateConfig.luau), [`Config.Crate`](../../common/server/Config/Crate.luau)
+**Code:** [`CrateService`](../../Lobby/src/Services/CrateService.luau), [`CrateController`](../../Lobby/src/Controllers/CrateController.luau), [`CrateUIController`](../../Lobby/src/Controllers/CrateUIController.luau), [`CratePityController`](../../Lobby/src/Controllers/CratePityController.luau), [`UnboxingController`](../../Lobby/src/Controllers/UnboxingController.luau), [`CrateConfig`](../../common/shared/Config/SharedConfig/CrateConfig.luau), [`Config.Crate`](../../common/server/Config/Crate.luau)
 
 ## Crate names
 
@@ -51,6 +51,34 @@ Its `Rarity` in `UnitStats` stays `Legendary`, which the card, color, and price 
 Published odds are per *rarity*, so they do not change: removing the Azure only makes Legendary drops land on the other Legendary units (Berserker and Electro).
 
 ⚠️ Emptying a whole rarity through the list would make the draw **drop a tier** and hand out a weaker unit, with a warning (the same path as Cosmic, which has no units).
+
+## Guarantee (pity)
+
+Cosmic, Legendary, and Epic (`CrateConfig.PITY_RARITIES`) have a guarantee with **one count per rarity, shared by every crate**: the profile's `Pity` counts how many openings in a row, of any crate, came out without that rarity.
+When the count reaches its limit, the next opening delivers it, whatever the crate; the count resets whenever the rarity comes out.
+
+| Rarity | Limit (`CrateConfig.PITY_THRESHOLDS`) |
+| --- | ---: |
+| Cosmic | 450 |
+| Legendary | 125 |
+| Epic | 25 |
+
+- **The crates' odds do not change**: the guarantee only decides the rarity of the opening that comes due (`RollCrate`'s `forcedRarity`), so a due Cosmic comes out of any crate, the Crate of Beginnings included.
+- **The counts are independent**: pulling Cosmic does not reset Legendary's, and pulling Legendary does not reset Epic's. The guarantee delivers **exactly** its rarity: a due Epic comes out as Epic even from a Legendary Crate opening that could have given a Legendary.
+- **Priority is the list order** (Cosmic, Legendary, Epic): if several come due together, the rarest comes out and the others wait for the next openings.
+- The limits are in `SharedConfig.CrateConfig`, not with the odds on the server, because they are not chances: the backpack shows them as they are.
+- `CrateService` applies it in `OpenCrate`; Cmdr's `unbox` touches no count.
+
+**The profile shape changed.** It is `Pity = { Legendary = 37, Cosmic = 210 }`; profiles from before still hold one table per crate (`{ Common = { Legendary = 80 }, ... }`).
+`CrateConfig.readPity` reads both, and for the old one each rarity starts from its **highest** crate count, so nobody loses progress; the next opening rewrites it in the new shape.
+
+### The backpack's pity list
+
+`crateui.Frame.Rectangle.Pity` shows **one row per rarity**, rarest on top, cloned from the authored `RarityContainer` (`CratePityController`), reading `count/limit`.
+The bar's fill and the rarity name take the rarity's color from `RarityConfig`.
+
+- **The counts come from the replica** (`Data.Pity`), so the bars move with each opening.
+- **It redraws on every opening of the panel**, besides every profile change, and a bind that a newer `crateui` copy overtook gives up, so the rows never land in a discarded copy.
 
 ## The unboxing is for the whole Lobby
 

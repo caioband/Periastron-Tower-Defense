@@ -187,13 +187,14 @@ function CrateController:_bindUI(screenGui : ScreenGui)
 	self.Entries = nil
 	self.Wrapper = nil
 
-	local rectangle = screenGui:WaitForChild("Rectangle", 10)
+	local frame = screenGui:WaitForChild("Frame", 10)
+	local rectangle = frame and frame:WaitForChild("Rectangle", 10)
 	local scroll = rectangle and rectangle:WaitForChild("scrollcrates", 10)
 	local wrapper = scroll and scroll:WaitForChild("CrateWrapper", 10)
 	local template = wrapper and wrapper:WaitForChild(TEMPLATE_NAME, 10)
 
 	if not template then
-		log:StudioWarn(`could not find {CRATE_UI_NAME}.Rectangle.scrollcrates.CrateWrapper.{TEMPLATE_NAME}`)
+		log:StudioWarn(`could not find {CRATE_UI_NAME}.Frame.Rectangle.scrollcrates.CrateWrapper.{TEMPLATE_NAME}`)
 		return
 	end
 

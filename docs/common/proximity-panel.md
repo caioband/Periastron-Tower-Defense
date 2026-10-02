@@ -1,10 +1,10 @@
 # Proximity panel
 
-`Shared.Util.ProximityPanel` is the shared behavior of the Lobby's walk-up panels (the crate shop, the card shop, the Robux shop, and the contracts board) and of the [settings panel](settings.md).
+`Shared.Util.ProximityPanel` is the shared behavior of the Lobby's walk-up panels (the crate shop, the card shop, the Robux shop, and the contracts board), of the backpack (`crateui`), and of the [settings panel](settings.md).
 A panel opens when the player reaches a spot on the map and closes when they leave; one without a spot opens only from a button.
 
 **Runs in:** Lobby · Game (only the settings panel)
-**Code:** [`ProximityPanel`](../../common/shared/Util/ProximityPanel.luau), used by [`ShopController`](../../Lobby/src/Controllers/ShopController.luau), [`RoundCardShopController`](../../Lobby/src/Controllers/RoundCardShopController.luau), [`RobuxShopController`](../../Lobby/src/Controllers/RobuxShopController.luau), [`ContractController`](../../Lobby/src/Controllers/ContractController.luau), and [`SettingsController`](../../common/client/Controllers/SettingsController.luau)
+**Code:** [`ProximityPanel`](../../common/shared/Util/ProximityPanel.luau), used by [`ShopController`](../../Lobby/src/Controllers/ShopController.luau), [`RoundCardShopController`](../../Lobby/src/Controllers/RoundCardShopController.luau), [`RobuxShopController`](../../Lobby/src/Controllers/RobuxShopController.luau), [`ContractController`](../../Lobby/src/Controllers/ContractController.luau), [`CrateUIController`](../../Lobby/src/Controllers/CrateUIController.luau), and [`SettingsController`](../../common/client/Controllers/SettingsController.luau)
 
 ## How it works
 

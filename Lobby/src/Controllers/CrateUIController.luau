@@ -1,6 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -12,34 +11,46 @@ local Me = require(Vendor.Me)
 local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
 local Signal = require(Packages.Signal)
 
+local ProximityPanel = require(Util.ProximityPanel)
 local UIUtil = require(Util.UIUtil)
 
 local Framework = Me.new()
 local log = Log.new("CrateUIController")
 
 --[[ CONSTANTS ]]
-local CRATE_UI_NAME = "crateui"
-local HUD_UI_NAME = "HUD"
 
-local PANEL_NAME = "Rectangle"
+--[=[
+	The UI path: `crateui.Frame.Rectangle`, the same shape as `Contracts.Frame.MainBoard`.
+	`Frame` is the outer frame `ProximityPanel` shows and hides; `Rectangle` is the art
+	the `OpenShop` animation scales and fades.
+]=]
+local GUI = {
+	ScreenGui = "crateui",
+	Wrapper = "Frame",
+	Panel = "Rectangle",
+	PityList = "Pity",
+}
+
+local HUD_UI_NAME = "HUD"
 local HUD_FRAME_NAME = "HUDFrame"
 local TOGGLE_BUTTON_NAME = "Backpack"
 
-local OPEN_INFO = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local CLOSE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local FADE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
-local OPEN_FROM_SCALE = 0.85
-local CLOSE_TO_SCALE = 0.9
+local OPEN_ANIMATION = "OpenShop"
+local HIDE_REASON = "Backpack"
 
 --[=[
-	Owns the crate panel: the Backpack button opens and closes it.
+	Owns the crate panel: the Backpack button opens it.
 
-	Was a LocalScript parented to the HUD (StarterGui.HUD.BackpackToggle). It lives
-	here so the UI holds no code. Opening a crate does **not** close the panel.
+	The panel itself (frame, `OpenShop`, the blur, hiding the rest of the UI, and the X)
+	belongs to `ProximityPanel`, the same as the contracts board and the shops. **No
+	`GetReference`**: the backpack has no place on the map, so it lives on the HUD button
+	and the X. With the HUD hidden while it is open, the X is how it closes.
+
+	Opening a crate does **not** close the panel: the player keeps opening crates from it.
 ]=]
 local CrateUIController = {
 	Controllers = {
+		InterfaceController = {},
 		HUDBadgeController = {},
 	},
 
@@ -51,85 +62,19 @@ local CrateUIController = {
 
 --[[ INTERNAL ]]
 
-function CrateUIController:_playTween(object : Instance, info : TweenInfo, goal : { [string]: any }) : Tween
-	local tween = TweenService:Create(object, info, goal)
-
-	self.TweenMaid:GiveTask(function()
-		tween:Cancel()
-	end)
-
-	tween:Play()
-	return tween
-end
-
-function CrateUIController:_setOpen(open : boolean)
-	local panel = self.Panel
-	if not panel or not panel.Parent or not self.PanelScale then
-		return
-	end
-
-	if open == self.IsOpenState then
-		return
-	end
-
-	self.IsOpenState = open
-	self.TweenMaid:DoCleaning()
-
-	if open then
-		--[[
-			The backpack was opened, so its `New` badge is done: the player has seen the
-			shelf. A crate that lands after this lights the badge again on its own.
-
-			Here and not on the button's click because the panel also opens through
-			`Open()` -- open is open, wherever it comes from.
-		]]
-		local badges = self.Controllers.HUDBadgeController
-		if badges then
-			badges:NoteSeen(TOGGLE_BUTTON_NAME)
-		end
-
-		self.PanelScale.Scale = OPEN_FROM_SCALE
-		panel.ImageTransparency = 1
-		panel.Visible = true
-
-		self:_playTween(self.PanelScale, OPEN_INFO, { Scale = 1 })
-		self:_playTween(panel, FADE_INFO, { ImageTransparency = 0 })
-	else
-		self:_playTween(self.PanelScale, CLOSE_INFO, { Scale = CLOSE_TO_SCALE })
-
-		local fade = self:_playTween(panel, CLOSE_INFO, { ImageTransparency = 1 })
-		fade.Completed:Once(function(state : Enum.PlaybackState)
-			-- Reopened mid-fade: the open tween owns the panel now.
-			if state == Enum.PlaybackState.Completed and not self.IsOpenState then
-				panel.Visible = false
-			end
-		end)
-	end
-
-	self.Signals.OpenChanged:Fire(open)
-end
-
 --[=[
-	Binds to a crateui instance. crateui has ResetOnSpawn enabled, so this runs again
-	for every fresh copy the engine parents into PlayerGui.
+	Each new copy of `crateui` (it has `ResetOnSpawn`). `maid` is `ProximityPanel`'s bind
+	maid, cleaned on the next copy.
 ]=]
-function CrateUIController:_bindPanel(screenGui : ScreenGui)
-	local panel = screenGui:WaitForChild(PANEL_NAME, 10)
-	local panelScale = panel and panel:FindFirstChildWhichIsA("UIScale")
-
-	if not panel or not panelScale then
-		log:StudioWarn(`could not find {CRATE_UI_NAME}.{PANEL_NAME} with a UIScale.`)
-		return
+function CrateUIController:_onBind(panel : GuiObject, maid : any)
+	-- The pity list scrolls as far as its rows go, however many there are.
+	local pityList = panel:FindFirstChild(GUI.PityList)
+	if pityList and pityList:IsA("ScrollingFrame") then
+		local connection = UIUtil.fitCanvasHeight(pityList)
+		if connection then
+			maid:GiveTask(connection)
+		end
 	end
-
-	self.TweenMaid:DoCleaning()
-
-	self.Panel = panel
-	self.PanelScale = panelScale
-
-	-- The panel starts closed, like the old script left it.
-	self.IsOpenState = false
-	panel.Visible = false
 end
 
 --[=[
@@ -152,17 +97,12 @@ function CrateUIController:_bindHud(screenGui : ScreenGui)
 	end))
 end
 
+--- The HUD, through the Backpack button. `ProximityPanel` follows `crateui`.
 function CrateUIController:_observeUI()
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 	local function onChild(child : Instance)
-		if not child:IsA("ScreenGui") then
-			return
-		end
-
-		if child.Name == CRATE_UI_NAME then
-			self:_bindPanel(child)
-		elseif child.Name == HUD_UI_NAME then
+		if child:IsA("ScreenGui") and child.Name == HUD_UI_NAME then
 			self:_bindHud(child)
 		end
 	end
@@ -177,22 +117,67 @@ end
 --[[ EXTERNAL ]]
 
 function CrateUIController:IsOpen() : boolean
-	return self.IsOpenState == true
+	return self.Proximity ~= nil and self.Proximity:IsOpen()
 end
 
 function CrateUIController:Open()
-	self:_setOpen(true)
+	if self.Proximity then
+		self.Proximity:Open()
+	end
 end
 
 function CrateUIController:Close()
-	self:_setOpen(false)
+	if self.Proximity then
+		self.Proximity:Close()
+	end
 end
 
 function CrateUIController:Toggle()
-	self:_setOpen(not self.IsOpenState)
+	if self.Proximity then
+		self.Proximity:Toggle()
+	end
 end
 
 function CrateUIController:construct()
+	self.Proximity = ProximityPanel.new({
+		Name = "CrateUIController",
+		ScreenGui = GUI.ScreenGui,
+		Wrapper = GUI.Wrapper,
+		Panel = GUI.Panel,
+		Animation = OPEN_ANIMATION,
+		HideReason = HIDE_REASON,
+		InterfaceController = self.Controllers.InterfaceController,
+
+		OnBind = function(_screenGui, _wrapper, panel, maid)
+			self:_onBind(panel, maid)
+		end,
+
+		--[[
+			The backpack was opened, so its `New` badge is done: the player has seen the
+			shelf. A crate that lands after this lights the badge again on its own.
+
+			Here and not on the button's click because the panel also opens through
+			`Open()` -- open is open, wherever it comes from.
+		]]
+		BeforeOpen = function()
+			local badges = self.Controllers.HUDBadgeController
+			if badges then
+				badges:NoteSeen(TOGGLE_BUTTON_NAME)
+			end
+		end,
+	})
+
+	local openChanged = self.Proximity.Signals.OpenChanged:Connect(function(isOpen : boolean)
+		self.Signals.OpenChanged:Fire(isOpen)
+	end)
+
+	self.Maid:GiveTask(function()
+		openChanged:Disconnect()
+		self.Proximity:Destroy()
+	end)
+
+	self.Proximity:Start()
+
 	self:_observeUI()
 end
 
@@ -200,19 +185,18 @@ function CrateUIController:start()
 	for Controller, _ in self.Controllers do
 		self.Controllers[Controller] = Framework:Get(Controller, false, true)
 	end
+
+	self:construct()
 end
 
 function CrateUIController:init()
 	self.Maid = Maid.new()
-	self.TweenMaid = Maid.new()
-	self.HudMaid = Maid.new()
 
-	self.Maid:GiveTask(self.TweenMaid)
+	-- The HUD button's click, which the engine rebuilds on every respawn.
+	self.HudMaid = Maid.new()
 	self.Maid:GiveTask(self.HudMaid)
 
-	self.IsOpenState = false
-
-	self:construct()
+	self.Proximity = nil
 end
 
 return CrateUIController

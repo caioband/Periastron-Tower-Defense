@@ -54,6 +54,48 @@ function UIUtil.waitForDescendant(root: Instance, name: string, timeout: number?
 	return root:FindFirstChild(name, true)
 end
 
+--[=[
+	Keeps a vertical scroller's `CanvasSize` as tall as its list, following
+	`AbsoluteContentSize` as rows come and go.
+
+	`AutomaticCanvasSize` would be the obvious tool, but it ignores rows sized by a
+	`UIAspectRatioConstraint` (a row that scales with the screen's width), so the
+	canvas stays the height of the window and the extra rows can't be reached.
+
+	`AbsoluteContentSize` already includes every ancestor `UIScale` (a panel's
+	open tween), and that scale applies to the canvas offset once more. So the height
+	is divided by it. Only the `UIPadding` **offsets** are added: a scale padding on
+	a scroller depends on the canvas, which is what is being computed.
+
+	Returns the connection, or nil when the scroller has no list layout.
+]=]
+function UIUtil.fitCanvasHeight(scroller: ScrollingFrame): RBXScriptConnection?
+	local layout = scroller:FindFirstChildWhichIsA("UIGridStyleLayout")
+	if not layout then
+		return nil
+	end
+
+	local function update()
+		local scale = 1
+		local ancestor: Instance? = scroller
+		while ancestor do
+			local uiScale = ancestor:FindFirstChildWhichIsA("UIScale")
+			if uiScale then
+				scale *= uiScale.Scale
+			end
+			ancestor = ancestor.Parent
+		end
+
+		local padding = scroller:FindFirstChildWhichIsA("UIPadding")
+		local extra = if padding then padding.PaddingTop.Offset + padding.PaddingBottom.Offset else 0
+
+		scroller.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y / math.max(scale, 0.01) + extra)
+	end
+
+	update()
+	return layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(update)
+end
+
 --[[ TRANSPARENCY ]]
 
 --[=[

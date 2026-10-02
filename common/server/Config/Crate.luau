@@ -220,52 +220,7 @@ function module.GetDisplayOdds(crateRarity : string) : { [string]: number }?
 	return odds
 end
 
---[=[
-	The guarantee (pity) for high rarities: those with their own counter per crate,
-	in priority order.
-
-	Each crate counts, on the opener's profile (`Pity[crate][rarity]`), how many
-	openings in a row came out **without** that rarity. When the count reaches
-	`GetPityThreshold`'s limit, the next opening delivers a unit of that rarity, and
-	the count resets whenever it comes out, guaranteed or not.
-
-	The counts are independent: pulling Cosmic does not reset Legendary's. If both
-	come due on the same opening, the first in this list wins, and the other waits for
-	the next opening, because its count stays at the limit.
-
-	`CrateService:OpenCrate` applies it. Cmdr's `unbox` does not open a real crate and
-	touches no count.
-]=]
-module.PITY_RARITIES = { "Cosmic", "Legendary" }
-
---[=[
-	How many openings in a row without `rarity` make the next one guaranteed, for a
-	crate of that tier. Nil when the crate has no chance of it at all, so there is
-	nothing to guarantee.
-
-	It derives from the **real** chance (`GetOdds`, with upgrades included, and
-	without the gamepass luck): at 1%, a hundred openings without it guarantee the
-	hundred-and-first. Change the pools or the upgrades and the limit follows without
-	touching anything else.
-
-		| Crate (today)       | Legendary | Cosmic |
-		| Crate Of Beginnings |       100 |   7247 |
-		| Crate Of Nature     |        24 |    725 |
-		| Fragmented Crate    |         9 |    109 |
-		| Legendary Crate     |         3 |      - |
-]=]
-function module.GetPityThreshold(crateRarity : string, rarity : string) : number?
-	-- The real chance, not the shop's: hiding the row must not turn the guarantee off.
-	local odds = module.GetOdds(crateRarity)
-	local chance = odds and odds[rarity]
-
-	if not chance or chance <= 0 then
-		return nil
-	end
-
-	-- The slack absorbs floating-point error on a round chance: 100 / 1 must not
-	-- become 101 because of a 100.00000000001.
-	return math.max(1, math.ceil(100 / chance - 1e-9))
-end
+-- The guarantee (pity) is not here: its limits are not chances. See
+-- `SharedConfig.CrateConfig.PITY_RARITIES`.
 
 return module
