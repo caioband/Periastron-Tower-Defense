@@ -82,5 +82,5 @@ The controllers match these elements by name and parent name, anywhere under `Pl
 
 ## Known issues
 
-- `EnvironmentConfig` has no `Afk` place id yet, so nothing can teleport players into this place.
+- Only Production has an `Afk` place id in `EnvironmentConfig`, and nothing in the Lobby teleports players into this place yet.
 - The billboard and the reward countdown start over on every visit; only `Stats.TimeInAfkArea` adds up across visits.

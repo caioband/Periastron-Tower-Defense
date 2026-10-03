@@ -7,8 +7,9 @@
 	teleport should use there. Nothing else should read the ids directly.
 
 	Every id here is public (it shows in the experience URL), so it is safe to
-	replicate. The place keys, `Lobby` and `Game`, are the same names the rest of
-	the repository uses for the two places.
+	replicate. The place keys, `Lobby`, `Game`, and `Afk`, are the same names the
+	rest of the repository uses for the places. `Afk` is optional: an environment
+	without it has no AFK place yet (`Environment.HasPlace`).
 
 	See docs/common/environments.md.
 ]]
@@ -21,6 +22,7 @@ module.Environments = {
 		Places = {
 			Lobby = 132304466547289, -- "Periastron Tower Defense", the start place
 			Game = 109030368179494, -- "Main Game"
+			Afk = 80286820709620,
 		},
 	},
 

@@ -11,6 +11,7 @@
 		Environment.Name                   -- "Production" or "QA"
 		Environment.GetPlaceId("Game")     -- the Game place of *this* universe
 		Environment.IsPlace("Lobby")       -- is this server the Lobby of this universe?
+		Environment.HasPlace("Afk")        -- does this universe have an AFK place?
 
 	**Every teleport resolves its destination here.** A reserved server has to be
 	in the caller's universe, so a QA Lobby that sent players to the production
@@ -38,7 +39,7 @@ local Config = SharedConfig.EnvironmentConfig
 local log = Log.new("Environment")
 
 export type EnvironmentName = "Production" | "QA"
-export type PlaceName = "Lobby" | "Game"
+export type PlaceName = "Lobby" | "Game" | "Afk"
 
 local function resolve() : (EnvironmentName, boolean)
 	for name, environment in Config.Environments do
@@ -77,18 +78,28 @@ function Environment.IsQA() : boolean
 	return name == "QA"
 end
 
+--- Whether this environment has `place`. `Afk` is optional; check it before
+--- `GetPlaceId("Afk")`.
+function Environment.HasPlace(place : PlaceName) : boolean
+	return places[place] ~= nil
+end
+
 --- The id of `place` in this environment. The id every teleport must use.
+--- Errors when the environment does not have it (see `HasPlace`).
 function Environment.GetPlaceId(place : PlaceName) : number
 	local placeId = places[place]
-	assert(placeId, `unknown place '{tostring(place)}'`)
+	assert(placeId, `place '{tostring(place)}' is not configured for {name}`)
 
 	return placeId
 end
 
 --- Whether this server or client is `place` of this environment. Always `false`
---- in an unpublished place, where `PlaceId` is 0.
+--- in an unpublished place, where `PlaceId` is 0, and for a place this
+--- environment does not have.
 function Environment.IsPlace(place : PlaceName) : boolean
-	return game.PlaceId == Environment.GetPlaceId(place)
+	local placeId = places[place]
+
+	return placeId ~= nil and game.PlaceId == placeId
 end
 
 --- The environment for a human to read: `"QA"`, or what an unknown universe

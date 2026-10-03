@@ -138,7 +138,7 @@ local RANDOM = ContractConfig.RANDOM
 ContractConfig.Contracts = {
 	Hourly = {
 		{ Id = "H_Win3", Text = "Win 3 games in any map", Event = E.Win, Goal = 3,
-			Rewards = { Cash = 250, Shards = 3 } },
+			Rewards = { Cash = 200 } },
 
 		--[[
 			Ids that mention a map or difficulty (`H_Win2Castle`, `D_Win3Nightmare`...)
@@ -147,72 +147,72 @@ ContractConfig.Contracts = {
 			the contract.
 		]]
 		{ Id = "H_Win2Castle", Text = "Win 2 games in {Map}", Event = E.Win, Goal = 2, Map = RANDOM,
-			Rewards = { Cash = 200, Shards = 3 } },
+			Rewards = { Cash = 150 } },
 
 		{ Id = "H_Wave15Desert", Text = "Reach Wave 15 on {Map}", Event = E.WaveReached, Goal = 15, Mode = "Max", Map = RANDOM,
-			Rewards = { Cash = 150, Shards = 2 } },
+			Rewards = { Cash = 100 } },
 
 		{ Id = "H_Win2Medium", Text = "Win {Difficulty} difficulty twice on any map", Event = E.Win, Goal = 2, Difficulty = RANDOM, RewardDifficulty = "Medium",
-			Rewards = { Cash = 250, Shards = 3 } },
+			Rewards = { Cash = 200 } },
 
 		-- "During one match": `Max` keeps the best match, not the sum.
 		{ Id = "H_Spend5000", Text = "Spend 5,000 coins during a match", Event = E.MatchCashSpent, Goal = 5000, Mode = "Max",
-			Rewards = { Cash = 200, Shards = 3 } },
+			Rewards = { Cash = 150 } },
 
 		{ Id = "H_BeatFarmMedium", Text = "Beat {Map} in Medium difficulty or higher", Event = E.Win, Goal = 1, Map = RANDOM, MinDifficulty = "Medium",
-			Rewards = { Cash = 200, Shards = 3 } },
+			Rewards = { Cash = 200 } },
 
 		{ Id = "H_Kill100", Text = "Kill 100 enemies", Event = E.Kill, Goal = 100,
-			Rewards = { Cash = 150, Shards = 2 } },
+			Rewards = { Cash = 100 } },
 
 		{ Id = "H_WinFullHealth", Text = "Win with 100% base health", Event = E.Win, Goal = 1, FullHealth = true,
-			Rewards = { Cash = 150, Shards = 2 } },
+			Rewards = { Cash = 100 } },
 
 		{ Id = "H_Kill200Volcano", Text = "Kill 200 enemies on {Map}", Event = E.Kill, Goal = 200, Map = RANDOM,
-			Rewards = { Cash = 250, Shards = 3 } },
+			Rewards = { Cash = 150 } },
 
 		{ Id = "H_Damage30k", Text = "Deal 30,000 damage", Event = E.Damage, Goal = 30000,
-			Rewards = { Cash = 250, Shards = 3 } },
+			Rewards = { Cash = 250 } },
 
 		{ Id = "H_WinFriendsMap", Text = "Win a match in {Map} with 1 or more friends", Event = E.Win, Goal = 1, Map = RANDOM, WithFriends = true,
-			Rewards = { Cash = 100, Shards = 3 } },
+			Rewards = { Cash = 150 } },
 	},
 
 	Daily = {
 		{ Id = "D_Win6", Text = "Win 6 games in any map", Event = E.Win, Goal = 6,
-			Rewards = { Cash = 500, Shards = 7 } },
+			Rewards = { Cash = 500, Shards = 3 } },
 
 		{ Id = "D_Win6VolcanoMedium", Text = "Win 6 games in {Map} on {Difficulty} difficulty", Event = E.Win, Goal = 6, Map = RANDOM, Difficulty = RANDOM, RewardDifficulty = "Medium",
-			Rewards = { Cash = 700, Shards = 9 } },
+			Rewards = { Cash = 700, Shards = 3 } },
 
 		-- Only players with a unit that stuns get this: the Electro's jolt (`Stun`) or
 		-- the Frostione's freeze (`Frost`).
 		{ Id = "D_Stun676", Text = "Stun enemies 676 times", Event = E.Stun, Goal = 676, NeedsUnitStat = { "Stun", "Frost" },
-			Rewards = { Cash = 800, Shards = 9 } },
+			Rewards = { Cash = 800, Shards = 4 } },
 
 		{ Id = "D_Win3Nightmare", Text = "Win 3 games in {Difficulty} mode", Event = E.Win, Goal = 3, Difficulty = RANDOM, RewardDifficulty = "Nightmare",
 			Rewards = { Cash = 900, Shards = 8 } },
 
 		-- Round cash in a single match (the `Max`), not profile coins.
 		{ Id = "D_Earn20k", Text = "Earn 20,000 Cash in a single match", Event = E.MatchCashEarned, Goal = 20000, Mode = "Max",
-			Rewards = { Cash = 500, Shards = 7 } },
+			Rewards = { Cash = 500, Shards = 2 } },
 
 		{ Id = "D_Win6Hard", Text = "Win 6 games in {Difficulty} mode", Event = E.Win, Goal = 6, Difficulty = RANDOM, RewardDifficulty = "Hard",
-			Rewards = { Cash = 700, Shards = 8 } },
+			Rewards = { Cash = 700, Shards = 4 } },
 
 		{ Id = "D_Kill600", Text = "Kill 600 enemies", Event = E.Kill, Goal = 600,
-			Rewards = { Cash = 500, Shards = 7 } },
+			Rewards = { Cash = 500, Shards = 2 } },
 
 		{ Id = "D_Win4MapDifficulty", Text = "Win 4 games in {Map} on {Difficulty}", Event = E.Win, Goal = 4, Map = RANDOM, Difficulty = RANDOM, RewardDifficulty = "Medium",
-			Rewards = { Cash = 500, Shards = 7 } },
+			Rewards = { Cash = 500, Shards = 4 } },
 
 		{ Id = "D_Win5DifficultyFriends", Text = "Win 5 games on {Difficulty} with 1 or more friends", Event = E.Win, Goal = 5, Difficulty = RANDOM, RewardDifficulty = "Medium", WithFriends = true,
-			Rewards = { Cash = 400, Shards = 6 } },
+			Rewards = { Cash = 400, Shards = 3 } },
 	},
 
 	Weekly = {
 		{ Id = "W_Win7MapClassNightmare", Text = "Win 7 games in {Map} with only {Class} units in {Difficulty}", Event = E.Win, Goal = 7, Map = RANDOM, Class = RANDOM, Difficulty = RANDOM, RewardDifficulty = "Nightmare",
-			Rewards = { Cash = 1000, Crates = { Epic = 8 } } },
+			Rewards = { Cash = 2000, Shards = 10, Crates = { Epic = 6 } } },
 
 		-- One UTC day at a time, only within the week: all seven are needed.
 		{ Id = "W_Login7", Text = "Log in for 7 days straight", Event = E.Login, Goal = 7, Mode = "Distinct",
@@ -222,16 +222,16 @@ ContractConfig.Contracts = {
 			Rewards = { Crates = { Epic = 4 } } },
 
 		{ Id = "W_Damage1M", Text = "Deal 1,000,000 damage", Event = E.Damage, Goal = 1000000,
-			Rewards = { Cash = 12000 } },
+			Rewards = { Cash = 8000, Shards = 10 } },
 
 		{ Id = "W_Weather60", Text = "Experience Weathers 60 times", Event = E.Weather, Goal = 60,
-			Rewards = { Crates = { Epic = 6 } } },
+			Rewards = { Crates = { Epic = 8 } } },
 
 		{ Id = "W_Boss70", Text = "Defeat 70 bosses", Event = E.BossKill, Goal = 70,
 			Rewards = { Shards = 40 } },
 
 		{ Id = "W_Play7Hours", Text = "Play 7 hours worth of matches", Event = E.MatchTime, Goal = 7 * HOUR, Format = "Hours",
-			Rewards = { Crates = { Epic = 12 } } },
+			Rewards = { Cash = 2000, Crates = { Epic = 8 } } },
 
 		{ Id = "W_Win20Map", Text = "Win 20 games in {Map} in any difficulty", Event = E.Win, Goal = 20, Map = RANDOM,
 			Rewards = { Crates = { Epic = 8 } } },
