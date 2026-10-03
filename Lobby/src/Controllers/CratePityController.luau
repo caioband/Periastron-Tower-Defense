@@ -24,12 +24,17 @@ local log = Log.new("CratePityController")
 	The UI path: `crateui.Frame.Rectangle.Pity`, a list with one authored
 	`RarityContainer`, the **template**: hidden, and cloned once per rarity with a
 	guarantee.
+
+	`crateui.Frame.Rectangle.PityTitle` is the toggle text: "> Show Pity chances"
+	while the list is hidden, "V Pity Chances" while it is shown. Clicking or tapping
+	it flips between the two. The list starts hidden.
 ]=]
 local GUI = {
 	ScreenGui = "crateui",
 	Wrapper = "Frame",
 	Panel = "Rectangle",
 	List = "Pity",
+	Title = "PityTitle",
 	Template = "RarityContainer",
 
 	RarityName = "RarityName",
@@ -38,6 +43,10 @@ local GUI = {
 }
 
 local WAIT_TIMEOUT = 10
+
+-- The toggle text: collapsed, then expanded.
+local TEXT_COLLAPSED = "> Show Pity chances"
+local TEXT_EXPANDED = "V Pity Chances"
 
 local BAR_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
@@ -157,6 +166,57 @@ function CratePityController:_render()
 	end
 end
 
+--- Shows or hides the list and writes the matching toggle text.
+function CratePityController:_setOpen(isOpen : boolean)
+	local list, title = self.List, self.Title
+
+	if list then
+		list.Visible = isOpen
+	end
+
+	if title and title:IsA("TextLabel") then
+		title.Text = if isOpen then TEXT_EXPANDED else TEXT_COLLAPSED
+	end
+
+	if isOpen then
+		self:_render()
+	end
+end
+
+--- Collapses the list again. Called when the panel closes, so it always reopens collapsed.
+function CratePityController:_hideList()
+	self:_setOpen(false)
+end
+
+--[=[
+	Makes the toggle text clickable. The title is a plain `TextLabel`, so it is made
+	`Active` to receive clicks and taps, and lifted above its siblings so nothing
+	sits on top of it.
+]=]
+function CratePityController:_bindToggle(title : Instance?, list : GuiObject)
+	if not title or not title:IsA("GuiObject") then
+		log:StudioWarn(`could not find {GUI.ScreenGui}.{GUI.Wrapper}.{GUI.Panel}.{GUI.Title}.`)
+		return
+	end
+
+	self.Title = title
+
+	title.Visible = true
+	title.Active = true
+	title.ZIndex = math.max(title.ZIndex, 10)
+
+	self:_setOpen(false)
+
+	self.RowMaid:GiveTask(title.InputBegan:Connect(function(input : InputObject)
+		local inputType = input.UserInputType
+		if inputType ~= Enum.UserInputType.MouseButton1 and inputType ~= Enum.UserInputType.Touch then
+			return
+		end
+
+		self:_setOpen(not list.Visible)
+	end))
+end
+
 --[=[
 	Binds to a `crateui` copy. It has `ResetOnSpawn`, so this runs again for every copy
 	the engine parents into `PlayerGui`, and the old rows go with the old copy.
@@ -165,6 +225,7 @@ function CratePityController:_bindUI(screenGui : ScreenGui)
 	self.RowMaid:DoCleaning()
 	self.Rows = nil
 	self.List = nil
+	self.Title = nil
 	self.Template = nil
 	self.Screen = screenGui
 
@@ -192,6 +253,9 @@ function CratePityController:_bindUI(screenGui : ScreenGui)
 
 	self.List = list
 	self.Template = template
+
+	-- The list starts hidden; the toggle text shows it.
+	self:_bindToggle(panel:FindFirstChild(GUI.Title), list)
 
 	self:_render()
 end
@@ -245,12 +309,15 @@ function CratePityController:construct()
 	self:_watchProfile()
 
 	-- Redrawn on every opening as well: whatever the player sees is the profile right
-	-- now, even if some change slipped by while the panel was closed.
+	-- now, even if some change slipped by while the panel was closed. Closing the
+	-- panel collapses the list again.
 	local crateUI = self.Controllers.CrateUIController
 	if crateUI and crateUI.Signals and crateUI.Signals.OpenChanged then
 		local connection = crateUI.Signals.OpenChanged:Connect(function(isOpen : boolean)
 			if isOpen then
 				self:_render()
+			else
+				self:_hideList()
 			end
 		end)
 
@@ -271,7 +338,7 @@ end
 function CratePityController:init()
 	self.Maid = Maid.new()
 
-	-- The cloned rows, per copy of `crateui`.
+	-- The cloned rows and the title's click, per copy of `crateui`.
 	self.RowMaid = Maid.new()
 	self.Maid:GiveTask(self.RowMaid)
 
@@ -280,6 +347,7 @@ function CratePityController:init()
 	-- The `crateui` copy being bound: an older bind still waiting gives up.
 	self.Screen = nil
 	self.List = nil
+	self.Title = nil
 	self.Template = nil
 
 	-- [rarity] = { Bar, Progress }
