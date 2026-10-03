@@ -1074,15 +1074,27 @@ end
 
 --[[ ENDLESS PRICE SCALING ]]
 
--- Each wave adds this fraction of the base price. 0.04 = +4% of base per wave.
-RoundCardConfig.EndlessPriceGrowth = 0.45
+--[[
+	Gentle curve: multiplier = 1 + Linear * wave + Curve * wave^2.
+
+	The linear term keeps early waves calm (+10% of base per wave); the small quadratic
+	term makes the climb speed up gradually, so late waves still get expensive without
+	any sudden step between one shop and the next.
+
+	Example, a 450 card: wave 3 = 594, wave 12 = 1121, wave 30 = 2610, wave 60 = 6390.
+]]
+RoundCardConfig.EndlessPriceLinear = 0.10
+RoundCardConfig.EndlessPriceCurve = 0.002
 
 --- The price of a card on a given wave. Only Endless scales; everything else is the base price.
 function RoundCardConfig.GetPrice(card, wave : number?, endless : boolean?) : number
 	local base = math.max(0, card.Price or 0)
 	if not endless then return base end
 
-	return math.floor(base * (1 + RoundCardConfig.EndlessPriceGrowth * (wave or 0)) + 0.5)
+	local w = math.max(0, wave or 0)
+	local multiplier = 1 + RoundCardConfig.EndlessPriceLinear * w + RoundCardConfig.EndlessPriceCurve * w * w
+
+	return math.floor(base * multiplier + 0.5)
 end
 
 --- This card's ring radius, for aiming and for the zone it leaves.

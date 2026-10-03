@@ -273,6 +273,39 @@ function WaveService:getMaxWaves(preset)
 end
 
 --[=[
+	NEW: Endless reward curve.
+
+	Returns how many "wave-equivalents" a run of `waves` cleared waves is worth.
+	Every wave adds a weight, and the total is what coins/XP/shards scale from:
+
+	* waves 1..EarlyUntil          -> EarlyWeight each (stingy)
+	* waves EarlyUntil+1..RampUntil -> ramp from EarlyWeight up to 1.0
+	* waves past RampUntil          -> 1 + LateGrowth * (wave - RampUntil), uncapped
+
+	Every weight is positive, so the total only ever goes up with the wave count.
+]=]
+function WaveService:endlessProgressUnits(curve, waves : number) : number
+	local total = 0
+
+	for w = 1, waves do
+		local weight
+
+		if w <= curve.EarlyUntil then
+			weight = curve.EarlyWeight
+		elseif w <= curve.RampUntil then
+			local t = (w - curve.EarlyUntil) / (curve.RampUntil - curve.EarlyUntil)
+			weight = curve.EarlyWeight + (1 - curve.EarlyWeight) * t
+		else
+			weight = 1 + curve.LateGrowth * (w - curve.RampUntil)
+		end
+
+		total += weight
+	end
+
+	return total
+end
+
+--[=[
 	A match's reward, by the fraction of waves survived.
 
 	`lost` separates the base falling from the player reaching the end:
@@ -289,9 +322,18 @@ function WaveService:computeReward(preset, lost : boolean?)
 	-- the same the `or 1` multipliers gave when the base was Medium's.
 	preset = preset or DifficultyConfig.Get(nil)
 
+	-- CHANGED: Endless with a RewardCurve is uncapped and weighted per wave;
+	-- every other preset keeps the old clamped, linear progress.
 	local maxWaves = preset.RewardWaves or self:getMaxWaves(preset)
-	local wavesSurvived = math.clamp(self.WaveCount or 0, 0, maxWaves)
-	local progress = maxWaves > 0 and (wavesSurvived / maxWaves) or 0
+	local progress
+
+	if preset.Endless and preset.RewardCurve then
+		local wavesCleared = math.max(0, math.floor(self.WaveCount or 0))
+		progress = maxWaves > 0 and (self:endlessProgressUnits(preset.RewardCurve, wavesCleared) / maxWaves) or 0
+	else
+		local wavesSurvived = math.clamp(self.WaveCount or 0, 0, maxWaves)
+		progress = maxWaves > 0 and (wavesSurvived / maxWaves) or 0
+	end
 
 	-- The full-run reward is the preset's; someone leaving early gets the fraction of waves.
 	local coins = (preset.WinCash or 0) * progress

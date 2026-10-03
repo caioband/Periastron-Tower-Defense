@@ -178,9 +178,15 @@ Difficulty.Presets = {
 		WaveInterval = 1.25,
 	},
 
-		Endless = {
+	Endless = {
 		Endless = true,
-		RewardWaves = 50, 	
+		RewardWaves = 50,
+		RewardCurve = {
+			EarlyUntil = 30,   -- waves 1-30 pay EarlyWeight per wave
+			EarlyWeight = 0.5, -- half the old per-wave rate
+			RampUntil = 35,    -- waves 31-35 ramp from EarlyWeight up to 1.0
+			LateGrowth = 0.04, -- each wave past 35 adds +0.04 to that wave's weight, uncapped
+		},
 		WeatherChance = 0.30,
 		RewardMultiplier = 0.85,
 		WinCash = 900,

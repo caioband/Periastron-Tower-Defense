@@ -553,7 +553,7 @@ WeatherConfig.Indicator = {
 		]=]
 		Fit = {
 			TextRatio = 1.5, --
-			MaxRows = 2,
+			MaxRows = 4,
 			MinTextSize = 8,
 			WidthPerChar = 1,
 		},
