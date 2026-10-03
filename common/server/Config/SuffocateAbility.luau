@@ -17,7 +17,7 @@ SuffocateAbility.CastVFXTime = 1
 
 SuffocateAbility.UnitAnim = "Suffocated"
 SuffocateAbility.UnitVFX = "VictimVFX"
-SuffocateAbility.Duration = 1.5
+SuffocateAbility.Duration = 4
 SuffocateAbility.FadeTime = 0.6
 SuffocateAbility.ExceptUnits = {}
 
