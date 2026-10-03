@@ -552,9 +552,9 @@ WeatherConfig.Indicator = {
 			two walls set the size; without it, tuning this is trial and error.
 		]=]
 		Fit = {
-			TextRatio = 0.9,
+			TextRatio = 1.5, --
 			MaxRows = 2,
-			MinTextSize = 6,
+			MinTextSize = 8,
 			WidthPerChar = 1,
 		},
 
