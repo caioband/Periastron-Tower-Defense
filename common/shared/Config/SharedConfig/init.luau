@@ -20,6 +20,7 @@ type Shared = {
 	IndexConfig : typeof(require(script.IndexConfig)),
 	ContractConfig : typeof(require(script.ContractConfig)),
 	SettingsConfig : typeof(require(script.SettingsConfig)),
+	CodeConfig : typeof(require(script.CodeConfig)),
 	Cmdr : typeof(require(script.Cmdr)),
 	SellValue : number,
 	SellRefundRatio : number,

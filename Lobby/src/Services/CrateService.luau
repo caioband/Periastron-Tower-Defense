@@ -349,20 +349,21 @@ function CrateService:_rollUnit(rarity : string) : (string?, string?)
 end
 
 --[=[
-	The rarity guaranteed on the next opening, or nil. The count is shared by every
-	crate, so any crate delivers it.
+	The rarity guaranteed on this opening, or nil. The count is shared by every crate,
+	so any crate that takes part in that rarity's guarantee delivers it; one left out
+	(`CrateConfig.PITY_EXCLUDED_CRATES`) skips it, and the guarantee waits.
 
 	It reads the profile's `Pity` counts against each rarity's limit
 	(`CrateConfig.getPityThreshold`), in `CrateConfig.PITY_RARITIES` order: if Cosmic and
 	Legendary come due together, Cosmic comes out now and Legendary stays due for the
 	next opening.
 ]=]
-function CrateService:_dueRarity(profile : any) : string?
+function CrateService:_dueRarity(crateRarity : string, profile : any) : string?
 	local counts = CrateConfig.readPity(profile and profile.Pity)
 
 	for _, rarity in CrateConfig.PITY_RARITIES do
 		local threshold = CrateConfig.getPityThreshold(rarity)
-		if threshold and (counts[rarity] or 0) >= threshold then
+		if threshold and CrateConfig.countsForPity(crateRarity, rarity) and (counts[rarity] or 0) >= threshold then
 			return rarity
 		end
 	end
@@ -378,15 +379,21 @@ end
 	result), not the rolled one: a tier with no unit steps down in `_rollUnit`, and that
 	opening did not deliver the upper tier.
 
+	`crateRarity` is the crate bought, before any upgrade: a rarity's count stays as it
+	is when that crate is left out of its guarantee (`CrateConfig.countsForPity`),
+	whatever came out.
+
 	It always writes the current shape (`{ [rarity] = count }`): a profile still holding
 	the old per-crate tables is converted here, by `CrateConfig.readPity`.
 ]=]
-function CrateService:_recordPity(Player : Player, gotRarity : string?)
+function CrateService:_recordPity(Player : Player, crateRarity : string, gotRarity : string?)
 	self.Services.DataService:Update(Player, "Pity", function(pity)
 		local counts = CrateConfig.readPity(pity)
 
 		for _, rarity in CrateConfig.PITY_RARITIES do
-			if gotRarity == rarity then
+			if not CrateConfig.countsForPity(crateRarity, rarity) then
+				counts[rarity] = counts[rarity] or 0
+			elseif gotRarity == rarity then
 				counts[rarity] = 0
 			else
 				counts[rarity] = (counts[rarity] or 0) + 1
@@ -553,7 +560,7 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 		`TutorialService` sets it, on the server, when it opens the Lobby step: the client
 		asks for no rarity, so there is nothing to forge.
 	]]
-	local dueRarity = self:ConsumeForcedRarity(Player) or self:_dueRarity(profile)
+	local dueRarity = self:ConsumeForcedRarity(Player) or self:_dueRarity(resolvedRarity, profile)
 
 	local result = self:RollCrate(resolvedRarity, profile, dueRarity)
 	if not result then
@@ -562,7 +569,7 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 		return nil
 	end
 
-	self:_recordPity(Player, result.Rarity)
+	self:_recordPity(Player, resolvedRarity, result.Rarity)
 
 	-- MOST BOXES OPENED counts from here: only a crate actually spent and rolled. The
 	-- `PlayUnboxing` (Cmdr's `unbox`) does not go through here and does not count.

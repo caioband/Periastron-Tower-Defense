@@ -19,6 +19,10 @@ SettingsConfig.Gui = {
 	ScreenGui = "SettingsGUI",
 	Wrapper = "SettingsContainer",
 	Panel = "Settings",
+
+	-- Inside `Wrapper`: closes this panel and opens the codes panel
+	-- (`CodeController`). See docs/common/codes.md.
+	CodeButton = "Code",
 }
 
 --[=[

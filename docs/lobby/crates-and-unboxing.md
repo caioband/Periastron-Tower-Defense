@@ -63,6 +63,7 @@ When the count reaches its limit, the next opening delivers it, whatever the cra
 | Legendary | 125 |
 | Epic | 25 |
 
+- **The Crate of Beginnings is out of the Legendary+ guarantee** (`CrateConfig.PITY_EXCLUDED_CRATES`): for Legendary and Cosmic it is invisible. Opening it does not add to those counts, does not deliver a due guarantee (it waits for a crate that counts), and a Legendary pulled from it does not reset the count. It still counts for Epic. It is the cheapest crate, and counting it would let a player fill and cash in the guarantees with it.
 - **The crates' odds do not change**: the guarantee only decides the rarity of the opening that comes due (`RollCrate`'s `forcedRarity`), so a due Cosmic comes out of any crate, the Crate of Beginnings included.
 - **The counts are independent**: pulling Cosmic does not reset Legendary's, and pulling Legendary does not reset Epic's. The guarantee delivers **exactly** its rarity: a due Epic comes out as Epic even from a Legendary Crate opening that could have given a Legendary.
 - **Priority is the list order** (Cosmic, Legendary, Epic): if several come due together, the rarest comes out and the others wait for the next openings.
@@ -70,7 +71,7 @@ When the count reaches its limit, the next opening delivers it, whatever the cra
 - `CrateService` applies it in `OpenCrate`; Cmdr's `unbox` touches no count.
 
 **The profile shape changed.** It is `Pity = { Legendary = 37, Cosmic = 210 }`; profiles from before still hold one table per crate (`{ Common = { Legendary = 80 }, ... }`).
-`CrateConfig.readPity` reads both, and for the old one each rarity starts from its **highest** crate count, so nobody loses progress; the next opening rewrites it in the new shape.
+`CrateConfig.readPity` reads both, and for the old one each rarity starts from its **highest** count among the crates that take part in its guarantee, so nobody loses progress; the next opening rewrites it in the new shape.
 
 ### The backpack's pity list
 

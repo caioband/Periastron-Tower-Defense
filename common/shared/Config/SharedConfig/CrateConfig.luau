@@ -199,8 +199,28 @@ module.PITY_THRESHOLDS = {
 	Epic = 25,
 }
 
+--[[
+	Crates left **out** of a rarity's guarantee, `{ [rarity] = { [crate] = true } }`.
+	For that rarity the crate is invisible: opening it does not add to the count, does
+	not deliver a due guarantee (it waits for a crate that counts), and pulling the
+	rarity from it naturally does not reset the count either.
+
+	The Crate Of Beginnings is the cheapest crate: counting it would let a player fill
+	Legendary+ guarantees with it and cash them in with it too.
+]]
+module.PITY_EXCLUDED_CRATES = {
+	Legendary = { Common = true },
+	Cosmic = { Common = true },
+}
+
 function module.getPityThreshold(rarity: string): number?
 	return module.PITY_THRESHOLDS[rarity]
+end
+
+--- Whether opening `crateRarity` takes part in `rarity`'s guarantee.
+function module.countsForPity(crateRarity: string, rarity: string): boolean
+	local excluded = module.PITY_EXCLUDED_CRATES[rarity]
+	return not (excluded and excluded[crateRarity])
 end
 
 --[=[
@@ -208,8 +228,9 @@ end
 
 	Today it is `{ Legendary = 37, Cosmic = 210 }`. Profiles from before the shared
 	count still hold one table per crate (`{ Common = { Legendary = 80 }, ... }`); for
-	those, each rarity starts from its **highest** crate count, so nobody loses the
-	progress they had. The next opening rewrites it in the new shape.
+	those, each rarity starts from its **highest** count among the crates that take part
+	in its guarantee, so nobody loses the progress they had. The next opening rewrites it
+	in the new shape.
 ]=]
 function module.readPity(pity: any): { [string]: number }
 	local counts = {}
@@ -223,9 +244,10 @@ function module.readPity(pity: any): { [string]: number }
 		if typeof(value) == "number" then
 			counts[rarity] = value
 		else
+			-- Crates left out of this rarity's guarantee do not carry their old count over.
 			local highest = 0
-			for _, counters in pity do
-				if typeof(counters) == "table" then
+			for crateRarity, counters in pity do
+				if typeof(counters) == "table" and module.countsForPity(crateRarity, rarity) then
 					highest = math.max(highest, tonumber(counters[rarity]) or 0)
 				end
 			end

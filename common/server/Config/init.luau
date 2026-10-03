@@ -23,6 +23,7 @@ type ServerConfig = {
 	Leaderboard : typeof(require(script.Leaderboard)),
 	Analytics : typeof(require(script.Analytics)),
 	Badges : typeof(require(script.Badges)),
+	Codes : typeof(require(script.Codes)),
 }
 
 local ServerConfig : ServerConfig = {}

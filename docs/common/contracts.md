@@ -68,7 +68,7 @@ Each entry remembers the period and the slot's `Id`, so progress on an expired c
 
 CLAIM sends only `(period, slot)`.
 The server flushes the queue, checks that the slot is complete and unpaid, marks it, and pays, with nothing that yields in between, so two clicks never pay twice.
-The reward adds `Cash` (and `CoinsEarned`), `Shards`, and crates (through `CrateService:GiveCrates`).
+The reward is paid by `RewardService`, the same as [codes](codes.md): it adds `Cash` (and `CoinsEarned`), `Shards`, and crates (through `CrateService:GiveCrates` in the Lobby, straight into the inventory elsewhere).
 
 In the UI, coins and shards use the authored rows of `RewardsContainer`, and each crate becomes an `8x Fragmented Crate` text in `OtherReward`, cloned when there is more than one.
 A paid slot also shows the `Claimed` stamp on its `TaskPaper`, following `slot.Claimed` from the replica: it appears on claim and disappears on rollover, when the button returns to `CLAIM`.

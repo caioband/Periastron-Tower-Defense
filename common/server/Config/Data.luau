@@ -243,6 +243,14 @@ return {
 
 		Settings = {},
 
+		--[[
+			The codes this player already redeemed, `{ [CODE] = os.time() }`: the
+			uppercase key from `Config.Codes` and when it was redeemed. Only
+			`CodeService` writes it; one entry means that code never pays this player
+			again. Older profiles get the key through reconcile.
+		]]
+		RedeemedCodes = {},
+
 	},
 
 

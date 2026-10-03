@@ -9,6 +9,7 @@ When a system also has place-specific parts, its page here covers the shared cor
 | [Admin commands](admin-commands.md) | The Cmdr console: every command, permissions, currency and unit edits, `viewdata` |
 | [Audio](audio.md) | `MusicController`: music, SFX, fades, ducking |
 | [Badges](badges.md) | Awarding Roblox badges |
+| [Codes](codes.md) | Redeemable codes with an expiry date, for members of the group |
 | [Contracts](contracts.md) | Hourly, daily, and weekly objectives |
 | [Controls](controls.md) | `PointerUtil` (mouse and touch) and the mobile button cluster |
 | [Data and profiles](data-and-profiles.md) | Profile sessions, `OnBeforeRelease`, editing profiles across servers |

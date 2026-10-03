@@ -314,6 +314,35 @@ function SettingsController:_bindRows(panel : GuiObject, maid : any)
 	template:Destroy()
 end
 
+--[=[
+	The `Code` button next to the panel art: closes this panel and opens the codes
+	panel. A place without `CodeController` leaves the button doing nothing.
+]=]
+function SettingsController:_bindCodeButton(wrapper : GuiObject, maid : any)
+	local button = wrapper:FindFirstChild(GUI.CodeButton)
+	if not button or not button:IsA("GuiButton") then
+		return
+	end
+
+	ButtonUtil.bindFeedback(button, maid)
+
+	maid:GiveTask(button.Activated:Connect(function()
+		local codes = Framework:Get("CodeController", false, false)
+		if not codes then
+			log:StudioWarn("no CodeController in this place -- the Code button does nothing.")
+			return
+		end
+
+		local music = self.Controllers.MusicController
+		if music then
+			music:PlaySFX(SettingsConfig.CLICK_SOUND)
+		end
+
+		self:Close()
+		codes:Open()
+	end))
+end
+
 --- Music and sound effects, which `MusicController` applies. See the header.
 function SettingsController:_applyAudio()
 	local music = self.Controllers.MusicController
@@ -426,8 +455,9 @@ function SettingsController:construct()
 
 		-- A new copy starts closed without `OpenChanged` (dying with the panel open, since
 		-- `SettingsGUI` resets on spawn), so the icon is set back here too.
-		OnBind = function(_screenGui, _wrapper, panel, maid)
+		OnBind = function(_screenGui, wrapper, panel, maid)
 			self:_bindRows(panel, maid)
+			self:_bindCodeButton(wrapper, maid)
 
 			if self.Icon then
 				self.Icon:setEnabled(true)

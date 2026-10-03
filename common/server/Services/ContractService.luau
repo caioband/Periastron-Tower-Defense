@@ -17,7 +17,6 @@ local Framework = Me.new()
 local log = Log.new("ContractService")
 
 local ContractConfig = SharedConfig.ContractConfig
-local CrateConfig = SharedConfig.CrateConfig
 local MapConfig = SharedConfig.MapConfig
 local UnitStats = SharedConfig.UnitStats
 local WeatherConfig = SharedConfig.WeatherConfig
@@ -67,6 +66,7 @@ local ContractService = {
 	Services = {
 		DataService = {},
 		MonetizationService = {},
+		RewardService = {},
 	},
 
 	-- [Player] = { ["Kind|Index"] = { Kind, Index, Period, Id, Mode, Value, Seen } }
@@ -650,57 +650,6 @@ end
 --[[ CLAIM ]]
 
 --[=[
-	Pays the reward. Coins also go into `CoinsEarned` (MOST COINS is the total
-	earned, and a contract is earnings). Crates go through `CrateService` when it
-	exists (it notifies the backpack screen), and straight into the inventory when
-	it does not.
-]=]
-function ContractService:_grant(player : Player, rewards)
-	local dataService = self.Services.DataService
-	local cash = math.max(0, math.floor(rewards.Cash or 0))
-	local shards = math.max(0, math.floor(rewards.Shards or 0))
-
-	if cash > 0 or shards > 0 then
-		dataService:Update(player, "Stats", function(stats)
-			stats.Cash = (stats.Cash or 0) + cash
-			stats.CoinsEarned = (tonumber(stats.CoinsEarned) or 0) + cash
-			stats.Shards = (stats.Shards or 0) + shards
-			return stats
-		end)
-	end
-
-	if not rewards.Crates then return end
-
-	local crateService = Framework:Get("CrateService")
-
-	for rarity, amount in rewards.Crates do
-		amount = math.max(0, math.floor(amount))
-		if amount <= 0 then continue end
-
-		if crateService and crateService.GiveCrates then
-			crateService:GiveCrates(player, rarity, amount)
-			continue
-		end
-
-		local resolved = CrateConfig.resolveRarity(rarity)
-		if not resolved then
-			log:StudioWarn(string.format("%q is not a crate tier; reward skipped.", tostring(rarity)))
-			continue
-		end
-
-		dataService:Update(player, "Inventory", function(inventory)
-			inventory = inventory or {}
-			inventory.Crates = inventory.Crates or CrateConfig.createEmptyCrates()
-			inventory.Crates[resolved] = math.min(
-				CrateConfig.MAX_CRATES_PER_RARITY,
-				(inventory.Crates[resolved] or 0) + amount
-			)
-			return inventory
-		end)
-	end
-end
-
---[=[
 	Claims a slot. Returns whether it paid and, when not, the reason: `NotLoaded`,
 	`NoContract`, `NotComplete`, or `AlreadyClaimed`.
 
@@ -742,7 +691,7 @@ function ContractService:Claim(player : Player, kind : any, index : any) : (bool
 	end)
 
 	-- The slot's own, when the drawn difficulty changed it (`scaledRewards`).
-	self:_grant(player, slot.Rewards or definition.Rewards or {})
+	self.Services.RewardService:Grant(player, slot.Rewards or definition.Rewards or {})
 
 	return true, nil
 end
