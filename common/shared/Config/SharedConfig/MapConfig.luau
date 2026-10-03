@@ -44,10 +44,9 @@ module.MAPS = {
 	},
 
 	-- The folder in `ServerStorage.Maps` is "Desert", with one S, and the key must
-	-- match it -- it used to be "Dessert", so this map was never drawn or loaded.
-	-- `DisplayName` is a separate matter.
+	-- match it. The old spelling, "Dessert", is still understood through `ALIASES`.
 	["Desert"] = {
-		DisplayName = "Dessert",
+		DisplayName = "Desert",
 		WinsRequired = 2,
 		Image = "rbxassetid://115008998327555",
 	},
@@ -110,6 +109,27 @@ module.MAPS = {
 }
 
 --[=[
+	Old map names that still resolve, `{ [old] = key }`. A rename only ever adds a
+	line here; the old key never comes back into `MAPS`.
+
+	Two things read it:
+
+	  - `resolveMap`, so any old name arriving at runtime (teleport data, a
+	    portal request, a Cmdr argument) lands on the current map.
+	  - `DataService`, which rewrites the profile on load: `Index.Maps` and the
+	    contracts' drawn `Params.Map` hold map **keys**, so a profile saved
+	    under an old name would keep it forever. `DisplayName` is never saved, so
+	    changing it needs no line here.
+
+	`Dessert` is the key `Desert` had until 2026-08-24. No `PROD_KEY_2` profile
+	should hold it (that store, the Index, and the contracts are all newer than
+	the rename), so this is insurance, not a known repair.
+]=]
+module.ALIASES = {
+	["Dessert"] = "Desert",
+}
+
+--[=[
 	The Part each map folder carries at its root with the base health billboard,
 	and the name of the TextLabel inside it where the number is written.
 
@@ -136,7 +156,8 @@ module.SPAWN_FALLBACK_RADIUS = 25
 
 --[=[
 	Returns the canonical map name for the passed string (case insensitive),
-	or nil when the map does not exist.
+	or nil when the map does not exist. An old name in `ALIASES` resolves to the
+	map it became.
 ]=]
 function module.resolveMap(mapName : string?) : string?
 	if typeof(mapName) ~= "string" then
@@ -151,6 +172,12 @@ function module.resolveMap(mapName : string?) : string?
 	for name in module.MAPS do
 		if string.lower(name) == lowered then
 			return name
+		end
+	end
+
+	for old, current in module.ALIASES do
+		if string.lower(old) == lowered and module.MAPS[current] then
+			return current
 		end
 	end
 

@@ -82,6 +82,52 @@ local function reconcileTemplate(data, template)
 end
 
 --[=[
+	Rewrites old map names (`MapConfig.ALIASES`) in the two places the profile
+	saves a map key: `Index.Maps` (discovered maps) and each contract slot's drawn
+	`Params.Map`. Returns how many entries changed.
+
+	It runs on the raw data, before the replica exists, so nothing downstream
+	(`ContractService`'s redraw, the client) ever sees the old name. An already
+	discovered current key just absorbs the old one.
+]=]
+local function migrateMapAliases(data) : number
+	local aliases = SharedConfig.MapConfig.ALIASES
+	local changed = 0
+
+	local maps = typeof(data.Index) == "table" and data.Index.Maps
+	if typeof(maps) == "table" then
+		for old, current in aliases do
+			if maps[old] ~= nil then
+				maps[current] = maps[current] or maps[old]
+				maps[old] = nil
+				changed += 1
+			end
+		end
+	end
+
+	if typeof(data.Contracts) == "table" then
+		for _, period in data.Contracts do
+			local slots = typeof(period) == "table" and period.Slots
+			if typeof(slots) ~= "table" then
+				continue
+			end
+
+			for _, slot in slots do
+				local params = typeof(slot) == "table" and slot.Params
+				local current = typeof(params) == "table" and aliases[params.Map]
+
+				if current then
+					params.Map = current
+					changed += 1
+				end
+			end
+		end
+	end
+
+	return changed
+end
+
+--[=[
 	The profile was taken by another server (or the session dropped) with the player
 	still here. From now on nothing they did would be saved (the profile no longer
 	belongs to this server), so they are removed, with a message to rejoin.
@@ -136,6 +182,11 @@ function DataService:CreatePlayer(Player : Player)
 
 	if Session ~= nil then
 		reconcileTemplate(Session.Data, ServerConfig.Data.Template)
+
+		local migrated = migrateMapAliases(Session.Data)
+		if migrated > 0 then
+			log:Info(string.format("renamed %d old map name(s) in %s's profile.", migrated, Player.Name))
+		end
 
 		local ReplicaProfile = Replica.New({
 			Token = self.Packages.ReplicaToken,

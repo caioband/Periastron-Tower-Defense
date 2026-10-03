@@ -10,7 +10,7 @@ For the repository layout and what is shared between the places, see [Repository
 | --- | --- | --- |
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | Entry LocalScript |
 | `src/Controllers/` | `Client.Controllers.Lobby` | ChooseMaps, Contract, Crate, CratePity, CrateUI, Deck, FriendInvite, HUD, HUDBadge, HUDButton, LobbyMusic, NextEvent, PlayButton, Portal, RobuxShop, RoundCardShop, Shop, ShopKeeper, UILibrary, Unboxing |
-| `src/Services/` | `ServerScriptService.Services.Lobby` | Crate, Deck, FriendInvite, Leaderstats, Portal, RoundCardShop, Shop, Summoning, WelcomeBadge |
+| `src/Services/` | `ServerScriptService.Services.Lobby` | AfkTeleport, Crate, Deck, FriendInvite, Leaderstats, Portal, RoundCardShop, Shop, Summoning, WelcomeBadge |
 | `src/CmdrDefinitions/Commands/` | `ServerScriptService.CmdrDefinitions.Commands.Lobby` | `friendinvite`, `friendinvitestats`, `setcrates`, `unbox` |
 | `src/CmdrDefinitions/Types/` | `ServerScriptService.CmdrDefinitions.Types.Lobby` | `crateRarity` |
 

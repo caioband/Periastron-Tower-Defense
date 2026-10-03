@@ -231,12 +231,18 @@ function AfkAreaService:_returnToLobby(player : Player)
 	if self.Leaving[player] then return end
 	self.Leaving[player] = true
 
+	local placeId = Environment.GetPlaceId("Lobby")
+
+	-- Public on purpose: which universe this server thinks it is in, and where the
+	-- player is being sent, readable from a live server's console.
+	log:Info(`sending {player.Name} to the {Environment.Describe()} Lobby ({placeId}) from universe {game.GameId}`)
+
 	local ok, err = pcall(function()
-		return TeleportService:TeleportAsync(Environment.GetPlaceId("Lobby"), { player })
+		return TeleportService:TeleportAsync(placeId, { player })
 	end)
 
 	if not ok then
-		log:Warn(`could not send {player.Name} to the Lobby: {err}`)
+		log:Warn(`could not send {player.Name} to the Lobby {placeId}: {err}`)
 	end
 
 	task.delay(RETURN_COOLDOWN, function()

@@ -49,9 +49,8 @@ Systems that need content from the place (a board, a part reference, a GUI) log 
 
 - **Playtime.** `PlaytimeService` does nothing here: time in this place goes only to `Stats.TimeInAfkArea` (MOST AFK TIME) and stays out of `Stats.TimePlayed` (MOST TIME PLAYED, in the Lobby).
 - **Leaderboards.** `LeaderboardService` draws the boards whose `Place` is `Afk`: today only MOST AFK TIME (`Stats.TimeInAfkArea`). See [AFK area](afk-area.md#saved-time-and-the-leaderboard).
-- **Teleports.** `EnvironmentConfig` has the Production id (`80286820709620`); QA has none yet, so `Environment.HasPlace("Afk")` is `false` there.
-  Nothing in the Lobby sends players here yet.
-  Going back works: `AfkAreaService` teleports to `Environment.GetPlaceId("Lobby")`.
+- **Teleports.** `EnvironmentConfig` has an `Afk` id per environment: Production `80286820709620`, QA `116470384978275` ("AFK Station").
+  The Lobby's `AfkTeleportService` sends players here with `Environment.GetPlaceId("Afk")`, and `AfkAreaService` sends them back with `Environment.GetPlaceId("Lobby")` (see [AFK area](afk-area.md#from-the-lobby)).
 
 ## Wally
 

@@ -12,7 +12,7 @@
 
 	Level drives the deck slots (`DeckConfig.SLOT_UNLOCK_LEVELS`, at 5, 15, and 25)
 	and the alternative difficulty unlock path (`DifficultyUnlockConfig`, levels 3,
-	6, and 12). Changing the curve moves both, which is why the exponent is the
+	5, 6, and 12). Changing the curve moves both, which is why the exponent is the
 	knob and not `BASE_XP`: the start stays put and only the middle onward, where
 	the grind was, gets shorter.
 ]=]

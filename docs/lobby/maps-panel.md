@@ -44,7 +44,3 @@ The controller turns on its `Visible`, disables the button underneath (`Active` 
 - **The lock is not just a drawing.**
   The client picks the map, and a map name is something any client can send, so `PortalService:CreateGroup` checks the same rule with the same config before opening the group.
   The client makes the choice; the server grants the permission, as with deck slots and level.
-
-## Known issues
-
-- The `Desert` map's `DisplayName` is `"Dessert"` in `MapConfig`, so that is what players read.

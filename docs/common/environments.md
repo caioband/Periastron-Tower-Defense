@@ -18,7 +18,7 @@ So the QA Lobby must send players to the QA Game, and the QA Game must send them
 | Environment | Universe | Lobby | Game | AFK |
 | --- | --- | --- | --- | --- |
 | `Production` | `10340119210` | `132304466547289` | `109030368179494` | `80286820709620` |
-| `QA` | `10767160215` | `80434020174775` | `131924395601623` | none yet |
+| `QA` | `10767160215` | `80434020174775` | `131924395601623` | `116470384978275` |
 
 These are the callers:
 
@@ -27,7 +27,7 @@ These are the callers:
 | `PortalService` (Lobby) | Sends a portal group to `GetPlaceId("Game")` |
 | `TutorialService` | Sends the player to the tutorial match at `GetPlaceId("Game")`, and offers the tutorial only when `IsPlace("Lobby")` |
 | `WaveService` (Game) | Sends the player back to `GetPlaceId("Lobby")` |
-| `AfkAreaService` (AFK) | Sends the player back to `GetPlaceId("Lobby")` |
+| `AfkAreaService` (AFK) | Sends the player back to `GetPlaceId("Lobby")`, logging the resolved environment and id |
 | `CmdrService` | Lets every player run `QA_COMMANDS` (currencies, units, and level) when `IsQA()`; see [Admin commands](admin-commands.md#testers-in-qa) |
 
 ### Unknown universes
@@ -81,7 +81,7 @@ The place is `Lobby`, `Main Game`, or `AFK`.
 
 Do not hard-code a place id or read `EnvironmentConfig` directly; go through `Environment` so both environments keep working.
 
-`GetPlaceId` errors for a place the environment does not have, so anything that teleports to the AFK place must check `HasPlace("Afk")` first (QA has none yet).
+`GetPlaceId` errors for a place the environment does not have, so anything that teleports to the AFK place must check `HasPlace("Afk")` first: an environment may have none.
 `IsPlace` just answers `false` there.
 
 To add an environment, add an entry to `Environments` with its universe id and the Lobby and Game place ids (and `Afk` when it has one), and add its name to the `EnvironmentName` type in `Environment`.

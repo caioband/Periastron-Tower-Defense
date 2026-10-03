@@ -31,6 +31,7 @@ module.Environments = {
 		Places = {
 			Lobby = 80434020174775,
 			Game = 131924395601623,
+			Afk = 116470384978275, -- "AFK Station"
 		},
 	},
 }

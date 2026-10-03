@@ -42,7 +42,7 @@ With `AnchorPoint` 0.5 inside the wrapper (and `X.Scale = 0.5` at rest), a fifth
 `MouseLeave` also releases the scale, because releasing the click outside the button never fires its `MouseButton1Up`.
 
 Only look and sound live there.
-Each panel's own controller **opens** it (`ShopController`, `CrateUIController`, `DeckController`), and the owner of a map spot **takes** the player there (`RoundCardShopController` for `CardShop`, `ContractController` for `Contracts`), always through the same button's `Activated`.
+Each panel's own controller **opens** it (`ShopController`, `CrateUIController`, `DeckController`, `RobuxShopController`; `HUDLeft.Settings` goes through `SettingsButtonController`, since the settings panel is common and this HUD is not), and the owner of a map spot **takes** the player there (`RoundCardShopController` for `CardShop`, `ContractController` for `Contracts`), always through the same button's `Activated`.
 That is why the click animation uses `Down`/`Up`, which consumes nobody's click.
 Everyone finds the button by name at any depth (`UIUtil.waitForDescendant`), so rearranging wrappers in Studio does not break the bind.
 

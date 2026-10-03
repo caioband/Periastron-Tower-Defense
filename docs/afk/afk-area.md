@@ -1,9 +1,9 @@
 # AFK area
 
-Pays players for time spent in the AFK place, saves that time to the profile for the MOST AFK TIME leaderboard, shows it over every head, and sends players back to the Lobby when they ask.
+Pays players for time spent in the AFK place, saves that time to the profile for the MOST AFK TIME leaderboard, shows it over every head, and moves players between the Lobby and this place.
 
-**Runs in:** AFK
-**Code:** [`AfkAreaService`](../../Afk/src/Services/AfkAreaService.luau), [`AfkAreaController`](../../Afk/src/Controllers/AfkAreaController.luau), [`CoinCountController`](../../Afk/src/Controllers/CoinCountController.luau), [`AfkRewards`](../../Afk/src/Shared/AfkRewards.luau)
+**Runs in:** AFK · Lobby (the way in)
+**Code:** [`AfkTeleportService`](../../Lobby/src/Services/AfkTeleportService.luau) (Lobby), [`AfkAreaService`](../../Afk/src/Services/AfkAreaService.luau), [`AfkAreaController`](../../Afk/src/Controllers/AfkAreaController.luau), [`CoinCountController`](../../Afk/src/Controllers/CoinCountController.luau), [`AfkRewards`](../../Afk/src/Shared/AfkRewards.luau)
 
 ## How it works
 
@@ -46,10 +46,18 @@ It listens to the profile's replica, so it follows any change made through `Data
 
 Both controllers bind their GUI elements again every time they appear, because the `ScreenGui` has `ResetOnSpawn`.
 
+### From the Lobby
+
+The prompt `Workspace["AFK Area"].teleport.ProximityPrompt` in the Lobby map is handled by `AfkTeleportService` on the Lobby server.
+Triggering it teleports the player to the AFK place of the current environment with `Environment.GetPlaceId("Afk")`, so a QA Lobby sends to the QA AFK place and Production to Production.
+The server ignores repeat triggers from the same player for 10 seconds, and logs (in every server) the environment and the place id it sent the player to.
+An environment without an `Afk` id in `EnvironmentConfig` turns the prompt off.
+In Studio the prompt only warns, since teleports do not work there.
+
 ### Back to the Lobby
 
 `ReturnFrame.ReturnButton` fires `AfkReturnToLobby`.
-The server teleports the player to the Lobby of the current environment with `Environment.GetPlaceId("Lobby")`.
+The server teleports the player to the Lobby of the current environment with `Environment.GetPlaceId("Lobby")`, and logs the environment and id the same way.
 The server ignores repeat requests from the same player for 10 seconds; the button ignores clicks for 3 seconds and shows `...` in the meantime.
 
 ## Configuration
@@ -76,11 +84,11 @@ The service skips an entry with a missing `Id`, a non-positive `Amount` or `Inte
 | `StarterGui.ScreenGui.RewardFrame.TimerLabel` | `TextLabel` for the countdown |
 | `StarterGui.ScreenGui.RewardFrame.CoinCount.CoinAmountText` | `TextLabel` for the coins |
 | `StarterGui.ScreenGui.ReturnFrame.ReturnButton` | `ImageButton`, with a `ButtonText` `TextLabel` child |
+| `Workspace["AFK Area"].teleport.ProximityPrompt` | **Lobby place.** The `ProximityPrompt` that sends the player here |
 | `Workspace.Leaderboards.MostAfkTimeLB` | Leaderboard model with `Main > SurfaceGui > ScrollingFrame > Frame` (see [Leaderboards](../common/leaderboards.md#studio-setup)) |
 
 The controllers match these elements by name and parent name, anywhere under `PlayerGui`.
 
 ## Known issues
 
-- Only Production has an `Afk` place id in `EnvironmentConfig`, and nothing in the Lobby teleports players into this place yet.
 - The billboard and the reward countdown start over on every visit; only `Stats.TimeInAfkArea` adds up across visits.

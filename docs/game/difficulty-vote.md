@@ -13,13 +13,13 @@ Before the first wave, players vote on the difficulty on `StarterGui.Difficulty.
 The same name keys `VoteCount` (`votes[name]`) and the highlight of your own vote.
 
 Renaming a button in Studio changes which difficulty it votes for.
-The five buttons must be named exactly `Easy`, `Medium`, `Hard`, `Impossible`, and `Nightmare`; the text the player reads lives in a `TextLabel` inside and is never read by code.
+The six buttons must be named exactly `Easy`, `Medium`, `Hard`, `Impossible`, `Nightmare`, and `Endless`; the text the player reads lives in a `TextLabel` inside and is never read by code.
 
 A player can only vote for difficulties they have unlocked (see [Difficulty locks](#difficulty-locks)); the server refuses the rest.
 
 ### Button audit
 
-The server drops an invalid name without a log, and the board keeps showing five buttons, so a misnamed button fails silently.
+The server drops an invalid name without a log, and the board keeps showing six buttons, so a misnamed button fails silently.
 `DifficultyController:auditButtons` checks, the first time a state arrives, that every button has a preset and every preset has a button, and warns in Studio otherwise.
 The check lives there and not in the bind because the preset list is server config: it only reaches the client through `state.options` in `DifficultySelection`.
 
@@ -30,13 +30,14 @@ The check lives there and not in the bind because the preset list is server conf
 ## Difficulty locks
 
 Easy and Medium are open to everyone.
-The three above open with **either** of two things, whichever comes first:
+The rest open with **either** of two things, whichever comes first:
 
 | Difficulty | Wins | or Level |
 | --- | --- | --- |
 | Hard | 4 on Medium | 3 |
 | Impossible | 4 on Hard | 6 |
 | Nightmare | 6 on Impossible | 12 |
+| Endless | 2 on Nightmare | 5 |
 
 The two sources measure different things.
 Wins on the difficulty below say the player **can handle** it: the short path for players doing well.

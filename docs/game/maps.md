@@ -84,6 +84,7 @@ Because "applied and nothing changed" and "not applied" look the same, `Apply` l
 | Key | Value | Effect |
 | --- | --- | --- |
 | `MapConfig.MAPS` | Farm, Desert, Snowy, SnowyCastle, Mountain, Cave, Volcano, Beach, Swamp, Pale Garden | The maps, their display names, images, music, and `WinsRequired` |
+| `MapConfig.ALIASES` | `Dessert` → `Desert` | Old map keys that still resolve; see [Renaming a map](#renaming-a-map) |
 | `MapConfig.SPAWN_HEIGHT_OFFSET` | `5` | Studs above the `SpawnLocation` center where players are placed |
 | `MapConfig.SPAWN_FALLBACK_RADIUS` | `25` | Horizontal distance from the spawn beyond which a character is moved back |
 | `MapConfig.BASE_HEALTH_PART` | `"BaseHP"` | Name of the base health Part in each map |
@@ -92,6 +93,19 @@ Because "applied and nothing changed" and "not applied" look the same, `Apply` l
 | `WeatherConfig.BoundsFolders` | `{ "Terrain", "Path" }` | Folders measured when a map has no bounding box |
 | `WeatherConfig.MaxPartFootprint` | `512` | Parts larger than this are ignored by the fallback measurement |
 | `LightingConfig.MapPrefix` | `"Map_"` | Prefix of the lighting presets registered from maps |
+
+## Renaming a map
+
+The key in `MapConfig.MAPS` is the folder name in `ServerStorage.Maps`, and it is also what the profile saves: `Index.Maps` and each contract's drawn `Params.Map` hold keys.
+`DisplayName` is only text and is never saved, so changing it needs nothing else.
+
+Changing a **key** means renaming the folder and adding `{ [old] = new }` to `MapConfig.ALIASES`:
+
+- `resolveMap` resolves the old name, so teleport data, a portal request, or a Cmdr argument with it still lands on the map.
+- `DataService` rewrites the old key in `Index.Maps` and in the contract slots when the profile loads, before the replica exists, and logs how many it changed.
+
+The only alias today is `Dessert` → `Desert`, the key until 2026-08-24.
+The `PROD_KEY_2` store, the Index, and the contracts are all newer than that rename, so no saved profile is expected to hold it; the alias is insurance.
 
 ## Studio setup
 
@@ -109,4 +123,3 @@ Each folder in `ServerStorage.Maps` needs, at its root, next to `Content`:
   Standardizing the names makes the transition shorter and smoother.
 - Several lighting folders have **two** children named `Atmosphere`.
   The second one is ignored, here and by the engine itself.
-- The `Desert` map's `DisplayName` is `"Dessert"` in `MapConfig`.

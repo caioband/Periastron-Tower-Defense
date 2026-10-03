@@ -339,7 +339,8 @@ function ContractConfig.describe(definition, slot) : string
 
 	text = string.gsub(text, "{Map}", function()
 		local map = ContractConfig.resolve(definition, slot, "Map")
-		local entry = map and MapConfig.MAPS[map]
+		local resolved = MapConfig.resolveMap(map)
+		local entry = resolved and MapConfig.MAPS[resolved]
 
 		return entry and entry.DisplayName or tostring(map or "?")
 	end)

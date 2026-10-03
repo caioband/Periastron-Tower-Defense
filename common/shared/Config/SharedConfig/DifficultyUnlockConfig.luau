@@ -2,13 +2,14 @@
 	The difficulty locks: who may vote for what.
 
 	Easy and Medium are not in the table: **a difficulty without an entry is
-	open**, and that is where every new player starts. The top three require one
+	open**, and that is where every new player starts. The rest require one
 	of two things, and **one** is enough:
 
 		| Difficulty | Wins                | or Level |
 		| Hard       | 4 on Medium         |        3 |
 		| Impossible | 4 on Hard           |        6 |
 		| Nightmare  | 6 on Impossible     |       12 |
+		| Endless    | 2 on Nightmare      |        5 |
 
 	The two sources measure different things. Wins on the difficulty below say the
 	player **can handle** it: the short path for players doing well. Level is the
@@ -53,7 +54,7 @@ module.REQUIREMENTS = {
 	Hard = { Wins = 4, WinsIn = "Medium", Level = 3 },
 	Impossible = { Wins = 4, WinsIn = "Hard", Level = 6 },
 	Nightmare = { Wins = 6, WinsIn = "Impossible", Level = 12 },
-	Endless = { Wins = 2, WinsIn = "Nightmare", Level = 15 },
+	Endless = { Wins = 2, WinsIn = "Nightmare", Level = 5 },
 } :: { [string] : Requirement }
 
 --[[ API ]]

@@ -1,10 +1,10 @@
 # Settings
 
-The settings panel (`SharedUIs.SettingsGUI`) opens from a **Settings** icon on the TopbarPlus bar, next to Satchel's Inventory.
+The settings panel (`SharedUIs.SettingsGUI`) opens from a **Settings** icon on the TopbarPlus bar, next to Satchel's Inventory, and in the Lobby also from the HUD's `HUDLeft.Wrapper.Settings` button.
 Every setting is an on/off toggle, and **nothing is saved yet**: each place starts from the defaults, and a teleport between the Lobby and the Game resets them.
 
 **Runs in:** Game · Lobby
-**Code:** [`SettingsController`](../../common/client/Controllers/SettingsController.luau), [`SettingsConfig`](../../common/shared/Config/SharedConfig/SettingsConfig.luau)
+**Code:** [`SettingsController`](../../common/client/Controllers/SettingsController.luau), [`SettingsButtonController`](../../Lobby/src/Controllers/SettingsButtonController.luau) (Lobby), [`SettingsConfig`](../../common/shared/Config/SharedConfig/SettingsConfig.luau)
 
 ## The settings
 
@@ -63,6 +63,8 @@ The panel is a [proximity panel](proximity-panel.md) with no spot on the map, th
 - **The toggle pops like the match speed button**: it sinks to `0.9` while pressed and returns with an overshoot, and `UIClick` plays.
   The value changes before the click sound, so turning sound effects off gives a silent click.
 - **Animation:** the Cascade `OpenShop` in the Lobby. The Game has no Cascade, so the frame grows and shrinks with a plain scale tween instead.
+- **The Lobby HUD button** (`HUD.HUDLeft.Wrapper.Settings`) calls `Toggle` through `SettingsButtonController`, a Lobby controller because only the Lobby has that HUD; its names stay out of `SettingsConfig`, which every place receives.
+  The icon follows `OpenChanged`, so it is selected the same way as when clicked, and the button's slide and sink come from `HUDButtonController`.
 - **The `Code` button** (`SettingsContainer.Code`) closes the panel and opens the [codes panel](codes.md).
 - **The rest of the UI goes away** while the panel is open, except the TopbarPlus bar (`TopbarStandard`, `TopbarCentered`): the icon stays so it can close the panel again.
 - **The icon and the panel always agree.** Closing with the X deselects the icon, and a click the panel cannot honor does not leave the icon selected.
