@@ -59,8 +59,8 @@ When the count reaches its limit, the next opening delivers it, whatever the cra
 
 | Rarity | Limit (`CrateConfig.PITY_THRESHOLDS`) |
 | --- | ---: |
-| Cosmic | 450 |
-| Legendary | 125 |
+| Cosmic | 250 |
+| Legendary | 80 |
 | Epic | 25 |
 
 - **The Crate of Beginnings is out of the Legendary+ guarantee** (`CrateConfig.PITY_EXCLUDED_CRATES`): for Legendary and Cosmic it is invisible. Opening it does not add to those counts, does not deliver a due guarantee (it waits for a crate that counts), and a Legendary pulled from it does not reset the count. It still counts for Epic. It is the cheapest crate, and counting it would let a player fill and cash in the guarantees with it.

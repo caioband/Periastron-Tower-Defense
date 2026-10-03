@@ -4,12 +4,18 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local RobloxBadges = game:GetService("BadgeService")
 
 local ServerConfig = require(ServerScriptService:WaitForChild("Config"))
-local Log = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Util"):WaitForChild("Log"))
+local Util = game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Util")
+local Log = require(Util:WaitForChild("Log"))
+local Environment = require(Util:WaitForChild("Environment"))
 
 local log = Log.new("BadgeService")
 
+-- This environment's badges: a badge only awards in its own universe.
+local BADGES = ServerConfig.Badges[Environment.Name] or {}
+
 --[[
-	Awards the Roblox badges listed in `ServerConfig.Badges`. It is the only door:
+	Awards the Roblox badges listed in `ServerConfig.Badges`, from the table of the
+	environment it runs in (Production or QA). It is the only door:
 	code that wants to award a badge calls `BadgeService:Award(player, "Name")` and
 	does not talk to the Roblox API directly.
 
@@ -62,9 +68,9 @@ end
 	just earned it or already had it.
 ]=]
 function BadgeService:Award(player : Player, name : string) : boolean
-	local badgeId = ServerConfig.Badges[name]
+	local badgeId = BADGES[name]
 	if not badgeId then
-		log:StudioWarn(`badge "{name}" is not in ServerConfig.Badges.`)
+		log:StudioWarn(`badge "{name}" is not in ServerConfig.Badges.{Environment.Name}.`)
 		return false
 	end
 

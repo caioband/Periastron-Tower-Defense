@@ -194,8 +194,8 @@ module.PITY_RARITIES = { "Cosmic", "Legendary", "Epic" }
 
 -- Openings in a row without the rarity, in any crate, that make the next one guaranteed.
 module.PITY_THRESHOLDS = {
-	Cosmic = 450,
-	Legendary = 125,
+	Cosmic = 250,
+	Legendary = 80,
 	Epic = 25,
 }
 

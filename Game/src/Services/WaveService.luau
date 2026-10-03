@@ -325,10 +325,10 @@ function WaveService:computeReward(preset, lost : boolean?)
 	-- CHANGED: Endless with a RewardCurve is uncapped and weighted per wave;
 	-- every other preset keeps the old clamped, linear progress.
 	local maxWaves = preset.RewardWaves or self:getMaxWaves(preset)
+	local wavesCleared = math.max(0, math.floor(self.WaveCount or 0))
 	local progress
 
 	if preset.Endless and preset.RewardCurve then
-		local wavesCleared = math.max(0, math.floor(self.WaveCount or 0))
 		progress = maxWaves > 0 and (self:endlessProgressUnits(preset.RewardCurve, wavesCleared) / maxWaves) or 0
 	else
 		local wavesSurvived = math.clamp(self.WaveCount or 0, 0, maxWaves)
@@ -339,11 +339,52 @@ function WaveService:computeReward(preset, lost : boolean?)
 	local coins = (preset.WinCash or 0) * progress
 	local xp = BASE_WINNING_XP * progress * (preset.WinXpMultiplier or 1)
 
-	local shards = 0
 	local threshold = DataConfig.SHARD_WAVE_THRESHOLD or 0
-	if threshold < 1 and progress > threshold then
-		local normalized = (progress - threshold) / (1 - threshold)
-		shards = (preset.WinShards or 0) * (normalized ^ (DataConfig.SHARD_CURVE or 1))
+	local shardCurve = DataConfig.SHARD_CURVE or 1
+
+	-- Shards for a given progress. A preset can scale and cap them per run
+	-- (Endless). Before gamepasses: `rewardsFor` multiplies after this.
+	local function shardsAt(at : number) : number
+		if threshold >= 1 or at <= threshold then return 0 end
+
+		local normalized = (at - threshold) / (1 - threshold)
+		local value = (preset.WinShards or 0) * (normalized ^ (preset.ShardCurve or shardCurve))
+		value *= preset.ShardMultiplier or 1
+
+		return if preset.ShardCap then math.min(value, preset.ShardCap) else value
+	end
+
+	local shards = shardsAt(progress)
+
+	--[[
+		Endless's shards for shorter runs (`EarlyShards`, see `Config.Difficulty`):
+		Nightmare's curve up to `Wave`, then a climb to what the curve pays at
+		`JoinWave`, where the curve takes over.
+	]]
+	local early = preset.EarlyShards
+	if early and preset.RewardCurve and wavesCleared < early.JoinWave then
+		if wavesCleared <= early.Wave then
+			local fraction = wavesCleared / early.Wave
+			shards = if fraction > threshold
+				then early.Shards * (((fraction - threshold) / (1 - threshold)) ^ shardCurve)
+				else 0
+		else
+			local joined = shardsAt(self:endlessProgressUnits(preset.RewardCurve, early.JoinWave) / maxWaves)
+			local t = (wavesCleared - early.Wave) / (early.JoinWave - early.Wave)
+			shards = early.Shards + (joined - early.Shards) * (t ^ (early.Curve or 1))
+		end
+	end
+
+	--[[
+		Endless's coin bonus for shorter runs (`EarlyBoost`): full up to
+		`UntilWave - FadeWaves`, then fading linearly to nothing at `UntilWave`.
+		The fade is slower than the curve grows, so the reward never dips from one
+		wave to the next.
+	]]
+	local boost = preset.EarlyBoost
+	if boost and wavesCleared < boost.UntilWave then
+		local strength = math.clamp((boost.UntilWave - wavesCleared) / math.max(1, boost.FadeWaves), 0, 1)
+		coins *= 1 + (boost.Coins or 0) * strength
 	end
 
 	if lost then

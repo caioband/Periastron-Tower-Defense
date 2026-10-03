@@ -187,6 +187,27 @@ Difficulty.Presets = {
 			RampUntil = 35,    -- waves 31-35 ramp from EarlyWeight up to 1.0
 			LateGrowth = 0.04, -- each wave past 35 adds +0.04 to that wave's weight, uncapped
 		},
+		-- Shards follow `Data.SHARD_CURVE` like every preset, scaled by
+		-- `ShardMultiplier` (~24 shards at wave 66) and stopped at `ShardCap` per run,
+		-- before gamepasses: uncapped, the square explodes past wave 100. The
+		-- multiplier is separate from `WinShards` because contracts scale their
+		-- shard rewards by `WinShards`.
+		ShardMultiplier = 1.5,
+		ShardCap = 100,
+		-- A bonus on coins for shorter runs: full up to wave `UntilWave - FadeWaves`
+		-- (50), fading to nothing at `UntilWave` (66), so runs from wave 66 on pay
+		-- the same as without it. XP is not boosted.
+		EarlyBoost = { UntilWave = 66, FadeWaves = 16, Coins = 0.25 },
+		--[[
+			Shards for shorter runs, replacing the curve above before `JoinWave`:
+			  - up to `Wave` (35, Nightmare's length): Nightmare's own curve
+			    (`Data.SHARD_WAVE_THRESHOLD`, `Data.SHARD_CURVE`) up to `Shards`, one
+			    less than a Nightmare win (5);
+			  - from `Wave` to `JoinWave` (66): from `Shards` up to what the curve
+			    pays at `JoinWave` (~24), along `((w - Wave) / span) ^ Curve`.
+			From `JoinWave` on, the curve above applies unchanged.
+		]]
+		EarlyShards = { Wave = 35, Shards = 4, JoinWave = 66, Curve = 2 },
 		WeatherChance = 0.30,
 		RewardMultiplier = 0.85,
 		WinCash = 900,

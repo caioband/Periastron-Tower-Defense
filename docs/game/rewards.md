@@ -95,6 +95,35 @@ Shards only start after `Data.SHARD_WAVE_THRESHOLD` (half the match) and follow 
 The whole run is the product, not time survived: otherwise, falling on Nightmare's last wave would pay almost the same as finishing it.
 Shards are zeroed **after** the curve, not by skipping it: a loss does not change *when* they would start, it removes all of them.
 
+### Endless
+
+Endless has no last wave, so it is never a loss: the run pays in full when the base falls or the player leaves.
+Progress is not waves over `MaxWaves` but a weighted sum (`RewardCurve` in `Config.Difficulty`, `WaveService:endlessProgressUnits`) over `RewardWaves` (50): waves 1-30 weigh 0.5, 31-35 ramp to 1, and each wave after 35 weighs 0.04 more than the one before, uncapped.
+
+Shards follow the same curve as every preset (`Data.SHARD_CURVE`, the square), times the preset's `ShardMultiplier = 1.5`, and stop at `ShardCap = 100` per run, before gamepasses (1.5x Shards takes it to 150):
+`shards = min(100, 5 × 1.5 × ((progress − 0.5) / 0.5)²)`, which pays about 24 at wave 66.
+The multiplier is its own field, not a higher `WinShards`, because contracts scale their shard rewards by `WinShards`.
+
+Shorter runs pay more:
+
+- **Coins** (`EarlyBoost`): +25% up to wave 50, fading linearly to nothing at wave 66.
+- **Shards** (`EarlyShards`): up to wave 35 (Nightmare's length) they follow Nightmare's own curve up to 4, one less than a Nightmare win; from 35 to 66 they climb as `4 + (24 − 4) × ((wave − 35) / 31)²` to the 24 the curve pays at wave 66.
+
+From wave 66 on, both pay as without them. XP has no bonus.
+
+| Last wave | Coins | Shards | XP |
+| --- | ---: | ---: | ---: |
+| 25 | 281 | 1 | 125 |
+| 35 | 428 | 4 | 190 |
+| 45 | 702 | 6 | 312 |
+| 50 | 873 | 9 | 388 |
+| 58 | 1,074 | 15 | 530 |
+| 60 | 1,122 | 17 | 570 |
+| 66 | 1,257 | 24 | 698 |
+| 75 | 1,652 | 54 | 918 |
+| 84 | 2,106 | 100 | 1,170 |
+| 150 | 7,214 | 100 | 4,008 |
+
 | Medium, 20 waves | Coins | Shards |
 | --- | ---: | ---: |
 | Won | 225 | 2 |
