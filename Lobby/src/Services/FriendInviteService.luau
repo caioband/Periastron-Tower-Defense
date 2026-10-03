@@ -50,7 +50,11 @@ local log = Log.new("FriendInviteService")
 	Profile keys are the friend's `UserId` **as a string**: a DataStore cannot
 	save a table with sparse numeric keys.
 
-	Cmdr's `friendinvite` goes through `:Prompt`, outside the schedule.
+	**Decline snoozes.** After `Decline`, the next automatic suggestion waits
+	`DECLINE_SNOOZE` seconds from the click instead of the usual interval. It is
+	kept per server, not in the profile.
+
+	Cmdr's `friendinvite` goes through `:Prompt`, outside the schedule (and the snooze).
 
 	See docs/lobby/friend-invite.md.
 ]]
@@ -76,6 +80,9 @@ local PROMPT_INTERVAL = 2 * 60
 -- Seconds a suggested friend stays out of the draw.
 local COOLDOWN = 60 * 60
 
+-- Seconds after a `Decline` before the next automatic suggestion.
+local DECLINE_SNOOZE = 5 * 60
+
 local FriendInviteService = {
 	Services = {
 		DataService = {},
@@ -95,6 +102,9 @@ FriendInviteService.Credited = {}
 
 -- [Player] = true: the suggestion loop is running for this player.
 FriendInviteService.Scheduled = {}
+
+-- [Player] = os.clock() before which the loop sends nothing (set by `Decline`).
+FriendInviteService.SnoozedUntil = {}
 
 --[[ INTERNAL ]]
 
@@ -235,14 +245,19 @@ function FriendInviteService:onShown(player : Player, friendId : any)
 end
 
 --[=[
-	The player clicked a button on the notification. Only `Invite` writes.
+	The player clicked a button on the notification. Only `Invite` writes;
+	`Decline` snoozes the schedule (`DECLINE_SNOOZE`).
 ]=]
 function FriendInviteService:onAnswered(player : Player, friendId : any, accepted : any)
 	local userId = toUserId(friendId)
 	if not userId or self.Current[player] ~= userId then return end
 	self.Current[player] = nil
 
-	if accepted ~= true then return end
+	if accepted ~= true then
+		self.SnoozedUntil[player] = os.clock() + DECLINE_SNOOZE
+		log:Debug(`{player.Name} declined friend {userId}; next suggestion in {DECLINE_SNOOZE}s`)
+		return
+	end
 
 	self.Services.DataService:Update(player, DATA_KEY, function(stored)
 		local invites = readInvites({ [DATA_KEY] = stored })
@@ -310,7 +325,8 @@ end
 
 --[=[
 	The automatic suggestion: first after `PROMPT_DELAY`, then every
-	`PROMPT_INTERVAL` until the player leaves the Lobby.
+	`PROMPT_INTERVAL` until the player leaves the Lobby. A `Decline` holds the
+	next beat until `SnoozedUntil`.
 ]=]
 function FriendInviteService:schedule(player : Player)
 	if self.Scheduled[player] then return end
@@ -319,6 +335,12 @@ function FriendInviteService:schedule(player : Player)
 	self.Services.DataService:Get(player, function()
 		task.delay(PROMPT_DELAY, function()
 			while player.Parent and self.Scheduled[player] do
+				local snoozed = self.SnoozedUntil[player]
+				if snoozed and os.clock() < snoozed then
+					task.wait(snoozed - os.clock())
+					continue
+				end
+
 				if self:canSuggest(player) then
 					self:Prompt(player, false)
 				end
@@ -442,6 +464,7 @@ function FriendInviteService:construct()
 		self.Current[player] = nil
 		self.Credited[player] = nil
 		self.Scheduled[player] = nil
+		self.SnoozedUntil[player] = nil
 	end)
 end
 

@@ -120,8 +120,12 @@ function CodeController:_setFeedback(text : string?, color : Color3?)
 	feedback.TextColor3 = color or self.FeedbackColor
 end
 
-function CodeController:_showError(reason : string?)
+function CodeController:_showError(reason : string?, minLevel : number?)
 	local message = CodeConfig.Messages[reason or "Unknown"] or CodeConfig.Messages.Unknown
+	if reason == "LowLevel" then
+		message = string.format(message, if typeof(minLevel) == "number" then tostring(minLevel) else "?")
+	end
+
 	self:_setFeedback(escape(message), CodeConfig.ERROR_COLOR)
 end
 
@@ -211,7 +215,7 @@ function CodeController:_onResult(payload : any)
 		return
 	end
 
-	self:_showError(payload.Reason)
+	self:_showError(payload.Reason, payload.MinLevel)
 
 	if payload.Reason == "NotInGroup" and typeof(payload.GroupId) == "number" then
 		promptGroup(payload.GroupId)

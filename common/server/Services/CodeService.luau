@@ -8,14 +8,19 @@ local Vendor = Shared:WaitForChild("Vendor")
 local ServerConfigs = ServerScriptService:WaitForChild("Config")
 
 local ServerConfig = require(ServerConfigs)
+local SharedConfig = require(Shared:WaitForChild("Config"):WaitForChild("SharedConfig"))
 
 local Me = require(Vendor.Me)
 local Log = require(Shared.Util.Log)
+local Environment = require(Shared.Util.Environment)
 
 local Framework = Me.new()
 local log = Log.new("CodeService")
 
 local Config = ServerConfig.Codes
+local LevelConfig = SharedConfig.LevelConfig
+
+local IS_QA = Environment.IsQA()
 
 local DATA_KEY = "RedeemedCodes"
 
@@ -29,13 +34,19 @@ local RESULT_EVENT = "CodeRedeemResult"
 
 	  1. the input is a string of sane length, and the player is not retrying faster
 	     than `ATTEMPT_COOLDOWN`, valid code or not;
-	  2. the player is in `GROUP_ID` (a web call, so it yields);
-	  3. the code exists, has started (`StartsAt`), and has not expired (`ExpiresAt`);
-	  4. the player has not redeemed it before (`Profile.RedeemedCodes`).
+	  2. the player is at least `MIN_LEVEL` (from `Stats.XP`, see `LevelConfig`);
+	  3. the player is in `GROUP_ID` (a web call, so it yields);
+	  4. the code exists, has started (`StartsAt`), and has not expired (`ExpiresAt`);
+	  5. the player has not redeemed it before (`Profile.RedeemedCodes`).
 
 	Then it marks the code and pays through `RewardService`, with nothing that
 	yields in between, and a player has one redemption in flight at a time: two
 	clicks never pay twice.
+
+	Two flags exist for test codes. `QaOnly` answers `Invalid` outside the QA
+	universe. `Persist = false` keeps the redemption in `SessionRedeemed` instead of
+	the profile, so it is forgotten when the player leaves this server and works
+	again on the next one.
 
 	The group is checked before the code so a player outside it always gets the
 	join prompt, whatever they typed. A code that has not started answers
@@ -61,6 +72,9 @@ local CodeService = {
 
 	-- [Player] = true while a redemption is waiting on the group check
 	Busy = {},
+
+	-- [Player] = { [code] = os.time() } for codes with `Persist = false`
+	SessionRedeemed = {},
 }
 
 --[[ INTERNAL ]]
@@ -108,7 +122,7 @@ end
 	Tries to redeem `text` for `player`. Returns whether it paid, the reason when it
 	did not, and on success the normalized code and its rewards. Yields (group check).
 
-	Reasons: `Invalid`, `Empty`, `Cooldown`, `Busy`, `NotLoaded`, `NotInGroup`,
+	Reasons: `Invalid`, `Empty`, `Cooldown`, `Busy`, `NotLoaded`, `LowLevel`, `NotInGroup`,
 	`GroupCheckFailed`, `Expired`, `AlreadyRedeemed`. The client's texts for them
 	are in `SharedConfig.CodeConfig.Messages`.
 ]=]
@@ -138,8 +152,16 @@ function CodeService:Redeem(player : Player, text : any) : (boolean, string?, st
 
 	self.LastAttempt[player] = now
 
-	if not self:_profileOf(player) then
+	local loaded = self:_profileOf(player)
+	if not loaded then
 		return false, "NotLoaded"
+	end
+
+	-- Before the group: no web call, and no join prompt for a code they cannot use yet.
+	local stats = loaded.Stats
+	local xp = typeof(stats) == "table" and tonumber(stats.XP) or 0
+	if LevelConfig:Resolve(xp).Level < Config.MIN_LEVEL then
+		return false, "LowLevel"
 	end
 
 	self.Busy[player] = true
@@ -161,7 +183,10 @@ function CodeService:Redeem(player : Player, text : any) : (boolean, string?, st
 	local definition = Config.Codes[code]
 	local time = os.time()
 
-	if not definition or (definition.StartsAt and time < definition.StartsAt) then
+	if not definition
+		or (definition.StartsAt and time < definition.StartsAt)
+		or (definition.QaOnly and not IS_QA)
+	then
 		return false, "Invalid"
 	end
 
@@ -169,25 +194,32 @@ function CodeService:Redeem(player : Player, text : any) : (boolean, string?, st
 		return false, "Expired"
 	end
 
-	local redeemed = profile[DATA_KEY]
+	local persist = definition.Persist ~= false
+	local redeemed = if persist then profile[DATA_KEY] else self.SessionRedeemed[player]
 	if typeof(redeemed) == "table" and redeemed[code] then
 		return false, "AlreadyRedeemed"
 	end
 
 	-- Marked before paying, with nothing that yields in between: see the header.
-	self.Services.DataService:Update(player, DATA_KEY, function(current)
-		local copy = {}
+	if persist then
+		self.Services.DataService:Update(player, DATA_KEY, function(current)
+			local copy = {}
 
-		if typeof(current) == "table" then
-			for key, value in current do
-				copy[key] = value
+			if typeof(current) == "table" then
+				for key, value in current do
+					copy[key] = value
+				end
 			end
-		end
 
-		copy[code] = time
+			copy[code] = time
 
-		return copy
-	end)
+			return copy
+		end)
+	else
+		local session = self.SessionRedeemed[player] or {}
+		session[code] = time
+		self.SessionRedeemed[player] = session
+	end
 
 	self.Services.RewardService:Grant(player, definition.Rewards)
 
@@ -217,12 +249,16 @@ function CodeService:construct()
 
 			-- The client opens the join prompt for this group.
 			GroupId = if reason == "NotInGroup" then Config.GROUP_ID else nil,
+
+			-- The client writes the required level into the message.
+			MinLevel = if reason == "LowLevel" then Config.MIN_LEVEL else nil,
 		})
 	end)
 
 	Players.PlayerRemoving:Connect(function(player : Player)
 		self.LastAttempt[player] = nil
 		self.Busy[player] = nil
+		self.SessionRedeemed[player] = nil
 	end)
 end
 

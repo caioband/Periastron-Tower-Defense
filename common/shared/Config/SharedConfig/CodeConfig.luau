@@ -61,13 +61,15 @@ CodeConfig.SUCCESS_TITLE = "Code redeemed!"
 
 --[=[
 	Why a redemption failed, as `CodeService` names it, and the line the player
-	reads. A reason missing here shows `Unknown`.
+	reads. A reason missing here shows `Unknown`. `%s` in `LowLevel` is the level
+	the server requires (`Config.Codes.MIN_LEVEL`).
 ]=]
 CodeConfig.Messages = {
 	Empty = "Type a code first.",
 	Invalid = "Invalid code.",
 	Expired = "This code has expired.",
 	AlreadyRedeemed = "You already redeemed this code.",
+	LowLevel = "Reach level %s to redeem codes!",
 	NotInGroup = "Join our group to redeem codes!",
 	GroupCheckFailed = "Could not check your group. Try again.",
 	Cooldown = "Slow down! Try again in a moment.",

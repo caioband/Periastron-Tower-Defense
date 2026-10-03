@@ -10,6 +10,10 @@
 	  - `ExpiresAt`: required. Unix time (UTC) after which the code stops working.
 	  - `StartsAt`: optional. Unix time (UTC) before which the code answers as if it
 	    did not exist, so a code can be scheduled ahead of an announcement.
+	  - `QaOnly`: optional. Only works in the QA universe (`Environment.IsQA`);
+	    anywhere else it answers as if it did not exist.
+	  - `Persist`: optional, `true` by default. `false` keeps the redemption only
+	    for the player's time on this server, so it can be used again next session.
 	  - `Rewards`: `{ Cash, Shards, Crates = { [rarity] = amount } }`, paid by
 	    `RewardService`. Crate keys are the `CrateConfig.CRATES` rarities
 	    (`Common`, `Rare`, `Epic`, `Legendary`).
@@ -35,6 +39,9 @@ return {
 	]]
 	GROUP_ID = 660345753,
 
+	-- The lowest level that can redeem. Below it, `LowLevel`, checked before the group.
+	MIN_LEVEL = 3,
+
 	-- Seconds between two attempts by the same player, valid or not. It stops
 	-- guessing codes by brute force.
 	ATTEMPT_COOLDOWN = 2,
@@ -47,6 +54,14 @@ return {
 			-- Through October 5, 2026, Brasília time (UTC-3).
 			ExpiresAt = utc(2026, 10, 6, 3),
 			Rewards = { Cash = 500, Shards = 3 },
+		},
+
+		-- Test code: QA only, once per server session.
+		QATEST = {
+			QaOnly = true,
+			Persist = false,
+			ExpiresAt = utc(2100, 1, 1),
+			Rewards = { Cash = 1000, Shards = 10, Crates = { Common = 1 } },
 		},
 	},
 }

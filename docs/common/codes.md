@@ -1,7 +1,7 @@
 # Codes
 
 Players type a code on the codes panel (`SharedUIs.CodesGUI`) and get coins, shards, or crates.
-Only members of the game's Roblox group can redeem, and every code has an expiry date.
+Only members of the game's Roblox group at level 3 or higher can redeem, and every code has an expiry date.
 
 **Runs in:** Game · Lobby · AFK
 **Code:** [`CodeService`](../../common/server/Services/CodeService.luau), [`RewardService`](../../common/server/Services/RewardService.luau), [`CodeController`](../../common/client/Controllers/CodeController.luau), [`Config.Codes`](../../common/server/Config/Codes.luau), [`CodeConfig`](../../common/shared/Config/SharedConfig/CodeConfig.luau)
@@ -19,6 +19,7 @@ The client sends only the text; `CodeService` decides, in this order:
 | The text is not empty and at most `MAX_LENGTH` characters | `Empty`, `Invalid` |
 | One attempt every `ATTEMPT_COOLDOWN` seconds, valid or not, and one in flight | `Cooldown`, `Busy` |
 | The profile is loaded | `NotLoaded` |
+| The player is at least `MIN_LEVEL` | `LowLevel` |
 | The player is in `GROUP_ID` | `NotInGroup`, `GroupCheckFailed` |
 | The code exists and `StartsAt` has passed | `Invalid` |
 | `ExpiresAt` has not passed | `Expired` |
@@ -28,9 +29,12 @@ Then it writes the code into `Profile.RedeemedCodes` and pays through `RewardSer
 
 - **Codes ignore case and surrounding spaces.** `release` and ` RELEASE ` both match `RELEASE`.
 - **A code that has not started looks like one that does not exist**, so a scheduled code cannot be found early.
-- **The group comes first.** A player outside the group gets `NotInGroup` whatever they typed, and the client opens Roblox's join prompt (`GroupService:PromptJoinAsync`).
+- **Level comes before the group.** A player under `MIN_LEVEL` gets `LowLevel` (`Reach level 3 to redeem codes!`, with the number sent by the server) and no join prompt; the check needs no web call.
+- **The group comes before the code.** A player outside the group gets `NotInGroup` whatever they typed, and the client opens Roblox's join prompt (`GroupService:PromptJoinAsync`).
   After joining, they press `Redeem` again.
 - **Joining mid-session works.** The server's `IsInGroup` is cached for the session, so on a "no" `CodeService` asks again with `GetGroupsAsync`, which is not cached.
+- **Test codes.** `QATEST` has `QaOnly` and `Persist = false`: it answers `Invalid` in Production, and in QA it can be redeemed once per server session (each Lobby or Game server the player joins).
+  The level and group checks still apply.
 - **"Like the game" is only text.** Roblox has no API to know whether a player liked the experience.
 
 ### Feedback
@@ -60,9 +64,10 @@ Server only, in `ServerScriptService.Config.Codes`:
 | Key | Default | Effect |
 | --- | --- | --- |
 | `GROUP_ID` | `660345753` | The group the player must be in |
+| `MIN_LEVEL` | `3` | The lowest level that can redeem (level comes from `Stats.XP` via `LevelConfig`) |
 | `ATTEMPT_COOLDOWN` | `2` | Seconds between two attempts by the same player |
 | `MAX_LENGTH` | `32` | Longer input is `Invalid` |
-| `Codes` | `RELEASE` | The codes, keyed in UPPERCASE |
+| `Codes` | `RELEASE`, `QATEST` | The codes, keyed in UPPERCASE |
 
 Each code:
 
@@ -70,6 +75,8 @@ Each code:
 | --- | --- | --- |
 | `ExpiresAt` | yes | Unix time (UTC) when it stops working |
 | `StartsAt` | no | Unix time (UTC) before which it does not exist |
+| `QaOnly` | no | Only exists in the QA universe (`Environment.IsQA`) |
+| `Persist` | no (`true`) | `false` stores the redemption only for the player's time on this server, not in the profile |
 | `Rewards` | yes | `{ Cash, Shards, Crates = { [rarity] = amount } }` |
 
 Client texts and colors are in `SharedConfig.CodeConfig`: UI names (`Gui`), `REDEEM_MARKUP`, `SUCCESS_COLOR`, `ERROR_COLOR`, `REWARD_COLORS`, and `Messages`.

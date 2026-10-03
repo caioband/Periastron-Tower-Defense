@@ -15,7 +15,8 @@ A while after a player arrives in the Lobby, a Roblox notification suggests one 
    With no eligible friend it shows nothing.
 5. It reports the pick (`FriendInviteShown`) and shows a CoreGui notification (`SendNotification`) with the friend's headshot, `Invite`, and `Decline`, for 20 seconds.
 6. `Invite` reports the click (`FriendInviteAnswered`) and opens Roblox's invite prompt aimed at that friend (`SocialService:PromptGameInvite` with `ExperienceInviteOptions.InviteUser`), with `LaunchData` set to `LAUNCH_DATA`.
-   `Decline` and the timeout only close the notification.
+   `Decline` reports the answer too, and the next automatic suggestion waits `DECLINE_SNOOZE` seconds (5 minutes) from the click instead of `PROMPT_INTERVAL`.
+   The timeout only closes the notification.
 
 Each friend still sits out `COOLDOWN` after being shown, so a player with few friends online soon gets no notification until one comes back into the draw.
 
@@ -57,6 +58,7 @@ Constants at the top of each module:
 | `PROMPT_DELAY` | `30` | Service | Seconds after the client is ready before the first suggestion |
 | `PROMPT_INTERVAL` | `120` | Service | Seconds between suggestions after the first |
 | `COOLDOWN` | `3600` | Service | Seconds a suggested friend stays out of the draw |
+| `DECLINE_SNOOZE` | `300` | Service | Seconds after `Decline` before the next automatic suggestion |
 | `DURATION` | `20` | Controller | Seconds the notification stays up |
 | `TITLE`, `TEXT`, `INVITE_BUTTON`, `DECLINE_BUTTON` | `"%s is online!"`, `"Invite them to play with you?"`, `Invite`, `Decline` | Controller | Notification text |
 | `INVITE_MESSAGE` | `"Come play Periastron Tower Defense with me!"` | Controller | Message in Roblox's invite prompt |
@@ -79,6 +81,7 @@ To test an accepted invite you need two accounts in the QA experience: A runs `f
 
 - Roblox does not tell a game who a player talks to or plays with most, so the game learns it: an accepted invite says more than a click, so it ranks first, and each `Invite` click raises that friend after that.
 - The cooldown starts when a friend is shown, whatever the answer, so the suggestions go through the whole friend list instead of repeating one friend.
+- The decline snooze lives on the server, not in the profile: going to a match and back starts a fresh schedule (`PROMPT_DELAY`). `friendinvite` ignores it.
 
 ## Known issues
 
