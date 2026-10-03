@@ -100,8 +100,8 @@ Shards are zeroed **after** the curve, not by skipping it: a loss does not chang
 Endless has no last wave, so it is never a loss: the run pays in full when the base falls or the player leaves.
 Progress is not waves over `MaxWaves` but a weighted sum (`RewardCurve` in `Config.Difficulty`, `WaveService:endlessProgressUnits`) over `RewardWaves` (50): waves 1-30 weigh 0.5, 31-35 ramp to 1, and each wave after 35 weighs 0.04 more than the one before, uncapped.
 
-Shards follow the same curve as every preset (`Data.SHARD_CURVE`, the square), times the preset's `ShardMultiplier = 1.5`, and stop at `ShardCap = 100` per run, before gamepasses (1.5x Shards takes it to 150):
-`shards = min(100, 5 × 1.5 × ((progress − 0.5) / 0.5)²)`, which pays about 24 at wave 66.
+Shards follow the same curve as every preset (`Data.SHARD_CURVE`, the square), times the preset's `ShardMultiplier = 1.5`, and stop at `ShardCap = 30` per run (reached at wave 69), before gamepasses (1.5x Shards takes it to 45):
+`shards = min(30, 5 × 1.5 × ((progress − 0.5) / 0.5)²)`, which pays about 24 at wave 66.
 The multiplier is its own field, not a higher `WinShards`, because contracts scale their shard rewards by `WinShards`.
 
 Shorter runs pay more:
@@ -120,9 +120,9 @@ From wave 66 on, both pay as without them. XP has no bonus.
 | 58 | 1,074 | 15 | 530 |
 | 60 | 1,122 | 17 | 570 |
 | 66 | 1,257 | 24 | 698 |
-| 75 | 1,652 | 54 | 918 |
-| 84 | 2,106 | 100 | 1,170 |
-| 150 | 7,214 | 100 | 4,008 |
+| 75 | 1,652 | 30 | 918 |
+| 84 | 2,106 | 30 | 1,170 |
+| 150 | 7,214 | 30 | 4,008 |
 
 | Medium, 20 waves | Coins | Shards |
 | --- | ---: | ---: |

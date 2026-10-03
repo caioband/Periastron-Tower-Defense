@@ -193,7 +193,7 @@ Difficulty.Presets = {
 		-- multiplier is separate from `WinShards` because contracts scale their
 		-- shard rewards by `WinShards`.
 		ShardMultiplier = 1.5,
-		ShardCap = 100,
+		ShardCap = 30,
 		-- A bonus on coins for shorter runs: full up to wave `UntilWave - FadeWaves`
 		-- (50), fading to nothing at `UntilWave` (66), so runs from wave 66 on pay
 		-- the same as without it. XP is not boosted.
