@@ -69,6 +69,11 @@ The moves several casts share are declared once at the top of `Mob.luau` and ref
 
 The Korblox Deathspeaker's Suffocate is not a gimmick: it is `SuffocateAbilityService`, configured in `Config.SuffocateAbility` by entity name.
 
+The convert holds the victim's card.
+When it leaves the match (killed or escaped), the card goes back to its owner's hand, at base level: upgrades and the cash spent on the unit are lost.
+Loans never return a card, and an owner who left the server gets nothing.
+`ResetRound` drops what is pending, since every hand is reloaded from the deck anyway.
+
 To give an enemy its own move, change its `Gimmicks` list; no other entity is affected.
 
 ### `HealthThresholdRush` (the Astral Sentinel's dash)

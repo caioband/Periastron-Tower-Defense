@@ -58,7 +58,7 @@ local ROUND_STATE = {
 
 -- Services that keep match state and know how to clean themselves. Each one
 -- exposes `ResetRound()`; anything added to this list gets reset along with it.
-local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService", "WeatherRoundService", "SpeedService", "CardShopService" }
+local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService", "WeatherRoundService", "SpeedService", "CardShopService", "SuffocateAbilityService" }
 
 
 local ENDLESS_BADGES = {
@@ -78,6 +78,7 @@ local WaveService = {
 		CardShopService = {},
 		TutorialMatchService = {},
 		BadgeService = {},
+		SuffocateAbilityService = {},
 	},
 	Signals = {
 		Ended = Signal.new(),

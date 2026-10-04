@@ -28,6 +28,12 @@ local SuffocateAbilityService = {
 	},
 	Triggered = setmetatable({}, { __mode = "k" }),
 	Suffocations = {},
+
+	--[[
+		The enemies born from a unit, and whose card they hold. When one leaves the
+		match (killed or escaped), the card goes back to its owner's hand.
+	]]
+	Converts = {},
 }
 
 function SuffocateAbilityService:appliesTo(mob) : boolean
@@ -138,7 +144,8 @@ function SuffocateAbilityService:removeUnit(entry)
 	fireAll("RemoveUnit", entry.unitId)
 end
 
--- Mirrors MobService:SpawnWave, for a single enemy placed mid-path.
+-- Mirrors MobService:SpawnWave, for a single enemy placed mid-path. Returns its id
+-- and record, or nil if nothing spawned.
 function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 	local mobService = self.Services.MobService
 	local mobConfig = SharedConfig.Mob
@@ -202,7 +209,7 @@ function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 
 	local mobId = HttpService:GenerateGUID(false)
 
-	mobService.ActiveMobs[mobId] = {
+	local mob = {
 		Name = entityName,
 		Health = maxHealth,
 		MaxHealth = maxHealth,
@@ -222,6 +229,7 @@ function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 		Reward = math.max(0, spawn.Reward or 0),
 		HealthScale = healthScale,
 	}
+	mobService.ActiveMobs[mobId] = mob
 	mobService.ActiveMobCount += 1
 
 	fireAll("SpawnClientMob", {
@@ -234,6 +242,43 @@ function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 
 	if startDistance > 0 then
 		fireAll("MobTeleported", mobId, startDistance)
+	end
+
+	return mobId, mob
+end
+
+--[[
+	Remembers which card a convert holds. Loans are left out: they never took a card
+	from the hand, and selling one does not return a card either.
+]]
+function SuffocateAbilityService:trackConvert(mobId : string?, mob, entry)
+	if not mobId or entry.loanUntilWave then
+		return
+	end
+
+	table.insert(self.Converts, {
+		MobId = mobId,
+		Mob = mob,
+		OwnerUserId = entry.ownerUserId,
+		UnitName = entry.unitName,
+	})
+end
+
+-- Returns the card of every convert that left the match since the last frame.
+function SuffocateAbilityService:stepConverts()
+	local activeMobs = self.Services.MobService.ActiveMobs
+
+	for index = #self.Converts, 1, -1 do
+		local convert = self.Converts[index]
+		if activeMobs[convert.MobId] ~= convert.Mob then
+			table.remove(self.Converts, index)
+
+			-- An owner who left the server has no hand to return to.
+			local owner = Players:GetPlayerByUserId(convert.OwnerUserId)
+			if owner then
+				self.Services.UnitService:incrementCardCount(owner, convert.UnitName)
+			end
+		end
 	end
 end
 
@@ -262,7 +307,8 @@ function SuffocateAbilityService:stepSuffocations()
 
 			local position = entry.cf.Position
 			self:removeUnit(entry)
-			self:spawnConverted(position, record.Mob)
+			local convertId, convert = self:spawnConverted(position, record.Mob)
+			self:trackConvert(convertId, convert, entry)
 		else
 			if record.FadeTime > 0 and not record.Fading and now >= record.FadeAt then
 				record.Fading = true
@@ -295,6 +341,17 @@ function SuffocateAbilityService:step()
 	end
 
 	self:stepSuffocations()
+	self:stepConverts()
+end
+
+--[[
+	Called by WaveService in `ResetRound()`. The round's enemies are already gone and
+	UnitService reloads every hand from the deck, so nothing is owed: returning the
+	converts' cards here would only add to a hand that is already full.
+]]
+function SuffocateAbilityService:ResetRound()
+	table.clear(self.Suffocations)
+	table.clear(self.Converts)
 end
 
 function SuffocateAbilityService:guardDamage()
