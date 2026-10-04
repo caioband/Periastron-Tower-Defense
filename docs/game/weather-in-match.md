@@ -254,6 +254,8 @@ The asset (`Assets.VFX.LightningBeam`) is an **Attachment** (the bolt's start) w
 - **Start**: the height of the weather part in `workspace.Weather`, so the bolt comes down from the cloud; without an active weather, `StrikeHeight` above the foot.
 
 The asset ships with `EmitRepeat = -1` (how the plugin marks a looping preview); the controller passes `EmitRepeat = 0` explicitly.
+With the player's "VFX" setting off, the bolt and its jumps between units still fall (they stun a unit), but without `CameraShake` and `ImpactFrames` (`STRIKE_IMPACT` in `VFXController`, removed on the clone's tip); the authored crater stays.
+With the setting on, the bolt arrives as authored.
 The module's `maxLifetime` would be zero here, because the addon creates the ParticleEmitters at runtime, so the clone's lifetime is its `Duration` attribute plus `Cleanup`.
 
 ### Stun, chain, and charge

@@ -67,8 +67,9 @@ local STATUS_VFX_FALLBACK = 2
 	hijack the player's screen like that, least of all one that repeats the whole match.
 	The crater stays, small: it marks where the bolt touched the ground.
 
-	The thunder bolt keeps everything and does not go through here: it falls once every
-	five seconds and is a wave event, not an attack.
+	The thunder bolt does not go through here: it falls once every five seconds and is a
+	wave event, not an attack. It keeps everything unless the "VFX" setting is off
+	(`STRIKE_IMPACT`).
 
 	`Clear` **removes** the attribute instead of zeroing it because that is how the addon
 	turns off: it reads `attrs.X` and bails out when it finds nothing (`if not attr then
@@ -81,6 +82,18 @@ local CHAIN_IMPACT = {
 		Variance = 1,
 		Size = Vector3.new(1.8, 0.7, 1.2),
 	},
+
+	Clear = { "CameraShake", "ImpactFrames" },
+}
+
+--[=[
+	The impact of the thunder weather's bolt and of its jumps between units when the
+	"VFX" setting is off: the authored crater, without the camera shake and the impact
+	frame. The bolt itself still falls, because it stuns a unit (see `effectsOn`); only
+	the screen effects go. With the setting on, the bolt arrives as authored.
+]=]
+local STRIKE_IMPACT = {
+	Attributes = {},
 
 	Clear = { "CameraShake", "ImpactFrames" },
 }
@@ -145,11 +158,17 @@ end
 	particles, the aura money, the round card burst, the Electro's arc, and the
 	particles of a status. What tells the player something stays: the status
 	Highlight, the meteor rock, the Archmage's line, and the weather bolts (a match
-	event that stuns a unit). Sounds inside the assets still play.
+	event that stuns a unit), which only lose their camera shake and impact frame
+	(`STRIKE_IMPACT`). Sounds inside the assets still play.
 ]=]
 function VFXController:effectsOn() : boolean
 	local settings = self.Controllers.SettingsController
 	return settings == nil or settings:Get("VFX")
+end
+
+-- The thunder weather's impact for the current "VFX" setting. See `STRIKE_IMPACT`.
+function VFXController:strikeImpact()
+	return if self:effectsOn() then nil else STRIKE_IMPACT
 end
 
 function VFXController:Play(effectName, target, options)
@@ -508,8 +527,9 @@ end
 	It works both for the bolt coming down from the cloud and for the jump from one unit
 	to another; the only difference between the two is where the ends are.
 
-	`impact` is optional and only the Electro's bolt sends one (`CHAIN_IMPACT`): without
-	it, the tip arrives with what was authored on the asset, the weather's full bolt.
+	`impact` is optional: the Electro's bolt sends `CHAIN_IMPACT`, and the thunder weather
+	sends `STRIKE_IMPACT` while the "VFX" setting is off. Without it, the tip arrives with
+	what was authored on the asset.
 ]=]
 function VFXController:spawnBeam(from : Vector3, to : Vector3, impact : { [string] : any }?) : Attachment?
 	local asset = self.Library[ThunderConfig.Asset]
@@ -576,7 +596,7 @@ function VFXController:PlayLightningStrike(position : Vector3, unitId : string?)
 		end
 	end
 
-	local tip = self:spawnBeam(strikeOrigin(foot), foot)
+	local tip = self:spawnBeam(strikeOrigin(foot), foot, self:strikeImpact())
 	if not tip then return end
 
 	--[[
@@ -619,12 +639,14 @@ end
 function VFXController:PlayLightningChain(links)
 	if typeof(links) ~= "table" then return end
 
+	local impact = self:strikeImpact()
+
 	for _, link in links do
 		local from = self:chainPoint(link.fromId, link.from)
 		local to = self:chainPoint(link.toId, link.to)
 
 		if from and to then
-			self:spawnBeam(from, to)
+			self:spawnBeam(from, to, impact)
 		end
 	end
 end

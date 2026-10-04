@@ -196,7 +196,8 @@ The ends use the enemy models once they have replicated, because the client simu
 
 The weather asset is authored as a bolt from the sky: a `CraterVFX` tag with 40 debris pieces, plus `CameraShake` and `ImpactFrames`.
 Per link, that would mean four camera shakes and 160 debris pieces on every attack.
-`spawnBeam` accepts an optional `impact`, and only the chain passes one (`CHAIN_IMPACT` in `VFXController`): a smaller crater (6 debris in a radius of 3), without shake or impact frames.
+`spawnBeam` accepts an optional `impact`, and the chain passes `CHAIN_IMPACT` (in `VFXController`): a smaller crater (6 debris in a radius of 3), without shake or impact frames.
+The thunder weather passes `STRIKE_IMPACT` only while the player's "VFX" setting is off: it keeps the authored crater and drops the shake and the impact frames.
 Those two are turned off by **removing** the attribute, which is how the addon checks for them (`if not attr then return end`); setting it to zero would still enable the effect.
 Changes are made on the clone only.
 
