@@ -118,11 +118,16 @@ local function unlockedMaps(profile) : { string }
 	return maps
 end
 
---- The difficulties the player can already vote for.
+--[=[
+	The difficulties a `Random` difficulty can draw: the ones the player can already
+	vote for, minus Endless, which is left out of the contracts' pool on purpose.
+]=]
 local function unlockedDifficulties(profile) : { string }
 	local difficulties = {}
 
 	for _, name in DIFFICULTY_ORDER do
+		if ServerConfig.Difficulty.Get(name).Endless then continue end
+
 		if UnlockConfig.isUnlocked(name, profile.Stats) then
 			table.insert(difficulties, name)
 		end

@@ -38,6 +38,7 @@ Each slot has `{ Id, Params, Progress, Claimed }`, plus `Seen` for the login con
   The previous period's contracts go to the back of the urn and only return when there are not enough new ones.
 - **Locks.**
   A contract tied to a map or difficulty the player has not unlocked is not drawn (Volcano for a player with two wins, Nightmare for a level 1 player), and `Random` parameters draw only among unlocked options.
+  A `Random` difficulty never draws Endless.
   `D_Stun676` only appears for players with a unit that stuns (`NeedsUnitStat = "Stun"`), and `{Class}` only among classes the player owns.
 
 ### What counts

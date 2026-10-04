@@ -44,7 +44,7 @@
 
 	**A contract tied to a locked map or difficulty is not drawn** (Nightmare for a
 	player who has not unlocked it, Volcano for one with two wins), and `Random`
-	draws only among unlocked options.
+	draws only among unlocked options. A `Random` difficulty never draws Endless.
 
 	See docs/common/contracts.md.
 ]]
