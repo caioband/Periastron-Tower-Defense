@@ -1,5 +1,6 @@
 local UnitStats = require(script.Parent.UnitStats)
 local WeatherConfig = require(script.Parent.WeatherConfig)
+local UnitAttackConfig = require(script.Parent.UnitAttackConfig)
 
 --[[
 	How each unit grows from level to level.
@@ -145,6 +146,23 @@ UnitUpgradeConfig.Units = {
 		Damages = { 39, 48, 65, 98, 115, 135 },
 		Cooldowns = { 6, 5.8, 5.5, 5.25, 5.1, 4.8 },
 	},
+
+		--[[
+		| Level  | 0 | 1 | 2 | 3 | 4 | 5  |
+		| Damage | 4 | 5 | 6 | 7 | 8 | 10 |
+
+		Per tick, before the ramp. The tick interval stays at 0.50 s at every level (no
+		`CooldownMultiplier`). Upgrades buy damage, range, and a shorter ramp
+		(`Beam.MaxRampTime` in `UnitStats`, see `GetRampTime`).
+
+		With the 300 placement cost from `UnitStats`, maxing it costs 2,595.
+	]]
+	["Bonfire"] = {
+		Costs = { 200, 300, 420, 575, 800 },
+		DamageMultiplier = (10 / UnitStats["Bonfire"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+		DamageCaps = { 500, 1000, 1500, 2000, 2500, 3000 },
+	},
+
 	--[[
 		The Slasher's damage goes from **5 (base) to 9 (max level)**, and the multiplier
 		is the `MaxUpgrades`-th root of 9/5, written as math rather than 1.12475 so the
@@ -516,6 +534,107 @@ function UnitUpgradeConfig:GetMeteorRadius(unitName, level)
 
 	return base + (top - base) * progress
 end
+
+
+--[=[
+	How much total damage a capped unit may deal at the given level, from
+	`DamageCaps`. `math.huge` for units without one, so they never run out.
+]=]
+function UnitUpgradeConfig:GetDamageCap(unitName, level)
+	local caps = self:GetUnitData(unitName).DamageCaps
+
+	if not caps or #caps == 0 then
+		return math.huge
+	end
+
+	return caps[math.clamp((level or 0) + 1, 1, #caps)]
+end
+
+
+--[=[
+	How long a channeling unit needs to reach full ramp, at the given level. Zero for
+	units without `Beam`.
+
+	Same ladder as `GetStunDuration` above: `Beam.RampTime` at level 0 and
+	`Beam.MaxRampTime` at max, linearly. Without `MaxRampTime` the time does not change.
+	No weather: weather already cuts the damage it ramps through `GetDamageMultiplier`.
+]=]
+function UnitUpgradeConfig:GetRampTime(unitName, level)
+	local stats = UnitStats[unitName]
+	local beam = stats and stats.Beam
+
+	if not beam then
+		return 0
+	end
+
+	local base = beam.RampTime or 0
+	local top = beam.MaxRampTime or base
+	local progress = math.clamp((level or 0) / self.MaxUpgrades, 0, 1)
+
+	-- A floor, so a typo of zero cannot turn the ramp into a division by zero.
+	return math.max(0.1, base + (top - base) * progress)
+end
+
+--[=[
+	How far into its ramp a channeling unit is, from 0 to 1, after burning `elapsed`
+	seconds of match time. Zero for units without `Beam`.
+]=]
+function UnitUpgradeConfig:GetRampProgress(unitName, level, elapsed)
+	local time = self:GetRampTime(unitName, level)
+
+	if time <= 0 then
+		return 0
+	end
+
+	return math.clamp((elapsed or 0) / time, 0, 1)
+end
+
+--[=[
+	The damage factor at a ramp progress: `Beam.StartMultiplier` at 0 up to
+	`Beam.MaxMultiplier` at 1, linearly. 1 for units without `Beam`.
+
+	A factor, not ready damage, for the same reason as `GetDamageMultiplier`: the
+	server multiplies it into the tick and rounds once at the end.
+]=]
+function UnitUpgradeConfig:GetRampMultiplier(unitName, progress)
+	local stats = UnitStats[unitName]
+	local beam = stats and stats.Beam
+
+	if not beam then
+		return 1
+	end
+
+	local start = beam.StartMultiplier or 1
+	local top = beam.MaxMultiplier or start
+
+	return start + (top - start) * math.clamp(progress or 0, 0, 1)
+end
+
+--[=[
+	Which of the unit's `BeamStages` (in `UnitAttackConfig`) a ramp progress is in: the
+	last stage whose `At` has been reached. 1 for units without stages.
+]=]
+function UnitUpgradeConfig:GetBeamStage(unitName, progress)
+	local config = UnitAttackConfig[unitName]
+	local stages = config and config.BeamStages
+
+	if not stages then
+		return 1
+	end
+
+	local index = 1
+
+	for i, stage in ipairs(stages) do
+		if (progress or 0) >= stage.At then
+			index = i
+		end
+	end
+
+	return index
+end
+
+
+
 
 --[=[
 	A farm's aura cash bonus at the given level, as an additive fraction: 0.15 is

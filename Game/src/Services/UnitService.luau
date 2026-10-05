@@ -884,6 +884,7 @@ function UnitService:construct()
 	Framework:Listen("ChainLightning", function() end)
 	Framework:Listen("ArchmageMeteor", function() end)
 	Framework:Listen("ArchmageLightning", function() end)
+	Framework:Listen("BonfireState", function() end)
 
 	Framework:Listen("SellUnit", function(player, unitId)
 		-- The tutorial match does not sell towers (`CanSell`): wave 1's Slingshot is the
@@ -973,6 +974,13 @@ function UnitService:construct()
 		for _, entry in self.PlacedUnits do
 			Framework:Fire("ReplicateUnit", player, entry.unitName, entry.cf, entry.ownerUserId, entry.unitId, entry.upgrades or 0, entry.priority)
 		end
+
+		for _, entry in self.PlacedUnits do
+			if entry.Bonfire then
+				self:broadcastBonfire(entry, player)
+			end
+		end
+
 		local cards = self.SessionCards[player.UserId]
 		if cards then
 			for unitName, count in cards do
@@ -1297,6 +1305,224 @@ function UnitService:creditHit(entry, hits, mobId, damage : number, auraBonus : 
 	return dealt
 end
 
+--[[ BONFIRE ]]
+
+-- How often a Bonfire with nothing going on looks for a target. Mid-fight it never waits.
+local BONFIRE_IDLE_SCAN_INTERVAL = 0.1
+
+--[=[
+	Tells clients where a Bonfire is in its life cycle: state, ramp stage, and target.
+
+	Fired on a change only (state, stage, or target), never per frame; the client draws
+	the beam and moves it with the enemy on its own. `false` stands for "no target", as
+	in `UnitSwing`, because Warp does not carry nil. `onlyPlayer` is the late-join resend.
+]=]
+function UnitService:broadcastBonfire(entry, onlyPlayer : Player?)
+	local bonfire = entry.Bonfire
+	if not bonfire then return end
+
+	local mobId = bonfire.targetMobId
+	if bonfire.state ~= "Fire" and bonfire.state ~= "Charge" then
+		mobId = nil
+	end
+
+	local recipients = if onlyPlayer then { onlyPlayer } else Players:GetPlayers()
+
+	for _, plr in ipairs(recipients) do
+		Framework:Fire("BonfireState", plr, entry.unitId, bonfire.state, bonfire.stage or 1, mobId or false)
+	end
+end
+
+--[=[
+	One frame of a burning Bonfire: the ramp, the stage, and the damage ticks.
+
+	Damage per tick is the regular `getDamage` (upgrades, weather, cards, charge) times
+	the ramp factor (`GetRampMultiplier`), so every card that touches damage still
+	touches this tower. The tick interval is `getCooldown`, so an attack-speed card
+	shortens it too. Each tick goes through `creditDamage` (cash, aura, damage
+	scoreboard) and is shown with a `MobDamageTick`, the same path the mines use for
+	damage that has no swing.
+]=]
+
+function UnitService:isBonfireSpent(entry, bonfire) : boolean
+	local cap = SharedConfig.UnitUpgradeConfig:GetDamageCap(entry.unitName, entry.upgrades or 0)
+	return (bonfire.damageDealt or 0) >= cap
+end
+
+function UnitService:stepBonfireBeam(entry, stats, bonfire, now : number, weather : string?)
+	local config = SharedConfig.UnitUpgradeConfig
+	local level = entry.upgrades or 0
+	local progress = config:GetRampProgress(entry.unitName, level, now - bonfire.fireStart)
+
+	local stage = config:GetBeamStage(entry.unitName, progress)
+	if stage ~= bonfire.stage then
+		bonfire.stage = stage
+		self:broadcastBonfire(entry)
+	end
+
+	local interval = math.max(0.05, self:getCooldown(entry, now, weather))
+	local ticks = 0
+
+	-- Catch-up is capped: at high game speed a frame can span several ticks, but a lag
+	-- spike must not turn into a burst of damage.
+	while now >= bonfire.nextTick and ticks < 4 do
+		ticks += 1
+		bonfire.nextTick += interval
+
+		local base = self:getDamage(entry, stats, weather)
+		local damage = math.max(1, math.floor(base * config:GetRampMultiplier(entry.unitName, progress) + 0.5))
+		local dealt = self:creditDamage(entry, bonfire.targetMobId, damage, self:getAuraBonus(entry, weather))
+		bonfire.damageDealt = (bonfire.damageDealt or 0) + dealt
+
+		if dealt > 0 then
+			for _, plr in ipairs(Players:GetPlayers()) do
+				Framework:Fire("MobDamageTick", plr, bonfire.targetMobId, dealt)
+			end
+		end
+
+		-- Cap reached: no more ticks this frame. `stepBonfire` sends it Tired next frame.
+		if self:isBonfireSpent(entry, bonfire) then
+			break
+		end
+	end
+
+	if now >= bonfire.nextTick then
+		bonfire.nextTick = now + interval
+	end
+end
+
+--[=[
+	Bonfire's state machine: Idle -> Charge -> Fire -> Tired -> Idle.
+
+	Runs instead of the regular attack in `stepCombat`, and before the weather and stun
+	checks: those count here as "no target", so a Bonfire that rain or a stun interrupts
+	goes Tired like any other that lost its enemy instead of freezing mid-burn.
+
+	Tired is a lock: nothing starts until `Tired.Duration` is over, even with an enemy in
+	range. Losing the target while charging goes straight back to Idle (it never fired,
+	so it is never tired). Replacing a dead target with another one in range keeps the
+	ramp; only having nobody left in range ends it.
+]=]
+function UnitService:stepBonfire(entry, stats, now : number, weather : string?, disabled : boolean)
+	local mobService = self.Services.MobService
+	local beam = stats.Beam
+
+	local attackConfig = SharedConfig.UnitAttackConfig and SharedConfig.UnitAttackConfig[entry.unitName]
+	local tiredDuration = attackConfig and attackConfig.Tired and attackConfig.Tired.Duration or 0
+	local chargeUpTime = beam and beam.ChargeUpTime or 0
+
+	local bonfire = entry.Bonfire
+	if not bonfire then
+		bonfire = {
+			state = "Idle",
+			stage = 1,
+			untilTime = 0,
+			nextScan = 0,
+			nextTick = 0,
+			fireStart = 0,
+			targetMobId = nil,
+			damageDealt = 0,
+		}
+		entry.Bonfire = bonfire
+	end
+
+	if bonfire.state == "Tired" then
+		if now < bonfire.untilTime then return end
+
+		-- Tired ended after hitting the damage cap: the tower is fresh again.
+		if self:isBonfireSpent(entry, bonfire) then
+			bonfire.damageDealt = 0
+		end
+
+		bonfire.state = "Idle"
+		bonfire.targetMobId = nil
+		self:broadcastBonfire(entry)
+	end
+
+	local position = entry.cf.Position
+	local range = self:getRange(entry, weather)
+	local canFight = not disabled
+		and now >= (entry.StunnedUntil or 0)
+		and mobService.ActiveMobCount > 0
+		and not self:isBonfireSpent(entry, bonfire)
+
+	local targetId = bonfire.targetMobId
+	local targetValid = false
+
+	if canFight and targetId and mobService.ActiveMobs[targetId] then
+		local pos = mobService:getMobPosition(targetId)
+		targetValid = pos ~= nil and (pos - position).Magnitude <= range
+	end
+
+	-- Mid-fight a lost target is replaced at once (a gap would read as "nobody left" and
+	-- send it Tired); only a tower with nothing going on scans on a timer.
+	if canFight and not targetValid and (bonfire.state ~= "Idle" or now >= bonfire.nextScan) then
+		bonfire.nextScan = now + BONFIRE_IDLE_SCAN_INTERVAL
+
+		local bestId = mobService:GetBestMobInRange(position, range, entry.priority)
+		if bestId then
+			targetId = bestId
+			targetValid = true
+		end
+	end
+
+	if bonfire.state == "Fire" then
+		if not targetValid then
+			bonfire.targetMobId = nil
+			bonfire.fireStart = nil
+			bonfire.stage = 1
+			bonfire.state = "Tired"
+			bonfire.untilTime = now + tiredDuration
+			self:broadcastBonfire(entry)
+			return
+		end
+
+		if targetId ~= bonfire.targetMobId then
+			bonfire.targetMobId = targetId
+			self:broadcastBonfire(entry)
+		end
+
+		self:stepBonfireBeam(entry, stats, bonfire, now, weather)
+		return
+	end
+
+	if bonfire.state == "Charge" then
+		if not targetValid then
+			bonfire.targetMobId = nil
+			bonfire.state = "Idle"
+			self:broadcastBonfire(entry)
+			return
+		end
+
+		if targetId ~= bonfire.targetMobId then
+			bonfire.targetMobId = targetId
+			self:broadcastBonfire(entry)
+		end
+
+		if now < bonfire.untilTime then return end
+		-- Charge-up is over: falls through to start firing.
+	elseif bonfire.state == "Idle" then
+		if not targetValid then return end
+
+		bonfire.targetMobId = targetId
+
+		if chargeUpTime > 0 then
+			bonfire.state = "Charge"
+			bonfire.untilTime = now + chargeUpTime
+			self:broadcastBonfire(entry)
+			return
+		end
+	end
+
+	bonfire.state = "Fire"
+	bonfire.fireStart = now
+	bonfire.nextTick = now
+	bonfire.stage = 1
+	self:broadcastBonfire(entry)
+end
+
+
+
 function UnitService:stepCombat()
 	local units = self.PlacedUnits
 	local count = #units
@@ -1345,6 +1571,15 @@ function UnitService:stepCombat()
 		local i = (start + step - 1) % count + 1
 		local entry = units[i]
 		local stats = SharedConfig.UnitStats[entry.unitName]
+
+		-- A channeling unit (the Bonfire) runs its own state machine, and it goes before
+		-- the weather check below: rain turning Fire units off has to send it Tired, not
+		-- leave its beam up.
+		if stats and stats.Beam then
+			self:stepBonfire(entry, stats, now, weather,
+				SharedConfig.WeatherConfig.IsDisabled(weather, entry.unitName))
+			continue
+		end
 
 		--[[
 			A unit turned off by weather does nothing in this loop: rain turns off all of

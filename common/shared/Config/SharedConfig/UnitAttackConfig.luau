@@ -197,6 +197,42 @@ local UnitAttackConfig = {
 			{ Animation = "Teleport", Combo = "Teleport", HitTime = 0.4167, Duration = 1.3667 },
 		},
 	},
+
+		--[=[
+		The Bonfire does not swing, it channels, so none of the steps above apply. It has
+		its own fields instead:
+
+		| Field | What it is |
+		| --- | --- |
+		| `BeamStages` | one stage per slice of the ramp: `At` is the ramp progress (0 to 1) where it begins, `Animation` plays on the model while it lasts, `Beam` is the model in `Assets.VFX` drawn between the unit and its target |
+		| `Tired` | the animation played when nothing is left in range, and `Duration`, its length |
+		| `BeamAttachment` | the `Part` of the model holding the attachment the beam starts from, and the `Names` tried, in order |
+		| `BeamEndOffset` | where on the enemy the beam ends, added to its pivot |
+
+		`Tired.Duration` is the animation's length copied by hand, same rule as `HitTime`:
+		the animation is the **source**, this field is the copy the server obeys, and the
+		server has no `AnimationTrack` to read it from. The client warns in Studio if
+		the two differ.
+
+		The Tired lock is the whole animation: nothing fires until it ends, even with an
+		enemy back in range.
+	]=]
+	["Bonfire"] = {
+		BeamStages = {
+			{ At = 0,    Animation = "Attack",  Beam = "FireBeam1" },
+			{ At = 0.33, Animation = "Attack2", Beam = "FireBeam2" },
+			{ At = 0.66, Animation = "Attack3", Beam = "MaxFireBeam" },
+		},
+		Tired = { Animation = "Tired", Duration = 2 },
+		BeamAttachment = {
+			Part = "Right Arm",
+			Names = { "BeamAttachment", "BeamAttatchment", "BeamPart" },
+		},
+		BeamTargetParts = { "Torso", "UpperTorso", "HumanoidRootPart" },
+		BeamEndOffset = Vector3.zero,
+	},
+
+
 }
 
 return UnitAttackConfig

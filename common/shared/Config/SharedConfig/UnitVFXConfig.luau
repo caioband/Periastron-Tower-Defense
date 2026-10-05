@@ -63,6 +63,9 @@ local UnitVFXConfig = {
 			Effect = "FrozenVFX",
 		},
 	},
+
+	["Bonfire"] = { PLACEMENT_EFFECT },
+
 }
 
 return UnitVFXConfig

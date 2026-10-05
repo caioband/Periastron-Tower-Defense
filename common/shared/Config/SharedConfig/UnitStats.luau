@@ -351,6 +351,44 @@ local UnitStats = {
 		},
 	},
 
+		--[=[
+		The channeled beam: 8 DPS at 0% ramp and 32 at 100% (`Damage` 4 every 0.50 s,
+		times `MaxMultiplier` 4), against a 300 placement cost. The numbers are
+		provisional.
+
+		It fires only after `ChargeUpTime`. When nothing is left in range it plays
+		`Tired` (`UnitAttackConfig`), cannot fire until that ends, and then charges up
+		again from 0% ramp. A dead target replaced by another one in range keeps the ramp.
+
+		Fire, so rain turns it off (see `WeatherConfig`), which sends it Tired.
+	]=]
+
+	
+	["Bonfire"] = {
+		Rarity = "Legendary",
+		Class = "Fire",
+		Cost = 300,
+		Damage = 4,
+		Range = 10,
+		Cooldown = 0.50,
+		AttackType = "SingleShot",
+		HitInterval = 0,
+		Hits = 1,
+		Beam = {
+			RampTime = 8,
+			MaxRampTime = 6,
+			StartMultiplier = 1,
+			MaxMultiplier = 4,
+			ChargeUpTime = 2,
+		},
+		RangeStats = {
+			Increment = 1,
+			Max = 14,
+		},
+	},
+
+
+
 	--[[ EPIC ]]
 
 	["Subspace Tripminer"] = {

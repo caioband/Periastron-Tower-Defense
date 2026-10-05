@@ -889,7 +889,7 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 	self.classesById[unitId] = class
 
 	local unitStats = SharedConfig.UnitStats[unitName]
-	local skipTargeting = unitStats and (unitStats.Farm ~= nil or unitStats.Tripmine ~= nil)
+	local skipTargeting = unitStats and (unitStats.Farm ~= nil or unitStats.Tripmine ~= nil or unitStats.Beam ~= nil)
 	if not skipTargeting and self.Controllers.TargetingController and self.Controllers.TargetingController.RegisterUnit then
 		self.Controllers.TargetingController:RegisterUnit(class)
 	end
