@@ -20,6 +20,7 @@ local UnitAttackConfig = require(script.Parent.UnitAttackConfig)
 	| `Damages` | damage at each level (index = level + 1), from 0 to max. Overrides `DamageMultiplier`; item 1 must equal `UnitStats` `Damage` |
 	| `Cooldowns` | cooldown at each level (index = level + 1), from 0 to max. Overrides `CooldownMultiplier`; item 1 must equal `UnitStats` `Cooldown` |
 	| `Incomes` | a farm's income per wave at each level (index = level + 1). Overrides `Farm.Income` x `DamageMultiplier`; item 1 must equal `UnitStats` `Farm.Income` |
+	| `Slows` | a slow aura's slow at each level (index = level + 1), as the fraction removed: 0.3 is "30% slower". Only for units with `SlowAura` in `UnitStats` |
 
 	Ten units use `Costs` today, because their price ladder was designed per wave,
 	not by formula: the jumps are uneven on purpose. The Slingshot, Archer, and
@@ -148,19 +149,42 @@ UnitUpgradeConfig.Units = {
 	},
 
 		--[[
-		| Level  | 0 | 1 | 2 | 3 | 4 | 5  |
-		| Damage | 4 | 5 | 6 | 7 | 8 | 10 |
+		| Level  | 0 | 1   | 2   | 3   | 4   | 5 |
+		| Damage | 2 | 2.4 | 2.9 | 3.5 | 4.2 | 5 |
 
-		Per tick, before the ramp. The tick interval stays at 0.50 s at every level (no
+		Per tick, before the ramp. The tick interval stays at 0.25 s at every level (no
 		`CooldownMultiplier`). Upgrades buy damage, range, and a shorter ramp
 		(`Beam.MaxRampTime` in `UnitStats`, see `GetRampTime`).
+
+		The fractions are real: the server carries what a tick cannot deal to the next
+		one (`UnitService:stepBonfireBeam`), so level 1 deals 2, 2, 3, 2, 3... The UI's
+		`GetDamage` rounds, so it shows 2, 2, 3, 3, 4, 5.
 
 		With the 300 placement cost from `UnitStats`, maxing it costs 2,595.
 	]]
 	["Bonfire"] = {
 		Costs = { 200, 300, 420, 575, 800 },
-		DamageMultiplier = (10 / UnitStats["Bonfire"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+		DamageMultiplier = (5 / UnitStats["Bonfire"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 		DamageCaps = { 500, 1000, 1500, 2000, 2500, 3000 },
+	},
+
+	--[[
+		| Level | 0   | 1   | 2   | 3   | 4   | 5   |
+		| Slow  | 10% | 14% | 18% | 22% | 26% | 30% |
+		| Range | 3   | 3.4 | 3.8 | 4.2 | 4.6 | 5   |
+
+		The ring is on from placement, and each upgrade adds 4 points up to 30%. Range
+		comes from `RangeStats` in `UnitStats`.
+
+		With the 150 placement cost from `UnitStats`, maxing it costs 1,350. Provisional.
+	]]
+	["Cryomancer"] = {
+		Costs = { 100, 150, 250, 325, 375 },
+		Slows = { 0.10, 0.14, 0.18, 0.22, 0.26, 0.30 },
+
+		-- Inert, kept only because `GetDamageMultiplier` is called for every unit: its
+		-- `Damage` is 0.
+		DamageMultiplier = 1,
 	},
 
 	--[[
@@ -635,6 +659,24 @@ end
 
 
 
+
+--[=[
+	A slow aura's slow at the given level (`Slows`), as the fraction removed: 0.3 is
+	"walks 30% slower". Zero for units without `SlowAura`.
+
+	No `weather`, like `GetAuraBonus` below: weather changes the ring's **radius**
+	(`GetRange`), not how cold it is.
+]=]
+function UnitUpgradeConfig:GetAuraSlow(unitName, level)
+	local stats = UnitStats[unitName]
+	local slows = self:GetUnitData(unitName).Slows
+
+	if not (stats and stats.SlowAura) or not slows or #slows == 0 then
+		return 0
+	end
+
+	return slows[math.clamp((level or 0) + 1, 1, #slows)]
+end
 
 --[=[
 	A farm's aura cash bonus at the given level, as an additive fraction: 0.15 is

@@ -50,6 +50,15 @@ local BLEED_VFX_NAME = "BleedVFX"
 local BLEED_HIGHLIGHT_NAME = "BleedHighlight"
 local STATUS_VFX_FALLBACK = 2
 
+-- The Cryomancer's ring slow (`holdModelStatus`): no deadline, it lasts while the enemy
+-- is inside a ring. The asset has no Highlight today; the name is there if it gets one.
+local FROZEN_AURA_VFX_NAME = "FrozenAuraVFX"
+local FROZEN_AURA_HIGHLIGHT_NAME = "FrozenAuraHighlight"
+
+-- How long `SetFrozenAura` keeps waiting for an enemy model that has not spawned yet.
+local FROZEN_AURA_RETRIES = 10
+local FROZEN_AURA_RETRY_DELAY = 0.1
+
 --[=[
 	The impact at the tip of the Electro's bolt, much smaller than the weather bolt's.
 
@@ -792,36 +801,8 @@ function VFXController:playModelStatus(mob : Model, assetName : string, highligh
 	duration = tonumber(duration) or 0
 	if duration <= 0 or not mob.Parent then return end
 
-	local root = mob:FindFirstChild(UNIT_ROOT_NAME) or mob.PrimaryPart
-	local previous = root and root:FindFirstChild(assetName)
-	if previous then
-		previous:Destroy()
-	end
-
-	local previousHighlight = mob:FindFirstChild(highlightName)
-	if previousHighlight then
-		previousHighlight:Destroy()
-	end
-
-	local clone = self:attachToMob(assetName, mob, "Torso")
+	local clone, highlight = self:attachModelStatus(mob, assetName, highlightName)
 	if not clone then return end
-
-	local highlight = clone:FindFirstChildWhichIsA("Highlight")
-	if highlight then
-		highlight.Name = highlightName
-		highlight.Adornee = nil
-		highlight.Parent = mob
-	end
-
-	-- With the "VFX" setting off only the Highlight shows the state: it is what tells
-	-- the player, and the particles are decoration.
-	local effects = self:effectsOn()
-
-	for _, descendant in clone:GetDescendants() do
-		if descendant:IsA("ParticleEmitter") then
-			descendant.Enabled = effects
-		end
-	end
 
 	-- Match time, like `StunMob` on the other side: at 3x the state ends sooner in
 	-- real seconds, and the drawing must leave with it.
@@ -840,6 +821,62 @@ function VFXController:playModelStatus(mob : Model, assetName : string, highligh
 
 		VFX.destroyAfter(clone, VFX.maxLifetime(clone) or STATUS_VFX_FALLBACK)
 	end)
+end
+
+--[=[
+	A state with no deadline: it stays until `stopModelStatus`. Used for the
+	Cryomancer's ring, which lasts exactly as long as the enemy is inside it.
+
+	A state already on the model is kept, not replaced: the server only says "on" once,
+	but replacing would restart the particles mid-loop if it ever said it twice.
+]=]
+function VFXController:holdModelStatus(mob : Model, assetName : string, highlightName : string)
+	if not mob.Parent then return end
+
+	local root = mob:FindFirstChild(UNIT_ROOT_NAME) or mob.PrimaryPart
+	if root and root:FindFirstChild(assetName) then return end
+
+	self:attachModelStatus(mob, assetName, highlightName)
+end
+
+--[=[
+	Puts a state's asset on the model, replacing the same state if present: the clone
+	welded to the `Torso`, its Highlight moved to the model, the emitters on. Returns
+	both for the caller to end them.
+]=]
+function VFXController:attachModelStatus(mob : Model, assetName : string, highlightName : string) : (Instance?, Highlight?)
+	local root = mob:FindFirstChild(UNIT_ROOT_NAME) or mob.PrimaryPart
+	local previous = root and root:FindFirstChild(assetName)
+	if previous then
+		previous:Destroy()
+	end
+
+	local previousHighlight = mob:FindFirstChild(highlightName)
+	if previousHighlight then
+		previousHighlight:Destroy()
+	end
+
+	local clone = self:attachToMob(assetName, mob, "Torso")
+	if not clone then return nil, nil end
+
+	local highlight = clone:FindFirstChildWhichIsA("Highlight")
+	if highlight then
+		highlight.Name = highlightName
+		highlight.Adornee = nil
+		highlight.Parent = mob
+	end
+
+	-- With the "VFX" setting off only the Highlight shows the state: it is what tells
+	-- the player, and the particles are decoration.
+	local effects = self:effectsOn()
+
+	for _, descendant in clone:GetDescendants() do
+		if descendant:IsA("ParticleEmitter") then
+			descendant.Enabled = effects
+		end
+	end
+
+	return clone, highlight
 end
 
 
@@ -888,6 +925,56 @@ end
 -- The Slasher's and Berserker's bleed (`BleedVFX`). See `playModelStatus`.
 function VFXController:PlayBleeding(mobId : string, duration : number?)
 	self:playMobStatus(mobId, BLEED_VFX_NAME, BLEED_HIGHLIGHT_NAME, duration)
+end
+
+--[=[
+	The Cryomancer's ring slow (`FrozenAuraVFX`): on while the enemy is inside a ring,
+	off when it leaves (`MobAuraSlowed`, from `MobService:SetAuraSlows`).
+
+	"On" can arrive before the enemy's model: `SpawnClientMob` travels in another Warp
+	queue, and an enemy born inside a ring is slowed on its first frame. So a missing
+	model is retried for a moment, and an "off" in between cancels the wait.
+]=]
+function VFXController:SetFrozenAura(mobId : string, on : boolean)
+	local mobs = self.Controllers.MobController
+	local spawned = mobs and mobs.SpawnedMobs
+
+	if not on then
+		self.FrozenAuraPending[mobId] = nil
+
+		local mob = spawned and spawned[mobId]
+		if mob then
+			self:stopModelStatus(mob, FROZEN_AURA_VFX_NAME, FROZEN_AURA_HIGHLIGHT_NAME)
+		end
+
+		return
+	end
+
+	local token = {}
+	self.FrozenAuraPending[mobId] = token
+
+	local tries = 0
+
+	local function attach()
+		if self.FrozenAuraPending[mobId] ~= token then return end
+
+		local mob = spawned and spawned[mobId]
+		if mob then
+			self.FrozenAuraPending[mobId] = nil
+			self:holdModelStatus(mob, FROZEN_AURA_VFX_NAME, FROZEN_AURA_HIGHLIGHT_NAME)
+			return
+		end
+
+		tries += 1
+		if tries > FROZEN_AURA_RETRIES then
+			self.FrozenAuraPending[mobId] = nil
+			return
+		end
+
+		task.delay(FROZEN_AURA_RETRY_DELAY, attach)
+	end
+
+	attach()
 end
 
 --suffocate logic
@@ -1375,6 +1462,12 @@ function VFXController:construct()
 		self:PlayBleeding(mobId, duration)
 	end)
 
+	-- The Cryomancer's ring: on when the enemy enters a ring, off when it leaves the
+	-- last one (`MobService:SetAuraSlows`).
+	Framework:Listen("MobAuraSlowed", function(mobId : string, on : boolean)
+		self:SetFrozenAura(mobId, on == true)
+	end)
+
 	-- The Archmage's attacks that have visuals. The server decides the aim and timing
 	-- (`UnitService:executeCombo`); only the drawing comes from here.
 	Framework:Listen("ArchmageMeteor", function(unitId : string, aimPos : Vector3, fallTime : number, height : number)
@@ -1416,6 +1509,9 @@ function VFXController:start()
 end
 
 function VFXController:init()
+	-- mobId -> the wait `SetFrozenAura` has for a model not spawned yet.
+	self.FrozenAuraPending = {}
+
 	for Controller, _ in self.Controllers do
 		self.Controllers[Controller] = Framework:Get(Controller, false, true)
 	end

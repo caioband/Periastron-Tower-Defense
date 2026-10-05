@@ -40,9 +40,10 @@ return {
 | `Speed` | yes | Studs per second of each enemy, before weather and gimmicks |
 | `Reward` | no | Cash per kill; overrides the entity's value |
 | `SpawnDelay` | no | Seconds until the next enemy; overrides the entity's value |
+| `GroupDelay` | no | Seconds after the entry's last enemy, before the next entry starts; without it, that gap is the `SpawnDelay` |
 
 Without `Reward` or `SpawnDelay`, `Config.Wave` uses the entity's value in `ENTITY_DATA` times the preset's `RewardMultiplier` or `SpawnDelayMultiplier`.
-An override is the final value, with no multiplier.
+An override is the final value, with no multiplier; so is `GroupDelay`.
 Easy and Medium use it for `AstralAdventurer` and `SkyGuardian` where they stand in for the elite slot (see [Enemies](enemies.md)).
 
 ### Checked at boot
@@ -78,6 +79,8 @@ The tables were generated from the formula they replaced, so the first version p
 
 Speeds were rounded to two decimals, which moves them by less than 0.5%.
 From here on the tables are the source of truth; edit them wave by wave.
+
+Hard was later rebalanced from "Hard V2" (`hardV2speedtest_2`, outside the repo): its enemies, counts, and timings (`Time_Between` as `SpawnDelay`, `Time_Until_Next_Group` as `GroupDelay`) replaced the old ones, while health and speed stayed per wave, since V2 does not set them. The header of `Waves/Hard.luau` has the details.
 
 ## Configuration
 

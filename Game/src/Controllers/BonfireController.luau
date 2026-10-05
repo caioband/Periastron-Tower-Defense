@@ -17,10 +17,15 @@ local log = Log.new("BonfireController")
 
 local UNIT_NAME = "Bonfire"
 
--- Everything below comes from `UnitAttackConfig["Bonfire"]`: stages, Tired, attachment.
+-- Everything below comes from `UnitAttackConfig["Bonfire"]`: stages, Charge, Tired, attachment.
 local attackConfig = SharedConfig.UnitAttackConfig[UNIT_NAME]
 local stages = attackConfig.BeamStages
+local charge = attackConfig.Charge
 local tired = attackConfig.Tired
+
+-- The wind-up is stretched over the server's charge-up, so the first stage's loop (and
+-- its first damage tick) starts the moment it ends.
+local CHARGE_UP_TIME = SharedConfig.UnitStats[UNIT_NAME].Beam.ChargeUpTime
 
 -- How long a unit may be missing on this client before its state is forgotten. Zippers
 -- removes and re-adds the same unitId in one step, and a unit's state event can also
@@ -33,20 +38,19 @@ local BonfireController = {
 		MobController = {},
 	},
 
-	-- unitId -> { state, stage, mobId, missingSince }: what the server last said.
+	-- unitId -> { state, stage, mobId, interval, missingSince }: what the server last said.
 	desired = {},
 
 	-- unitId -> { class, model, state, stage, beam, ... }: what is on screen now.
 	visuals = {},
-
-	checkedTired = false,
 }
 
 local function stageDef(stage : number)
 	return stages[stage] or stages[#stages]
 end
 
-local function playTrack(class, name : string, looped : boolean)
+-- `restart` rewinds a track that is already playing, so it starts on the server's beat.
+local function playTrack(class, name : string, looped : boolean, restart : boolean?)
 	local tracks = class.loadedAnimations
 	local track = tracks and tracks[name]
 	if not track then
@@ -59,6 +63,8 @@ local function playTrack(class, name : string, looped : boolean)
 
 	if not track.IsPlaying then
 		track:Play(0.1)
+	elseif restart then
+		track.TimePosition = 0
 	end
 
 	-- A freshly played track returns to 1x, so the match speed goes back on (see
@@ -78,6 +84,52 @@ local function stopTrack(class, name : string, fade : number)
 	end
 end
 
+--[=[
+	Makes one play of `name` last `window` seconds of match time: the wind-up spans the
+	charge-up, each stage's loop spans whole damage ticks (`loopWindow`), and Tired
+	spans its lock.
+
+	The factor is kept in `animationSpeeds`, so `Unit:applyTimeScale` multiplies it into
+	the match speed like the attack fit in `Unit:playAttackVisual`. Called every frame:
+	`Length` is zero until the animation loads, and the server's tick interval changes
+	with cards and weather.
+]=]
+local function fitTrack(class, name : string, window : number?)
+	local tracks = class.loadedAnimations
+	local track = tracks and tracks[name]
+	if not track or not window or window <= 0 or track.Length <= 0 then return end
+
+	local fit = track.Length / window
+	if class.animationSpeeds[name] == fit then return end
+
+	class.animationSpeeds[name] = fit
+
+	if track.IsPlaying then
+		track:AdjustSpeed(GameClock.GetScale() * fit)
+	end
+end
+
+--[[
+	How long one loop of a stage lasts: a whole number of damage ticks, the count
+	closest to the animation's own length. Every loop still starts on a tick, without
+	the 5x a 1.3 s animation would need to fit one 0.25 s tick.
+]]
+local function loopWindow(class, name : string, interval : number?) : number?
+	local tracks = class.loadedAnimations
+	local track = tracks and tracks[name]
+	if not track or not interval or interval <= 0 or track.Length <= 0 then return nil end
+
+	return interval * math.max(1, math.floor(track.Length / interval + 0.5))
+end
+
+-- Whether the one-shot wind-up is over. A missing track counts as over.
+local function windUpDone(class) : boolean
+	local tracks = class.loadedAnimations
+	local track = tracks and tracks[charge.Animation]
+
+	return not track or not track.IsPlaying
+end
+
 local function findBeamAttachment(model : Model) : Attachment?
 	local holder = model:FindFirstChild(attackConfig.BeamAttachment.Part)
 	if not holder then return nil end
@@ -90,26 +142,6 @@ local function findBeamAttachment(model : Model) : Attachment?
 	end
 
 	return nil
-end
-
---[[
-	Tells the developer, once, if the `Tired` animation is not the length the server
-	waits for. The server cannot read it, so `Tired.Duration` is a copy.
-]]
-local function verifyTiredLength(track : AnimationTrack)
-	task.spawn(function()
-		local waited = 0
-		while track.Length <= 0 and waited < 5 do
-			waited += task.wait(0.25)
-		end
-
-		if track.Length > 0 and math.abs(track.Length - tired.Duration) > 0.05 then
-			log:StudioWarn(string.format(
-				"Tired animation is %.2fs but UnitAttackConfig Bonfire Tired.Duration is %.2fs. Set Duration = %.2f",
-				track.Length, tired.Duration, track.Length
-			))
-		end
-	end)
 end
 
 function BonfireController:getMob(mobId : any) : Model?
@@ -173,10 +205,16 @@ function BonfireController:destroyBeam(visual)
 	visual.finish = nil
 end
 
-function BonfireController:enterStage(visual, stage : number)
+--[[
+	A stage starts on a damage tick (the server fires one on every stage change), so its
+	loop starts from the top with the beam, each loop a whole number of ticks.
+]]
+function BonfireController:enterStage(visual, stage : number, interval : number?)
 	local class = visual.class
 	local def = stageDef(stage)
 
+	-- Fire can arrive before the wind-up ends (late join, high game speed): the loop wins.
+	stopTrack(class, charge.Animation, 0.1)
 	stopTrack(class, tired.Animation, 0.1)
 
 	for _, other in stages do
@@ -185,7 +223,8 @@ function BonfireController:enterStage(visual, stage : number)
 		end
 	end
 
-	playTrack(class, def.Animation, true)
+	fitTrack(class, def.Animation, loopWindow(class, def.Animation, interval))
+	playTrack(class, def.Animation, true, true)
 
 	if visual.beamName ~= def.Beam then
 		self:destroyBeam(visual)
@@ -214,8 +253,11 @@ function BonfireController:applyState(visual, want)
 
 	if want.state == "Fire" then
 		if visual.state ~= "Fire" or visual.stage ~= want.stage then
-			self:enterStage(visual, want.stage)
+			self:enterStage(visual, want.stage, want.interval)
 		end
+
+		local loopName = stageDef(visual.stage).Animation
+		fitTrack(class, loopName, loopWindow(class, loopName, want.interval))
 
 		visual.state = "Fire"
 		return
@@ -225,26 +267,35 @@ function BonfireController:applyState(visual, want)
 		self:leaveFire(visual)
 	end
 
-	-- Charge-up reuses the first stage's animation (Attack). If Charge turns into Fire,
-	-- `enterStage` finds it already playing and keeps it going.
+	-- Charge-up plays the wind-up (StartAttack) once, slowed to last the whole charge-up,
+	-- so it ends as the server fires.
 	if want.state == "Charge" then
+		fitTrack(class, charge.Animation, CHARGE_UP_TIME)
+
 		if visual.state ~= "Charge" then
 			stopTrack(class, tired.Animation, 0.1)
+			playTrack(class, charge.Animation, false, true)
+		end
+
+		-- Fire arriving a few ms after the wind-up ends (network jitter) would show a
+		-- frame of Idle: the first stage's loop fills the gap, and `enterStage` rewinds
+		-- it onto the first tick.
+		if windUpDone(class) then
 			playTrack(class, stages[1].Animation, true)
 		end
 	elseif visual.state == "Charge" then
 		-- Charge ended without firing (the target left): back to Idle.
+		stopTrack(class, charge.Animation, 0.15)
 		stopTrack(class, stages[1].Animation, 0.15)
 	end
 
+	-- Tired is squeezed into `Tired.Duration`, the lock the server waits out, so it
+	-- ends as the tower is free again.
 	if want.state == "Tired" then
-		if visual.state ~= "Tired" then
-			local track = playTrack(class, tired.Animation, false)
+		fitTrack(class, tired.Animation, tired.Duration)
 
-			if track and not self.checkedTired then
-				self.checkedTired = true
-				verifyTiredLength(track)
-			end
+		if visual.state ~= "Tired" then
+			playTrack(class, tired.Animation, false)
 		end
 	elseif visual.state == "Tired" then
 		-- Tired finishing on its own drops back to the Idle that never stopped playing.
@@ -332,6 +383,7 @@ function BonfireController:destroyVisual(unitId : any)
 	for _, def in stages do
 		stopTrack(visual.class, def.Animation, 0)
 	end
+	stopTrack(visual.class, charge.Animation, 0)
 	stopTrack(visual.class, tired.Animation, 0)
 
 	self.visuals[unitId] = nil
@@ -382,7 +434,7 @@ function BonfireController:update()
 end
 
 function BonfireController:construct()
-	Framework:Listen("BonfireState", function(unitId, state, stage, mobId)
+	Framework:Listen("BonfireState", function(unitId, state, stage, mobId, interval)
 		local want = self.desired[unitId]
 		if not want then
 			want = {}
@@ -393,6 +445,8 @@ function BonfireController:construct()
 		want.stage = stage
 		-- The server sends `false` for "no target": Warp does not carry nil.
 		want.mobId = mobId or nil
+		-- Seconds between damage ticks, match time: each stage loop spans whole ticks.
+		want.interval = interval
 	end)
 
 	RunService.RenderStepped:Connect(function()

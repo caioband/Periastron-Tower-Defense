@@ -204,15 +204,15 @@ local UnitAttackConfig = {
 
 		| Field | What it is |
 		| --- | --- |
-		| `BeamStages` | one stage per slice of the ramp: `At` is the ramp progress (0 to 1) where it begins, `Animation` plays on the model while it lasts, `Beam` is the model in `Assets.VFX` drawn between the unit and its target |
-		| `Tired` | the animation played when nothing is left in range, and `Duration`, its length |
+		| `BeamStages` | one stage per slice of the ramp: `At` is the ramp progress (0 to 1) where it begins, `Animation` loops on the model while it lasts, each loop a whole number of damage ticks, the count closest to its own length (its speed is fit to that), `Beam` is the model in `Assets.VFX` drawn between the unit and its target; a new stage starts on a tick |
+		| `Charge` | the wind-up `Animation`, played once and slowed to last the whole `Beam.ChargeUpTime` (`UnitStats`), so it ends on the first tick |
+		| `Tired` | the animation played when nothing is left in range, and `Duration`, how long the tower is locked |
 		| `BeamAttachment` | the `Part` of the model holding the attachment the beam starts from, and the `Names` tried, in order |
 		| `BeamEndOffset` | where on the enemy the beam ends, added to its pivot |
 
-		`Tired.Duration` is the animation's length copied by hand, same rule as `HitTime`:
-		the animation is the **source**, this field is the copy the server obeys, and the
-		server has no `AnimationTrack` to read it from. The client warns in Studio if
-		the two differ.
+		`Tired.Duration` is the **source**, not a copy of the animation: it is a balance
+		number, and the client plays the animation at whatever speed makes it last exactly
+		that long. Change it freely; the art follows.
 
 		The Tired lock is the whole animation: nothing fires until it ends, even with an
 		enemy back in range.
@@ -223,6 +223,7 @@ local UnitAttackConfig = {
 			{ At = 0.33, Animation = "Attack2", Beam = "FireBeam2" },
 			{ At = 0.66, Animation = "Attack3", Beam = "MaxFireBeam" },
 		},
+		Charge = { Animation = "StartAttack" },
 		Tired = { Animation = "Tired", Duration = 2 },
 		BeamAttachment = {
 			Part = "Right Arm",

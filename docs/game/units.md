@@ -5,7 +5,7 @@ How placed units attack: the server-side attack cycle, projectiles, hits on seve
 **Runs in:** Game
 **Code:** [`UnitService`](../../Game/src/Services/UnitService.luau), [`MobService`](../../Game/src/Services/MobService.luau), [`Unit` class](../../common/shared/Classes/Unit.luau), [`ProjectileController`](../../Game/src/Controllers/ProjectileController.luau), [`VFXController`](../../Game/src/Controllers/VFXController.luau), [`UnitStats`](../../common/shared/Config/SharedConfig/UnitStats.luau), [`UnitAttackConfig`](../../common/shared/Config/SharedConfig/UnitAttackConfig.luau), [`UnitUpgradeConfig`](../../common/shared/Config/SharedConfig/UnitUpgradeConfig.luau)
 
-The roster is defined in `UnitStats`: Archer, Archmage, Azure, Berserker, Electro, Entrepreneur, Frostione, Pyre, Rocket, Slasher, Slingshot, Subspace Tripminer, and Sword.
+The roster is defined in `UnitStats`: Archer, Archmage, Azure, Berserker, Bonfire, Cryomancer, Electro, Entrepreneur, Frostione, Pyre, Rocket, Slasher, Slingshot, Subspace Tripminer, and Sword.
 The header of `UnitStats` documents every field and the balance rules (such as the damage-per-cost cap in rule 1).
 
 ## The attack cycle
@@ -302,6 +302,55 @@ The `vfx` module handles `EmitCount`, `EmitDelay`, and cleanup from the asset it
 
 The effect is throttled per unit (`AURA_VFX_COOLDOWN`, 0.35 s): a Rocket inside the aura would otherwise send ten effects in the same frame.
 The bonus still applies to **every** hit; only the visual is spaced out.
+
+## Cryomancer: the slow ring
+
+The Cryomancer deals no damage and targets nobody.
+It keeps a ring of frost on the ground around itself, and every enemy inside the ring walks slower.
+The ring is art from `Assets.VFX.Rings`, named in `UnitStats.Cryomancer.SlowAura.Ring` (`Frigid`).
+
+### The radius is the `Range`
+
+Same rule as the Entrepreneur's aura: the ring radius is `UnitUpgradeConfig:GetRange`, the circle the player sees when selecting the unit, weather and cards included.
+There is no separate `Radius`.
+
+### The slow per level
+
+The slow is `Slows` in `UnitUpgradeConfig`, read through `GetAuraSlow(unitName, level)`, as the fraction removed (0.3 is 30% slower):
+
+| Level | 0 | 1 | 2 | 3 | 4 | 5 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Slow | 10% | 14% | 18% | 22% | 26% | 30% |
+| Range | 3 | 3.4 | 3.8 | 4.2 | 4.6 | 5 |
+
+The ring is on from placement, and each upgrade adds 4 points.
+
+### Server
+
+`UnitService:stepSlowAuras` runs every frame in `stepCombat`.
+It maps each enemy inside a ring to the strongest slow over it and hands the map to `MobService:SetAuraSlows`, which stores it as `mob.AuraSlowScale` and fires `UpdateMobSpeed` only for enemies whose factor changed.
+
+- **Nothing stacks.** Overlapping rings give the strongest one. The ring also competes with the other slows (the Frostione's `SlowScale` and the Staff of Azure Ever Ice's `CardSpeedScale`) instead of multiplying with them: `computeSpeed` takes whichever is slower.
+- **The distance is flat** (X and Z only), like the ring drawn on the ground. With a radius of 3, the height between the unit's position and the enemy's would otherwise shrink the real area well below the drawn one.
+- **It ends on exit.** An enemy missing from the map walks at its own pace again on the next frame; there is no deadline.
+- **The Chill Out card** (`Slow`) multiplies the ring's slow, as it does `ApplySlow`'s.
+- A Cryomancer turned off by weather or stunned by a boss slows nobody while that lasts.
+
+### The effect on enemies
+
+When an enemy enters its first ring or leaves its last one, `SetAuraSlows` fires `MobAuraSlowed(mobId, on)`.
+`VFXController:SetFrozenAura` puts `Assets.VFX.FrozenAuraVFX` on the enemy (through `holdModelStatus`, the deadline-free sibling of `playModelStatus`) and takes it off with `stopModelStatus`, letting the particles finish.
+Moving between rings of different strength sends nothing: the effect is the same.
+
+"On" can arrive before the enemy's model, because `SpawnClientMob` travels in another Warp queue; the client retries for up to a second, and an "off" in between cancels it.
+
+### Client
+
+`SlowAuraController` draws one ring per Cryomancer, through `CardModifierController:CreateRing` (the same code as the area cards' rings).
+It polls the placed units five times a second and follows upgrades, weather, cards, selling, and Zippers moves.
+
+On the upgrade card, the damage line shows the slow (`18% SLOW`), the attack speed line says `SLOWS IN RANGE`, and the priority button is hidden, as for farms.
+In the Lobby deck, the stat reads the level 0 slow (`10% SLOW`), as other units show their level 0 damage.
 
 ## Subspace Tripminer mines
 

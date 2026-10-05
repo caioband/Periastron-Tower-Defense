@@ -465,6 +465,11 @@ local function formatDamageOrIncome(unitName : string, level : number, weather, 
 		return "$" .. UIUtil.formatAbbreviated(income) .. " PER WAVE"
 	end
 
+	-- A slow aura deals no damage: the line shows how much slower its ring makes enemies.
+	if unitStats and unitStats.SlowAura then
+		return formatNumber(upgradeConfig:GetAuraSlow(unitName, level) * 100, 2) .. "% SLOW"
+	end
+
 	--[[
 		Built from base damage instead of multiplying `GetDamage`, so the rounding is the
 		**same** as the server's: it rounds once, at the end (`UnitService:getDamage`), and
@@ -499,6 +504,12 @@ local function formatCooldownOrBonus(unitName : string, level : number, weather,
 
 	if bonus > 0 then
 		return formatNumber(bonus * 100, 1) .. "% PER UNIT BONUS"
+	end
+
+	-- A slow aura has no cycle: its cooldown is inert, so the line says what it does.
+	local unitStats = SharedConfig.UnitStats[unitName]
+	if unitStats and unitStats.SlowAura then
+		return "SLOWS IN RANGE"
 	end
 
 	-- Attack speed goes in as a division, like weather: 1.15 is "hits 15% faster",
@@ -1093,12 +1104,12 @@ function module:refreshPriority()
 	if not unitModel or not unitModel.Parent then return end
 
 	--[[
-		Two reasons for the button to leave the screen, and both hold at once: Farms target
-		nobody, and the server refuses priority changes on someone else's unit (see
-		`refreshOwnership`).
+		Two reasons for the button to leave the screen, and both hold at once: Farms and
+		slow auras target nobody, and the server refuses priority changes on someone
+		else's unit (see `refreshOwnership`).
 	]]
 	local unitStats = SharedConfig.UnitStats[unitModel.Name]
-	button.Visible = isOwnedByMe(unitModel) and not (unitStats and unitStats.Farm)
+	button.Visible = isOwnedByMe(unitModel) and not (unitStats and (unitStats.Farm or unitStats.SlowAura))
 
 	label.Text = withBind(TargetPriority.Label(unitModel:GetAttribute("TargetPriority")), KEYBINDS.Priority)
 end

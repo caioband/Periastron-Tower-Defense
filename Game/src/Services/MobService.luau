@@ -65,14 +65,22 @@ end
 	`HealthThresholdRush`). A separate factor for the same reason: it lasts three seconds
 	and must go away on its own without taking along an ice slow that came in during it.
 
+	`AuraSlowScale` is the Cryomancer's ring (`SetAuraSlows`), and it is the one slow
+	that does **not** multiply: it competes with the other two together, and the
+	enemy walks at whichever is slower. A 30% ring over a 30% frost is still 30%.
+
 	See docs/game/enemies.md.
 ]=]
 local function computeSpeed(self, mob)
+	local slowed = math.min(
+		(self.CardSpeedScale or 1) * (mob.SlowScale or 1),
+		mob.AuraSlowScale or 1
+	)
+
 	return mob.BaseSpeed
 		* (mob.SpeedScale or 1)
 		* (self.WeatherSpeedScale or 1)
-		* (self.CardSpeedScale or 1)
-		* (mob.SlowScale or 1)
+		* slowed
 		* (mob.RushScale or 1)
 end
 
@@ -506,6 +514,45 @@ function MobService:ApplySlow(mobId : string, amount : number?, duration : numbe
 			end
 		end
 	end)
+end
+
+--[=[
+	The Cryomancer's rings, for this frame: `slows` maps each enemy inside a ring to the
+	strongest slow over it (the fraction removed). Any enemy missing from the map is
+	outside every ring and walks free of them again, at once: no deadline, unlike
+	`ApplySlow`.
+
+	`UnitService:stepSlowAuras` calls it every frame, so the speed only goes out when an
+	enemy's factor changes (it entered, left, or the ring was upgraded), never per frame.
+	The Chill Out card (`Slow`) multiplies it, the same as `ApplySlow`.
+
+	The factor competes with the other slows instead of stacking (see `computeSpeed`).
+
+	Entering the first ring and leaving the last also fire `MobAuraSlowed`, which puts
+	`FrozenAuraVFX` on the enemy and takes it off (`VFXController:SetFrozenAura`). A
+	change of strength between rings does not: the effect is the same.
+]=]
+function MobService:SetAuraSlows(slows : { [string] : number })
+	local cardSlow = self:cardStat("Slow")
+
+	for mobId, mob in self.ActiveMobs do
+		local previous = mob.AuraSlowScale or 1
+		local scale = 1 - math.clamp((slows[mobId] or 0) * cardSlow, 0, 0.95)
+
+		if scale ~= previous then
+			mob.AuraSlowScale = scale
+			mob.CurrentSpeed = computeSpeed(self, mob)
+
+			broadcastSpeed(self, mobId, mob)
+
+			local slowed = scale < 1
+			if slowed ~= (previous < 1) then
+				for _, player in Players:GetPlayers() do
+					Framework:Fire("MobAuraSlowed", player, mobId, slowed)
+				end
+			end
+		end
+	end
 end
 
 --[=[
@@ -1325,7 +1372,10 @@ function MobService:SpawnWave(waveNumber)
 							Route = routeIndex,
 						})
 					end
-					GameClock.Wait(spawnEntry.SpawnDelay or 1)
+					-- The group's last enemy waits the gap to the next group, when the
+					-- wave table sets one (`GroupDelay` in `Config.Waves`).
+					local isLast = i == (spawnEntry.Amount or 1)
+					GameClock.Wait(if isLast and spawnEntry.GroupDelay then spawnEntry.GroupDelay else (spawnEntry.SpawnDelay or 1))
 				end
 			end
 		end
@@ -1723,6 +1773,7 @@ function MobService:construct()
 	Framework:Listen("MobFrozen", function() end)
 	Framework:Listen("MobBurning", function() end)
 	Framework:Listen("MobBleeding", function() end)
+	Framework:Listen("MobAuraSlowed", function() end)
 	Framework:Listen("MobDamageTick", function() end)
 	Framework:Listen("MobTeleported", function() end)
 	Framework:Listen("KillClientMob", function() end)

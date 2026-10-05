@@ -25,6 +25,9 @@
 	- `Reward` (cash per kill) and `SpawnDelay` (seconds until the next enemy) are
 	  optional overrides. Without them, `Config.Wave` uses the entity's value times
 	  the preset's `RewardMultiplier`/`SpawnDelayMultiplier`.
+	- `GroupDelay` (optional) is the wait after the entry's **last** enemy, before the
+	  next entry starts. Without it, that wait is the entry's `SpawnDelay`, like the
+	  gaps inside the group. Seconds of match time, not scaled by the preset.
 	- The boss wave is any wave with a boss entity in it (`Boss = true` in
 	  `SharedConfig.Mob`; see `Config.Wave.HasBoss`).
 
@@ -48,6 +51,7 @@ export type Entry = {
 	Speed : number,
 	Reward : number?,
 	SpawnDelay : number?,
+	GroupDelay : number?,
 }
 
 export type WaveTable = { [number] : { Entry } }
@@ -124,6 +128,10 @@ local function validate(difficultyName : string, waves : any)
 
 			if entry.SpawnDelay ~= nil and not isPositive(entry.SpawnDelay) then
 				fail(`{where} ({entry.Entity}): SpawnDelay must be above 0`)
+			end
+
+			if entry.GroupDelay ~= nil and not isPositive(entry.GroupDelay) then
+				fail(`{where} ({entry.Entity}): GroupDelay must be above 0`)
 			end
 		end
 	end

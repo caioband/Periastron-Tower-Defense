@@ -352,9 +352,10 @@ local UnitStats = {
 	},
 
 		--[=[
-		The channeled beam: 8 DPS at 0% ramp and 32 at 100% (`Damage` 4 every 0.50 s,
-		times `MaxMultiplier` 4), against a 300 placement cost. The numbers are
-		provisional.
+		The channeled beam: 8 DPS at 0% ramp and 32 at 100% (`Damage` 2 every 0.25 s,
+		times `MaxMultiplier` 4), against a 300 placement cost. Small, frequent ticks
+		so it reads as continuous damage, like the Archmage's `Lightning`. The numbers
+		are provisional.
 
 		It fires only after `ChargeUpTime`. When nothing is left in range it plays
 		`Tired` (`UnitAttackConfig`), cannot fire until that ends, and then charges up
@@ -368,9 +369,9 @@ local UnitStats = {
 		Rarity = "Legendary",
 		Class = "Fire",
 		Cost = 300,
-		Damage = 4,
+		Damage = 2,
 		Range = 10,
-		Cooldown = 0.50,
+		Cooldown = 0.25,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
@@ -379,7 +380,7 @@ local UnitStats = {
 			MaxRampTime = 6,
 			StartMultiplier = 1,
 			MaxMultiplier = 4,
-			ChargeUpTime = 2,
+			ChargeUpTime = 1,
 		},
 		RangeStats = {
 			Increment = 1,
@@ -776,6 +777,41 @@ local UnitStats = {
 		Bleed = { Damage = 1, Ticks = 5, Interval = 1, Vulnerability = 1.3 },
 		RangeStats = {
 			Levels = { 4, 5, 5, 5, 6, 6 },
+		},
+	},
+
+	--[=[
+		Deals no damage and attacks nobody: it keeps a ring of frost on the ground
+		around itself (`SlowAura.Ring`, a Model in `Assets.VFX.Rings`), and every enemy
+		inside it walks slower.
+
+		The slow per level is `Slows` in `UnitUpgradeConfig`: 10% when placed, 4 more per
+		upgrade, 30% at max.
+
+		The radius is `Range`, read through `UnitUpgradeConfig:GetRange`, which is the
+		circle the player sees when selecting it, weather and cards included; the same
+		rule as the Entrepreneur's aura.
+
+		Rings do not stack, with each other or with any other slow: the enemy walks at the
+		strongest one (`MobService:SetAuraSlows`), and back at its own pace the moment it
+		leaves the ring. `Cooldown` is inert: nothing here runs on a cycle.
+
+		Cost, range, and upgrade prices are provisional.
+	]=]
+	["Cryomancer"] = {
+		Rarity = "Common",
+		Class = "Ice",
+		Cost = 150,
+		Damage = 0,
+		Range = 3,
+		Cooldown = 1,
+		AttackType = "SingleShot",
+		HitInterval = 0,
+		Hits = 1,
+		SlowAura = { Ring = "Frigid" },
+		RangeStats = {
+			Increment = 0.4,
+			Max = 5,
 		},
 	},
 }

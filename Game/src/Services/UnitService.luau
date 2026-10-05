@@ -113,6 +113,11 @@ local UnitService = {
 	-- The aura farms on the map. Rebuilt every frame in `stepCombat`.
 	AuraSources = {},
 
+	-- mobId -> the strongest Cryomancer slow over it this frame. Refilled every frame in
+	-- `stepSlowAuras`; `HadAuraSlows` says whether the last one applied any.
+	AuraSlows = {},
+	HadAuraSlows = false,
+
 	--[[
 		The field as `CardModifier` sees it: the unit list (for neighborhood conditions and
 		Abrakadabra) and the base health fraction (for No Pain, No Gain).
@@ -1305,6 +1310,70 @@ function UnitService:creditHit(entry, hits, mobId, damage : number, auraBonus : 
 	return dealt
 end
 
+--[[ SLOW AURAS ]]
+
+--[=[
+	The Cryomancer's rings: every enemy inside one walks slower, for exactly as long as
+	it stays inside.
+
+	Each frame rebuilds who is in which ring and hands the whole map to
+	`MobService:SetAuraSlows`, which only notifies clients of the enemies whose speed
+	changed. Overlapping rings do not add up: the enemy gets the strongest.
+
+	The radius is `getRange`, the same circle the player sees when selecting the unit,
+	weather and cards included, measured flat (X and Z): the ring is drawn on the
+	ground, and with a radius of a few studs the height between the unit's position and
+	the enemy's would shrink the real area well below the drawn one. A Cryomancer the weather turned off or a boss stunned
+	slows nobody while it lasts, like any tower that stops working.
+
+	`HadAuraSlows` saves the sweep over every enemy on maps without a Cryomancer, while
+	still letting one last empty sweep release the enemies when the last ring goes away
+	(sold, stunned, or turned off).
+]=]
+function UnitService:stepSlowAuras(now : number, weather : string?)
+	local mobService = self.Services.MobService
+	if not mobService then return end
+
+	local slows = self.AuraSlows
+	table.clear(slows)
+
+	local any = false
+
+	for _, entry in ipairs(self.PlacedUnits) do
+		local stats = SharedConfig.UnitStats[entry.unitName]
+		if not (stats and stats.SlowAura) then continue end
+
+		if SharedConfig.WeatherConfig.IsDisabled(weather, entry.unitName) then continue end
+		if now < (entry.StunnedUntil or 0) then continue end
+
+		local amount = SharedConfig.UnitUpgradeConfig:GetAuraSlow(entry.unitName, entry.upgrades or 0)
+		if amount <= 0 then continue end
+
+		any = true
+
+		local center = entry.cf.Position
+		local range = self:getRange(entry, weather)
+		local rangeSquared = range * range
+
+		for mobId in mobService.ActiveMobs do
+			if amount <= (slows[mobId] or 0) then continue end
+
+			local pos = mobService:getMobPosition(mobId)
+			if not pos then continue end
+
+			local dx, dz = pos.X - center.X, pos.Z - center.Z
+			if dx * dx + dz * dz <= rangeSquared then
+				slows[mobId] = amount
+			end
+		end
+	end
+
+	if not any and not self.HadAuraSlows then return end
+	self.HadAuraSlows = any
+
+	mobService:SetAuraSlows(slows)
+end
+
 --[[ BONFIRE ]]
 
 -- How often a Bonfire with nothing going on looks for a target. Mid-fight it never waits.
@@ -1313,9 +1382,13 @@ local BONFIRE_IDLE_SCAN_INTERVAL = 0.1
 --[=[
 	Tells clients where a Bonfire is in its life cycle: state, ramp stage, and target.
 
-	Fired on a change only (state, stage, or target), never per frame; the client draws
-	the beam and moves it with the enemy on its own. `false` stands for "no target", as
-	in `UnitSwing`, because Warp does not carry nil. `onlyPlayer` is the late-join resend.
+	Fired on a change only (state, stage, target, or tick interval), never per frame; the
+	client draws the beam and moves it with the enemy on its own. `false` stands for "no
+	target", as in `UnitSwing`, because Warp does not carry nil. `onlyPlayer` is the
+	late-join resend.
+
+	The tick interval goes along so the client can fit each loop of the stage's
+	animation to whole ticks (`BonfireController`), the same idea as `UnitSwing`'s window.
 ]=]
 function UnitService:broadcastBonfire(entry, onlyPlayer : Player?)
 	local bonfire = entry.Bonfire
@@ -1329,14 +1402,20 @@ function UnitService:broadcastBonfire(entry, onlyPlayer : Player?)
 	local recipients = if onlyPlayer then { onlyPlayer } else Players:GetPlayers()
 
 	for _, plr in ipairs(recipients) do
-		Framework:Fire("BonfireState", plr, entry.unitId, bonfire.state, bonfire.stage or 1, mobId or false)
+		Framework:Fire("BonfireState", plr, entry.unitId, bonfire.state, bonfire.stage or 1, mobId or false, bonfire.interval or 0)
 	end
+end
+
+-- Time between damage ticks: `getCooldown`, so an attack-speed card shortens it too.
+function UnitService:getBonfireInterval(entry, now : number, weather : string?) : number
+	return math.max(0.05, self:getCooldown(entry, now, weather))
 end
 
 --[=[
 	One frame of a burning Bonfire: the ramp, the stage, and the damage ticks.
 
-	Damage per tick is the regular `getDamage` (upgrades, weather, cards, charge) times
+	Damage per tick is the regular damage before rounding (`getRawDamage`: upgrades,
+	weather, cards, charge), with the fraction carried between ticks, times
 	the ramp factor (`GetRampMultiplier`), so every card that touches damage still
 	touches this tower. The tick interval is `getCooldown`, so an attack-speed card
 	shortens it too. Each tick goes through `creditDamage` (cash, aura, damage
@@ -1354,13 +1433,27 @@ function UnitService:stepBonfireBeam(entry, stats, bonfire, now : number, weathe
 	local level = entry.upgrades or 0
 	local progress = config:GetRampProgress(entry.unitName, level, now - bonfire.fireStart)
 
+	local interval = self:getBonfireInterval(entry, now, weather)
+	local changed = false
+
+	-- A new stage starts its animation on a tick: the tick clock restarts with it.
 	local stage = config:GetBeamStage(entry.unitName, progress)
 	if stage ~= bonfire.stage then
 		bonfire.stage = stage
+		bonfire.nextTick = now
+		changed = true
+	end
+
+	-- Cards or weather changed the interval: the client refits the loop to it.
+	if math.abs(interval - (bonfire.interval or 0)) > 0.001 then
+		bonfire.interval = interval
+		changed = true
+	end
+
+	if changed then
 		self:broadcastBonfire(entry)
 	end
 
-	local interval = math.max(0.05, self:getCooldown(entry, now, weather))
 	local ticks = 0
 
 	-- Catch-up is capped: at high game speed a frame can span several ticks, but a lag
@@ -1369,8 +1462,16 @@ function UnitService:stepBonfireBeam(entry, stats, bonfire, now : number, weathe
 		ticks += 1
 		bonfire.nextTick += interval
 
-		local base = self:getDamage(entry, stats, weather)
-		local damage = math.max(1, math.floor(base * config:GetRampMultiplier(entry.unitName, progress) + 0.5))
+		--[[
+			The fraction a tick cannot deal is carried to the next one. Ticks are small (2
+			at level 0), so rounding each one would erase whole upgrades: level 1's 2.4
+			would deal 2. Carried, it deals 2, 2, 3, 2, 3... and averages exactly 2.4.
+		]]
+		local raw = self:getRawDamage(entry, stats, weather) * config:GetRampMultiplier(entry.unitName, progress)
+			+ (bonfire.carry or 0)
+		local damage = math.max(1, math.floor(raw))
+		bonfire.carry = math.max(0, raw - damage)
+
 		local dealt = self:creditDamage(entry, bonfire.targetMobId, damage, self:getAuraBonus(entry, weather))
 		bonfire.damageDealt = (bonfire.damageDealt or 0) + dealt
 
@@ -1518,6 +1619,8 @@ function UnitService:stepBonfire(entry, stats, now : number, weather : string?, 
 	bonfire.fireStart = now
 	bonfire.nextTick = now
 	bonfire.stage = 1
+	bonfire.carry = 0
+	bonfire.interval = self:getBonfireInterval(entry, now, weather)
 	self:broadcastBonfire(entry)
 end
 
@@ -1526,7 +1629,11 @@ end
 function UnitService:stepCombat()
 	local units = self.PlacedUnits
 	local count = #units
-	if count == 0 then return end
+	if count == 0 then
+		-- No towers left, but a Cryomancer sold this frame still has enemies to let go.
+		self:stepSlowAuras(GameClock.Now(), nil)
+		return
+	end
 
 	local mobService = self.Services.MobService
 	if not mobService then return end
@@ -1550,6 +1657,7 @@ function UnitService:stepCombat()
 
 	self:collectAuraSources()
 	self:stepTripmines(now, weather)
+	self:stepSlowAuras(now, weather)
 
 	--[[
 		The loop through the list starts with whoever was left without a scan the previous
@@ -1593,6 +1701,9 @@ function UnitService:stepCombat()
 		if SharedConfig.WeatherConfig.IsDisabled(weather, entry.unitName) then continue end
 
 		if stats and stats.Farm then continue end
+
+		-- A slow aura attacks nobody: its ring is `stepSlowAuras`, above.
+		if stats and stats.SlowAura then continue end
 
 		if stats and stats.Tripmine then
 			if now >= (entry.StunnedUntil or 0) then
@@ -1717,14 +1828,19 @@ function UnitService:getCooldown(entry, now : number, weather : string?) : numbe
 	return cooldown / charge
 end
 
--- Damage per hit, with the same rounding as the config.
-function UnitService:getDamage(entry, stats, weather : string?) : number
+-- Damage per hit before rounding: the Bonfire carries the fraction between ticks.
+function UnitService:getRawDamage(entry, stats, weather : string?) : number
 	local base = stats.Damage or 0
 	local multiplier = SharedConfig.UnitUpgradeConfig:GetDamageMultiplier(entry.unitName, entry.upgrades or 0, weather)
 	local charge = self:chargeMultiplier(entry, "Damage", GameClock.Now())
 	local cards = self:cardMultiplier(entry, "Damage")
 
-	return math.floor(base * multiplier * charge * cards + 0.5)
+	return base * multiplier * charge * cards
+end
+
+-- Damage per hit, with the same rounding as the config.
+function UnitService:getDamage(entry, stats, weather : string?) : number
+	return math.floor(self:getRawDamage(entry, stats, weather) + 0.5)
 end
 
 function UnitService:getMineLimit(entry, tripmineConfig)

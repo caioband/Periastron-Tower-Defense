@@ -213,6 +213,9 @@ function Wave.GetSpawns(waveNumber : number, difficultyName : string?)
 				or math.max(1, math.floor((data.Reward * preset.RewardMultiplier) + 0.5)),
 			SpawnDelay = entry.SpawnDelay
 				or math.max(0.05, data.SpawnDelay * preset.SpawnDelayMultiplier),
+
+			-- Nil keeps the old rhythm: the group's last enemy waits its `SpawnDelay`.
+			GroupDelay = entry.GroupDelay,
 		})
 	end
 

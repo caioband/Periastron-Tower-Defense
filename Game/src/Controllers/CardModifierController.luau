@@ -157,18 +157,17 @@ function CardModifierController:_ringFolder() : Instance?
 end
 
 --[=[
-	This card's ring Model, or the default when it declares none.
+	The ring Model named `name`, or the default when it is missing or not given.
 
 	A new area card shows up on the ground without its own art, with a Studio-only
 	warning: a generic ring beats no drawn zone at all, because the zone exists anyway
 	and affects the towers inside it.
 ]=]
-function CardModifierController:_ringTemplate(cardId : any) : Model?
+function CardModifierController:_ringTemplate(name : string?) : Model?
 	local folder = self:_ringFolder()
 	if not folder then return nil end
 
-	local definition = RoundCardConfig.Get(cardId)
-	local name = definition and definition.Ring or RINGS.Default
+	name = name or RINGS.Default
 
 	local template = folder:FindFirstChild(name) or folder:FindFirstChild(RINGS.Default)
 
@@ -214,10 +213,6 @@ end
 	matching zone by zone would need its own bookkeeping to save a clone nobody
 	notices.
 
-	The ring grows from nothing to its size. It is the same gesture as the selected
-	unit's range circle, and serves the same purpose: saying the drawing **just**
-	appeared, instead of always having been there.
-
 	The radius is the same the player saw while aiming: it comes from the
 	`Zone.Radius` the server stored, which is the card's `Params.Radius`. The ring they
 	aimed is the ring that stayed.
@@ -237,68 +232,97 @@ function CardModifierController:_drawZones()
 		if self.DrawnZones[modifier.Uid] then continue end
 		self.DrawnZones[modifier.Uid] = true
 
-		local template = self:_ringTemplate(modifier.Card)
-		if not template then continue end
+		local definition = RoundCardConfig.Get(modifier.Card)
+		local ring = self:CreateRing(definition and definition.Ring, zone.Radius or 0, zone.Position, self:_ringContainer())
 
-		local ring = template:Clone()
-
-		--[[
-			The ring is scenery, and needs three things before entering the world.
-
-			**`Anchored` is the one that must not be missing.** The Models in
-			`Assets.VFX.Rings` come from Studio with loose Parts, and the Workspace
-			simulates everything inside it, including what hangs from the Camera. A loose
-			Part falls, passes `FallenPartsDestroyHeight` about two seconds later, and
-			**Roblox destroys the ring**: it appears in the right place and vanishes on its
-			own, with no error in the log. Anchoring here, not in the asset, is what keeps
-			a new ring drawn by someone else from bringing the problem back.
-
-			The other two are about staying out of the way: it must not eat the ray that
-			looks for the ground under the cursor (or aiming the next card over it would
-			hit the ring itself), nor push anything.
-		]]
-		for _, descendant in ring:GetDescendants() do
-			if descendant:IsA("BasePart") then
-				descendant.Anchored = true
-				descendant.CanCollide = false
-				descendant.CanQuery = false
-				descendant.CanTouch = false
-			end
+		if ring then
+			self.ZoneMaid:GiveTask(ring)
 		end
-
-		local scale = self:_ringScale(ring, zone.Radius or 0)
-		local center = CFrame.new(zone.Position)
-
-		ring:ScaleTo(0.001)
-		ring:PivotTo(center)
-		ring.Parent = self:_ringContainer()
-
-		self.ZoneMaid:GiveTask(ring)
-
-		local grow = Instance.new("NumberValue")
-		grow.Value = 0.001
-		grow.Changed:Connect(function(value)
-			if ring.Parent then
-				ring:ScaleTo(value)
-			end
-		end)
-
-		local tween = TweenService:Create(
-			grow,
-			TweenInfo.new(RINGS.Grow, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-			{ Value = scale }
-		)
-
-		self.ZoneMaid:GiveTask(function()
-			tween:Cancel()
-			grow:Destroy()
-		end)
-
-		tween:Play()
 	end
 end
 
 --[[ API ]]
+
+--[=[
+	A ring from `Assets.VFX.Rings` (`name`, or the default) on the ground at `position`,
+	growing to `radius` inside `parent`. Destroying the ring also stops its growth.
+
+	The area cards' zones draw through here, and so do units that keep a ring of their
+	own (`SlowAuraController`), so the anchoring rules below live in one place.
+
+	The ring grows from nothing to its size. It is the same gesture as the selected
+	unit's range circle, and serves the same purpose: saying the drawing **just**
+	appeared, instead of always having been there.
+]=]
+function CardModifierController:CreateRing(name : string?, radius : number, position : Vector3, parent : Instance) : Model?
+	local template = self:_ringTemplate(name)
+	if not template then return nil end
+
+	local ring = template:Clone()
+
+	--[[
+		The ring is scenery, and needs three things before entering the world.
+
+		**`Anchored` is the one that must not be missing.** The Models in
+		`Assets.VFX.Rings` come from Studio with loose Parts, and the Workspace
+		simulates everything inside it, including what hangs from the Camera. A loose
+		Part falls, passes `FallenPartsDestroyHeight` about two seconds later, and
+		**Roblox destroys the ring**: it appears in the right place and vanishes on its
+		own, with no error in the log. Anchoring here, not in the asset, is what keeps
+		a new ring drawn by someone else from bringing the problem back.
+
+		The other two are about staying out of the way: it must not eat the ray that
+		looks for the ground under the cursor (or aiming the next card over it would
+		hit the ring itself), nor push anything.
+	]]
+	for _, descendant in ring:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.Anchored = true
+			descendant.CanCollide = false
+			descendant.CanQuery = false
+			descendant.CanTouch = false
+		end
+	end
+
+	local scale = self:_ringScale(ring, radius)
+
+	ring:ScaleTo(0.001)
+	ring:PivotTo(CFrame.new(position))
+	ring.Parent = parent
+
+	local grow = Instance.new("NumberValue")
+	grow.Value = 0.001
+	grow.Changed:Connect(function(value)
+		if ring.Parent then
+			ring:ScaleTo(value)
+		end
+	end)
+
+	local tween = TweenService:Create(
+		grow,
+		TweenInfo.new(RINGS.Grow, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Value = scale }
+	)
+
+	ring.Destroying:Once(function()
+		tween:Cancel()
+		grow:Destroy()
+	end)
+
+	tween:Play()
+
+	return ring
+end
+
+--[=[
+	Gives a ring made by `CreateRing` a new radius, at once: the range changed under it
+	(an upgrade, weather, a card).
+]=]
+function CardModifierController:ResizeRing(ring : Model, radius : number)
+	if not ring.Parent then return end
+
+	ring:ScaleTo(self:_ringScale(ring, radius))
+end
 
 --[=[
 	A stat's card multiplier for a unit, the way the server computes it.

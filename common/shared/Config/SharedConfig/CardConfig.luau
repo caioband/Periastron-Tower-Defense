@@ -36,7 +36,7 @@ CardConfig.Images = {
 	Frostione = "rbxassetid://119338340194654",
 	Archmage = "rbxassetid://137825632441679",
 	Pyre = "rbxassetid://111515366066023",
-	Bonfire = "rbxassetid://111515366066023", -- TODO: replace with actual art
+	Bonfire = "rbxassetid://139271145798062",
 }
 
 --[=[
@@ -126,7 +126,7 @@ CardConfig.IndexImages = {
 	Frostione = { Locked = "rbxassetid://80161422857290", Unlocked = "rbxassetid://131404225317311" },
 	Archmage = { Locked = "rbxassetid://125536412737882", Unlocked = "rbxassetid://140669373263625" },
 	Pyre = { Locked = "rbxassetid://99768598031119", Unlocked = "rbxassetid://130443019837476" },
-	Bonfire = { Locked = "rbxassetid://99768598031119", Unlocked = "rbxassetid://130443019837476" }, -- actual art needed
+	Bonfire = { Locked = "rbxassetid://95440009266771", Unlocked = "rbxassetid://133228010596030" },
 }
 
 --[=[

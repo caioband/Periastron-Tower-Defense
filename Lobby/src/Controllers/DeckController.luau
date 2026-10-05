@@ -154,6 +154,11 @@ local function formatDamageOrIncome(unitName : string) : string
 		return "$" .. UIUtil.formatAbbreviated(farm.Income or 0) .. " INCOME"
 	end
 
+	-- A slow aura deals no damage: its level 0 slow, as the others show level 0 damage.
+	if stats and stats.SlowAura then
+		return formatNumber(UpgradeConfig:GetAuraSlow(unitName, 0) * 100, 1) .. "% SLOW"
+	end
+
 	return formatStat(UpgradeConfig:GetDamage(unitName, 0)) .. " DMG"
 end
 

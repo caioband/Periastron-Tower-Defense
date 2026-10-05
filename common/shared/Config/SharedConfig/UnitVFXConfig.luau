@@ -66,6 +66,8 @@ local UnitVFXConfig = {
 
 	["Bonfire"] = { PLACEMENT_EFFECT },
 
+	["Cryomancer"] = { PLACEMENT_EFFECT },
+
 }
 
 return UnitVFXConfig
