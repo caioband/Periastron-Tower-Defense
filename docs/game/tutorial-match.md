@@ -36,7 +36,7 @@ Upgrading and selling are refused for the whole match (see [Upgrade card](upgrad
   When the menu opens, the highlight slides from the button to the step's option, and back if the menu closes.
   The step's `Index` is 2, which is **1.5x**: 2x needs a game pass, and a step that holds the wave behind a purchase is a dead end.
 - **The closing step pays for its own cards.**
-  `PlaceRest` (wave 5, cover the free spots before the boss) declares `GrantCash = 300`, given by `TutorialMatchService:grantCash` when the step opens: 150 for each of the two Archers left in the deck.
+  `PlaceRest` (wave 5, cover the free spots before the boss) declares `GrantCash = 500`, given by `TutorialMatchService:grantCash` when the step opens: the 250 for the two Archers left in the deck (125 each), plus 250 of slack so the player cannot softlock.
   It is a gift, not the `Ensure` safety net (`ensureCash`, which only tops up to the price of a required card): it comes in whole, once, and `Granted` stores the `Id` so a step reopened does not pay twice.
 
 Wave 1 asks for the **Slingshot**, the only card allowed until wave 5 (`AllowedUnits`): the tutorial teaches weather, the shop, and speed with one tower on screen.

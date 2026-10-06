@@ -465,12 +465,13 @@ TutorialConfig.Match = {
 			--[[
 				The cash for the cards this step asks for.
 
-				Two Archers at 150 make exactly 300: the step pays what it charges, so the
-				player does not reach the closer finding they cannot cover the free points.
-				It adds, not caps: a player who saved all match keeps the extra, and extra
-				on the last step of a match that ends next wave unbalances nothing.
+				Two Archers at 125 make 250; the step gives 500, double that, so a player
+				who spent the match cash elsewhere still cannot reach the closer unable to
+				cover the free points (a softlock). It adds, not caps: a player who saved all
+				match keeps the extra, and extra on the last step of a match that ends next
+				wave unbalances nothing.
 			]]
-			GrantCash = 300,
+			GrantCash = 500,
 
 			Points = { "2", "3" },
 			Radius = 3,

@@ -74,8 +74,8 @@ local UnitAttackConfig = {
 	},
 
 	--[[
-		1.017 s is the frame of the `Hit` marker in the Archer's `Attack` animation:
-		the instant the animator said the arrow leaves the bow.
+		1.3667 s is the frame of the `Hit` marker in the Archer's `Attack` animation
+		(2.0833 s long): the instant the animator said the arrow leaves the bow.
 
 		**The number is written here even though the marker exists**, instead of
 		`HitTime = 0` for `Unit:playAttackVisual` to listen to the track. The server
@@ -86,15 +86,20 @@ local UnitAttackConfig = {
 
 		In short: the marker is the **source** of the number, and this field is the
 		copy both sides obey. Move the marker, update this too.
+
+		Written as `HitTimes` + `Duration`, not `HitTime`, for the same reason as the
+		Slingshot above: at max level its cooldown (1.9 s) is shorter than the
+		animation, and both sides must squeeze the shot along with the gesture.
 	]]
 	["Archer"] = {
 		AttackSequence = {
-			{ Animation = "Attack", HitTime = 1.017 },
+			{ Animation = "Attack", HitTimes = { 1.3667 }, Duration = 2.0833 },
 		},
 	},
 
 	-- 1.017 s is the `Hit` marker of the Pyre's `Attack` animation (2.033 s long).
 	-- Same rule as the Archer above: the marker is the source, this number the copy.
+	-- `HitTime` is enough here: its cooldown never drops below the animation.
 	["Pyre"] = {
 		AttackSequence = {
 			{ Animation = "Attack", HitTime = 1.017 },

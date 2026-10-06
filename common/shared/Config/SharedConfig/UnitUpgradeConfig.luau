@@ -23,7 +23,7 @@ local UnitAttackConfig = require(script.Parent.UnitAttackConfig)
 	| `Slows` | a slow aura's slow at each level (index = level + 1), as the fraction removed: 0.3 is "30% slower". Only for units with `SlowAura` in `UnitStats` |
 
 	Ten units use `Costs` today, because their price ladder was designed per wave,
-	not by formula: the jumps are uneven on purpose. The Slingshot, Archer, and
+	not by formula: the jumps are uneven on purpose. The Slingshot, Archer, Pyre, and
 	Berserker use `Cooldowns` (none of them drops at a fixed ratio), the Archer and
 	Berserker use `Damages`, and only the Entrepreneur, the only farm, uses `Incomes`.
 
@@ -240,26 +240,31 @@ UnitUpgradeConfig.Units = {
 		Slasher: the `MaxUpgrades`-th root of target/base. Only the shot grows; the burn
 		is fixed.
 
-		| Level  | 0  | 1  | 2  | 3  | 4  | 5  |
-		| Damage | 15 | 17 | 18 | 20 | 23 | 25 |
+		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Damage   | 15   | 17   | 18   | 20   | 23   | 25   |
+		| Cooldown | 2.58 | 2.45 | 2.38 | 2.23 | 2.10 | 2.10 |
+
+		The cooldown is a hand ladder (`Cooldowns`): its steps (0.13, 0.07, 0.15, and
+		0.13) fit no ratio. It stops at 2.10 s from level 4 up, just above the 2.033 s
+		`Attack` animation.
 	]]
 	["Pyre"] = {
 		-- With the 150 placement cost from `UnitStats`, maxing it costs 1,560.
 		Costs = { 100, 185, 250, 375, 500 },
 		DamageMultiplier = (25 / UnitStats["Pyre"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+		Cooldowns = { 2.58, 2.45, 2.38, 2.23, 2.1, 2.1 },
 	},
 	--[=[
 		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
 		| Damage   | 16   | 20   | 25   | 31   | 37   | 45   |
-		| Cooldown | 3.50 | 3.20 | 2.90 | 2.60 | 2.30 | 2.00 |
+		| Cooldown | 3.00 | 2.80 | 2.65 | 2.38 | 2.20 | 1.90 |
 		| Range    | 12   | 13   | 14   | 15   | 16   | 17   |
-		| DPS      | 4.6  | 6.3  | 8.7  | 12.0 | 16.1 | 22.5 |
+		| DPS      | 5.3  | 7.1  | 9.4  | 13.0 | 16.8 | 23.7 |
 
-		Damage and attack speed are hand ladders. The cooldown drops **exactly 0.30 s
-		per level** (a straight line, and no straight line is a ratio) and stops at the
-		2.00 s of the `Attack` animation at max level: the unit's floor, written this
-		way so nobody lowers it without changing the animation too (see its comment in
-		`UnitStats`).
+		Damage and attack speed are hand ladders. The cooldown drops in uneven steps
+		(0.20, 0.15, 0.27, 0.18, and 0.30), so no ratio fits it. From level 4 up it is
+		shorter than the `Attack` animation, and the client plays the animation faster
+		to fit (see its comment in `UnitStats`).
 
 		Damage needs `Damages` because the steps cross: for level 3 to land on 31 the
 		multiplier would have to be at least 1.2399, and for level 4 to land on 37 it
@@ -271,12 +276,12 @@ UnitUpgradeConfig.Units = {
 		Slingshot pokes one target, the Archer charges the line) and max range, 17
 		against 16.
 
-		With the 150 placement cost from `UnitStats`, maxing it costs 1,835.
+		With the 125 placement cost from `UnitStats`, maxing it costs 1,685.
 	]=]
 	["Archer"] = {
-		Costs = { 125, 235, 300, 425, 600 },
+		Costs = { 110, 195, 280, 400, 575 },
 		Damages = { 16, 20, 25, 31, 37, 45 },
-		Cooldowns = { 3.5, 3.2, 2.9, 2.6, 2.3, 2 },
+		Cooldowns = { 3, 2.8, 2.65, 2.38, 2.2, 1.9 },
 	},
 	--[[
 		The price ladder is by hand (`Costs`), not the old formula: the jump from level 1

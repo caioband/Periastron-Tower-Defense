@@ -612,20 +612,20 @@ local UnitStats = {
 		to settle balance. Two things in them are not guesses and are worth knowing
 		before changing them:
 
-		- **2.00s is the cooldown floor**, and it is the duration of the model's
-		  `Attack` animation. `UnitUpgradeConfig`'s `Cooldowns` goes from 3.5s down to
-		  exactly that number at max level and not below: with a shorter cooldown the
-		  unit would ask for a new attack before the model finished the previous one,
-		  and `playAttackVisual` does not restart a track that is already playing, so
-		  the arrow would leave without the gesture.
-		- 16 damage in 3.5s is 4.6 DPS, or 3.0 per 100 cash: next to the Slingshot
-		  (3.5), the other shooting Rare, and well below rule 1's cap of 15. At max
-		  level it is 22.5 DPS.
+		- **From level 4 up the cooldown is shorter than the `Attack` animation**
+		  (2.083s): `UnitUpgradeConfig`'s `Cooldowns` goes from 3s down to 1.9s at max
+		  level. `Unit:playAttackVisual` plays the track faster to fit the window and
+		  restarts it on each attack, so the gesture still shows whole, and the shot
+		  is squeezed with it on both sides (`HitTimes` + `Duration` in
+		  `UnitAttackConfig`).
+		- 16 damage in 3s is 5.3 DPS, or 4.3 per 100 cash: above the Slingshot (3.5),
+		  the other shooting Rare, and well below rule 1's cap of 15. At max level it
+		  is 23.7 DPS.
 
 		**The arrow pierces** (`Projectile.Subtype = "Piercing"`), and that is what
 		separates the Archer from the Slingshot now that both have the same range: the
 		shot stops being worth per target and becomes worth per **queue**. Against a
-		lone enemy it is still the same 4.6 DPS; against the line walking single file
+		lone enemy it is still the same 5.3 DPS; against the line walking single file
 		down the path, it charges every enemy on the line, so where the unit is placed
 		matters more than its number.
 
@@ -637,9 +637,8 @@ local UnitStats = {
 		enemies stays worthwhile and stops scaling linearly.
 
 		Against a single target it grows a lot with levels (damage almost triples,
-		16 to 45, while the cycle drops almost by half, 3.5s to 2s), and against a
-		queue it scales with both. That is why its `Cooldowns` stops at the
-		animation's 2s: it is the only ceiling the unit has.
+		16 to 45, while the cycle drops from 3s to 1.9s), and against a queue it
+		scales with both.
 
 		If it still becomes the obvious pick on some map, the knobs to turn are
 		`Damage` and `PierceFalloff`, in that order: the subtype is the unit's
@@ -648,10 +647,10 @@ local UnitStats = {
 	["Archer"] = {
 		Rarity = "Rare",
 		Class = "Ranged",
-		Cost = 150,
+		Cost = 125,
 		Damage = 16,
 		Range = 12,
-		Cooldown = 3.5,
+		Cooldown = 3,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
@@ -664,17 +663,18 @@ local UnitStats = {
 
 	--[[
 		The first `Fire` unit: a single shot with a projectile, and the hit leaves the
-		target burning: 3 damage every 0.5s for 10s, 60 in total, through
+		target burning: 3 damage every 0.75s for 9s, 36 in total, through
 		`MobService:ApplyBurn`.
 
 		**Burn does not stack**, whoever applies it: a hit on an enemy already burning
 		only deals the shot's damage, without adding ticks or refreshing the timer. So
 		its value is in **spreading** fire, not in hammering the same target.
 
-		**The cost, range, and cooldown numbers are provisional.** What is not a guess:
-		`Cooldown = 2.1` sits just above the `Attack` animation (2.033s), for the same
-		reason as the Archer; 15 damage in 2.1s is 7.1 DPS from the shot, and with the
-		full burn (6 DPS) it reaches 13.1: 8.8 per 100 cash, below rule 1's cap of 15.
+		**The cost and range numbers are provisional.** The cooldown is level 0's
+		(2.58s); upgrades bring it down to 2.1s, just above the `Attack` animation
+		(2.033s), and not below (see `UnitUpgradeConfig`). 15 damage in 2.58s is 5.8
+		DPS from the shot, and with the full burn (4 DPS) it reaches 9.8: 6.5 per 100
+		cash, below rule 1's cap of 15.
 
 		The burn does not grow with upgrades, weather, or damage cards: only the Fire
 		Hazard card changes it.
@@ -685,30 +685,30 @@ local UnitStats = {
 		Cost = 150,
 		Damage = 15,
 		Range = 10,
-		Cooldown = 2.1,
+		Cooldown = 2.58,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
 		Projectile = { Asset = "PyreProjectile", Speed = 60 },
 
 		--[[
-			The shot bursts where it lands: anyone within 3 studs of the aim point takes
+			The shot bursts where it lands: anyone within 2 studs of the aim point takes
 			full damage **and** catches fire, because the burn comes from `creditDamage`,
 			which runs once per target hit.
 
-			That is what separates the Pyre from the Rocket, which has a radius-2 area
-			and leaves nothing: here the area is not the hit, it is what spreads the
-			burn. In a tight queue one shot lights four enemies, and each burns on its
-			own for the 10s. `BurningUntil` is per enemy, and the no-stacking rule still
+			That is what separates the Pyre from the Rocket, which has the same radius-2
+			area and leaves nothing: here the area is not the hit, it is what spreads the
+			burn. In a tight queue one shot lights several enemies, and each burns on its
+			own for the 9s. `BurningUntil` is per enemy, and the no-stacking rule still
 			applies per enemy, not per shot.
 
-			No per-target falloff, on purpose: the area is small (3 against the
+			No per-target falloff, on purpose: the area is small (2 against the
 			tripmine's 6) and the cooldown is long. If it needs reining in, the place is
 			the radius.
 		]]
-		AOE = { Radius = 3 },
+		AOE = { Radius = 2 },
 
-		Burn = { Damage = 3, Ticks = 20, Interval = 0.5 },
+		Burn = { Damage = 3, Ticks = 12, Interval = 0.75 },
 		RangeStats = {
 			Increment = 1,
 			Max = 14,
@@ -745,7 +745,7 @@ local UnitStats = {
 		the player buys on wave 1.
 
 		5 damage every 0.85 s is 5.9 DPS, or 6.5 per 100 cash: far from rule 1's cap of
-		15, and **above** the Slingshot (3.5) and the Archer (3.0), which are Rare and
+		15, and **above** the Slingshot (3.5) and the Archer (4.3), which are Rare and
 		cost more. Rarity is not a ladder (see rule 1 at the top), and what separates
 		the three is still range: it has to hug the path to strike, and they do not.
 

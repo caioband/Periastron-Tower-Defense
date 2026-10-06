@@ -207,7 +207,7 @@ The Electro is the first `Electric` unit, so it is the one that uses the Thunder
 
 ### Burn (Pyre)
 
-The Pyre fires a single `PyreProjectile` for 15 damage with `AOE = { Radius = 3 }`, and every enemy hit starts burning: 3 damage every 0.5 s for 10 s (`UnitStats.Pyre.Burn`, applied by `MobService:ApplyBurn`).
+The Pyre fires a single `PyreProjectile` for 15 damage with `AOE = { Radius = 2 }`, and every enemy hit starts burning: 3 damage every 0.75 s for 9 s (`UnitStats.Pyre.Burn`, applied by `MobService:ApplyBurn`).
 
 - **A burn does not stack or refresh.**
   Hitting an enemy that is already burning, from the same Pyre or another, only deals the hit damage.
@@ -218,7 +218,7 @@ The Pyre fires a single `PyreProjectile` for 15 damage with `AOE = { Radius = 3 
 - The server fires `MobBurning` only when a new burn starts; `VFXController:PlayBurning` welds `Assets.VFX.BurningVFX` to the enemy (through `playMobStatus`, the same path as the Frostione freeze).
 
 The burn does not scale with upgrades or weather; only the Fire Hazard round card changes it.
-The Pyre's cost (150), range (10), and cooldown (2.1 s, just above its 2.033 s animation) are provisional.
+The Pyre's cost (150) and range (10) are provisional; its cooldown goes from 2.58 s to 2.1 s with upgrades (`Cooldowns`), never below its 2.033 s animation.
 
 ### Bleed (Slasher, Berserker)
 
