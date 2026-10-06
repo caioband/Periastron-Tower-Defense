@@ -37,6 +37,7 @@ CardConfig.Images = {
 	Archmage = "rbxassetid://137825632441679",
 	Pyre = "rbxassetid://111515366066023",
 	Bonfire = "rbxassetid://139271145798062",
+	Cryomancer = "rbxassetid://109821143712853",
 }
 
 --[=[
@@ -127,6 +128,7 @@ CardConfig.IndexImages = {
 	Archmage = { Locked = "rbxassetid://125536412737882", Unlocked = "rbxassetid://140669373263625" },
 	Pyre = { Locked = "rbxassetid://99768598031119", Unlocked = "rbxassetid://130443019837476" },
 	Bonfire = { Locked = "rbxassetid://95440009266771", Unlocked = "rbxassetid://133228010596030" },
+	Cryomancer = { Locked = "rbxassetid://88227960714771", Unlocked = "rbxassetid://88118640086913" },
 }
 
 --[=[
