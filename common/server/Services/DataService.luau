@@ -235,10 +235,13 @@ function DataService:CreatePlayer(Player : Player)
 			may not be up yet on the first batch.
 		]]
 		Session:MessageHandler(function(message, processed)
-			local editor = Framework:Get("ProfileEditService", false, true)
-			if self.Profiles[Player] == entry then
-				editor:ApplyMessageToPlayer(Player, message, processed)
+			if self.Profiles[Player] ~= entry then
+				return
 			end
+
+			-- Each service ignores messages of another kind, so both can see every one.
+			Framework:Get("ProfileEditService", false, true):ApplyMessageToPlayer(Player, message, processed)
+			Framework:Get("GiftService", false, true):ApplyMessageToPlayer(Player, message, processed)
 		end)
 
 		log:Debug("profile loaded for", Player.Name)

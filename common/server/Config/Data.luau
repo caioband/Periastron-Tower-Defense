@@ -116,6 +116,38 @@ return {
 		]]
 		Gamepasses = {},
 
+				--[[
+			Gamepasses someone GIFTED this player, `{ [passKey] = giftId }`. Unlike
+			`Gamepasses` (a copy of what Roblox answers, rewritten on every join), this
+			is a real record: Roblox does not know about gifts, so it is the only place
+			they are kept. `MonetizationService:RecalibratePasses` merges it into
+			`Gamepasses`. Only `GiftService` writes it.
+		]]
+		GiftedPasses = {},
+
+		--[[
+			`GiftService`'s state. All keys are gift ids (the `PurchaseId` as text).
+
+			  - `Inbox`:    gifts that arrived and are not claimed yet, `{ ItemKey,
+			                SenderId, SenderName, Message, At }`.
+			  - `Received`: ids already claimed, `{ [id] = os.time() }`, capped. It is
+			                what makes a redelivered gift a no-op.
+			  - `Outgoing`: the buyer's intent per gift item, `{ RecipientId,
+			                RecipientName, Message, At, ConsumedBy? }`, saved BEFORE
+			                the purchase prompt opens.
+			  - `Unseen`:   claimed gifts the client has not acknowledged, for toasts,
+			                `{ ItemKey, SenderId, SenderName, Message, At, Duplicate }`.
+
+			Older profiles get the tables through reconcile.
+		]]
+		Gifts = {
+			Inbox = {},
+			Received = {},
+			Outgoing = {},
+			Unseen = {},
+		},
+
+
 		--[[
 			What the player has already discovered, per category (`{ [key] = true }`).
 

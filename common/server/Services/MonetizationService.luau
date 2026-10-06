@@ -227,6 +227,13 @@ function MonetizationService:RecalibratePasses(Player : Player)
 		return
 	end
 
+	-- Gifted passes are the one ownership Roblox cannot confirm: they stand as long
+	-- as the record does (see `Data.GiftedPasses`).
+	local giftedPasses = DataService.Profiles[Player].Profile.Data.GiftedPasses
+	if typeof(giftedPasses) ~= "table" then
+		giftedPasses = {}
+	end
+
 	local owned
 
 	DataService:Update(Player, "Gamepasses", function(current)
@@ -236,8 +243,11 @@ function MonetizationService:RecalibratePasses(Player : Player)
 		for key in GamepassConfig.PASSES do
 			local answer = answers[key]
 
+			if giftedPasses[key] then
+				owned[key] = true
+
 			-- `nil` means "the call failed": what the profile already said stands.
-			if answer == nil then
+			elseif answer == nil then
 				owned[key] = current[key] == true or nil
 			elseif answer then
 				owned[key] = true
@@ -247,6 +257,7 @@ function MonetizationService:RecalibratePasses(Player : Player)
 		return owned
 	end)
 
+	
 	if not owned then
 		return
 	end
