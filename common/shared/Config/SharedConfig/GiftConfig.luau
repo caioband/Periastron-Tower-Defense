@@ -40,9 +40,11 @@ module.ITEMS = {
 }
 
 --[=[
-	Why an item cannot be gifted right now, or nil when it can.
+	Why a gift of this item cannot be **paid out**, or nil when it can. Only what the
+	recipient gets matters here, not the gift product: a gift already bought still
+	pays out after its product is turned off.
 ]=]
-function module.problem(item : any) : string?
+function module.payoutProblem(item : any) : string?
 	if typeof(item) ~= "table" then
 		return "not a table"
 	end
@@ -57,6 +59,18 @@ function module.problem(item : any) : string?
 		end
 	else
 		return `unknown Kind '{tostring(item.Kind)}'`
+	end
+
+	return nil
+end
+
+--[=[
+	Why an item cannot be gifted right now, or nil when it can.
+]=]
+function module.problem(item : any) : string?
+	local payout = module.payoutProblem(item)
+	if payout then
+		return payout
 	end
 
 	if typeof(item.ProductId) ~= "number" or item.ProductId <= 0 then

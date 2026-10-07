@@ -1062,10 +1062,11 @@ function WaveService:sendToLobby(player : Player)
 	if not player or not player.Parent then return end
 
 	-- Match cash is volatile, but the round reward already went to the profile:
-	-- saving before leaving avoids losing the last reward.
+	-- saving before leaving avoids losing the last reward. `Save` waits for the
+	-- disk; the teleport does not need to (the leave releases the session anyway).
 	local dataService = self.Services.DataService
 	if dataService and dataService.Save then
-		dataService:Save(player)
+		task.spawn(dataService.Save, dataService, player)
 	end
 
 	--[[

@@ -1,4 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
@@ -8,6 +9,7 @@ local Vendor = Shared:WaitForChild("Vendor")
 local Me = require(Vendor:WaitForChild("Me"))
 local SharedConfig = require(Shared:WaitForChild("Config"):WaitForChild("SharedConfig"))
 local Environment = require(Shared.Util.Environment)
+local Gifting = require(ServerScriptService:WaitForChild("Config")).Gifting
 
 local GiftConfig = SharedConfig.GiftConfig
 local GamepassConfig = SharedConfig.GamepassConfig
@@ -141,7 +143,7 @@ return function(context, userIds : { number }, itemKey : string)
 		check("recipient lookup", true, `{status.Username}, inbox {status.InboxCount}, owns {itemKey}: {tostring(status.Owned[itemKey] == true)}, pending {itemKey}: {tostring(status.Pending[itemKey] == true)}`)
 
 		if status.Owned[itemKey] then
-			warn(`{TAG} recipient already owns this pass (real flow would refuse AlreadyOwns; delivery will be flagged Duplicate).`)
+			warn(`{TAG} recipient already owns this pass (real flow would refuse AlreadyOwns; delivery pays DUPLICATE_COINS instead).`)
 		end
 		if status.Pending[itemKey] then
 			warn(`{TAG} recipient already has this gift pending (real flow would refuse AlreadyPending).`)
@@ -244,12 +246,21 @@ return function(context, userIds : { number }, itemKey : string)
 				print(`{TAG} ---- AFTER ----`)
 				print(`{TAG} recipient : inbox {recipientAfter.Inbox}, received {recipientAfter.Received}, cash {recipientAfter.Cash}, owns pass {tostring(recipientAfter.Owns)}, gifted pass id {tostring(recipientAfter.GiftedId)}`)
 
-				if isPass then
+				local wasDuplicate = isPass and recipientBefore ~= nil
+					and (recipientBefore.Owns or recipientBefore.GiftedId ~= nil)
+
+				if wasDuplicate then
+					-- Already owned: coins instead, and no new gift record.
+					local expected = tonumber(Gifting.DUPLICATE_COINS[item.Pass]) or 0
+					local delta = recipientAfter.Cash - recipientBefore.Cash
+					check("duplicate paid in coins", delta == expected, `Stats.Cash {recipientBefore.Cash} -> {recipientAfter.Cash} (+{delta}, expected +{expected} from DUPLICATE_COINS.{item.Pass})`)
+					check("pass still owned", recipientAfter.Owns == true, `Gamepasses.{item.Pass} = {tostring(recipientAfter.Owns)}`)
+				elseif isPass then
 					check("pass granted", recipientAfter.Owns == true, `Gamepasses.{item.Pass} = {tostring(recipientAfter.Owns)}`)
 					check(
 						"gift recorded",
-						recipientAfter.GiftedId ~= nil,
-						`GiftedPasses.{item.Pass} = {tostring(recipientAfter.GiftedId)}{recipientAfter.GiftedId == giftId and " (this gift)" or " (an earlier gift: this one was a duplicate)"}`
+						recipientAfter.GiftedId == giftId,
+						`GiftedPasses.{item.Pass} = {tostring(recipientAfter.GiftedId)} (expected {giftId})`
 					)
 				elseif pack then
 					local delta = recipientAfter.Cash - (recipientBefore and recipientBefore.Cash or 0)
@@ -266,7 +277,7 @@ return function(context, userIds : { number }, itemKey : string)
 			end
 
 			if unseenEntry then
-				print(`{TAG} notification: Unseen entry present (from {tostring(unseenEntry.SenderName)}, Duplicate = {tostring(unseenEntry.Duplicate)}, Message = "{tostring(unseenEntry.Message)}")`)
+				print(`{TAG} notification: Unseen entry present (from {tostring(unseenEntry.SenderName)}, Duplicate = {tostring(unseenEntry.Duplicate)}, Coins = {tostring(unseenEntry.Coins)}, Message = "{tostring(unseenEntry.Message)}")`)
 			else
 				print(`{TAG} notification: Unseen entry already cleared (the client acknowledged the toast) or not created`)
 			end

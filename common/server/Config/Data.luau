@@ -133,10 +133,12 @@ return {
 			  - `Received`: ids already claimed, `{ [id] = os.time() }`, capped. It is
 			                what makes a redelivered gift a no-op.
 			  - `Outgoing`: the buyer's intent per gift item, `{ RecipientId,
-			                RecipientName, Message, At, ConsumedBy? }`, saved BEFORE
-			                the purchase prompt opens.
+			                RecipientName, Message, At, State, PaidAt?, ConsumedBy? }`,
+			                saved BEFORE the purchase prompt opens. `State` is
+			                `"Prompt"` until Roblox says it was bought (`"Paid"`).
 			  - `Unseen`:   claimed gifts the client has not acknowledged, for toasts,
-			                `{ ItemKey, SenderId, SenderName, Message, At, Duplicate }`.
+			                `{ ItemKey, SenderId, SenderName, Message, At, Duplicate,
+			                Coins? }` (`Coins`: what a duplicate pass became).
 
 			Older profiles get the tables through reconcile.
 		]]
@@ -146,6 +148,10 @@ return {
 			Outgoing = {},
 			Unseen = {},
 		},
+
+		-- Bumped by `DataService:Save` before each forced save, to tell its own save
+		-- apart from one already in flight. Only `DataService` writes it.
+		SaveStamp = 0,
 
 
 		--[[
@@ -339,6 +345,10 @@ return {
 	CASH_PER_KILL_MIN = 6,
 	CASH_PER_KILL_MAX = 12,
 	MAX_DATA_TIME_OUT = 20,
+
+	-- How long `DataService:Save` waits for its save to land before answering
+	-- `false` (a receipt then comes back later).
+	SAVE_TIMEOUT = 15,
 
 	--[[
 		What `DataService` does differently in each place. The place is the `Place`

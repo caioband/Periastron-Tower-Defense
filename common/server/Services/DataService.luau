@@ -392,31 +392,73 @@ function DataService:Update(Player : Player, Key : string, callbackFunc)
 end
 
 --[=[
-	Saves the profile now, instead of waiting for ProfileStore's autosave.
+	Saves the profile now, instead of waiting for ProfileStore's autosave, and
+	**yields until that save is on disk**. Returns `true` once it is, `false` when there
+	is no open profile, or when the save did not land within `Config.Data.SAVE_TIMEOUT`.
 
 	`MonetizationService`'s `ProcessReceipt` needs this: it only returns
 	`PurchaseGranted` after what was bought is **on disk**. Without it, a server crashing
 	between the purchase and the autosave would charge the player and lose the delivery,
 	and `PurchaseHistory`, which keeps the purchase from being credited twice, goes with
-	it.
-
-	Returns `false` when there is no open profile or when the save failed, which is why
-	it is a `pcall`: the receipt comes back as `NotProcessedYet` and Roblox retries, which
+	it. On `false` the receipt comes back as `NotProcessedYet` and Roblox retries, which
 	beats confirming a delivery that was not saved.
+
+	`Session:Save()` alone does not wait: it starts the save on its own thread and
+	returns. And `OnAfterSave` alone does not prove anything either, since a save that
+	was already in flight (an autosave) may have read the data before this call's
+	changes. So each call stamps the data (`SaveStamp`) before asking for the save, and
+	only a save whose stored copy carries that stamp, or a later one, counts.
 
 	Every place needs it: developer products are sold in the Lobby too (the card shop
 	reroll is one), and without this method `ProcessReceipt` would error in here and no
 	purchase would be credited.
 ]=]
-function DataService:Save(Player : Player)
+function DataService:Save(Player : Player) : boolean
 	local entry = self.Profiles[Player]
 	if not entry then return false end
 
-	local ok = pcall(function()
-		entry.Session:Save()
+	local session = entry.Session
+	if not session:IsActive() then return false end
+
+	local stamp = (tonumber(session.Data.SaveStamp) or 0) + 1
+	session.Data.SaveStamp = stamp
+
+	local thread = coroutine.running()
+	local result : boolean? = nil
+	local waiting = false
+	local connection
+
+	local function finish(saved : boolean)
+		if result ~= nil then return end
+		result = saved
+		connection:Disconnect()
+
+		if waiting then
+			task.spawn(thread, saved)
+		end
+	end
+
+	-- The release save on leave also fires this, with the stamp in: a player who
+	-- leaves mid-wait still answers `true`.
+	connection = session.OnAfterSave:Connect(function(saved)
+		if typeof(saved) == "table" and (tonumber(saved.SaveStamp) or 0) >= stamp then
+			finish(true)
+		end
 	end)
 
-	return ok
+	task.delay(ServerConfig.Data.SAVE_TIMEOUT, finish, false)
+
+	if not pcall(session.Save, session) then
+		finish(false)
+	end
+
+	-- A mock store may answer without yielding: then it is already settled.
+	if result ~= nil then
+		return result
+	end
+
+	waiting = true
+	return coroutine.yield()
 end
 
 function DataService:init()

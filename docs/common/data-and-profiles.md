@@ -30,6 +30,10 @@ end)
 ```
 
 `Update` warns and does nothing if the profile is not loaded, and keeps the existing data if the callback returns `nil`.
+
+`DataService:Save(player)` forces a save and **yields until it is on disk** (up to `SAVE_TIMEOUT`), returning `true` or `false`.
+ProfileStore's own `Save` only starts one, so `DataService` stamps the data (`SaveStamp`) and waits for a save that carries the stamp; an autosave already in flight does not count.
+`ProcessReceipt` and gifting rely on it; code that does not need to wait calls it in a `task.spawn`.
 Every write through `Update` also fires `Signals.DataUpdated(player, key, value)`; server code that reacts to a change listens there instead of watching the profile.
 
 ### What changes per place
@@ -88,6 +92,7 @@ The [friend invite suggestion](../lobby/friend-invite.md) uses it to credit an a
 | `PROFILE_KEY` | `Config.Data` | The ProfileStore name; changing it starts every player from the template |
 | `Template` | `Config.Data` | The default profile; new keys are added to existing profiles on load |
 | `MAX_DATA_TIME_OUT` | `Config.Data` | How long `Get` waits for a profile |
+| `SAVE_TIMEOUT` | `Config.Data` | How long `Save` waits for its save before answering `false` |
 
 The profile key and template live in the server-only config (see [Configuration](../architecture/configuration.md)).
 Old stores can still be read with the [`viewdata`](admin-commands.md#viewdata) command.

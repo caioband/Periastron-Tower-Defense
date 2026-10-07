@@ -17,6 +17,7 @@ When a system also has place-specific parts, its page here covers the shared cor
 | [Environments](environments.md) | Production and QA: which universe the server is in, and the place ids teleports use |
 | [Footsteps](footsteps.md) | Footstep sounds by surface |
 | [Game passes and Robux purchases](gamepasses.md) | Passes, coin packs, and the Robux shop |
+| [Gifting](gifting.md) | Buying a pass or a coin pack for another player, online or offline |
 | [Interface visibility](interface-visibility.md) | `InterfaceController`: named requests to hide the UI |
 | [Leaderboards](leaderboards.md) | Global leaderboards and the stats that feed them |
 | [Lighting](lighting.md) | Lighting presets and client-side interpolation |

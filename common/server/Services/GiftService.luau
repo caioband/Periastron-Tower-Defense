@@ -3,6 +3,8 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Players = game:GetService("Players")
 local MarketplaceService = game:GetService("MarketplaceService")
 local TextService = game:GetService("TextService")
+local TextChatService = game:GetService("TextChatService")
+local DataStoreService = game:GetService("DataStoreService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -41,22 +43,29 @@ local EVENTS = {
 
 	  **Buyer.** `RequestGift` validates everything, writes an **intent**
 	  (`Data.Gifts.Outgoing[itemKey]`: who, which message) into the buyer's profile
-	  and SAVES it before opening the purchase prompt. The receipt then comes
-	  through `MonetizationService:RegisterProduct` like any other product, so
-	  `PurchaseHistory` and the save-before-`PurchaseGranted` already make the
+	  and waits for it to be SAVED before opening the purchase prompt. There is one
+	  intent per item, so it is locked while it belongs to a purchase in progress
+	  (prompt open, or bought with the receipt not paid out yet): a second gift of
+	  the same item would replace it, and the pending receipt would go to the new
+	  recipient. Roblox's answer to the prompt (`PromptProductPurchaseFinished`)
+	  frees a closed prompt's intent and locks a bought one's. The receipt then
+	  comes through `MonetizationService:RegisterProduct` like any other product,
+	  so `PurchaseHistory` and the save-before-`PurchaseGranted` already make the
 	  payout exactly-once from the buyer's side.
 
 	  **Delivery.** The gift id is the `PurchaseId`. It reaches the recipient's
-	  `Data.Gifts.Inbox` by one of two roads: straight into the profile when they
-	  are on this server, or as a ProfileStore message (same road as
-	  `ProfileEditService`) when they are elsewhere or offline. The inbox write
-	  drops an id it has already seen (`Inbox` or `Received`), so a receipt retried
-	  after a failed save or a crash cannot deliver twice.
+	  `Data.Gifts.Inbox` by one of two roads: straight into the profile (saved
+	  before the receipt is confirmed) when they are on this server, or as a
+	  ProfileStore message (same road as `ProfileEditService`) when they are
+	  elsewhere or offline. The inbox write drops an id it has already seen
+	  (`Inbox` or `Received`), so a receipt retried after a failed save or a crash
+	  cannot deliver twice.
 
 	  **Recipient.** `Deliver` claims inbox entries once the profile is open (and,
 	  in the Lobby, the client is ready). A pass goes into `Data.GiftedPasses`,
-	  which `MonetizationService:RecalibratePasses` merges into `Gamepasses`. A pack
-	  goes through `RobuxShopService:Grant`. The pack grant and the inbox removal
+	  which `MonetizationService:RecalibratePasses` merges into `Gamepasses`; a pass
+	  they already own becomes coins instead (`Config.Gifting.DUPLICATE_COINS`). A
+	  pack goes through `RobuxShopService:Grant`. The payout and the inbox removal
 	  happen with nothing yielding in between, so a save can never land between
 	  them.
 
@@ -72,11 +81,15 @@ local GiftService = {
 		DataService = {},
 		MonetizationService = {},
 		RobuxShopService = {},
+		CurrencyService = {},
 	},
 
 	-- [Player] = os.clock()
 	LastRequest = {},
 	LastLookup = {},
+
+	-- [UserId] = { At = os.clock(), Status = GetRecipientStatus's answer }
+	LookupCache = {},
 
 	-- [Player] = true
 	Busy = {},
@@ -156,6 +169,52 @@ local function validGift(gift : any) : boolean
 		and typeof(gift.At) == "number"
 end
 
+--[=[
+	The gifts still waiting in a profile's message queue (sent by `_route`, not yet
+	moved into `Inbox` by a `MessageHandler`). ProfileStore has no public reader for
+	the queue, so this reads its internal `global_updates` list (`{ {index,
+	message}, ... }`), refreshed on every load and save. Works on a `GetAsync`
+	snapshot and on an open session alike.
+]=]
+local function queuedGifts(profile : any) : { any }
+	local list = {}
+
+	local updates = typeof(profile) == "table" and profile.global_updates
+	if typeof(updates) ~= "table" then
+		return list
+	end
+
+	for _, update in updates do
+		local message = typeof(update) == "table" and update[#update]
+		if typeof(message) == "table" and message.Kind == MESSAGE_KIND and validGift(message.Gift) then
+			table.insert(list, message.Gift)
+		end
+	end
+
+	return list
+end
+
+--[=[
+	Whether a stored intent still belongs to a purchase in progress: its prompt is
+	open, or it was bought and the receipt has not paid out. Replacing it then would
+	send that receipt to the new recipient. Intents from before the `State` field
+	never lock.
+]=]
+local function intentBusy(intent : any, now : number) : boolean
+	if typeof(intent) ~= "table" or intent.ConsumedBy ~= nil then
+		return false
+	end
+
+	if intent.State == "Paid" then
+		return now - (tonumber(intent.PaidAt) or 0) < Config.PAID_LOCK
+	end
+	if intent.State == "Prompt" then
+		return now - (tonumber(intent.At) or 0) < Config.PROMPT_LOCK
+	end
+
+	return false
+end
+
 local function entryOf(gift : any) : any
 	return {
 		ItemKey = gift.ItemKey,
@@ -183,12 +242,65 @@ function GiftService:_data(player : Player) : any
 	return entry and entry.Profile.Data or nil
 end
 
+function GiftService:_intentOf(player : Player, itemKey : string) : any
+	local data = self:_data(player)
+	local outgoing = data and typeof(data.Gifts) == "table" and data.Gifts.Outgoing
+
+	return typeof(outgoing) == "table" and outgoing[itemKey] or nil
+end
+
+--[=[
+	Removes the buyer's intent for an item while it is still only a prompt (never
+	one that was bought or consumed). With `at`, only the intent written at that
+	time, so a late answer cannot remove a newer one.
+]=]
+function GiftService:_dropIntent(player : Player, itemKey : string, at : number?)
+	if not self:_data(player) then
+		return
+	end
+
+	self.Services.DataService:Update(player, "Gifts", function(current)
+		local gifts = shaped(current)
+		local stored = gifts.Outgoing[itemKey]
+
+		if typeof(stored) == "table" and stored.ConsumedBy == nil and stored.State == "Prompt"
+			and (at == nil or stored.At == at) then
+			gifts.Outgoing[itemKey] = nil
+		end
+
+		return gifts
+	end)
+end
+
+--[=[
+	Whether Roblox lets these two users text each other (chat settings and parental
+	controls). A free-text note from one user to another is direct communication,
+	so it is gated like a private message. Any error counts as "no".
+]=]
+local function canMessage(sender : Player, recipientId : number) : boolean
+	local ok, allowed = pcall(function()
+		if not TextChatService:CanUserChatAsync(sender.UserId) then
+			return false
+		end
+
+		local direct = TextChatService:CanUsersDirectChatAsync(sender.UserId, { recipientId })
+		return typeof(direct) == "table" and table.find(direct, recipientId) ~= nil
+	end)
+
+	return ok and allowed == true
+end
+
 --[=[
 	The message, cut and filtered for the recipient. `nil` for an empty or
-	unfilterable message: a gift without a note beats a gift with unfiltered text.
+	unfilterable message, or when the two users may not text each other: a gift
+	without a note beats a gift with text that should not reach them.
 ]=]
 local function filterMessage(sender : Player, recipientId : number, text : any) : string?
 	if typeof(text) ~= "string" or text == "" or not utf8.len(text) then
+		return nil
+	end
+
+	if not canMessage(sender, recipientId) then
 		return nil
 	end
 
@@ -275,34 +387,58 @@ function GiftService:_claim(player : Player, giftId : string) : boolean
 		return true
 	end
 
+	-- Only the payout is checked, not the gift product: a gift already paid for
+	-- still pays out after its product is turned off.
 	local item = GiftConfig.ITEMS[entry.ItemKey]
-	local problem = GiftConfig.problem(item)
+	local problem = GiftConfig.payoutProblem(item)
 	if problem then
 		log:Warn(`gift {giftId} ({tostring(entry.ItemKey)}) stays in the inbox: {problem}.`)
 		return false
 	end
 
 	local duplicate = false
+	local coins = 0
 	local passKey : string? = nil
 
 	if item.Kind == "Pass" then
-		passKey = item.Pass
 		local gifted = typeof(data.GiftedPasses) == "table" and data.GiftedPasses or {}
-		duplicate = GamepassConfig.owns(data, passKey) or gifted[passKey] ~= nil
+		duplicate = GamepassConfig.owns(data, item.Pass) or gifted[item.Pass] ~= nil
 
-		dataService:Update(player, "GiftedPasses", function(current)
-			local copy = table.clone(typeof(current) == "table" and current or {})
-			copy[passKey] = copy[passKey] or giftId
-			return copy
-		end)
+		if duplicate then
+			-- They already have it: coins instead, and no gift record (what they
+			-- already own stays the only claim to the pass).
+			coins = tonumber(Config.DUPLICATE_COINS[item.Pass]) or 0
 
-		-- Shows up now; the recalibrate below re-asks Roblox and rewrites the same
-		-- thing with the chat tag attribute.
-		dataService:Update(player, "Gamepasses", function(current)
-			local copy = table.clone(typeof(current) == "table" and current or {})
-			copy[passKey] = true
-			return copy
-		end)
+			if coins > 0 then
+				local currency = self.Services.CurrencyService
+				if not currency or not currency.Apply then
+					return false
+				end
+
+				local _, updated = currency:Apply(player, "Cash", "add", coins)
+				if updated == nil then
+					return false
+				end
+			else
+				log:Warn(`gift {giftId}: {player.Name} already owns {item.Pass} and DUPLICATE_COINS pays nothing for it.`)
+			end
+		else
+			passKey = item.Pass
+
+			dataService:Update(player, "GiftedPasses", function(current)
+				local copy = table.clone(typeof(current) == "table" and current or {})
+				copy[passKey] = copy[passKey] or giftId
+				return copy
+			end)
+
+			-- Shows up now; the recalibrate below re-asks Roblox and rewrites the same
+			-- thing with the chat tag attribute.
+			dataService:Update(player, "Gamepasses", function(current)
+				local copy = table.clone(typeof(current) == "table" and current or {})
+				copy[passKey] = true
+				return copy
+			end)
+		end
 	else
 		local pack = RobuxShopConfig.packOfProduct(item.Pack)
 		local robuxShop = self.Services.RobuxShopService
@@ -322,6 +458,7 @@ function GiftService:_claim(player : Player, giftId : string) : boolean
 		local seen = entryOf(entry)
 		seen.At = now
 		seen.Duplicate = duplicate
+		seen.Coins = coins > 0 and coins or nil
 		gifts.Unseen[giftId] = seen
 		pruneOldest(gifts.Unseen, Config.UNSEEN_CAP)
 
@@ -345,6 +482,7 @@ function GiftService:_claim(player : Player, giftId : string) : boolean
 		SenderName = entry.SenderName,
 		Message = entry.Message,
 		Duplicate = duplicate,
+		Coins = coins > 0 and coins or nil,
 	})
 
 	return true
@@ -439,6 +577,13 @@ function GiftService:_route(recipientId : number, gift : any) : (boolean, string
 			return gifts
 		end)
 		self:Deliver(recipient)
+
+		-- The receipt only saves the BUYER: without this, a crash before the
+		-- recipient's autosave would lose a gift the buyer's profile says was paid
+		-- out. On `false` the receipt comes back, and the redelivery is a no-op.
+		if not dataService:Save(recipient) then
+			return false, "ServiceUnavailable"
+		end
 
 		return true
 	end
@@ -604,10 +749,12 @@ function GiftService:GetRecipientStatus(userId : number, onlyItemKey : string?) 
 	end
 
 	local data
+	local profile -- whatever holds the message queue: the open session or the snapshot
 	local here = Players:GetPlayerByUserId(userId)
 	local entry = here and dataService.Profiles[here]
 	if entry then
 		data = entry.Profile.Data
+		profile = entry.Session
 	else
 		local store = dataService.Packages.ProfileManager
 		local okRead, snapshot = pcall(store.GetAsync, store, "Player_" .. userId)
@@ -618,25 +765,43 @@ function GiftService:GetRecipientStatus(userId : number, onlyItemKey : string?) 
 			return nil, "RecipientNoProfile"
 		end
 		data = snapshot.Data
+		profile = snapshot
 	end
 	data = typeof(data) == "table" and data or {}
 
 	local gifts = typeof(data.Gifts) == "table" and data.Gifts or {}
 	local inbox = typeof(gifts.Inbox) == "table" and gifts.Inbox or {}
+	local received = typeof(gifts.Received) == "table" and gifts.Received or {}
 	local gifted = typeof(data.GiftedPasses) == "table" and data.GiftedPasses or {}
+
+	--[[
+		Waiting = in the inbox, or still in the message queue (sent from another
+		server and not applied yet: the recipient is elsewhere, or offline and the
+		short session has not run). By id, so a message already applied but not yet
+		cleared from the queue is not counted twice.
+	]]
+	local waiting = {} -- [giftId] = itemKey
+	for id, gift in inbox do
+		if typeof(gift) == "table" and typeof(gift.ItemKey) == "string" then
+			waiting[id] = gift.ItemKey
+		end
+	end
+	for _, gift in queuedGifts(profile) do
+		if waiting[gift.Id] == nil and received[gift.Id] == nil then
+			waiting[gift.Id] = gift.ItemKey
+		end
+	end
 
 	local status = {
 		UserId = userId,
 		Username = name,
 		Owned = {},
 		Pending = {},
-		InboxCount = countKeys(inbox),
+		InboxCount = countKeys(waiting),
 	}
 
-	for _, waiting in inbox do
-		if typeof(waiting) == "table" and typeof(waiting.ItemKey) == "string" then
-			status.Pending[waiting.ItemKey] = true
-		end
+	for _, itemKey in waiting do
+		status.Pending[itemKey] = true
 	end
 
 	for itemKey, item in GiftConfig.ITEMS do
@@ -699,25 +864,33 @@ function GiftService:_prepare(player : Player, recipientId : number, itemKey : s
 
 	local message = filterMessage(player, recipientId, rawMessage)
 
-	-- Everything above yielded: the buyer may be gone.
+	-- Everything above yielded: the buyer may be gone, or a receipt or a prompt
+	-- answer may have changed the intent in the meantime.
 	if player.Parent ~= Players or not self:_data(player) then
 		return false, "Left"
 	end
+	if intentBusy(self:_intentOf(player, itemKey), os.time()) then
+		return false, "PurchasePending"
+	end
 
+	local at = os.time()
 	dataService:Update(player, "Gifts", function(current)
 		local gifts = shaped(current)
 		gifts.Outgoing[itemKey] = {
 			RecipientId = recipientId,
 			RecipientName = status.Username,
 			Message = message,
-			At = os.time(),
+			At = at,
+			State = "Prompt",
 		}
 		return gifts
 	end)
 
 	-- The prompt only opens once the intent is on disk: a crash between the
 	-- purchase and the next save would otherwise leave a receipt with no recipient.
+	-- No prompt opens on failure, so the intent goes too (it would only lock).
 	if not dataService:Save(player) then
+		self:_dropIntent(player, itemKey, at)
 		return false, "ServiceUnavailable"
 	end
 	if player.Parent ~= Players then
@@ -734,9 +907,12 @@ end
 	open, not that the gift is done. Yields.
 
 	Reasons: `Cooldown`, `Busy`, `UnknownItem`, `InvalidRecipient`, `SelfGift`,
-	`NotLoaded`, `NotFriends`, `RecipientNotFound`, `RecipientNoProfile`,
-	`AlreadyOwns`, `AlreadyPending`, `InboxFull`, `Left`, `ServiceUnavailable`,
-	`ServerError`.
+	`NotLoaded`, `PurchasePending`, `NotFriends`, `RecipientNotFound`,
+	`RecipientNoProfile`, `AlreadyOwns`, `AlreadyPending`, `InboxFull`, `Left`,
+	`ServiceUnavailable`, `ServerError`.
+
+	`PurchasePending`: this buyer's previous gift of the same item is still open
+	(prompt not answered) or bought and not paid out yet.
 ]=]
 function GiftService:RequestGift(player : Player, recipientId : any, itemKey : any, rawMessage : any) : (boolean, string?)
 	if self.Busy[player] then
@@ -764,6 +940,9 @@ function GiftService:RequestGift(player : Player, recipientId : any, itemKey : a
 	if not self:_data(player) then
 		return false, "NotLoaded"
 	end
+	if intentBusy(self:_intentOf(player, itemKey), os.time()) then
+		return false, "PurchasePending"
+	end
 
 	self.Busy[player] = true
 	local ok, success, reason = pcall(self._prepare, self, player, recipientId, itemKey, item, rawMessage)
@@ -775,6 +954,42 @@ function GiftService:RequestGift(player : Player, recipientId : any, itemKey : a
 	end
 
 	return success, reason
+end
+
+--[=[
+	`GetRecipientStatus` for the lookup (a display, never a purchase decision:
+	`RequestGift` asks again). A recent answer for the same recipient is reused, and
+	a recipient off this server (one DataStore read each) is refused while the
+	server's GetAsync budget is low, so lookups never compete with profile loads and
+	saves. The cooldown alone does not cover that: each new name is a new read.
+]=]
+function GiftService:_lookupStatus(userId : number) : (any?, string?)
+	local cached = self.LookupCache[userId]
+	if cached and os.clock() - cached.At < Config.LOOKUP_CACHE_SECONDS then
+		return cached.Status
+	end
+
+	if not Players:GetPlayerByUserId(userId) then
+		local ok, budget = pcall(DataStoreService.GetRequestBudgetForRequestType, DataStoreService, Enum.DataStoreRequestType.GetAsync)
+		if ok and typeof(budget) == "number" and budget < Config.LOOKUP_MIN_BUDGET then
+			return nil, "ServiceUnavailable"
+		end
+	end
+
+	local status, reason = self:GetRecipientStatus(userId)
+	if not status then
+		return nil, reason
+	end
+
+	local now = os.clock()
+	for id, old in self.LookupCache do
+		if now - old.At >= Config.LOOKUP_CACHE_SECONDS then
+			self.LookupCache[id] = nil
+		end
+	end
+	self.LookupCache[userId] = { At = now, Status = status }
+
+	return status
 end
 
 --- A username or a UserId from the client, as a UserId, or `nil, reason`.
@@ -803,6 +1018,9 @@ function GiftService:construct()
 	local dataService = self.Services.DataService
 	local monetization = self.Services.MonetizationService
 
+	-- [gift ProductId] = itemKey
+	local itemOfProduct = {}
+
 	-- Each gift product pays through the same receipt path as every other product.
 	for itemKey, item in GiftConfig.ITEMS do
 		local problem = GiftConfig.problem(item)
@@ -811,10 +1029,40 @@ function GiftService:construct()
 			continue
 		end
 
+		itemOfProduct[item.ProductId] = itemKey
 		monetization:RegisterProduct(item.ProductId, function(player : Player, receiptInfo : any)
 			return self:_onPurchase(itemKey, player, receiptInfo)
 		end)
 	end
+
+	--[[
+		Roblox's answer to a gift prompt. It pays nothing (the receipt does): it only
+		settles the intent's lock. A closed prompt frees the intent at once, so a
+		cancelled gift neither blocks the next one nor waits around for a purchase
+		made some other way. A bought one stays locked until its receipt consumes it.
+	]]
+	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId : number, productId : number, isPurchased : boolean)
+		local itemKey = itemOfProduct[productId]
+		local player = itemKey and Players:GetPlayerByUserId(userId)
+		if not player or not self:_data(player) then
+			return
+		end
+
+		if not isPurchased then
+			self:_dropIntent(player, itemKey)
+			return
+		end
+
+		dataService:Update(player, "Gifts", function(current)
+			local gifts = shaped(current)
+			local stored = gifts.Outgoing[itemKey]
+			if typeof(stored) == "table" and stored.ConsumedBy == nil then
+				stored.State = "Paid"
+				stored.PaidAt = os.time()
+			end
+			return gifts
+		end)
+	end)
 
 	Framework:Listen(EVENTS.Request, function(player : Player, requestId : any, recipientId : any, itemKey : any, message : any)
 		if typeof(requestId) ~= "number" then
@@ -859,7 +1107,7 @@ function GiftService:construct()
 			return
 		end
 
-		local status, statusReason = self:GetRecipientStatus(userId)
+		local status, statusReason = self:_lookupStatus(userId)
 		if not status then
 			answer({ Success = false, Reason = statusReason })
 			return

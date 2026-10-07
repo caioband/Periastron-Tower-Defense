@@ -28,6 +28,8 @@ Commands that depend on a service from one place only live in that place's folde
 | `tutorialshop` | `tutorial2` | `[players]` | both | Runs the Lobby half of the tutorial (the shop until the Crate of Beginnings is bought) |
 | `highlight` | `spotlight` | `[path] [players]` | both | Darkens the screen except the GuiObject at the path (for example `HUD.HUDLeft.Shop`); no path clears it |
 | `arrow` | `indicator` | `[x,y,z] [players]` | both | Points the indicator arrow at a position; no position clears it |
+| `gift` | `giftpass` | `<players> <item>` | both | QA/Studio: runs a [gift](gifting.md) receipt with a fake purchase (no Robux) and logs every check; the player may be offline |
+| `giftreset` | `resetgifts` | `[players]` | both | QA/Studio: removes gifted passes and clears the gift tables of players on this server |
 | `roundcash` | `sessioncash` | `<action> <players> <amount>` | Game | The round cash that pays for towers |
 | `roundshop` | `cardshop`, `rcs` | `[players]` | Game | Opens the [round card shop](../game/round-card-shop.md) offer now and redraws it |
 | `strike` | `lightning`, `thunderstrike` | `[unit]` | Game | Drops a lightning bolt on a placed unit |
@@ -67,11 +69,13 @@ In the [QA environment](environments.md), **every player is a tester** and may r
 | `roundcash` | Game |
 | `friendinvite` | Lobby |
 | `friendinvitestats` | Lobby |
+| `help` | both |
 
 Testers can aim them at any player, online or offline, like admins.
 QA is a separate universe with its own DataStores, so this never touches a production profile.
 In Production, `QA_COMMANDS` does nothing.
-A tester's console shows only these commands (and only the ones registered in the current place), without `help`.
+A tester's console shows only these commands (and only the ones registered in the current place).
+`help` lists only those too, since `CmdrController` removes every other command from the client's registry.
 
 ### Other non-admins
 

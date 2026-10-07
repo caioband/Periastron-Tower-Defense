@@ -26,6 +26,7 @@ A developer product purchase is an **event** that must be credited once (what `P
 A game pass is a **state**: the player owns it or not, today.
 
 So **nothing about a pass is saved as a value in the profile.**
+The one exception is a gifted pass (`Data.GiftedPasses`), since Roblox does not know about it; see [Gifting](gifting.md).
 The +5 cards do not go into `CardLimit`; they are added on read (`DeckConfig.limitFor`).
 Writing to the profile would be a credit, and credits do not go back: a refunded player would keep the higher cap forever, and a second login would add five more.
 

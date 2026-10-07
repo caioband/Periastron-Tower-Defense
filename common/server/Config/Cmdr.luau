@@ -65,6 +65,8 @@ return {
 		roundcash = true,
 		friendinvite = true,
 		friendinvitestats = true,
+		-- Lists only what the tester can run: the client drops the rest from its registry.
+		help = true,
 	} :: { [string]: boolean },
 
 	--[[

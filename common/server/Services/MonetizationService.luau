@@ -56,6 +56,9 @@ function MonetizationService:construct()
 	]]
 	self.Callbacks = self.Callbacks or {}
 
+	-- [purchaseKey] = true while a `ProcessReceipt` call is handling it.
+	self.InFlight = {}
+
 	self:_watchPasses()
 
 	MarketplaceService.ProcessReceipt = function(receiptInfo)
@@ -74,41 +77,69 @@ function MonetizationService:construct()
 
 		local purchaseKey = "P_" .. tostring(receiptInfo.PurchaseId)
 
-		local alreadyGranted = false
-		self.Services.DataService:Update(player, "PurchaseHistory", function(history)
-			history = history or {}
-			alreadyGranted = history[purchaseKey] == true
-			return history
-		end)
-		if alreadyGranted then
-			return Enum.ProductPurchaseDecision.PurchaseGranted
+		--[[
+			A receipt being handled yields (gift routing, and `Save` waits for the
+			disk), and Roblox may hand the same receipt in again meanwhile. Both calls
+			would pass the `PurchaseHistory` check below before either writes it, so
+			the second one waits for its turn as a retry.
+		]]
+		if self.InFlight[purchaseKey] then
+			return Enum.ProductPurchaseDecision.NotProcessedYet
 		end
+		self.InFlight[purchaseKey] = true
 
-		local callback = self.Callbacks[tostring(receiptInfo.ProductId)]
-		if not callback then
+		-- In a pcall so an error cannot leave the purchase marked in flight for good.
+		local ok, decision = pcall(self._processReceipt, self, player, receiptInfo, purchaseKey)
+		self.InFlight[purchaseKey] = nil
+
+		if not ok then
+			log:Warn(`receipt {purchaseKey} failed: {tostring(decision)}`)
 			return Enum.ProductPurchaseDecision.NotProcessedYet
 		end
 
-		local granted = false
-		local ok = pcall(function()
-			granted = callback(player, receiptInfo) ~= false
-		end)
-		if not ok or not granted then
-			return Enum.ProductPurchaseDecision.NotProcessedYet
-		end
+		return decision
+	end
+end
 
-		self.Services.DataService:Update(player, "PurchaseHistory", function(history)
-			history = history or {}
-			history[purchaseKey] = true
-			return history
-		end)
-
-		if not self.Services.DataService:Save(player) then
-			return Enum.ProductPurchaseDecision.NotProcessedYet
-		end
-
+--[=[
+	The body of `ProcessReceipt`, once the profile is open and no other call is
+	handling the same purchase. Returns the decision.
+]=]
+function MonetizationService:_processReceipt(player : Player, receiptInfo : any, purchaseKey : string)
+	local alreadyGranted = false
+	self.Services.DataService:Update(player, "PurchaseHistory", function(history)
+		history = history or {}
+		alreadyGranted = history[purchaseKey] == true
+		return history
+	end)
+	if alreadyGranted then
 		return Enum.ProductPurchaseDecision.PurchaseGranted
 	end
+
+	local callback = self.Callbacks[tostring(receiptInfo.ProductId)]
+	if not callback then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	local granted = false
+	local ok = pcall(function()
+		granted = callback(player, receiptInfo) ~= false
+	end)
+	if not ok or not granted then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	self.Services.DataService:Update(player, "PurchaseHistory", function(history)
+		history = history or {}
+		history[purchaseKey] = true
+		return history
+	end)
+
+	if not self.Services.DataService:Save(player) then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	return Enum.ProductPurchaseDecision.PurchaseGranted
 end
 
 --[=[
