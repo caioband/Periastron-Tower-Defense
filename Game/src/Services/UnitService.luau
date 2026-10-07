@@ -1193,7 +1193,8 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 		and self.Services.MobService:getMobPosition(mobId)
 
 	local dealt = self.Services.MobService:DamageMob(
-		mobId, damage, entry.ownerUserId, auraBonus, self:cardMultiplier(entry, "HitIncome")
+		mobId, damage, entry.ownerUserId, auraBonus, self:cardMultiplier(entry, "HitIncome"),
+		SharedConfig.WeatherConfig.GetClasses(entry.unitName)
 	)
 	self:addDamageDone(entry, dealt)
 

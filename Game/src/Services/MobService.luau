@@ -723,11 +723,13 @@ end
 	The visual comes from here through `MobBurning`, because only the server knows whether
 	the hit lit a new fire or landed on something already burning. Today the Pyre burns.
 ]=]
-function MobService:ApplyBurn(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?)
+function MobService:ApplyBleed(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?, vulnerability : number?)
 	self:applyDamageOverTime(mobId, damage, ticks, interval, ownerUserId, {
-		UntilKey = "BurningUntil",
-		Event = "MobBurning",
-		CardStat = "Burn",
+		UntilKey = "BleedingUntil",
+		Event = "MobBleeding",
+		VulnerabilityKey = "BleedVulnerability",
+		Vulnerability = vulnerability,
+		DamageClass = "Melee",
 	})
 end
 
@@ -805,8 +807,8 @@ function MobService:applyDamageOverTime(mobId : string, damage : number?, ticks 
 
 			local multiplier = if kind.CardStat then self:cardStat(kind.CardStat) else 1
 			local tick = math.max(1, math.floor(damage * multiplier + 0.5))
-			local dealt = self:DamageMob(mobId, tick, ownerUserId)
-
+			local dealt = self:DamageMob(mobId, tick, ownerUserId, nil, nil, kind.DamageClass)
+			
 			-- `DamageMob` does not notify the screen: a regular hit's number and health bar
 			-- come from the unit's `AttackVisual`, and a tick has no unit.
 			if dealt > 0 then
@@ -1702,7 +1704,7 @@ end
 	freezes at the start of the attack, along with damage and range. It applies to both
 	rewards, damage and kill.
 ]=]
-function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?, cashScale : number?)
+function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?, cashScale : number?, damageClasses)
 	local mob = self.ActiveMobs[mobId]
 	if not mob then return 0 end
 
@@ -1724,8 +1726,19 @@ function MobService:DamageMob(mobId, damage, killerUserId, cashBonus : number?, 
 		vulnerability = mob.BleedVulnerability or 1
 	end
 
+	--[[
+		The enemy's resistance to the attacker's class and the elemental matchup
+		(`ResistanceConfig`). 1 for untyped damage, enemies with no Resist/Element, and
+		units with no Class. 0 means immune: no damage, no cash, no kill credit, and
+		`creditDamage` skips the burn/slow/stun the hit would have left.
+	]]
+	local elementMultiplier = SharedConfig.ResistanceConfig.GetMultiplier(mob.Name, damageClasses)
+	if elementMultiplier <= 0 then
+		return 0
+	end
+
 	local base = damage or 10
-	local incoming = base * (self.BrittleMultiplier or 1) * vulnerability
+	local incoming = base * (self.BrittleMultiplier or 1) * vulnerability * elementMultiplier
 	if incoming ~= base then
 		incoming = math.max(1, math.floor(incoming + 0.5))
 	end
