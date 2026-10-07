@@ -27,16 +27,16 @@ local module = {}
 module.MAX_MESSAGE_LENGTH = 100
 
 module.ITEMS = {
-	VIP = { Kind = "Pass", Pass = "VIP", ProductId = 0 },
-	Shards = { Kind = "Pass", Pass = "Shards", ProductId = 0 },
-	Luck = { Kind = "Pass", Pass = "Luck", ProductId = 0 },
-	CardSlots = { Kind = "Pass", Pass = "CardSlots", ProductId = 0 },
-	Coins = { Kind = "Pass", Pass = "Coins", ProductId = 0 },
-	Speed = { Kind = "Pass", Pass = "Speed", ProductId = 0 },
+	VIP = { Kind = "Pass", Pass = "VIP", ProductId = 3717057432 },
+	Shards = { Kind = "Pass", Pass = "Shards", ProductId = 3717057466 },
+	Luck = { Kind = "Pass", Pass = "Luck", ProductId = 3717057523 },
+	CardSlots = { Kind = "Pass", Pass = "CardSlots", ProductId = 3717057651 },
+	Coins = { Kind = "Pass", Pass = "Coins", ProductId = 3717057573 },
+	Speed = { Kind = "Pass", Pass = "Speed", ProductId = 3717059592 },
 
-	Pack1 = { Kind = "Pack", Pack = 3713311022, ProductId = 0 },
-	Pack2 = { Kind = "Pack", Pack = 3713311161, ProductId = 0 },
-	Pack3 = { Kind = "Pack", Pack = 3713311237, ProductId = 0 },
+	Pack1 = { Kind = "Pack", Pack = 3713311022, ProductId = 3717057707 },
+	Pack2 = { Kind = "Pack", Pack = 3713311161, ProductId = 3717057754 },
+	Pack3 = { Kind = "Pack", Pack = 3713311237, ProductId = 3717057911 },
 }
 
 --[=[
