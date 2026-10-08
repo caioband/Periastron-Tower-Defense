@@ -38,7 +38,7 @@ CardConfig.Images = {
 	Pyre = "rbxassetid://111515366066023",
 	Bonfire = "rbxassetid://139271145798062",
 	Cryomancer = "rbxassetid://109821143712853",
-	Vindicator = "rbxassetid://75123400726970" -- TODO: Replace with actual art
+	Vindicator = "rbxassetid://130740288231397",
 
 }
 
@@ -133,7 +133,7 @@ CardConfig.IndexImages = {
 	Pyre = { Locked = "rbxassetid://99768598031119", Unlocked = "rbxassetid://130443019837476" },
 	Bonfire = { Locked = "rbxassetid://95440009266771", Unlocked = "rbxassetid://133228010596030" },
 	Cryomancer = { Locked = "rbxassetid://88227960714771", Unlocked = "rbxassetid://88118640086913" },
-	Vindicator = { Locked = "rbxassetid://98510105775698", Unlocked = "rbxassetid://125051466447818" },
+	Vindicator = { Locked = "rbxassetid://83846373389394", Unlocked = "rbxassetid://83026555203229" },
 
 }
 
