@@ -238,6 +238,12 @@ local UnitAttackConfig = {
 		BeamEndOffset = Vector3.zero,
 	},
 
+	["Vindicator"] = {
+	AttackSequence = {
+		{ Animation = "Attack", HitTimes = {  0.7667 }, Duration = 1.4167 },
+	},
+},
+
 
 }
 

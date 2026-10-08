@@ -946,6 +946,92 @@ function MobService:TeleportMobBack(mobId : string) : boolean
 	return true
 end
 
+--[=[
+	Pushes an enemy back along the track by `distance` studs (never past the start).
+	Only `Distance` moves, same as `TeleportMobBack`, so turn gimmicks do not refire.
+	`cooldown` is per enemy, so a fast unit cannot pin one in place.
+]=]
+function MobService:KnockbackMob(mobId : string, distance : number?, cooldown : number?, bossScale : number?) : boolean
+	local mob = self.ActiveMobs[mobId]
+	if not mob then return false end
+
+	distance = distance or 0
+	if distance <= 0 then return false end
+
+	local now = GameClock.Now()
+	if now < (mob.KnockbackUntil or 0) then return false end
+
+	if bossScale and WaveConfig.IsBoss(mob.Name) then
+		distance *= bossScale
+	end
+
+	local target = math.max(0, mob.Distance - distance)
+	if target >= mob.Distance then return false end
+
+	mob.KnockbackUntil = now + (cooldown or 0)
+	mob.Distance = target
+	mob.LastDistance = target
+	mob.NodeProgress = nil
+	self.PositionCache[mobId] = nil
+	self.PreviousPositionCache[mobId] = nil
+
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("MobTeleported", player, mobId, target)
+	end
+
+	return true
+end
+
+--[=[
+	Knockback on the enemy that was hit plus the closest others within `config.Radius`
+	of `center`, up to `config.MaxTargets` in total. `center` is where the hit enemy
+	stood **before** the damage, since a kill leaves it without a position.
+	Returns how many were actually pushed.
+]=]
+function MobService:KnockbackArea(mobId : string, center : Vector3?, config) : number
+	local limit = config.MaxTargets or 1
+
+	local targets = {}
+	if self.ActiveMobs[mobId] then
+		table.insert(targets, mobId)
+	end
+
+	if center and config.Radius then
+		local distances = {}
+		local nearby = {}
+
+		for _, id in self:GetMobsInRadius(center, config.Radius) do
+			if id == mobId then continue end
+
+			local pos = self:getMobPosition(id)
+			if not pos then continue end
+
+			distances[id] = (pos - center).Magnitude
+			table.insert(nearby, id)
+		end
+
+		table.sort(nearby, function(a, b)
+			return distances[a] < distances[b]
+		end)
+
+		for _, id in nearby do
+			if #targets >= limit then break end
+			table.insert(targets, id)
+		end
+	end
+
+	local pushed = 0
+	for _, id in targets do
+		if self:KnockbackMob(id, config.Distance, config.Cooldown, config.BossScale) then
+			pushed += 1
+		end
+	end
+
+	return pushed
+end
+
+
+
 function MobService:getSmoothPath(routeIndex : number?)
 	local routes = self:getRoutes()
 	local route = routes[routeIndex or 1] or routes[1]
@@ -1052,9 +1138,16 @@ function MobService:removeMob(mobId)
 end
 
 function MobService:mobEscaped(mobId)
-	if not self.ActiveMobs[mobId] then return end
+	local mob = self.ActiveMobs[mobId]
+	if not mob then return end
 
-	self.BaseHealth = math.max(0, self.BaseHealth - (self:getDifficulty().MobDamage or MOB_DAMAGE))
+	local configured = self:getDifficulty().MobDamage or MOB_DAMAGE
+	local damage = 0
+	if configured ~= 0 then
+		damage = math.max(1, math.ceil(mob.Health or 0))
+	end
+
+	self.BaseHealth = math.max(0, self.BaseHealth - damage)
 	self:broadcastBaseHealth()
 
 	if self.BaseHealth <= 0 then

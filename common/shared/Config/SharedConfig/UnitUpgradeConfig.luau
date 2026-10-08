@@ -188,6 +188,23 @@ UnitUpgradeConfig.Units = {
 		DamageMultiplier = 1,
 	},
 
+		--[[
+		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Damage   | 20   | 24   | 29   | 35   | 41   | 50   |
+		| Cooldown | 1.50 | 1.38 | 1.27 | 1.17 | 1.08 | 0.99 |
+		| Range    | 4    | 4    | 4    | 5    | 5    | 5    |
+
+		Damage and attack speed come from the formula; only the price is a hand ladder
+		(`Costs`), the same design as the Sword. Range comes from `RangeStats.Levels` in
+		`UnitStats`. With the 175 placement cost from `UnitStats`, maxing it costs 1,570.
+		Numbers are provisional.
+	]]
+	["Vindicator"] = {
+		Costs = { 120, 175, 250, 350, 500 },
+		DamageMultiplier = 1.2,
+		CooldownMultiplier = 0.92,
+	},
+
 	--[[
 		The Slasher's damage goes from **5 (base) to 9 (max level)**, and the multiplier
 		is the `MaxUpgrades`-th root of 9/5, written as math rather than 1.12475 so the

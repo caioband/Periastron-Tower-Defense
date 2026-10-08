@@ -255,7 +255,7 @@ WeatherConfig.Thunder = {
 	been themed yet.
 ]]
 WeatherConfig.MapPools = {
-	Farm = { "Fog", "Wind", "Thunder", "Rain" },
+	Farm = { "Fog", "Wind", "Rain" },
 	Desert = { "Sandstorm", "Drought" },
 	Volcano = { "Drought", "Fog" },
 	Cave = { "Fog" },

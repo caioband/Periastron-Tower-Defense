@@ -38,6 +38,8 @@ CardConfig.Images = {
 	Pyre = "rbxassetid://111515366066023",
 	Bonfire = "rbxassetid://139271145798062",
 	Cryomancer = "rbxassetid://109821143712853",
+	Vindicator = "rbxassetid://75123400726970" -- TODO: Replace with actual art
+
 }
 
 --[=[
@@ -81,7 +83,9 @@ CardConfig.Icons = {
 	["Subspace Tripminer"] = "rbxassetid://130513046357852",
 	Archmage = "rbxassetid://114668138717801",
 	Archer = "rbxassetid://111421285376457",
-	Bonfire = "rbxassetid://116877116738728" -- TODO: Replace with actual art
+	Bonfire = "rbxassetid://116877116738728", -- TODO: Replace with actual art
+	Vindicator = "rbxassetid://77799937837921" -- TODO: Replace with actual art
+
 }
 
 --[=[
@@ -129,6 +133,8 @@ CardConfig.IndexImages = {
 	Pyre = { Locked = "rbxassetid://99768598031119", Unlocked = "rbxassetid://130443019837476" },
 	Bonfire = { Locked = "rbxassetid://95440009266771", Unlocked = "rbxassetid://133228010596030" },
 	Cryomancer = { Locked = "rbxassetid://88227960714771", Unlocked = "rbxassetid://88118640086913" },
+	Vindicator = { Locked = "rbxassetid://98510105775698", Unlocked = "rbxassetid://125051466447818" },
+
 }
 
 --[=[

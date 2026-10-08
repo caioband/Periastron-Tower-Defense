@@ -813,6 +813,39 @@ local UnitStats = {
 			Levels = { 4, 4.3, 4.7, 5, 5.4, 6 },
 		},
 	},
+
+	--[[
+	A melee unit that shoves enemies back along the track. Each hit pushes the enemy
+	it struck and up to 2 more within 6 studs of it, 3 studs each (bosses only a
+	quarter of that). Only the enemy it struck takes damage; the others are just pushed.
+
+	20 damage every 1.5 s is 13.3 DPS, or 7.6 per 100 cash, well under rule 1's cap
+	of 15. Its value is the time it buys the other towers, not the damage.
+	Numbers are provisional.
+]]
+	["Vindicator"] = {
+		Rarity = "Rare",
+		Class = "Melee",
+		Cost = 175,
+		Damage = 20,
+		Range = 4,
+		Cooldown = 1.5,
+		AttackType = "SingleShot",
+		HitInterval = 0,
+		Hits = 1,
+		Knockback = {
+			Distance = 3,
+			Cooldown = 0.5,
+			BossScale = 0.25,
+			Radius = 6,
+			MaxTargets = 3,
+		},
+		RangeStats = {
+			Levels = { 4, 4, 4, 5, 5, 5 },
+		},
+	},
+
+
 }
 
 return UnitStats

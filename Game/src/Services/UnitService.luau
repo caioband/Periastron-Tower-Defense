@@ -1191,6 +1191,8 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 	local unitStats = SharedConfig.UnitStats[entry.unitName]
 	local frostCenter = unitStats and unitStats.Frost and unitStats.Frost.Radius
 		and self.Services.MobService:getMobPosition(mobId)
+	local knockbackCenter = unitStats and unitStats.Knockback and unitStats.Knockback.Radius
+	and self.Services.MobService:getMobPosition(mobId)
 
 	local dealt = self.Services.MobService:DamageMob(
 		mobId, damage, entry.ownerUserId, auraBonus, self:cardMultiplier(entry, "HitIncome"),
@@ -1233,6 +1235,11 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 		local bleed = stats and stats.Bleed
 		if bleed then
 			self.Services.MobService:ApplyBleed(mobId, bleed.Damage, bleed.Ticks, bleed.Interval, entry.ownerUserId, bleed.Vulnerability)
+		end
+
+		local knockback = stats and stats.Knockback
+		if knockback then
+			self.Services.MobService:KnockbackArea(mobId, knockbackCenter, knockback)
 		end
 
 		--[[
