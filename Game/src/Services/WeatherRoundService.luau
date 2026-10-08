@@ -71,7 +71,8 @@ local WeatherRoundService = {
 		WeatherService = {},
 		MapService = {},
 		WaveService = {},
-		DifficultyService = {}
+		DifficultyService = {},
+		IndexService = {},
 	},
 
 	Signals = {
@@ -444,6 +445,17 @@ end
 --[[ LIFECYCLE ]]
 
 function WeatherRoundService:construct()
+	-- Every player in the match lived through it, so it enters their Index. Only a
+	-- weather that went live: the warning alone does not count.
+	self.Signals.WeatherStarted:Connect(function(weatherName : string)
+		local indexService = self.Services.IndexService
+		if not indexService then return end
+
+		for _, player in Players:GetPlayers() do
+			indexService:UnlockWeather(player, weatherName)
+		end
+	end)
+
 	local waveService = self.Services.WaveService
 	if not waveService or not waveService.Signals or not waveService.Signals.WaveStarted then
 		log:Warn("WaveService has no WaveStarted signal; weather will not start on its own.")

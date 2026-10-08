@@ -320,10 +320,13 @@ The slow is `Slows` in `UnitUpgradeConfig`, read through `GetAuraSlow(unitName, 
 
 | Level | 0 | 1 | 2 | 3 | 4 | 5 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Slow | 10% | 14% | 18% | 22% | 26% | 30% |
-| Range | 3 | 3.4 | 3.8 | 4.2 | 4.6 | 5 |
+| Price | $165 | $130 | $200 | $285 | $350 | $425 |
+| Slow | 12% | 15% | 18% | 23% | 27% | 30% |
+| Range | 4 | 4.3 | 4.7 | 5 | 5.4 | 6 |
 
-The ring is on from placement, and each upgrade adds 4 points.
+The ring is on from placement.
+Level 0's price is the placement cost (`UnitStats.Cryomancer.Cost`); the rest are the upgrade `Costs`.
+Range is a `RangeStats.Levels` ladder, since its steps are uneven.
 
 ### Server
 

@@ -71,6 +71,31 @@ local function copyTemplateValue(value)
 	return copy
 end
 
+--[=[
+	What a data reset (`ResetOnRelease`) keeps: `PurchaseHistory` is what stops a
+	developer product receipt that Roblox replays from paying twice, and `SaveStamp`
+	belongs to `Save`. Everything else goes back to `Data.Template`.
+]=]
+local RESET_KEEP = {
+	PurchaseHistory = true,
+	SaveStamp = true,
+}
+
+--- The profile, back to a new player's: every key but `RESET_KEEP` from the template.
+local function resetToTemplate(data, template)
+	for key in table.clone(data) do
+		if not RESET_KEEP[key] then
+			data[key] = nil
+		end
+	end
+
+	for key, value in template do
+		if not RESET_KEEP[key] then
+			data[key] = copyTemplateValue(value)
+		end
+	end
+end
+
 local function reconcileTemplate(data, template)
 	for key, templateValue in template do
 		if data[key] == nil then
@@ -83,7 +108,7 @@ end
 
 --[=[
 	Rewrites old map names (`MapConfig.ALIASES`) in the two places the profile
-	saves a map key: `Index.Maps` (discovered maps) and each contract slot's drawn
+	saves a map key: `Index.Maps` (discovered maps, and its twin `IndexSeen.Maps`) and each contract slot's drawn
 	`Params.Map`. Returns how many entries changed.
 
 	It runs on the raw data, before the replica exists, so nothing downstream
@@ -94,13 +119,16 @@ local function migrateMapAliases(data) : number
 	local aliases = SharedConfig.MapConfig.ALIASES
 	local changed = 0
 
-	local maps = typeof(data.Index) == "table" and data.Index.Maps
-	if typeof(maps) == "table" then
-		for old, current in aliases do
-			if maps[old] ~= nil then
-				maps[current] = maps[current] or maps[old]
-				maps[old] = nil
-				changed += 1
+	-- `IndexSeen` mirrors `Index`, so its map keys follow the same rename.
+	for _, root in { data.Index, data.IndexSeen } do
+		local maps = typeof(root) == "table" and root.Maps
+		if typeof(maps) == "table" then
+			for old, current in aliases do
+				if maps[old] ~= nil then
+					maps[current] = maps[current] or maps[old]
+					maps[old] = nil
+					changed += 1
+				end
 			end
 		end
 	end
@@ -364,10 +392,34 @@ function DataService:Destroy(Player : Player)
 		end
 	end
 
+	-- After the leave callbacks, so nothing they write (playtime, the leave reward)
+	-- lands on top of the fresh profile. See `ResetOnRelease`.
+	if entry.ResetPending then
+		resetToTemplate(entry.Session.Data, ServerConfig.Data.Template)
+		log:Info(string.format("reset %s's profile to the template.", Player.Name))
+	end
+
 	entry.Releasing = true
 	entry.Session:EndSession()
 	entry.Profile:Destroy()
 	self.Profiles[Player] = nil
+end
+
+--[=[
+	Marks the profile to go back to `Data.Template` when the session closes (QA's
+	`datareset`). Returns `false` when the profile is not open.
+
+	It happens on release, not now, because the other services keep state read from
+	the profile when it loaded (contracts drawn, the Index synced, the leaderstats):
+	resetting under them would leave the server out of step with the data. The caller
+	kicks the player, and the next join loads the clean profile like a new player's.
+]=]
+function DataService:ResetOnRelease(Player : Player) : boolean
+	local entry = self.Profiles[Player]
+	if not entry then return false end
+
+	entry.ResetPending = true
+	return true
 end
 
 function DataService:Update(Player : Player, Key : string, callbackFunc)

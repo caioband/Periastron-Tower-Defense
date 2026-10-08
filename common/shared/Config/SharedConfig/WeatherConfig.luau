@@ -1100,4 +1100,44 @@ function WeatherConfig.GetDisplayName(weatherName : string) : string
 	return WeatherConfig.Warning.DisplayNames[weatherName] or string.upper(weatherName)
 end
 
+--[=[
+	An effect line (`Indicator.Details`) with its colors, as `RichTextController`
+	markup. The in-match indicator and the Lobby's Index both draw these lines.
+
+	Two passes, and both only paint pieces:
+
+	  1. **the number**: `+10%`, `-60%`, `20s`. The sign picks the color, and `kind` rules
+	     when the sign is misleading (`+40% ENEMY HP` goes up and is terrible). A number
+	     with no sign is a debuff, which is what today's stuns are;
+	  2. **the unit type**: `FIRE`, `ICE`, `ELEC`... in the type's color, so the player
+	     finds what concerns them without reading the whole line.
+
+	The order of the two does not matter: what the first inserts is
+	`[color=85,170,255]`, and no type name is written in lowercase or with digits. The
+	`%f` frontier in the second is what keeps a name from being found inside another
+	word.
+]=]
+function WeatherConfig.MarkupDetail(text : string, kind : string?) : string
+	local colors = WeatherConfig.Indicator.Colors
+
+	local forced = if kind then (if kind == "Buff" then colors.Buff else colors.Debuff) else nil
+
+	local function paint(token : string) : string
+		local color = forced or (if string.sub(token, 1, 1) == "+" then colors.Buff else colors.Debuff)
+
+		return `[color={color}]{token}[/color]`
+	end
+
+	-- Two calls instead of one: `[%%s]` in a set would be "percent or whitespace",
+	-- because `%s` inside it is still the whitespace class.
+	local painted = string.gsub(text, "[%+%-]?%d+%%", paint)
+	painted = string.gsub(painted, "[%+%-]?%d+s", paint)
+
+	for word, color in colors.Classes do
+		painted = string.gsub(painted, `%f[%a]{word}%f[%A]`, `[color={color}]{word}[/color]`)
+	end
+
+	return painted
+end
+
 return WeatherConfig

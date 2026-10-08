@@ -42,19 +42,20 @@ With `AnchorPoint` 0.5 inside the wrapper (and `X.Scale = 0.5` at rest), a fifth
 `MouseLeave` also releases the scale, because releasing the click outside the button never fires its `MouseButton1Up`.
 
 Only look and sound live there.
-Each panel's own controller **opens** it (`ShopController`, `CrateUIController`, `DeckController`, `RobuxShopController`; `HUDLeft.Settings` goes through `SettingsButtonController`, since the settings panel is common and this HUD is not), and the owner of a map spot **takes** the player there (`RoundCardShopController` for `CardShop`, `ContractController` for `Contracts`), always through the same button's `Activated`.
+Each panel's own controller **opens** it (`ShopController`, `CrateUIController`, `DeckController`, `RobuxShopController`, `IndexController`; `HUDLeft.Settings` goes through `SettingsButtonController`, since the settings panel is common and this HUD is not), and the owner of a map spot **takes** the player there (`RoundCardShopController` for `CardShop`, `ContractController` for `Contracts`), always through the same button's `Activated`.
 That is why the click animation uses `Down`/`Up`, which consumes nobody's click.
 Everyone finds the button by name at any depth (`UIUtil.waitForDescendant`), so rearranging wrappers in Studio does not break the bind.
 
 ## `New` badges
 
-Five of the six column buttons have a `New` label drawn inside, and `HUDBadgeController` is the **only** code that writes its `Visible`.
+Six of the seven column buttons have a `New` label drawn inside, and `HUDBadgeController` is the **only** code that writes its `Visible`.
 One rule per button:
 
 | Button | Lights when | Clears when |
 | --- | --- | --- |
 | `HUDLeft.Contracts` | a contract is ready to claim, **or** a period's `Period` rolled over | the claim happens (the profile undoes it); "rolled over" clears when the board opens |
 | `HUDLeft.RobuxShop` | on arrival, and five minutes after each opening | the shop opens |
+| `HUDLeft.Index` | something discovered that the player has not clicked in the [Index](index.md) yet | every new item is clicked (the profile undoes it) |
 | `HUDFrame.Backpack` | a new crate enters the inventory | the backpack opens |
 | `HUDFrame.Deck` | a unit the player **did not have** enters the profile | the loadout opens |
 | `HUDFrame.CardShop` | the four-hour stock block turned | the shop opens |
@@ -66,6 +67,7 @@ One rule per button:
   It lives in the open path, not the click, because every panel also opens through `Open()`.
 - The backpack and loadout badges are **reset** there, not turned off: whatever arrives after the look lights the badge again.
 - **A pending claim is state, not news**: the contracts badge insists while a completed contract is unclaimed, even after the board opens.
+  The Index badge is state too (`IndexConfig.hasNew` on the profile): opening the book does not clear it, clicking the new items does.
 - **The card shop turn is clock math** (`RoundCardShopConfig.rotationIndex`, checked every five seconds): the block turns at the same time for everyone.
   The contracts turn is read from the **profile** (`Contracts[kind].Period`), because what matters is the draw already saved.
 - **The state belongs to the Lobby visit** and lives only on the client.

@@ -169,18 +169,18 @@ UnitUpgradeConfig.Units = {
 	},
 
 	--[[
-		| Level | 0   | 1   | 2   | 3   | 4   | 5   |
-		| Slow  | 10% | 14% | 18% | 22% | 26% | 30% |
-		| Range | 3   | 3.4 | 3.8 | 4.2 | 4.6 | 5   |
+		| Level | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Price | $165 | $130 | $200 | $285 | $350 | $425 |
+		| Slow  | 12%  | 15%  | 18%  | 23%  | 27%  | 30%  |
+		| Range | 4    | 4.3  | 4.7  | 5    | 5.4  | 6    |
 
-		The ring is on from placement, and each upgrade adds 4 points up to 30%. Range
-		comes from `RangeStats` in `UnitStats`.
-
-		With the 150 placement cost from `UnitStats`, maxing it costs 1,350. Provisional.
+		Level 0's price is the placement cost (`Cost` in `UnitStats`); the others are
+		`Costs`. The ring is on from placement. Range comes from `RangeStats.Levels` in
+		`UnitStats`. Maxing it costs 1,555. Numbers from the 2026-10-07 balance sheet.
 	]]
 	["Cryomancer"] = {
-		Costs = { 100, 150, 250, 325, 375 },
-		Slows = { 0.10, 0.14, 0.18, 0.22, 0.26, 0.30 },
+		Costs = { 130, 200, 285, 350, 425 },
+		Slows = { 0.12, 0.15, 0.18, 0.23, 0.27, 0.30 },
 
 		-- Inert, kept only because `GetDamageMultiplier` is called for every unit: its
 		-- `Damage` is 0.

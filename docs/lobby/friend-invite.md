@@ -2,6 +2,10 @@
 
 A while after a player arrives in the Lobby, a Roblox notification suggests one of their online friends and offers to invite them.
 
+> **Off since 2026-10-07.** `AUTO_SUGGEST = false` in `FriendInviteService` stops the automatic suggestion (step 1 below never schedules).
+> Accepted invites are still credited, and `friendinvite` still sends a suggestion by hand.
+> Setting the flag back to `true` restores everything as described here.
+
 **Runs in:** Lobby
 **Code:** [`FriendInviteService`](../../Lobby/src/Services/FriendInviteService.luau), [`FriendInviteController`](../../Lobby/src/Controllers/FriendInviteController.luau), [`friendinvite`](../../Lobby/src/CmdrDefinitions/Commands/FriendInvite.luau), [`friendinvitestats`](../../Lobby/src/CmdrDefinitions/Commands/FriendInviteStats.luau), [`ProfileEditService`](../../common/server/Services/ProfileEditService.luau), [`Config.Data`](../../common/server/Config/Data.luau) (`FriendInvites`)
 

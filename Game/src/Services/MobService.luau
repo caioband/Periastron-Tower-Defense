@@ -207,6 +207,7 @@ local MobService = {
 		DifficultyService = {},
 		WeatherService = {},
 		CardModifierService = {},
+		IndexService = {},
 	},
 	ActiveMobs = {},
 	DebugParts = {},
@@ -1365,6 +1366,10 @@ function MobService:SpawnWave(waveNumber)
 					}
 					self.ActiveMobCount += 1
 
+					-- Everyone in the match saw it spawn, so it enters their Index.
+					-- `UnlockEnemy` writes only the first time, so this costs a lookup.
+					local indexService = self.Services.IndexService
+
 					for _, player in Players:GetPlayers() do
 						Framework:Fire("SpawnClientMob", player, {
 							Id = mobId,
@@ -1373,6 +1378,10 @@ function MobService:SpawnWave(waveNumber)
 							MaxHealth = maxHealth,
 							Route = routeIndex,
 						})
+
+						if indexService then
+							indexService:UnlockEnemy(player, spawnEntry.Entity)
+						end
 					end
 					-- The group's last enemy waits the gap to the next group, when the
 					-- wave table sets one (`GroupDelay` in `Config.Waves`).

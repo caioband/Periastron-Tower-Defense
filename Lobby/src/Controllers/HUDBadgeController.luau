@@ -20,6 +20,7 @@ local Framework = Me.new()
 local log = Log.new("HUDBadgeController")
 
 local ContractConfig = SharedConfig.ContractConfig
+local IndexConfig = SharedConfig.IndexConfig
 local RoundCardShopConfig = SharedConfig.RoundCardShopConfig
 
 --[[ CONSTANTS ]]
@@ -45,7 +46,7 @@ local ROBUX_SECONDS = 300
 local ROTATION_INTERVAL = 5
 
 --[=[
-	The five buttons that have a badge, and which column each lives in. `Key` is the
+	The six buttons that have a badge, and which column each lives in. `Key` is the
 	button's name **and** the badge key: it is what `NoteSeen` receives.
 
 	**`HUDFrame.Shop` is not here on purpose**: the crate shop has no news to announce
@@ -55,6 +56,7 @@ local ROTATION_INTERVAL = 5
 local BADGES = {
 	{ Key = "Contracts", Column = "HUDLeft" },
 	{ Key = "RobuxShop", Column = "HUDLeft" },
+	{ Key = "Index", Column = "HUDLeft" },
 	{ Key = "Backpack", Column = "HUDFrame" },
 	{ Key = "Deck", Column = "HUDFrame" },
 	{ Key = "CardShop", Column = "HUDFrame" },
@@ -76,7 +78,10 @@ local BADGES = {
 	  - **Deck**: some unit the player did not have entered the profile. Clears when the
 	    loadout opens;
 	  - **CardShop**: the storefront's four-hour block turned over. Clears when the shop
-	    opens.
+	    opens;
+	  - **Index**: something discovered that the player has not clicked in the Index yet
+	    (`IndexConfig.hasNew`). Like the pending claim it is state, read from the profile:
+	    opening the Index does not clear it, clicking each new item does.
 
 	**Opening the panel clears almost every badge** (`NoteSeen`, called by each panel the
 	instant it comes in): the opening has happened, and the player has seen what was new:
@@ -199,6 +204,8 @@ function HUDBadgeController:_isOn(key : string) : boolean
 		return next(self.NewUnits) ~= nil
 	elseif key == "CardShop" then
 		return self.CardShopReset
+	elseif key == "Index" then
+		return IndexConfig.hasNew(self:_data())
 	end
 
 	return false

@@ -162,6 +162,10 @@ return {
 			migration is needed.
 		]]
 		Index = IndexConfig.createEmpty(),
+
+		-- What of `Index` the player already clicked in the Index UI; a discovered key
+		-- missing here is "new". Same shape as `Index`, same writer.
+		IndexSeen = IndexConfig.createEmpty(),
 		--[[
 			What a new player already owns. Only Common and Rare: starting with two
 			Rockets and two Subspace Tripminers put the top of the table in their

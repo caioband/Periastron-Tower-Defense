@@ -65,6 +65,8 @@ return {
 		roundcash = true,
 		friendinvite = true,
 		friendinvitestats = true,
+		-- Wipes only the profile in the QA universe's own DataStore; refuses in Production.
+		datareset = true,
 		-- Lists only what the tester can run: the client drops the rest from its registry.
 		help = true,
 	} :: { [string]: boolean },

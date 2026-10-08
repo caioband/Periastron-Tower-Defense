@@ -9,7 +9,7 @@ For the repository layout and what is shared between the places, see [Repository
 | Folder | Mounted at | Contents |
 | --- | --- | --- |
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | Entry LocalScript |
-| `src/Controllers/` | `Client.Controllers.Lobby` | ChooseMaps, Contract, Crate, CratePity, CrateUI, Deck, FriendInvite, HUD, HUDBadge, HUDButton, LobbyMusic, NextEvent, PlayButton, Portal, RobuxShop, RoundCardShop, Shop, ShopKeeper, UILibrary, Unboxing |
+| `src/Controllers/` | `Client.Controllers.Lobby` | ChooseMaps, Contract, Crate, CratePity, CrateUI, Deck, FriendInvite, HUD, HUDBadge, HUDButton, Index, LobbyMusic, NextEvent, PlayButton, Portal, RobuxShop, RoundCardShop, Shop, ShopKeeper, UILibrary, Unboxing |
 | `src/Services/` | `ServerScriptService.Services.Lobby` | AfkTeleport, Crate, Deck, FriendInvite, Leaderstats, Portal, RoundCardShop, Shop, Summoning, WelcomeBadge |
 | `src/CmdrDefinitions/Commands/` | `ServerScriptService.CmdrDefinitions.Commands.Lobby` | `friendinvite`, `friendinvitestats`, `setcrates`, `unbox` |
 | `src/CmdrDefinitions/Types/` | `ServerScriptService.CmdrDefinitions.Types.Lobby` | `crateRarity` |
@@ -21,6 +21,7 @@ For the repository layout and what is shared between the places, see [Repository
 | [HUD](hud.md) | Level, XP, currencies, column buttons, `New` badges, leaderstats, the welcome badge |
 | [Maps panel](maps-panel.md) | Choosing the map and the win locks |
 | [Deck](deck.md) | The loadout: inventory, equipped cards, slot unlocks |
+| [Index](index.md) | The book of discovered units, enemies, weathers, and maps |
 | [Crates and unboxing](crates-and-unboxing.md) | Crate names, odds, and the shared unboxing |
 | [Crate shop](shop.md) | The crate shop and the shopkeeper |
 | [Card shop](round-card-shop.md) | Unlocking round cards with shards |

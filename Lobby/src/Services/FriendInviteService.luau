@@ -61,6 +61,14 @@ local log = Log.new("FriendInviteService")
 
 local DATA_KEY = "FriendInvites"
 
+--[[
+	Whether the automatic suggestion runs. Off since 2026-10-07, by request: no
+	notification appears on its own. What stays on is everything that is not the
+	notification nagging: accepted invites are still credited (`creditReferral`), and
+	Cmdr's `friendinvite` still sends one by hand. Turning it back on is only this flag.
+]]
+local AUTO_SUGGEST = false
+
 -- What the invites opened by the notification carry in `LaunchData`. The client
 -- gets it in the prompt, so this is the only copy.
 local LAUNCH_DATA = "FriendInvite"
@@ -329,6 +337,7 @@ end
 	next beat until `SnoozedUntil`.
 ]=]
 function FriendInviteService:schedule(player : Player)
+	if not AUTO_SUGGEST then return end
 	if self.Scheduled[player] then return end
 	self.Scheduled[player] = true
 

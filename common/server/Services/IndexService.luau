@@ -22,9 +22,15 @@ local log = Log.new("IndexService")
 	door, and there is a single one for both places. Each trigger calls from where
 	the information exists:
 
-	  - unit obtained -> `CrateService` and `SummoningService` (Lobby)
-	  - map played    -> `MapService` (Game), which knows which map loaded
-	  - enemies       -> nobody yet; the category exists empty on purpose
+	  - unit obtained   -> `CrateService` and `SummoningService` (Lobby)
+	  - map entered     -> `MapService` (Game), which knows which map loaded
+	  - enemy spawned   -> `MobService` (Game), for every player in the match
+	  - weather started -> `WeatherRoundService` (Game), on `WeatherStarted`
+
+	It also writes `IndexSeen`, the keys the player clicked in the Lobby's Index UI
+	(`IndexSeen` event, from `IndexController`). The client only names the key: a
+	key the player has not discovered is refused, so a forged click can light
+	nothing and clear nothing that matters.
 
 	**Discovery is forever.** Nothing here deletes: a sold unit stays discovered,
 	because the Index is a memory of what the player has seen, not an inventory.
@@ -60,6 +66,19 @@ end
 	zero means nothing was written and nothing was replicated.
 ]=]
 function IndexService:_unlock(player : Player, category : string, keys : { string }) : number
+	-- Only what the Index can show: a key with no page (the tutorial map) would be a
+	-- "new" nobody can ever click. See `IndexConfig.isKnown`.
+	return self:_write(player, IndexConfig.DISCOVERED_KEY, category, keys, function(profile, key)
+		return IndexConfig.isKnown(category, key) and not IndexConfig.has(profile, category, key)
+	end)
+end
+
+--[=[
+	Adds keys to `profile[root][category]`, only those `accepts` lets through, in a
+	single `Update`. Shared by discovery (`Index`) and clicks (`IndexSeen`), which
+	have the same shape and differ only in which keys are worth writing.
+]=]
+function IndexService:_write(player : Player, root : string, category : string, keys : { string }, accepts : (any, string) -> boolean) : number
 	if not IndexConfig.isCategory(category) then
 		log:StudioWarn(string.format("%q is not an Index category.", tostring(category)))
 		return 0
@@ -80,7 +99,7 @@ function IndexService:_unlock(player : Player, category : string, keys : { strin
 	-- was already there sends a replication to say nothing.
 	local pending = {}
 	for _, key in keys do
-		if typeof(key) == "string" and key ~= "" and not IndexConfig.has(profile, category, key) then
+		if typeof(key) == "string" and key ~= "" and accepts(profile, key) and not table.find(pending, key) then
 			table.insert(pending, key)
 		end
 	end
@@ -89,7 +108,7 @@ function IndexService:_unlock(player : Player, category : string, keys : { strin
 		return 0
 	end
 
-	dataService:Update(player, "Index", function(index)
+	dataService:Update(player, root, function(index)
 		index = typeof(index) == "table" and index or IndexConfig.createEmpty()
 
 		local entries = index[category]
@@ -155,6 +174,26 @@ function IndexService:UnlockMap(player : Player, mapName : string) : boolean
 	return self:Unlock(player, "Maps", mapName)
 end
 
+--- An enemy (its `Mob.Entities` key) spawned in the player's match.
+function IndexService:UnlockEnemy(player : Player, entityName : string) : boolean
+	return self:Unlock(player, "Enemies", entityName)
+end
+
+--- A weather (its `Assets.Weathers` name) went live in the player's match.
+function IndexService:UnlockWeather(player : Player, weatherName : string) : boolean
+	return self:Unlock(player, "Weathers", weatherName)
+end
+
+--[=[
+	The player clicked the key in the Index UI: it stops being "new". Only a key
+	already discovered and not seen yet is written. Returns whether it was written.
+]=]
+function IndexService:MarkSeen(player : Player, category : string, key : string) : boolean
+	return self:_write(player, IndexConfig.SEEN_KEY, category, { key }, function(profile, candidate)
+		return IndexConfig.isNew(profile, category, candidate)
+	end) > 0
+end
+
 --- Whether the player already discovered this key.
 function IndexService:Has(player : Player, category : string, key : string) : boolean
 	return IndexConfig.has(self:_profileOf(player), category, key)
@@ -171,6 +210,13 @@ function IndexService:construct()
 
 	dataService.Signals.PlayerDataLoaded:Connect(function(player : Player)
 		self:_syncOwnedUnits(player)
+	end)
+
+	-- The Index UI's click. Everything that arrives is checked in `MarkSeen`.
+	Framework:Listen("IndexSeen", function(player : Player, category : any, key : any)
+		if typeof(category) ~= "string" or typeof(key) ~= "string" then return end
+
+		self:MarkSeen(player, category, key)
 	end)
 
 	-- Players already in when this service started: their signal already fired.

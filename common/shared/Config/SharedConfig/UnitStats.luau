@@ -785,8 +785,8 @@ local UnitStats = {
 		around itself (`SlowAura.Ring`, a Model in `Assets.VFX.Rings`), and every enemy
 		inside it walks slower.
 
-		The slow per level is `Slows` in `UnitUpgradeConfig`: 10% when placed, 4 more per
-		upgrade, 30% at max.
+		The slow per level is `Slows` in `UnitUpgradeConfig`: 12% when placed, 30% at
+		max, in uneven steps (see the table there).
 
 		The radius is `Range`, read through `UnitUpgradeConfig:GetRange`, which is the
 		circle the player sees when selecting it, weather and cards included; the same
@@ -796,22 +796,22 @@ local UnitStats = {
 		strongest one (`MobService:SetAuraSlows`), and back at its own pace the moment it
 		leaves the ring. `Cooldown` is inert: nothing here runs on a cycle.
 
-		Cost, range, and upgrade prices are provisional.
+		Range rises in uneven steps (4 to 6), so it is a `RangeStats.Levels` ladder.
+		Numbers from the 2026-10-07 balance sheet.
 	]=]
 	["Cryomancer"] = {
 		Rarity = "Common",
 		Class = "Ice",
-		Cost = 150,
+		Cost = 165,
 		Damage = 0,
-		Range = 3,
+		Range = 4,
 		Cooldown = 1,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
 		SlowAura = { Ring = "Frigid" },
 		RangeStats = {
-			Increment = 0.4,
-			Max = 5,
+			Levels = { 4, 4.3, 4.7, 5, 5.4, 6 },
 		},
 	},
 }

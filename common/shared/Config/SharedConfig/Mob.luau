@@ -84,6 +84,13 @@ local SENTINEL_RUSH = {
 	Once = true,
 }
 
+--[[
+	Every enemy, by the Model name in `Assets.Entities.Difficulties.<Folder>`.
+
+	The Lobby's Index shows the key split at its capitals ("RedcliffChampion" ->
+	"Redcliff Champion"). An optional `DisplayName` overrides that when the split
+	reads wrong.
+]]
 Mob.Entities = {
 	-- Redcliff (`Hard`), used by Hard and the tutorial.
 	Traveler = { Folder = "Hard", Health = 5, SpeedMultiplier = 1 },
