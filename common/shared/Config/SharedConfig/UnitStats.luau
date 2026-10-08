@@ -353,7 +353,7 @@ local UnitStats = {
 
 		--[=[
 		The channeled beam: 8 DPS at 0% ramp and 32 at 100% (`Damage` 2 every 0.25 s,
-		times `MaxMultiplier` 4), against a 300 placement cost. Small, frequent ticks
+		times `MaxMultiplier` 4), against a 1,000 placement cost. Small, frequent ticks
 		so it reads as continuous damage, like the Archmage's `Lightning`. The numbers
 		are provisional.
 
@@ -368,7 +368,7 @@ local UnitStats = {
 	["Bonfire"] = {
 		Rarity = "Legendary",
 		Class = "Fire",
-		Cost = 300,
+		Cost = 1000,
 		Damage = 2,
 		Range = 10,
 		Cooldown = 0.25,
@@ -448,8 +448,8 @@ local UnitStats = {
 		control, not damage. Each hit leaves a `Frost` stack; with any stack the enemy
 		walks 30% slower, and on the fourth it freezes for 3s.
 
-		That is why its DPS per cash sits low (rule 1): 10 every 1s is 10 DPS, or 5 per
-		100 cash. The rest of the price is the freeze: fast shots close the four stacks
+		Its DPS per cash is middling (rule 1): 12 every 1s is 12 DPS, or 8.9 per 100
+		cash. The rest of the price is the freeze: fast shots close the four stacks
 		in 3s, freeze for 3s, and the enemy still spends 2s immune before it can stack
 		again. Close to a third of the time stopped, and never locked for good, however
 		fast the unit gets.
@@ -457,8 +457,8 @@ local UnitStats = {
 	["Frostione"] = {
 		Rarity = "Epic",
 		Class = "Ice",
-		Cost = 200,
-		Damage = 10,
+		Cost = 135,
+		Damage = 12,
 		Range = 10,
 		Cooldown = 1,
 		AttackType = "SingleShot",
@@ -574,15 +574,14 @@ local UnitStats = {
 	--[[ RARE ]]
 
 	--[[
-		The cheap long-range poker: 7 damage every 1.15 s, 6.1 DPS, 3.5 per 100 cash,
-		among the lowest in the table on purpose. It kills nothing alone; what it sells
-		is constant poking from afar, and at max level the cycle drops to 0.77 s and
-		the damage almost quadruples (26).
+		The cheap long-range poker: 10 damage every 1.1 s, 9.1 DPS, 6.1 per 100 cash.
+		What it sells is constant poking from afar, and at max level the cycle drops
+		to 0.75 s and the damage almost triples (28).
 
 		**The cooldown is no longer shorter than the shot's windup** (0.7 s in
 		`UnitAttackConfig`) at the first levels, but it gets close again at the top,
 		so its step is still written as `HitTimes` + `Duration` instead of `HitTime`:
-		with a 0.77 s cycle against a 1.25 s animation, both ends compress the instant
+		with a 0.75 s cycle against a 1.25 s animation, both ends compress the instant
 		along with the gesture. See its comment there.
 
 		Range rises in steps up to 16 (`RangeStats.Levels`): rule 2's long band, shared
@@ -591,10 +590,10 @@ local UnitStats = {
 	["Slingshot"] = {
 		Rarity = "Rare",
 		Class = "Ranged",
-		Cost = 175,
-		Damage = 7,
+		Cost = 150,
+		Damage = 10,
 		Range = 12,
-		Cooldown = 1.15,
+		Cooldown = 1.1,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
@@ -618,7 +617,7 @@ local UnitStats = {
 		  restarts it on each attack, so the gesture still shows whole, and the shot
 		  is squeezed with it on both sides (`HitTimes` + `Duration` in
 		  `UnitAttackConfig`).
-		- 16 damage in 3s is 5.3 DPS, or 4.3 per 100 cash: above the Slingshot (3.5),
+		- 16 damage in 3s is 5.3 DPS, or 4.3 per 100 cash: below the Slingshot (6.1),
 		  the other shooting Rare, and well below rule 1's cap of 15. At max level it
 		  is 23.7 DPS.
 
@@ -745,7 +744,7 @@ local UnitStats = {
 		the player buys on wave 1.
 
 		5 damage every 0.85 s is 5.9 DPS, or 6.5 per 100 cash: far from rule 1's cap of
-		15, and **above** the Slingshot (3.5) and the Archer (4.3), which are Rare and
+		15, and **above** the Slingshot (6.1) and the Archer (4.3), which are Rare and
 		cost more. Rarity is not a ladder (see rule 1 at the top), and what separates
 		the three is still range: it has to hug the path to strike, and they do not.
 

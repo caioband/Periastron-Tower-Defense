@@ -58,11 +58,11 @@ local UnitAttackConfig = {
 
 	--[[
 		Written as `HitTimes` + `Duration`, not `HitTime`, for the same reason as the
-		Frostione below: its cooldown is **shorter than the windup**. 0.55 s at level
-		0 and 0.32 s at max, against the shot's 0.7 s; `HitTime` is a fixed wait that
-		only the client shrinks along with the track, so the shot would land after
-		the next attack started, later and later as the unit got faster. With the
-		list, both sides divide by the same factor (see `UnitService`'s `squeeze` and
+		Frostione below: its cooldown is **shorter than the animation**. 1.1 s at
+		level 0 and 0.75 s at max, against 1.25 s; `HitTime` is a fixed wait that
+		only the client shrinks along with the track, so the shot would land later
+		and later in the cycle as the unit got faster. With the list, both sides
+		divide by the same factor (see `UnitService`'s `squeeze` and
 		`Unit:playAttackVisual`'s `fit`).
 
 		1.25 s is the `Attack` animation length.
@@ -168,7 +168,7 @@ local UnitAttackConfig = {
 		copy both sides obey. The projectile leaves and the server applies damage on it.
 
 		Written as `HitTimes` + `Duration`, not `HitTime`, because of the cooldown:
-		with upgrades it drops to 1 s, below the animation. `HitTime` is a fixed wait
+		it starts at 1 s, already below the animation, and drops to 0.48 s at max. `HitTime` is a fixed wait
 		only the client shrinks with the track; both sides divide `HitTimes` by the
 		same factor (see `UnitService`'s `squeeze` and `Unit:playAttackVisual`'s
 		`fit`), so the shot still leaves on the marker frame with the animation
@@ -229,7 +229,7 @@ local UnitAttackConfig = {
 			{ At = 0.66, Animation = "Attack3", Beam = "MaxFireBeam" },
 		},
 		Charge = { Animation = "StartAttack" },
-		Tired = { Animation = "Tired", Duration = 2 },
+		Tired = { Animation = "Tired", Duration = 4 },
 		BeamAttachment = {
 			Part = "Right Arm",
 			Names = { "BeamAttachment", "BeamAttatchment", "BeamPart" },

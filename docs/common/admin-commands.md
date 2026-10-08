@@ -71,9 +71,10 @@ In the [QA environment](environments.md), **every player is a tester** and may r
 | `friendinvite` | Lobby |
 | `friendinvitestats` | Lobby |
 | `datareset` | both |
+| `tutorialreset` | both |
 | `help` | both |
 
-Testers can aim them at any player, online or offline, like admins (`datareset` only reaches players on the same server).
+Testers can aim them at any player, online or offline, like admins (`datareset` and `tutorialreset` only reach players on the same server).
 QA is a separate universe with its own DataStores, so this never touches a production profile.
 In Production, `QA_COMMANDS` does nothing.
 A tester's console shows only these commands (and only the ones registered in the current place).

@@ -69,7 +69,7 @@ Difficulty.Presets = {
 		The numbers are for a match the player **must** win: few, weak enemies (see
 		`Config.Waves.Tutorial`) and a base that takes no damage. Losing here would
 		take effort. `StartingCash` covers the whole tutorial deck
-		(Slingshot 175 + Archer 150 x2 = 475) with room to spare, because the player
+		(Slingshot 150 + Archer 125 x2 = 400) with room to spare, because the player
 		places one unit on wave 1 and the other two on wave 5, and running out of
 		money mid-script is the only way they could get stuck.
 

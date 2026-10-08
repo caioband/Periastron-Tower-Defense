@@ -67,6 +67,8 @@ return {
 		friendinvitestats = true,
 		-- Wipes only the profile in the QA universe's own DataStore; refuses in Production.
 		datareset = true,
+		-- Clears the profile's `Tutorial` flag, so the tutorial can be tested again.
+		tutorialreset = true,
 		-- Lists only what the tester can run: the client drops the rest from its registry.
 		help = true,
 	} :: { [string]: boolean },

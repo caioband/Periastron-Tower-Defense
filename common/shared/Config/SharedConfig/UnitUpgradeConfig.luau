@@ -22,15 +22,16 @@ local UnitAttackConfig = require(script.Parent.UnitAttackConfig)
 	| `Incomes` | a farm's income per wave at each level (index = level + 1). Overrides `Farm.Income` x `DamageMultiplier`; item 1 must equal `UnitStats` `Farm.Income` |
 	| `Slows` | a slow aura's slow at each level (index = level + 1), as the fraction removed: 0.3 is "30% slower". Only for units with `SlowAura` in `UnitStats` |
 
-	Ten units use `Costs` today, because their price ladder was designed per wave,
-	not by formula: the jumps are uneven on purpose. The Slingshot, Archer, Pyre, and
-	Berserker use `Cooldowns` (none of them drops at a fixed ratio), the Archer and
-	Berserker use `Damages`, and only the Entrepreneur, the only farm, uses `Incomes`.
+	Most units use `Costs` today, because their price ladder was designed per wave,
+	not by formula: the jumps are uneven on purpose. The Slingshot, Archer, Pyre,
+	Frostione, and Berserker use `Cooldowns` (none of them drops at a fixed ratio),
+	the Slingshot, Archer, and Berserker use `Damages`, and only the Entrepreneur,
+	the only farm, uses `Incomes`.
 
 	**`Damages` is the last resort, not the easy way out.** The damage ladder goes
 	through rounding, so a hand-designed table almost always still fits a ratio:
-	find the multiplier range where all six numbers round right, as the Slingshot
-	does with 1.304. Only when that range is empty (the Archer's and Berserker's
+	find the multiplier range where all six numbers round right, as the Frostione
+	does. Only when that range is empty (the Slingshot's, Archer's, and Berserker's
 	steps cross, and no number works for all six) does the list come in.
 
 	The rule is simple: **if the formula reproduces the table exactly, use the
@@ -160,10 +161,10 @@ UnitUpgradeConfig.Units = {
 		one (`UnitService:stepBonfireBeam`), so level 1 deals 2, 2, 3, 2, 3... The UI's
 		`GetDamage` rounds, so it shows 2, 2, 3, 3, 4, 5.
 
-		With the 300 placement cost from `UnitStats`, maxing it costs 2,595.
+		With the 1,000 placement cost from `UnitStats`, maxing it costs 19,000.
 	]]
 	["Bonfire"] = {
-		Costs = { 200, 300, 420, 575, 800 },
+		Costs = { 1650, 2100, 3250, 4500, 6500 },
 		DamageMultiplier = (5 / UnitStats["Bonfire"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
 		DamageCaps = { 500, 1000, 1500, 2000, 2500, 3000 },
 	},
@@ -212,28 +213,25 @@ UnitUpgradeConfig.Units = {
 	},
 	--[=[
 		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Damage   | 7    | 9    | 12   | 16   | 20   | 26   |
-		| Cooldown | 1.15 | 1.05 | 0.93 | 0.87 | 0.82 | 0.77 |
+		| Damage   | 10   | 13   | 16   | 19   | 23   | 28   |
+		| Cooldown | 1.10 | 1.00 | 0.90 | 0.85 | 0.80 | 0.75 |
 		| Range    | 12   | 13   | 14   | 15   | 15   | 16   |
-		| DPS      | 6.1  | 8.6  | 12.9 | 18.4 | 24.4 | 33.8 |
+		| DPS      | 9.1  | 13.0 | 17.8 | 22.4 | 28.8 | 37.3 |
 
 		The cooldown is a hand ladder (`Cooldowns`) because its steps are not
-		geometric: it drops 0.10, 0.12, 0.06, 0.05, and 0.05, strong at first and
+		geometric: it drops 0.10, 0.10, 0.05, 0.05, and 0.05, strong at first and
 		almost flat at the end; from level 3 up, upgrades buy damage, not attack speed.
 
-		**`1.304` is not the max-level target written as a root**, unlike the Slasher
-		and Frostione: `(26/7) ^ (1/5)` would give 1.3001 and level 3 would land at
-		15.4, a 15 where the table wants 16. The range that rounds to all six numbers is
-		very narrow (1.3034 to 1.3051), and 1.304 is inside it. Change any step and
-		redo the math: there is no slack here, and if the range closes the way out is a
-		hand `Damages`, like the Archer's and Berserker's.
+		Damage needs `Damages` because the steps cross: level 1 landing on 13 needs a
+		multiplier of at least 1.25, and level 3 landing on 19 needs one under 1.2494.
 
-		With the 175 placement cost from `UnitStats`, maxing it costs 1,725.
+		With the 150 placement cost from `UnitStats`, maxing it costs 1,585. Numbers
+		from the 2026-10-07 balance sheet.
 	]=]
 	["Slingshot"] = {
-		Costs = { 130, 210, 285, 375, 550 },
-		DamageMultiplier = 1.304,
-		Cooldowns = { 1.15, 1.05, 0.93, 0.87, 0.82, 0.77 },
+		Costs = { 110, 200, 250, 350, 525 },
+		Damages = { 10, 13, 16, 19, 23, 28 },
+		Cooldowns = { 1.1, 1, 0.9, 0.85, 0.8, 0.75 },
 	},
 	--[[
 		The shot's damage goes from 15 to 25 at max level, by the same math as the
@@ -316,22 +314,26 @@ UnitUpgradeConfig.Units = {
 		DamageMultiplier = 1.25,
 	},
 	--[[
-		Upgrades buy damage and attack speed up to fixed max-level targets: 14 damage
-		(10 -> 14) and half the cooldown (1 s -> 0.5 s), for 28 DPS at the top. Same
-		math as the Slasher below: the `MaxUpgrades`-th root of target/base. Slow and
-		freeze do not grow, but a faster shot fills the four stacks sooner, so freezes
-		become more frequent with level.
+		Upgrades buy damage and attack speed. Slow and freeze do not grow, but a faster
+		shot fills the four stacks sooner, so freezes become more frequent with level.
 
 		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
-		| Damage   | 10   | 11   | 11   | 12   | 13   | 14   |
-		| Cooldown | 1.00 | 0.87 | 0.76 | 0.66 | 0.57 | 0.50 |
-		| DPS      | 10.0 | 12.6 | 14.5 | 18.2 | 22.6 | 28.0 |
+		| Damage   | 12   | 13   | 14   | 15   | 16   | 17   |
+		| Cooldown | 1.00 | 0.85 | 0.75 | 0.65 | 0.55 | 0.48 |
+		| DPS      | 12.0 | 15.3 | 18.7 | 23.1 | 29.1 | 35.4 |
+
+		Damage is the max-level target written as a root, by the same math as the
+		Slasher: `(17/12) ^ (1/5)` is 1.0721, inside the range that rounds to all six
+		numbers (1.0661 to 1.0784). The cooldown is a hand ladder (`Cooldowns`): its
+		steps (0.15, then 0.10 three times, then 0.07) fit no ratio.
+
+		With the 135 placement cost from `UnitStats`, maxing it costs 1,780. Numbers
+		from the 2026-10-07 balance sheet.
 	]]
 	["Frostione"] = {
-		-- With the 200 placement cost from `UnitStats`, maxing it costs 2,015.
-		Costs = { 135, 250, 345, 470, 615 },
-		DamageMultiplier = (14 / UnitStats["Frostione"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
-		CooldownMultiplier = (0.5 / UnitStats["Frostione"].Cooldown) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+		Costs = { 100, 210, 350, 435, 550 },
+		DamageMultiplier = (17 / UnitStats["Frostione"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+		Cooldowns = { 1, 0.85, 0.75, 0.65, 0.55, 0.48 },
 	},
 	--[[
 		+15% damage per level, on all three attacks. The cooldown at the end of the
