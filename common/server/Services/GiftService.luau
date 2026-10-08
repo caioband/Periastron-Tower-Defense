@@ -33,6 +33,7 @@ local EVENTS = {
 	LookupResult = "GiftLookupResult",
 	Notify = "GiftNotification",       -- server -> client
 	Seen = "GiftSeen",                 -- client -> server
+	Announce = "GiftAnnounce",         -- server -> client, everyone on the server
 }
 
 --[[
@@ -95,6 +96,8 @@ local GiftService = {
 	Busy = {},
 	Delivering = {},
 	Dirty = {},
+		-- [giftId] = true
+	Announced = {},
 }
 
 --[[ INTERNAL ]]
@@ -661,6 +664,29 @@ end
 	The receipt of a gift product, called by `MonetizationService`. `false` makes
 	the receipt come back later; it is safe to run twice for the same purchase.
 ]=]
+
+--[=[
+	Tells everyone on this server, in chat, that a gift was bought. Names only: the
+	text is built on the client.
+]=]
+function GiftService:_announce(buyer : Player, recipientName : any, itemKey : string)
+	if typeof(recipientName) ~= "string" or recipientName == "" then
+		return
+	end
+
+	local itemName = GiftConfig.displayName(itemKey) or itemKey
+
+	for _, other in Players:GetPlayers() do
+		Framework:Fire(EVENTS.Announce, other, buyer.Name, recipientName, itemName)
+	end
+end
+
+
+
+--[=[
+	The receipt of a gift product, called by `MonetizationService`. `false` makes
+	the receipt come back later; it is safe to run twice for the same purchase.
+]=]
 function GiftService:_onPurchase(itemKey : string, player : Player, receiptInfo : any) : boolean
 	local dataService = self.Services.DataService
 
@@ -725,6 +751,13 @@ function GiftService:_onPurchase(itemKey : string, player : Player, receiptInfo 
 		RecipientId = recipientId,
 		RecipientName = usable and intent.RecipientName or nil,
 	})
+
+	-- A receipt that runs twice announces once. A gift that fell back to the
+	-- buyer was not a gift to anyone, so it says nothing.
+	if recipientId ~= player.UserId and not self.Announced[giftId] then
+		self.Announced[giftId] = true
+		self:_announce(player, usable and intent.RecipientName or nil, itemKey)
+	end
 
 	return true
 end
@@ -1173,6 +1206,7 @@ function GiftService:init()
 	Framework:Listen(EVENTS.RequestResult, function() end)
 	Framework:Listen(EVENTS.LookupResult, function() end)
 	Framework:Listen(EVENTS.Notify, function() end)
+	Framework:Listen(EVENTS.Announce, function() end)
 end
 
 return GiftService
