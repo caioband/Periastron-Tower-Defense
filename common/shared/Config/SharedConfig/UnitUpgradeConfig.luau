@@ -384,6 +384,23 @@ UnitUpgradeConfig.Units = {
 		DamageMultiplier = 1.15,
 		Cooldowns = { 8, 7.67, 7.36, 7.06, 6.28, 6 },
 	},
+
+	["Necromancer"] = {
+		Costs = { 275, 425, 600, 850, 1300 },
+		DamageMultiplier = (30 / UnitStats["Necromancer"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+		CooldownMultiplier = 0.94,
+		ConvertChances = { 0.10, 0.13, 0.16, 0.20, 0.25, 0.33 },
+		ConvertCooldowns = { 10, 9, 8, 6.5, 5, 3.5 },
+		MaxMinions = { 1, 1, 2, 2, 3, 4 },
+	},
+
+
+	
+
+
+
+
+
 }
 
 --[[
@@ -849,5 +866,42 @@ end
 function UnitUpgradeConfig:IsMaxed(level)
 	return (level or 0) >= self.MaxUpgrades
 end
+
+function UnitUpgradeConfig:GetConvertChance(unitName, level)
+	local stats = UnitStats[unitName]
+	local ladder = self:GetUnitData(unitName).ConvertChances
+
+	if not (stats and stats.Necromancy) or not ladder or #ladder == 0 then
+		return 0
+	end
+
+	return ladder[math.clamp((level or 0) + 1, 1, #ladder)]
+end
+
+function UnitUpgradeConfig:GetConvertCooldown(unitName, level)
+	local stats = UnitStats[unitName]
+	local ladder = self:GetUnitData(unitName).ConvertCooldowns
+
+	if not (stats and stats.Necromancy) or not ladder or #ladder == 0 then
+		return 0
+	end
+
+	return ladder[math.clamp((level or 0) + 1, 1, #ladder)]
+end
+
+function UnitUpgradeConfig:GetMaxMinions(unitName, level)
+	local stats = UnitStats[unitName]
+	local ladder = self:GetUnitData(unitName).MaxMinions
+
+	if not (stats and stats.Necromancy) or not ladder or #ladder == 0 then
+		return 0
+	end
+
+	return ladder[math.clamp((level or 0) + 1, 1, #ladder)]
+end
+
+
+
+
 
 return UnitUpgradeConfig

@@ -256,6 +256,13 @@ local UnitAttackConfig = {
 		},
 	},
 
+	["Necromancer"] = {
+		AttackSequence = {
+			{ Animation = "Attack", HitTime = 0.6 },
+		},
+	},	
+
+
 
 }
 

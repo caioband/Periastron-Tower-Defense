@@ -58,8 +58,7 @@ local ROUND_STATE = {
 
 -- Services that keep match state and know how to clean themselves. Each one
 -- exposes `ResetRound()`; anything added to this list gets reset along with it.
-local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService", "WeatherRoundService", "SpeedService", "CardShopService", "SuffocateAbilityService" }
-
+local ROUND_SCOPED_SERVICES = { "MobService", "UnitService", "DifficultyService", "WeatherRoundService", "SpeedService", "CardShopService", "SuffocateAbilityService", "NecromancerService" }
 
 local ENDLESS_BADGES = {
 	[50] = "Endless50",
@@ -79,6 +78,7 @@ local WaveService = {
 		TutorialMatchService = {},
 		BadgeService = {},
 		SuffocateAbilityService = {},
+		NecromancerService = {},
 
 		-- The Shards rune's bonus in `rewardsFor`, and the match lock in `StartRound`.
 		RuneService = {},

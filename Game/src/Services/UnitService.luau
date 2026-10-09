@@ -90,6 +90,7 @@ local UnitService = {
 		WeatherService = {},
 		CardModifierService = {},
 		TutorialMatchService = {},
+		NecromancerService = {},
 	},
 
 	Signals = {
@@ -1194,6 +1195,10 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 	local knockbackCenter = unitStats and unitStats.Knockback and unitStats.Knockback.Radius
 	and self.Services.MobService:getMobPosition(mobId)
 
+	-- The enemy's record before the hit, for the Necromancer: a kill removes it from
+	-- `ActiveMobs`, and the conversion needs its name, health, speed, and route.
+	local necromancyVictim = unitStats and unitStats.Necromancy and self.Services.MobService.ActiveMobs[mobId]
+
 	--[[
 		The Volt's charge, if the target carries one and this is another Electric
 		unit: more damage now and a longer jolt below. Read before the damage, so it
@@ -1210,6 +1215,13 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 		SharedConfig.WeatherConfig.GetClasses(entry.unitName)
 	)
 	self:addDamageDone(entry, dealt)
+
+	if necromancyVictim and dealt > 0 and self.Services.MobService.ActiveMobs[mobId] ~= necromancyVictim then
+		local necromancerService = self.Services.NecromancerService
+		if necromancerService and necromancerService.TryConvert then
+			necromancerService:TryConvert(entry, necromancyVictim)
+		end
+	end
 
 	-- A hit that touched nobody (the enemy was already dead) does not even yield an
 	-- effect: `DamageMob` returns 0 and paid nothing.

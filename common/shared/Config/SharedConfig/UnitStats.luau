@@ -901,6 +901,34 @@ local UnitStats = {
 		},
 	},
 
+	["Necromancer"] = {
+		Rarity = "Legendary",
+		Class = "Magic",
+		Cost = 425,
+		Damage = 14,
+		Range = 10,
+		Cooldown = 1.6,
+		AttackType = "SingleShot",
+		HitInterval = 0,
+		Hits = 1,
+		Necromancy = {
+			HealthScale = 1,
+			SpeedScale = 1,
+			ContactRadius = 1.5,
+			ExcludeBosses = true,
+			Exclude = {},
+			Tint = Color3.fromRGB(120, 255, 140),
+			SpawnVFX = "DeathVFX",
+		},
+		RangeStats = {
+			Increment = 1,
+			Max = 14,
+		},
+	},
+
+
+
+
 
 }
 

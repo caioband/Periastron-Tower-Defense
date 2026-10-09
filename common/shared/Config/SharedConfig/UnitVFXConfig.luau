@@ -75,6 +75,8 @@ local UnitVFXConfig = {
 	]]
 	["Volt"] = { PLACEMENT_EFFECT },
 
+	["Necromancer"] = { PLACEMENT_EFFECT },
+
 }
 
 return UnitVFXConfig
