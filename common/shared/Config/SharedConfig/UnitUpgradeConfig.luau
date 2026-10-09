@@ -206,6 +206,26 @@ UnitUpgradeConfig.Units = {
 	},
 
 	--[[
+		| Level    | 0    | 1    | 2    | 3    | 4    | 5    |
+		| Damage   | 4    | 5    | 5    | 6    | 7    | 8    |
+		| Cooldown | 0.70 | 0.64 | 0.59 | 0.55 | 0.50 | 0.46 |
+		| Static   | 0.40 | 0.44 | 0.48 | 0.52 | 0.56 | 0.60 |
+		| DPS      | 5.7  | 7.8  | 8.4  | 11.0 | 14.0 | 17.3 |
+
+		Damage lands on 8 at max by the Slasher's math (the `MaxUpgrades`-th root of
+		8/4); level 2 repeats, and the 8% cooldown cut keeps it from being a dead
+		level. `Static` is the stun of each charge pulse, from `Static.Stun` to
+		`Static.MaxStun` in `UnitStats` (`GetStaticStun`); the pulse interval does not
+		change. With the 120 placement cost from `UnitStats`, maxing it costs 1,200.
+		Numbers are provisional.
+	]]
+	["Volt"] = {
+		Costs = { 90, 140, 200, 275, 375 },
+		DamageMultiplier = (8 / UnitStats["Volt"].Damage) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+		CooldownMultiplier = 0.92,
+	},
+
+	--[[
 		The Slasher's damage goes from **5 (base) to 9 (max level)**, and the multiplier
 		is the `MaxUpgrades`-th root of 9/5, written as math rather than 1.12475 so the
 		top lands exactly on 9 and keeps landing there if the upgrade cap changes. The
@@ -536,6 +556,28 @@ function UnitUpgradeConfig:GetStunDuration(unitName, level)
 
 	local base = stun.Duration or 0
 	local top = stun.MaxDuration or base
+	local progress = math.clamp((level or 0) / self.MaxUpgrades, 0, 1)
+
+	return base + (top - base) * progress
+end
+
+--[=[
+	How long each pulse of the Volt's charge stops the enemy, at the given level. Zero
+	for units without `Static`.
+
+	Same ladder as `GetStunDuration` above: `Static.Stun` at level 0 and
+	`Static.MaxStun` at max, linearly. Without `MaxStun` the pulse does not grow.
+]=]
+function UnitUpgradeConfig:GetStaticStun(unitName, level)
+	local stats = UnitStats[unitName]
+	local static = stats and stats.Static
+
+	if not static then
+		return 0
+	end
+
+	local base = static.Stun or 0
+	local top = static.MaxStun or base
 	local progress = math.clamp((level or 0) / self.MaxUpgrades, 0, 1)
 
 	return base + (top - base) * progress

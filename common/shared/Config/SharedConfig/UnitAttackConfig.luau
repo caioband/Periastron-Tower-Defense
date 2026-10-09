@@ -244,6 +244,18 @@ local UnitAttackConfig = {
 	},
 },
 
+	--[[
+		0.75 s is the `Hit` marker of the Volt's `Attack` animation (1.3333 s long).
+		`HitTimes` + `Duration` for the Frostione's reason: the cooldown (0.7 s at
+		level 0, 0.46 s at max) is already shorter than the animation, so both sides
+		squeeze the instant along with the gesture.
+	]]
+	["Volt"] = {
+		AttackSequence = {
+			{ Animation = "Attack", HitTimes = { 0.75 }, Duration = 1.3333 },
+		},
+	},
+
 
 }
 

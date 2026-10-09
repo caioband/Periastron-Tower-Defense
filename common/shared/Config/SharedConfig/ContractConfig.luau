@@ -185,9 +185,9 @@ ContractConfig.Contracts = {
 		{ Id = "D_Win6VolcanoMedium", Text = "Win 6 games in {Map} on {Difficulty} difficulty", Event = E.Win, Goal = 6, Map = RANDOM, Difficulty = RANDOM, RewardDifficulty = "Medium",
 			Rewards = { Cash = 700, Shards = 3 } },
 
-		-- Only players with a unit that stuns get this: the Electro's jolt (`Stun`) or
-		-- the Frostione's freeze (`Frost`).
-		{ Id = "D_Stun676", Text = "Stun enemies 676 times", Event = E.Stun, Goal = 676, NeedsUnitStat = { "Stun", "Frost" },
+		-- Only players with a unit that stuns get this: the Electro's jolt (`Stun`),
+		-- the Frostione's freeze (`Frost`), or the Volt's charge (`Static`).
+		{ Id = "D_Stun676", Text = "Stun enemies 676 times", Event = E.Stun, Goal = 676, NeedsUnitStat = { "Stun", "Frost", "Static" },
 			Rewards = { Cash = 800, Shards = 4 } },
 
 		{ Id = "D_Win3Nightmare", Text = "Win 3 games in {Difficulty} mode", Event = E.Win, Goal = 3, Difficulty = RANDOM, RewardDifficulty = "Nightmare",

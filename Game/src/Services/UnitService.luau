@@ -1194,6 +1194,17 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 	local knockbackCenter = unitStats and unitStats.Knockback and unitStats.Knockback.Radius
 	and self.Services.MobService:getMobPosition(mobId)
 
+	--[[
+		The Volt's charge, if the target carries one and this is another Electric
+		unit: more damage now and a longer jolt below. Read before the damage, so it
+		is the charge the target had when it was attacked. Rounded like the rest of
+		the damage path (`DamageMob`), with a floor of 1.
+	]]
+	local staticDamage, staticStun = self.Services.MobService:GetStaticBonus(mobId, entry.unitName)
+	if staticDamage ~= 1 then
+		damage = math.max(1, math.floor(damage * staticDamage + 0.5))
+	end
+
 	local dealt = self.Services.MobService:DamageMob(
 		mobId, damage, entry.ownerUserId, auraBonus, self:cardMultiplier(entry, "HitIncome"),
 		SharedConfig.WeatherConfig.GetClasses(entry.unitName)
@@ -1254,9 +1265,18 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 		]]
 		-- The time is the unit level's (the jolt grows with upgrades), and the owner goes
 		-- along: the stun counts for their contracts.
-		local stunDuration = SharedConfig.UnitUpgradeConfig:GetStunDuration(entry.unitName, entry.upgrades or 0)
+		-- A charged target (the Volt's `Static`) holds the jolt `staticStun` times longer.
+		local stunDuration = SharedConfig.UnitUpgradeConfig:GetStunDuration(entry.unitName, entry.upgrades or 0) * staticStun
 		if stunDuration > 0 then
 			self.Services.MobService:StunMob(mobId, stunDuration, entry.ownerUserId)
+		end
+
+		-- The Volt's charge: stops the enemy now and every `Static.Interval` while it
+		-- lasts, at this unit's level. See `MobService:ApplyStatic`.
+		local static = stats and stats.Static
+		if static then
+			local staticPulse = SharedConfig.UnitUpgradeConfig:GetStaticStun(entry.unitName, entry.upgrades or 0)
+			self.Services.MobService:ApplyStatic(mobId, static, staticPulse, entry.ownerUserId)
 		end
 
 		-- The Frostione's frost stacks: slow while they last, freeze on the
@@ -2396,6 +2416,10 @@ function UnitService:executeAttack(entry, unitStats, initialMobId, weather : str
 					table.insert(arc.targets, {
 						mobId = targetId,
 						position = mobService:getMobPosition(targetId),
+
+						-- This link's jolt, which a Volt charge stretches (`GetStaticBonus`);
+						-- read before the damage, like `creditDamage` does.
+						stun = arc.stun * select(2, mobService:GetStaticBonus(targetId, entry.unitName)),
 					})
 
 					self:creditHit(entry, hits, targetId, hitDamage, auraBonus)

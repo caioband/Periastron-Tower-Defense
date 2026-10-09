@@ -130,6 +130,7 @@ local UNIT_BEHAVIOR = {
 	Sword = `A melee fighter that lands {paint("one heavy strike", C.Health)} at a time. Has to stand right next to the path.`,
 	Slasher = `Quick melee slashes that make enemies {paint("bleed", C.Bleed)}, so every tower hits them harder.`,
 	Cryomancer = `Does not attack. Surrounds itself with a {paint("frigid aura", C.Ice)} that {paint("slows", C.Ice)} every enemy inside it.`,
+	Volt = `Quick zaps that leave enemies {paint("static", C.Electric)}, {paint("stunning", C.Electric)} them every few seconds. Other Electric towers hit charged enemies harder.`,
 }
 
 -- The difficulty folders in `Mob.Entities`, easiest first: the enemies page order.

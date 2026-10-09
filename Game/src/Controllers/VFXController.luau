@@ -55,6 +55,12 @@ local STATUS_VFX_FALLBACK = 2
 local FROZEN_AURA_VFX_NAME = "FrozenAuraVFX"
 local FROZEN_AURA_HIGHLIGHT_NAME = "FrozenAuraHighlight"
 
+-- The Volt's charge (`PlayStatic`): held on the enemy while the charge lasts, with a
+-- burst on each hit and pulse. The asset has no Highlight today; the name is there if it
+-- gets one.
+local SHOCKED_AURA_VFX_NAME = "ShockedAuraVFX"
+local SHOCKED_AURA_HIGHLIGHT_NAME = "ShockedAuraHighlight"
+
 -- How long `SetFrozenAura` keeps waiting for an enemy model that has not spawned yet.
 local FROZEN_AURA_RETRIES = 10
 local FROZEN_AURA_RETRY_DELAY = 0.1
@@ -977,6 +983,53 @@ function VFXController:SetFrozenAura(mobId : string, on : boolean)
 	attach()
 end
 
+--[=[
+	The Volt's charge (`ShockedAuraVFX`), from `MobStatic` (`MobService:ApplyStatic`):
+	`remaining` is how long the charge has left, and `burst` fires the asset's
+	`EmitCount`s once, on each hit and each stun pulse.
+
+	The asset stays on the enemy, emitters on, until the charge's deadline, through
+	`holdModelStatus` (the Cryomancer's ring path), so a refresh does not restart the
+	particles. The deadline only grows: the server only ever pushes it forward, and
+	keeping the latest one makes the order the notices arrive in irrelevant. Each
+	notice schedules its own check, and only the one holding the current deadline
+	takes the asset off.
+
+	With the "VFX" setting off there is no burst and the emitters stay off, the same
+	as the other states.
+]=]
+function VFXController:PlayStatic(mobId : string, remaining : number?, burst : boolean?)
+	remaining = tonumber(remaining) or 0
+	if remaining <= 0 then return end
+
+	local mobs = self.Controllers.MobController
+	local mob = mobs and mobs.SpawnedMobs and mobs.SpawnedMobs[mobId]
+	if not mob or not mob.Parent then return end
+
+	local deadline = math.max(self.StaticUntil[mobId] or 0, GameClock.Now() + remaining)
+	self.StaticUntil[mobId] = deadline
+
+	self:holdModelStatus(mob, SHOCKED_AURA_VFX_NAME, SHOCKED_AURA_HIGHLIGHT_NAME)
+
+	if burst and self:effectsOn() then
+		local root = mob:FindFirstChild(UNIT_ROOT_NAME) or mob.PrimaryPart
+		local clone = root and root:FindFirstChild(SHOCKED_AURA_VFX_NAME)
+		if clone then
+			VFX.emit(clone)
+		end
+	end
+
+	GameClock.Delay(deadline - GameClock.Now(), function()
+		if self.StaticUntil[mobId] ~= deadline then return end
+
+		self.StaticUntil[mobId] = nil
+
+		if mob.Parent then
+			self:stopModelStatus(mob, SHOCKED_AURA_VFX_NAME, SHOCKED_AURA_HIGHLIGHT_NAME)
+		end
+	end)
+end
+
 --suffocate logic
 
 local MOVED_MARK = "MovedVFXAsset"
@@ -1462,6 +1515,12 @@ function VFXController:construct()
 		self:PlayBleeding(mobId, duration)
 	end)
 
+	-- The Volt's charge: only the server knows when it lands, refreshes, and pulses
+	-- (`MobService:ApplyStatic`).
+	Framework:Listen("MobStatic", function(mobId : string, remaining : number, burst : boolean?)
+		self:PlayStatic(mobId, remaining, burst == true)
+	end)
+
 	-- The Cryomancer's ring: on when the enemy enters a ring, off when it leaves the
 	-- last one (`MobService:SetAuraSlows`).
 	Framework:Listen("MobAuraSlowed", function(mobId : string, on : boolean)
@@ -1511,6 +1570,9 @@ end
 function VFXController:init()
 	-- mobId -> the wait `SetFrozenAura` has for a model not spawned yet.
 	self.FrozenAuraPending = {}
+
+	-- mobId -> the match-clock deadline of the Volt's charge drawn on it. See `PlayStatic`.
+	self.StaticUntil = {}
 
 	for Controller, _ in self.Controllers do
 		self.Controllers[Controller] = Framework:Get(Controller, false, true)

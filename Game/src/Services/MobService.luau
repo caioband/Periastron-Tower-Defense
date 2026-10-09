@@ -705,6 +705,97 @@ function MobService:StunMob(mobId : string, duration : number?, sourceUserId : n
 end
 
 --[=[
+	The Volt's charge on an enemy: the hitting unit's `Static` from `UnitStats`, and
+	`stun`, the pulse's stun at that unit's level (`UnitUpgradeConfig:GetStaticStun`).
+
+	The charge lasts `Static.Duration` from the **last** hit (`mob.StaticUntil`), and
+	while it lasts the enemy stops for `stun` every `Static.Interval` seconds, the
+	first pulse the moment the charge lands on an enemy that had none. A hit on an
+	enemy already charged only pushes the deadline and updates the pulse's stun and
+	owner (the most recent Volt rules); it does **not** restart the pulse clock, or a
+	cooldown shorter than the interval would keep the next pulse from ever coming.
+
+	Each pulse is a `StunMob`, so it counts toward the owner's stun contracts and
+	follows its rule: a longer stop already running is not shortened.
+
+	`MobStatic` tells the client how long the charge has left and whether to burst
+	(`VFXController:PlayStatic`). It goes on every hit and every pulse; the client
+	keeps the latest deadline, so the order the notices arrive in does not matter.
+
+	The bonus the charge gives other Electric units is read by `GetStaticBonus`.
+]=]
+function MobService:ApplyStatic(mobId : string, static, stun : number?, sourceUserId : number?)
+	local mob = self.ActiveMobs[mobId]
+	if not mob or typeof(static) ~= "table" then return end
+
+	local duration = math.max(0, static.Duration or 0)
+	if duration <= 0 then return end
+
+	local now = GameClock.Now()
+	local charged = now < (mob.StaticUntil or 0)
+
+	mob.StaticUntil = now + duration
+	mob.Static = static
+	mob.StaticStun = math.max(0, stun or 0)
+	mob.StaticOwner = sourceUserId
+
+	if charged then
+		for _, player in Players:GetPlayers() do
+			Framework:Fire("MobStatic", player, mobId, duration, true)
+		end
+
+		return
+	end
+
+	-- A new charge: the token retires the pulse loop of the previous one, which may
+	-- still be waiting for its next pulse to notice the charge ran out.
+	mob.StaticToken = (mob.StaticToken or 0) + 1
+	local token = mob.StaticToken
+	local interval = math.max(0.1, static.Interval or 1)
+
+	local function pulse()
+		if self.ActiveMobs[mobId] ~= mob or mob.StaticToken ~= token then return end
+
+		local remaining = (mob.StaticUntil or 0) - GameClock.Now()
+		if remaining <= 0 then return end
+
+		self:StunMob(mobId, mob.StaticStun, mob.StaticOwner)
+
+		for _, player in Players:GetPlayers() do
+			Framework:Fire("MobStatic", player, mobId, remaining, true)
+		end
+
+		GameClock.Delay(interval, pulse)
+	end
+
+	pulse()
+end
+
+--[=[
+	What a hit from `unitName` gets from the charge on this enemy: the damage and
+	stun multipliers, both 1 when nothing applies.
+
+	Only `Electric` units cash in, and not the ones that charge (units with
+	`Static`): the Volt does not boost itself. The charge is not spent here; it lasts
+	until its deadline.
+
+	Read **before** the hit lands, so it is the charge the target had when attacked.
+]=]
+function MobService:GetStaticBonus(mobId : string, unitName : string?) : (number, number)
+	local mob = self.ActiveMobs[mobId]
+	if not mob or not unitName then return 1, 1 end
+
+	local static = mob.Static
+	if not static or GameClock.Now() >= (mob.StaticUntil or 0) then return 1, 1 end
+
+	local stats = SharedConfig.UnitStats[unitName]
+	if not stats or stats.Static then return 1, 1 end
+	if not SharedConfig.WeatherConfig.HasClass(unitName, "Electric") then return 1, 1 end
+
+	return static.ElectricDamage or 1, static.ElectricStun or 1
+end
+
+--[=[
 	Sets an enemy on fire: `damage` every `interval` seconds, `ticks` times.
 
 	Each tick goes through `DamageMob` like any other damage: it pays cash, counts toward
@@ -1888,6 +1979,7 @@ function MobService:construct()
 	Framework:Listen("MobFrozen", function() end)
 	Framework:Listen("MobBurning", function() end)
 	Framework:Listen("MobBleeding", function() end)
+	Framework:Listen("MobStatic", function() end)
 	Framework:Listen("MobAuraSlowed", function() end)
 	Framework:Listen("MobDamageTick", function() end)
 	Framework:Listen("MobTeleported", function() end)

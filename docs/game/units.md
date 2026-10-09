@@ -5,7 +5,7 @@ How placed units attack: the server-side attack cycle, projectiles, hits on seve
 **Runs in:** Game
 **Code:** [`UnitService`](../../Game/src/Services/UnitService.luau), [`MobService`](../../Game/src/Services/MobService.luau), [`Unit` class](../../common/shared/Classes/Unit.luau), [`ProjectileController`](../../Game/src/Controllers/ProjectileController.luau), [`VFXController`](../../Game/src/Controllers/VFXController.luau), [`UnitStats`](../../common/shared/Config/SharedConfig/UnitStats.luau), [`UnitAttackConfig`](../../common/shared/Config/SharedConfig/UnitAttackConfig.luau), [`UnitUpgradeConfig`](../../common/shared/Config/SharedConfig/UnitUpgradeConfig.luau)
 
-The roster is defined in `UnitStats`: Archer, Archmage, Azure, Berserker, Bonfire, Cryomancer, Electro, Entrepreneur, Frostione, Pyre, Rocket, Slasher, Slingshot, Subspace Tripminer, and Sword.
+The roster is defined in `UnitStats`: Archer, Archmage, Azure, Berserker, Bonfire, Cryomancer, Electro, Entrepreneur, Frostione, Pyre, Rocket, Slasher, Slingshot, Subspace Tripminer, Sword, Vindicator, and Volt.
 The header of `UnitStats` documents every field and the balance rules (such as the damage-per-cost cap in rule 1).
 
 ## The attack cycle
@@ -202,6 +202,35 @@ Those two are turned off by **removing** the attribute, which is how the addon c
 Changes are made on the clone only.
 
 The Electro is the first `Electric` unit, so it is the one that uses the Thunder weather bonuses (see [Weather in a match](weather-in-match.md)) and the Electric round cards.
+
+### Static charge (Volt)
+
+```lua
+["Volt"] = {
+    Damage = 4,
+    Cooldown = 0.7,
+    Static = { Duration = 6, Interval = 2, Stun = 0.4, MaxStun = 0.6, ElectricDamage = 1.2, ElectricStun = 1.5 },
+}
+```
+
+The Volt is an `Electric` Common with an instant single-target hit (no projectile) and a low cooldown.
+Every hit leaves a **charge** on the target (`MobService:ApplyStatic`):
+
+- The charge lasts `Duration` seconds from the last Volt hit (`mob.StaticUntil`).
+- While it lasts, the enemy stops for `Stun` seconds every `Interval` seconds, the first time the moment the charge lands.
+  Each stop is a `StunMob`, so it counts for stun contracts, and a longer stop already running is never shortened.
+- A hit on an enemy that is already charged only pushes the deadline back (and updates the stop length and the owner to the latest Volt).
+  It does **not** restart the pulse clock: with a 0.7 s cooldown against a 2 s interval, restarting would mean the next pulse never comes.
+- The stop grows with level, from `Stun` to `MaxStun` (`UnitUpgradeConfig:GetStaticStun`); the interval does not.
+
+The charge is also a **setup for the other Electric units**.
+While it lasts, a hit from an `Electric` unit that does not itself have `Static` deals `ElectricDamage` times the damage, and its stun (the Electro's jolt) lasts `ElectricStun` times longer (`MobService:GetStaticBonus`, read by `creditDamage` before the hit lands).
+The Volt does not boost its own hits, and the bonus does not use up the charge.
+
+**The drawing comes from the server.**
+`MobStatic` (mob id, time left, burst) goes out on every Volt hit and every pulse.
+`VFXController:PlayStatic` welds `Assets.VFX.ShockedAuraVFX` to the enemy with its emitters on (`holdModelStatus`), fires one burst of its `EmitCount`s, and takes it off at the charge's deadline.
+The client keeps the latest deadline, so the order the notices arrive in does not matter.
 
 ## Damage over time
 

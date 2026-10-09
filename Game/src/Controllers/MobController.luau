@@ -931,7 +931,8 @@ function MobController:construct()
 		for _, target in arc.targets do
 			local mob = self.SpawnedMobs[target.mobId]
 			if mob and mob.Parent then
-				shockMob(mob, duration)
+				-- Per link: a Volt charge on that enemy holds its jolt longer.
+				shockMob(mob, tonumber(target.stun) or duration)
 			end
 		end
 	end)

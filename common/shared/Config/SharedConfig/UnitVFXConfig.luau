@@ -68,6 +68,13 @@ local UnitVFXConfig = {
 
 	["Cryomancer"] = { PLACEMENT_EFFECT },
 
+	--[[
+		Only the placement effect. The charge on the enemy is not here: only the
+		server knows when it lands, refreshes, and pulses, so it arrives through
+		`MobStatic` (`VFXController:PlayStatic`).
+	]]
+	["Volt"] = { PLACEMENT_EFFECT },
+
 }
 
 return UnitVFXConfig

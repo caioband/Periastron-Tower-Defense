@@ -66,6 +66,13 @@
 	can be this short: stopped is stopped, and a third of a second of it is a stretch
 	of path the enemy did not walk.
 
+	`Static` is the Volt's charge, and unlike the others it keeps working after the
+	hit: see the Volt's note below and `MobService:ApplyStatic`.
+
+	| Field | What it is |
+	| --- | --- |
+	| `Static` | `{ Duration, Interval, Stun, MaxStun, ElectricDamage, ElectricStun }`: the charge lasts `Duration` seconds, and each hit from the unit refreshes it. While it lasts, the enemy stops for `Stun` seconds (up to `MaxStun` at max level) every `Interval` seconds, the first one the moment the charge lands. A hit from **another** `Electric` unit on a charged enemy deals `ElectricDamage` times the damage and its stun lasts `ElectricStun` times longer |
+
 	`MobService` runs them (`ApplySlow`, `StunMob`, `ApplyBurn`, `ApplyBleed`), since
 	it owns enemy state; `UnitService:creditDamage` triggers them after the damage
 	lands. The Chill Out and Fire Hazard round cards multiply exactly these numbers.
@@ -776,6 +783,55 @@ local UnitStats = {
 		Bleed = { Damage = 1, Ticks = 5, Interval = 1, Vulnerability = 1.3 },
 		RangeStats = {
 			Levels = { 4, 5, 5, 5, 6, 6 },
+		},
+	},
+
+	--[=[
+		The Electric Common: a quick, weak single-target hit whose value is the
+		`Static` it leaves, not the damage.
+
+		4 damage every 0.7 s is 5.7 DPS, or 4.8 per 100 cash: at the bottom of the
+		Commons, and on purpose. The hit is instant (no projectile yet), at medium
+		range (10).
+
+		**The charge is control.** A charged enemy stops for 0.4 s the moment the
+		charge lands and again every 2 s while it lasts (6 s, refreshed by every hit
+		from the Volt). With the Volt keeping the target charged, that is a fifth of
+		the walk spent stopped, rising to 0.6 s (30%) at max level
+		(`UnitUpgradeConfig:GetStaticStun`). The pulse clock does **not** restart on
+		each hit: a cooldown this short would otherwise keep the enemy from ever
+		reaching its next pulse.
+
+		**And it is a setup for the other Electric units.** While the charge lasts, a
+		hit from another `Electric` unit deals 20% more and its stun (the Electro's
+		jolt) lasts 50% longer. The Volt itself does not get the bonus on its own
+		charge: a unit that has `Static` is the one charging, not the one cashing in.
+		The charge is not spent by the bonus; it lasts until it runs out.
+
+		`MobService:ApplyStatic` runs it, and every pulse is a `StunMob`, so it counts
+		toward the owner's stun contracts.
+	]=]
+	["Volt"] = {
+		Rarity = "Common",
+		Class = "Electric",
+		Cost = 120,
+		Damage = 4,
+		Range = 10,
+		Cooldown = 0.7,
+		AttackType = "SingleShot",
+		HitInterval = 0,
+		Hits = 1,
+		Static = {
+			Duration = 6,
+			Interval = 2,
+			Stun = 0.4,
+			MaxStun = 0.6,
+			ElectricDamage = 1.2,
+			ElectricStun = 1.5,
+		},
+		RangeStats = {
+			Increment = 1,
+			Max = 13,
 		},
 	},
 

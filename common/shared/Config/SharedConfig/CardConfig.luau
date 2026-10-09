@@ -39,6 +39,7 @@ CardConfig.Images = {
 	Bonfire = "rbxassetid://139271145798062",
 	Cryomancer = "rbxassetid://109821143712853",
 	Vindicator = "rbxassetid://130740288231397",
+	Volt = "rbxassetid://115436373491774",
 
 }
 
@@ -134,6 +135,7 @@ CardConfig.IndexImages = {
 	Bonfire = { Locked = "rbxassetid://95440009266771", Unlocked = "rbxassetid://133228010596030" },
 	Cryomancer = { Locked = "rbxassetid://88227960714771", Unlocked = "rbxassetid://88118640086913" },
 	Vindicator = { Locked = "rbxassetid://83846373389394", Unlocked = "rbxassetid://83026555203229" },
+	Volt = { Locked = "rbxassetid://123863331948712", Unlocked = "rbxassetid://123863331948712" },
 
 }
 

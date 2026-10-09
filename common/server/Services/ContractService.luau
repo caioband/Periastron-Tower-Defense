@@ -165,7 +165,8 @@ end
 --[=[
 	Whether the player has any unit with the requested field in `UnitStats`. `stat`
 	accepts a single name or a list, and one is enough: "stuns", today, is `Stun`
-	(the Electro's jolt) or `Frost` (the Frostione's freeze).
+	(the Electro's jolt), `Frost` (the Frostione's freeze), or `Static` (the Volt's
+	charge).
 ]=]
 local function ownsUnitWith(profile, stat : string | { string }) : boolean
 	local wanted = if typeof(stat) == "table" then stat else { stat }
