@@ -38,6 +38,11 @@ local log = Log.new("MonetizationService")
 	at the next login instead of leaving an orphaned benefit. The functions in
 	`SharedConfig.GamepassConfig` consume it, on both sides, always from the profile.
 
+	Gifted passes (`Data.GiftedPasses`) are merged into `Gamepasses` by
+	`RecalibratePasses`, and the chat tag attributes read **both** tables directly
+	(`_publishTags`), so a gifted tag shows the moment the gift is claimed or the
+	profile opens, without waiting on Roblox.
+
 	See docs/common/gamepasses.md.
 ]]
 local MonetizationService = {
@@ -60,6 +65,7 @@ function MonetizationService:construct()
 	self.InFlight = {}
 
 	self:_watchPasses()
+	self:_watchTags()
 
 	MarketplaceService.ProcessReceipt = function(receiptInfo)
 		local player = Players:GetPlayerByUserId(receiptInfo.PlayerId)
@@ -201,6 +207,66 @@ function MonetizationService:_watchPasses()
 end
 
 --[=[
+	Keeps the chat tag attributes in step with the profile data.
+
+	On profile open: published straight from what is stored (bought passes from the
+	last session, and every gifted pass), before any web call, so a gifted VIP is
+	tagged from the first message. On every write to `Gamepasses` or `GiftedPasses`
+	(a gift claim, a recalibrate): published again from the new data.
+]=]
+function MonetizationService:_watchTags()
+	local dataService = self.Services.DataService
+	if not dataService or not dataService.Signals then
+		log:Warn("DataService unavailable; chat tags will only follow RecalibratePasses.")
+		return
+	end
+
+	dataService.Signals.PlayerDataLoaded:Connect(function(player : Player)
+		self:_publishTags(player)
+	end)
+
+	dataService.Signals.DataUpdated:Connect(function(player : Player, key : string)
+		if key == "Gamepasses" or key == "GiftedPasses" then
+			self:_publishTags(player)
+		end
+	end)
+
+	for _, player in Players:GetPlayers() do
+		if dataService.Profiles and dataService.Profiles[player] then
+			self:_publishTags(player)
+		end
+	end
+end
+
+--[=[
+	Writes one attribute per pass with a `ChatTag`, from the profile data: `true`
+	when the pass is in `Gamepasses` **or** in `GiftedPasses`. Does nothing when
+	the profile is not open.
+
+	The attribute exists because the profile only replicates to its owner: the VIP
+	tag must appear on their chat message on everyone's screen, and a `Player`
+	attribute replicates to the whole room. The server writes it; the client only
+	reads.
+]=]
+function MonetizationService:_publishTags(Player : Player)
+	local dataService = self.Services.DataService
+	local entry = dataService and dataService.Profiles and dataService.Profiles[Player]
+	if not entry then
+		return
+	end
+
+	local data = entry.Profile.Data
+	local gifted = typeof(data.GiftedPasses) == "table" and data.GiftedPasses or {}
+
+	for key, pass in GamepassConfig.PASSES do
+		if pass.ChatTag then
+			local owns = GamepassConfig.owns(data, key) or gifted[key] ~= nil
+			Player:SetAttribute(GamepassConfig.attributeName(key), owns)
+		end
+	end
+end
+
+--[=[
 	Asks Roblox about a single pass. Returns `nil`, not `false`, when the call failed.
 
 	The difference matters: `false` is "they do not have it" and removes the benefit;
@@ -223,17 +289,12 @@ function MonetizationService:_ownsPass(Player : Player, gamePassId : number) : b
 end
 
 --[=[
-	Rewrites `Data.Gamepasses` with what Roblox answers now, and publishes on the
-	`Player` the attributes for passes that must be seen by **others**.
+	Rewrites `Data.Gamepasses` with what Roblox answers now, plus every gifted pass,
+	and republishes the chat tag attributes.
 
 	It checks one pass at a time because `UserOwnsGamePassAsync` is one web call per
 	pass: there are few, and they run on their own thread (see `construct`), so
 	nobody waits on this.
-
-	The attribute exists because the profile only replicates to its owner: the VIP
-	tag must appear on their chat message on everyone's screen, and a `Player`
-	attribute replicates to the whole room. The server still writes it; the client
-	only reads.
 ]=]
 function MonetizationService:RecalibratePasses(Player : Player)
 	local DataService = self.Services.DataService
@@ -265,11 +326,9 @@ function MonetizationService:RecalibratePasses(Player : Player)
 		giftedPasses = {}
 	end
 
-	local owned
-
 	DataService:Update(Player, "Gamepasses", function(current)
 		current = typeof(current) == "table" and current or {}
-		owned = {}
+		local owned = {}
 
 		for key in GamepassConfig.PASSES do
 			local answer = answers[key]
@@ -288,16 +347,7 @@ function MonetizationService:RecalibratePasses(Player : Player)
 		return owned
 	end)
 
-	
-	if not owned then
-		return
-	end
-
-	for key, pass in GamepassConfig.PASSES do
-		if pass.ChatTag then
-			Player:SetAttribute(GamepassConfig.attributeName(key), owned[key] == true)
-		end
-	end
+	self:_publishTags(Player)
 end
 
 function MonetizationService:init()
