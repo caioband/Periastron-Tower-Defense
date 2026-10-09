@@ -18,6 +18,7 @@ Commands that depend on a service from one place only live in that place's folde
 | `restartwarning` | `testrestart` | `<reason> [seconds]` | both | Rehearses the server restart warning (restarts nothing) |
 | `cash` | `money`, `coins` | `<action> <players> <amount>` | both | Saved Cash (`Stats.Cash`, the Lobby currency); the player may be offline |
 | `shards` | `shard` | `<action> <players> <amount>` | both | Saved Shards (`Stats.Shards`, the premium currency) |
+| `rune` | `runes` | `<players> <rune> <tier> [seconds]` | both | Grants a [rune](runes.md) for free with the shop's rules, or removes it with tier `0`; `seconds` shortens the duration to test expiry; players on this server |
 | `units` | `unit`, `giveunit`, `inventory` | `<action> <players> <unit> [amount]` | both | The saved unit inventory (`Units` in the profile) |
 | `level` | `levels`, `setlevel`, `lvl` | `<action> <players> <amount>` | both | The profile's level, written as `Stats.XP` (see [`level`](#level)) |
 | `viewdata` | `inspectdata`, `olddata` | `<player> [store] [date]` | both | Reads a saved profile (read-only; the player may be offline) |

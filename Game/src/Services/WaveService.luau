@@ -79,6 +79,9 @@ local WaveService = {
 		TutorialMatchService = {},
 		BadgeService = {},
 		SuffocateAbilityService = {},
+
+		-- The Shards rune's bonus in `rewardsFor`, and the match lock in `StartRound`.
+		RuneService = {},
 	},
 	Signals = {
 		Ended = Signal.new(),
@@ -405,7 +408,9 @@ end
 
 --[=[
 	**This** player's reward: the match base, already multiplied by the gamepasses their
-	profile declares (2x Coins, 1.5x Shards, the VIP's XP).
+	profile declares (2x Coins, 1.5x Shards, the VIP's XP), and shards by the player's
+	Shards rune (`RuneService`). The two multiply: 1.5x Shards with a +20% rune is 1.8x.
+	The rune reads the match's lock, so one that ran out mid-match still pays it.
 
 	The base is a single one for the whole room: it comes from the waves survived and the
 	difficulty, which belong to the match and not to anyone. What belongs to each player
@@ -423,9 +428,12 @@ function WaveService:rewardsFor(player : Player, rewards)
 	local entry = profiles and profiles[player]
 	local profile = entry and entry.Profile.Data or nil
 
+	local runeService = self.Services.RuneService
+	local shardRune = if runeService then runeService:GetMultiplier(player, "Shards") else 1
+
 	return {
 		coins = math.floor(rewards.coins * GamepassConfig.coinMultiplier(profile) + 0.5),
-		shards = math.floor(rewards.shards * GamepassConfig.shardMultiplier(profile) + 0.5),
+		shards = math.floor(rewards.shards * GamepassConfig.shardMultiplier(profile) * shardRune + 0.5),
 		xp = math.floor(rewards.xp * GamepassConfig.xpMultiplier(profile) + 0.5),
 	}
 end
@@ -864,6 +872,28 @@ function WaveService:SkipWave() : boolean
 end
 
 --[=[
+	Locks the runes of everyone on the server for this round: a rune active at any point
+	of the match pays the whole match (see `RuneService:Lock`). The previous round's
+	locks go first, so a rune that ran out does not carry into the next match.
+
+	Players who load during the round are locked when their profile arrives (see
+	`construct`).
+]=]
+function WaveService:lockRunes()
+	local runeService = self.Services.RuneService
+	if not runeService then return end
+
+	runeService:UnlockAll()
+
+	local profiles = self.Services.DataService and self.Services.DataService.Profiles or {}
+	for _, player in Players:GetPlayers() do
+		if profiles[player] then
+			runeService:Lock(player)
+		end
+	end
+end
+
+--[=[
 	Starts a round from scratch. It cleans nothing: for a clean match call
 	`ResetRound()`, which resets the services and calls this at the end.
 ]=]
@@ -880,6 +910,8 @@ function WaveService:StartRound()
 	self.GameOver = false
 	self.WaveCount = 0
 	table.clear(self.PaidRewards)
+
+	self:lockRunes()
 
 	self.Signals.RoundStarted:Fire()
 
@@ -1132,6 +1164,17 @@ function WaveService:construct()
 	if dataService and dataService.OnBeforeRelease then
 		dataService:OnBeforeRelease(function(player)
 			self:GrantLeaveReward(player)
+		end)
+	end
+
+	-- Joining a running round locks the runes the player brought, like `lockRunes` does
+	-- for those already in.
+	if dataService and dataService.Signals then
+		dataService.Signals.PlayerDataLoaded:Connect(function(player)
+			local runeService = self.Services.RuneService
+			if runeService and self.State == ROUND_STATE.Running then
+				runeService:Lock(player)
+			end
 		end)
 	end
 

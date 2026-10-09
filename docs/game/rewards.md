@@ -84,7 +84,8 @@ A completed run pays the full numbers of its difficulty: `WinCash` and `WinShard
 XP is still a base times a multiplier (`Data.BASE_WINNING_XP` times the difficulty's `WinXpMultiplier`), because the base is the same for everyone and the multiplier is the number worth reading.
 
 These are the base amounts.
-Per-player multipliers such as game passes are applied afterward in `WaveService:rewardsFor` (see [Game passes](../common/gamepasses.md)).
+Per-player multipliers are applied afterward in `WaveService:rewardsFor`: the game passes (see [Game passes](../common/gamepasses.md)) and, for shards, the Shards rune (see [Runes](../common/runes.md)).
+They multiply each other, and a rune active at any point of the match counts for the whole match.
 
 ### Proration and losses
 

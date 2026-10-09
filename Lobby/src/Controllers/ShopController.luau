@@ -198,6 +198,7 @@ local ShopController = {
 		-- before disabling the ScreenGui of all three; see `CanDisable` in `construct`.
 		RoundCardShopController = {},
 		RobuxShopController = {},
+		RuneShopController = {},
 	},
 
 	Signals = {
@@ -853,13 +854,15 @@ function ShopController:construct()
 		Interval = ShopConfig.PROXIMITY_INTERVAL,
 		InterfaceController = self.Controllers.InterfaceController,
 
-		-- `ShopUI` is shared with the card shop and the Robux shop: closing this one with
-		-- one of them open must not disable the ScreenGui of all three.
+		-- `ShopUI` is shared with the card, Robux, and rune shops: closing this one with
+		-- one of them open must not disable the ScreenGui under it.
 		CanDisable = function()
 			local cardShop = self.Controllers.RoundCardShopController
 			local robuxShop = self.Controllers.RobuxShopController
+			local runeShop = self.Controllers.RuneShopController
 
-			return not ((cardShop and cardShop:IsOpen()) or (robuxShop and robuxShop:IsOpen()))
+			return not ((cardShop and cardShop:IsOpen()) or (robuxShop and robuxShop:IsOpen())
+				or (runeShop and runeShop:IsOpen()))
 		end,
 
 		OnBind = function(screenGui, _wrapper, panel)

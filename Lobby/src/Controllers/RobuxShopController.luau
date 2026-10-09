@@ -88,6 +88,7 @@ local RobuxShopController = {
 		-- open before disabling the ScreenGui of all three; see `CanDisable`.
 		ShopController = {},
 		RoundCardShopController = {},
+		RuneShopController = {},
 
 		-- The HUD button's `New` badge, which comes back five minutes after each
 		-- opening. See `BeforeOpen` in `construct`.
@@ -347,13 +348,15 @@ function RobuxShopController:construct()
 		HideReason = HIDE_REASON,
 		InterfaceController = self.Controllers.InterfaceController,
 
-		-- `ShopUI` is shared with the crate shop and the card shop: closing this one with
-		-- one of them open must not disable the ScreenGui of all three.
+		-- `ShopUI` is shared with the crate, card, and rune shops: closing this one with
+		-- one of them open must not disable the ScreenGui under it.
 		CanDisable = function()
 			local crateShop = self.Controllers.ShopController
 			local cardShop = self.Controllers.RoundCardShopController
+			local runeShop = self.Controllers.RuneShopController
 
-			return not ((crateShop and crateShop:IsOpen()) or (cardShop and cardShop:IsOpen()))
+			return not ((crateShop and crateShop:IsOpen()) or (cardShop and cardShop:IsOpen())
+				or (runeShop and runeShop:IsOpen()))
 		end,
 
 		OnBind = function(_screenGui, _wrapper, panel, maid)

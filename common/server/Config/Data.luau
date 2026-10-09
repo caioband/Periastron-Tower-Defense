@@ -293,6 +293,16 @@ return {
 		]]
 		RedeemedCodes = {},
 
+		--[[
+			Active runes, `{ [Id] = { Tier, Remaining } }`: the `SharedConfig.RuneConfig`
+			id, the tier bought, and the **seconds of play** left. Seconds left, not an
+			expiry date, because the time only runs while the profile is open on a
+			server. `RuneService` counts it down and removes a rune when it runs out;
+			`RuneShopService` (Lobby) adds them. Older profiles get the key through
+			reconcile.
+		]]
+		Runes = {},
+
 	},
 
 

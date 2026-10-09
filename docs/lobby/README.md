@@ -9,8 +9,8 @@ For the repository layout and what is shared between the places, see [Repository
 | Folder | Mounted at | Contents |
 | --- | --- | --- |
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | Entry LocalScript |
-| `src/Controllers/` | `Client.Controllers.Lobby` | ChooseMaps, Contract, Crate, CratePity, CrateUI, Deck, FriendInvite, HUD, HUDBadge, HUDButton, Index, LobbyMusic, NextEvent, PlayButton, Portal, RobuxShop, RoundCardShop, Shop, ShopKeeper, UILibrary, Unboxing |
-| `src/Services/` | `ServerScriptService.Services.Lobby` | AfkTeleport, Crate, Deck, FriendInvite, Leaderstats, Portal, RoundCardShop, Shop, Summoning, WelcomeBadge |
+| `src/Controllers/` | `Client.Controllers.Lobby` | ChooseMaps, Contract, Crate, CratePity, CrateUI, Deck, FriendInvite, HUD, HUDBadge, HUDButton, Index, LobbyMusic, NextEvent, PlayButton, Portal, RobuxShop, RoundCardShop, RuneShop, Shop, ShopKeeper, UILibrary, Unboxing |
+| `src/Services/` | `ServerScriptService.Services.Lobby` | AfkTeleport, Crate, Deck, FriendInvite, Leaderstats, Portal, RoundCardShop, RuneShop, Shop, Summoning, WelcomeBadge |
 | `src/CmdrDefinitions/Commands/` | `ServerScriptService.CmdrDefinitions.Commands.Lobby` | `friendinvite`, `friendinvitestats`, `setcrates`, `unbox` |
 | `src/CmdrDefinitions/Types/` | `ServerScriptService.CmdrDefinitions.Types.Lobby` | `crateRarity` |
 
@@ -25,10 +25,11 @@ For the repository layout and what is shared between the places, see [Repository
 | [Crates and unboxing](crates-and-unboxing.md) | Crate names, odds, and the shared unboxing |
 | [Crate shop](shop.md) | The crate shop and the shopkeeper |
 | [Card shop](round-card-shop.md) | Unlocking round cards with shards |
+| [Rune shop](rune-shop.md) | Buying temporary buffs with shards |
 | [Friend invite suggestion](friend-invite.md) | The "your friend is online" notification and the `friendinvite` command |
 | [Next event sign](next-event.md) | `Workspace.NEXTEVENT`: the next Roblox event's name, countdown, and RSVP prompt |
 
-Systems that also run here are documented in [common](../common/README.md): [contracts](../common/contracts.md), [game passes and the Robux shop](../common/gamepasses.md), [leaderboards](../common/leaderboards.md), [the proximity panel](../common/proximity-panel.md), and [the tutorial](../common/tutorial.md).
+Systems that also run here are documented in [common](../common/README.md): [contracts](../common/contracts.md), [game passes and the Robux shop](../common/gamepasses.md), [leaderboards](../common/leaderboards.md), [runes](../common/runes.md), [the proximity panel](../common/proximity-panel.md), and [the tutorial](../common/tutorial.md).
 
 ## Outside the repository
 

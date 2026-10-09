@@ -82,7 +82,7 @@ InterfaceController:Show("Shop")
 
 See [Interface visibility](../common/interface-visibility.md).
 `ShopUI` itself is enabled through `InterfaceController:SetEnabled`, because it turns on in the same instant the request sweeps the GUIs; all enabling goes through `_setShopEnabled`.
-`ShopUI` also holds the card shop and the Robux shop, so each one asks the others before disabling it (see [Card shop](round-card-shop.md#sharing-shopui)).
+`ShopUI` also holds the card shop, the Robux shop, and the [rune shop](rune-shop.md), so each one asks the others before disabling it (see [Card shop](round-card-shop.md#sharing-shopui)).
 
 The screen is returned at the **start** of closing, so the rest of the UI returns behind the panel.
 `_bindUI` also returns it, because `ShopUI` is `ResetOnSpawn` and dying with the shop open would otherwise leave the player without a HUD.
