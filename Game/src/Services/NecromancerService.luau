@@ -22,6 +22,14 @@ local function fireAll(event : string, ...)
 	end
 end
 
+local function atLevel(value, level : number)
+	if type(value) == "table" then
+		if #value == 0 then return nil end
+		return value[math.clamp(level + 1, 1, #value)]
+	end
+	return value
+end
+
 local function segmentDistance(a0 : Vector3, a1 : Vector3, b0 : Vector3, b1 : Vector3) : number
 	local p1 = Vector2.new(a0.X, a0.Z)
 	local q1 = Vector2.new(a1.X, a1.Z)
@@ -85,6 +93,20 @@ function NecromancerService:GetMinionCount(unitId : string) : number
 	return self.MinionCounts[unitId] or 0
 end
 
+function NecromancerService:GetMinionHealth(unitName : string, victimMaxHealth : number, level : number) : number
+	local config = self:getConfig(unitName)
+	local health = config and config.Health or {}
+
+	local scale = atLevel(health.Scale, level) or 0
+	local flat = atLevel(health.Flat, level) or 0
+	local minimum = math.max(1, health.Min or 1)
+	local maximum = math.max(minimum, health.Max or math.huge)
+
+	local raw = (victimMaxHealth or 1) * scale + flat
+
+	return math.clamp(math.floor(raw + 0.5), minimum, maximum)
+end
+
 function NecromancerService:canConvert(entry, victim) : boolean
 	local config = self:getConfig(entry.unitName)
 	if not config or not victim or not victim.Name then return false end
@@ -92,21 +114,11 @@ function NecromancerService:canConvert(entry, victim) : boolean
 	if config.ExcludeBosses and SharedConfig.Mob.IsBoss(victim.Name) then return false end
 	if config.Exclude and table.find(config.Exclude, victim.Name) then return false end
 
-	if GameClock.Now() < (entry.NextConvertAt or 0) then return false end
-
-	local upgrade = SharedConfig.UnitUpgradeConfig
-	local level = entry.upgrades or 0
-
-	if self:GetMinionCount(entry.unitId) >= upgrade:GetMaxMinions(entry.unitName, level) then return false end
-
-	return math.random() < upgrade:GetConvertChance(entry.unitName, level)
+	return true
 end
 
 function NecromancerService:TryConvert(entry, victim) : string?
 	if not entry or not self:canConvert(entry, victim) then return nil end
-
-	local cooldown = SharedConfig.UnitUpgradeConfig:GetConvertCooldown(entry.unitName, entry.upgrades or 0)
-	entry.NextConvertAt = GameClock.Now() + cooldown
 
 	return self:spawnMinion(entry, victim)
 end
@@ -137,7 +149,7 @@ function NecromancerService:spawnMinion(entry, victim) : string?
 	local route = routes[routeIndex]
 	if not route or not route.smooth or route.smooth.length <= 0 then return nil end
 
-	local maxHealth = math.max(1, math.floor((victim.MaxHealth or 1) * (config.HealthScale or 1) + 0.5))
+	local maxHealth = self:GetMinionHealth(entry.unitName, victim.MaxHealth or 1, entry.upgrades or 0)
 	local speed = (victim.BaseSpeed or SharedConfig.Mob.BaseSpeed) * (victim.SpeedScale or 1) * (config.SpeedScale or 1)
 
 	local minionId = HttpService:GenerateGUID(false)

@@ -912,7 +912,12 @@ local UnitStats = {
 		HitInterval = 0,
 		Hits = 1,
 		Necromancy = {
-			HealthScale = 1,
+			Health = {
+				Scale = { 0.3, 0.35, 0.4, 0.45, 0.5, 0.6 },
+				Flat = 0,
+				Min = 1,
+				Max = nil,
+			},
 			SpeedScale = 1,
 			ContactRadius = 1.5,
 			ExcludeBosses = true,

@@ -61,7 +61,7 @@ local UnitVFXConfig = {
 			Event = "OnAttack",
 			Target = "MobRoot",
 			Effect = "FrozenVFX",
-		},
+		},	
 	},
 
 	["Bonfire"] = { PLACEMENT_EFFECT },
