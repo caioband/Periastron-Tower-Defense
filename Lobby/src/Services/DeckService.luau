@@ -13,7 +13,6 @@ local Log = require(Shared.Util.Log)
 local Signal = require(Packages.Signal)
 
 local DeckConfig = SharedConfig.DeckConfig
-local GamepassConfig = SharedConfig.GamepassConfig
 
 local Framework = Me.new()
 local log = Log.new("DeckService")
@@ -106,10 +105,10 @@ function DeckService:_write(Player : Player, unitName : string?, decide) : (bool
 	return true
 end
 
---[[ EXTERNAL ]]
+--[[ EXTERNALs ]]
 
 --[=[
-	How many cards fit in this player's deck, gamepass included (`limitFor`).
+	How many cards fit in this player's deck, level and gamepass bonus included (`limitFor`).
 ]=]
 function DeckService:GetLimit(Player : Player) : number
 	local data = self:_getData(Player)
@@ -200,12 +199,12 @@ function DeckService:SetLimit(Player : Player, limit : number) : boolean
 	end
 
 	--[[
-		What is saved is the **game's** cap, without the gamepass: the pass adds on read
-		(`limitFor`), and writing it here would turn it into a credit: a refund would leave
-		the +5 on the profile forever.
+		What is saved is the **game's** cap, without the level or gamepass bonus: the bonus
+		adds on read (`limitFor`), and writing it here would turn it into a credit: a refund
+		would leave the +5 on the profile forever.
 
 		The cleanup just below does use the real cap: cutting the deck by the number
-		without the pass would remove cards the player is entitled to keep.
+		without the bonus would remove cards the player is entitled to keep.
 	]]
 	local resolved = DeckConfig.resolveLimit(limit)
 
@@ -214,9 +213,9 @@ function DeckService:SetLimit(Player : Player, limit : number) : boolean
 	end)
 
 	DataService:Update(Player, "EquippedUnits", function(current)
-		local limitWithPasses = resolved + GamepassConfig.cardBonus(data)
+		local limitWithBonus = resolved + DeckConfig.cardBonusFor(data)
 
-		return DeckConfig.sanitize(current, data.Units, limitWithPasses, DeckConfig.unlockedFor(data))
+		return DeckConfig.sanitize(current, data.Units, limitWithBonus, DeckConfig.unlockedFor(data))
 	end)
 
 	self.Signals.DeckChanged:Fire(Player, self:GetEquipped(Player))

@@ -56,6 +56,15 @@ DeckConfig.SLOT_UNLOCK_LEVELS = { 1, 1, 1, 5, 15, 25 }
 DeckConfig.DEFAULT_CARD_LIMIT = 15
 
 --[=[
+	The extra cards a player earns by leveling, and the level that grants them.
+
+	The `+5 Total Cards` pass is the same bonus bought early: owning it skips the
+	level requirement, it does not stack on top (see `cardBonusFor`)..
+]=]
+DeckConfig.LEVEL_CARD_BONUS = 5
+DeckConfig.LEVEL_CARD_BONUS_LEVEL = 25
+
+--[=[
 	An empty deck: `MAX_SLOTS` entries, all free.
 ]=]
 function DeckConfig.empty() : Deck
@@ -128,7 +137,7 @@ end
 
 --[=[
 	The card limit stored in a profile, with the default for players without the key
-	yet. It is the **profile's** number, without game passes; see `limitFor`.
+	yet. It is the **profile's** number, without bonuses; see `limitFor`.
 ]=]
 function DeckConfig.resolveLimit(limit : number?) : number
 	if typeof(limit) ~= "number" or limit < 0 then
@@ -139,12 +148,27 @@ function DeckConfig.resolveLimit(limit : number?) : number
 end
 
 --[=[
-	How many cards this profile can actually equip: its `CardLimit` plus what game
-	passes give.
+	The extra cards on top of `CardLimit`: `LEVEL_CARD_BONUS` once the player reaches
+	`LEVEL_CARD_BONUS_LEVEL`, or the pass bonus if they own it, whichever is larger.
+
+	The pass skips the level requirement instead of stacking with it, so a level 20
+	player with the pass has the same cap as one without.
+]=]
+function DeckConfig.cardBonusFor(profile : any) : number
+	local levelBonus = if DeckConfig.levelOf(profile) >= DeckConfig.LEVEL_CARD_BONUS_LEVEL
+		then DeckConfig.LEVEL_CARD_BONUS
+		else 0
+
+	return math.max(levelBonus, GamepassConfig.cardBonus(profile))
+end
+
+--[=[
+	How many cards this profile can actually equip: its `CardLimit` plus the level or
+	pass bonus (`cardBonusFor`).
 
 	The shortcut server and client both use, like `unlockedFor` for slots.
 
-	**The pass adds here, not to `CardLimit`.** Writing +5 to the profile would be a
+	**The bonus adds here, not to `CardLimit`.** Writing +5 to the profile would be a
 	credit, and credits do not go back: a refunded player would keep the higher cap
 	forever, and a second login would add five more. Added on read, the cap drops
 	with the pass, and `SetLimit` (the cap the game grants) remains the only thing
@@ -153,7 +177,7 @@ end
 function DeckConfig.limitFor(profile : any) : number
 	local stored = typeof(profile) == "table" and profile.CardLimit or nil
 
-	return DeckConfig.resolveLimit(stored) + GamepassConfig.cardBonus(profile)
+	return DeckConfig.resolveLimit(stored) + DeckConfig.cardBonusFor(profile)
 end
 
 --[=[
