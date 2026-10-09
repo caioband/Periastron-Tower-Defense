@@ -26,6 +26,7 @@ Commands that depend on a service from one place only live in that place's folde
 | `richtext` | `textlab` | `[players]` | both | Opens the rich text workbench (run again to close); players omitted = you |
 | `tutorial` | `tutorialprompt` | `[players]` | both | Sends the tutorial offer (writes nothing to the profile) |
 | `tutorialreset` | `resettutorial` | `[players]` | both | Clears the profile's `Tutorial` flag so the offer shows again |
+| `runereset` | `clearrunes`, `resetrunes` | `[players]` | both | Removes every active [rune](runes.md), and its match lock; players on this server |
 | `tutorialshop` | `tutorial2` | `[players]` | both | Runs the Lobby half of the tutorial (the shop until the Crate of Beginnings is bought) |
 | `highlight` | `spotlight` | `[path] [players]` | both | Darkens the screen except the GuiObject at the path (for example `HUD.HUDLeft.Shop`); no path clears it |
 | `arrow` | `indicator` | `[x,y,z] [players]` | both | Points the indicator arrow at a position; no position clears it |
@@ -73,9 +74,10 @@ In the [QA environment](environments.md), **every player is a tester** and may r
 | `friendinvitestats` | Lobby |
 | `datareset` | both |
 | `tutorialreset` | both |
+| `runereset` | both |
 | `help` | both |
 
-Testers can aim them at any player, online or offline, like admins (`datareset` and `tutorialreset` only reach players on the same server).
+Testers can aim them at any player, online or offline, like admins (`datareset`, `tutorialreset`, and `runereset` only reach players on the same server).
 QA is a separate universe with its own DataStores, so this never touches a production profile.
 In Production, `QA_COMMANDS` does nothing.
 A tester's console shows only these commands (and only the ones registered in the current place).

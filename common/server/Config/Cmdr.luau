@@ -69,6 +69,8 @@ return {
 		datareset = true,
 		-- Clears the profile's `Tutorial` flag, so the tutorial can be tested again.
 		tutorialreset = true,
+		-- Removes every active rune, so the rune shop can be tested from scratch.
+		runereset = true,
 		-- Lists only what the tester can run: the client drops the rest from its registry.
 		help = true,
 	} :: { [string]: boolean },

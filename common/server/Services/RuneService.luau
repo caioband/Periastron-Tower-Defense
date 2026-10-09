@@ -237,8 +237,20 @@ function RuneService:Grant(player : Player, id : string, tier : number, seconds 
 	return true, action
 end
 
---- Removes one rune, or every rune when `id` is nil. For the admin command.
+--[=[
+	Removes one rune, or every rune when `id` is nil. For the admin commands.
+
+	The match lock goes too: a rune cleared mid-match no longer pays that match, so
+	what the tester sees at the end matches what they cleared.
+]=]
 function RuneService:Clear(player : Player, id : string?) : boolean
+	local locks = self.Locks[player]
+	if locks and id then
+		locks[id] = nil
+	else
+		self.Locks[player] = nil
+	end
+
 	return self:_write(player, function(runes)
 		if id then
 			runes[id] = nil

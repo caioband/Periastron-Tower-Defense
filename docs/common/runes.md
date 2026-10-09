@@ -99,4 +99,6 @@ RuneService:Clear(player)                   -- removes every rune
 
 To add a rune, add an entry to `RuneConfig.Runes`, author its frame in the shop (see [Rune shop](../lobby/rune-shop.md#studio-setup)), and make the reward it boosts read `RuneService:GetMultiplier(player, Id)`.
 
-The `rune` admin command grants or removes a rune without charging; its optional `seconds` shortens the duration to watch a rune run out (see [Admin commands](admin-commands.md)).
+The `rune` admin command grants or removes a rune without charging; its optional `seconds` shortens the duration to watch a rune run out.
+`runereset` removes every active rune and is open to QA testers (see [Admin commands](admin-commands.md)).
+Both go through `RuneService:Clear`, which also drops the match lock, so a rune cleared mid-match no longer pays that match.
