@@ -5,16 +5,23 @@ local Mob = require(SharedConfig:WaitForChild("Mob"))
 
 local EndlessWaves = {}
 
---[[ TUNING ]]
--- Growth factors must stay above 1: below it, health shrinks each wave and clamps to 1.
--- LateGrowth puts the multiplier at ~15M on wave 500 (the Endless500 badge).
-local HEALTH = { Start = 0.4, EarlyGrowth = 1.08, LateFrom = 25, LateGrowth = 1.0334 }
+local HEALTH = {
+	Start = 0.4,
+	Chunks = {
+		{ Until = 50, PerWave = 0.06 },
+		{ Until = 100, PerWave = 0.10 },
+		{ Until = 150, PerWave = 0.16 },
+		{ Until = 200, PerWave = 0.24 },
+		{ Until = 300, PerWave = 0.35 },
+		{ Until = 400, PerWave = 0.50 },
+		{ Until = math.huge, PerWave = 0.70 },
+	},
+}
 local SPEED = { Start = 0.9, PerWave = 0.03, Max = 2.6 }
-local BOSS_INTERVAL = 5       -- boss waves repeat every N waves after the first boss wave
-local BOSS_EXTRA_EVERY = 10   -- +1 boss per faction every N waves after its first
-local NEWEST_WEIGHT = 2       -- share weight of the newest faction (others are 1)
+local BOSS_INTERVAL = 5
+local BOSS_EXTRA_EVERY = 10
+local NEWEST_WEIGHT = 2
 
--- Astral and Sky have no elite model: their winged model stands in, with the elite's stats and pay.
 local ELITE_STAND_IN = { Health = 120, SpeedMultiplier = 1 / 1.75, Reward = 45, SpawnDelay = 0.45 }
 
 local FACTIONS = {
@@ -60,7 +67,6 @@ local FACTIONS = {
 	},
 }
 
--- Spawn order is this list's order. Count = min(Cap, floor(Base + Per * (wave - From))).
 local SLOTS = {
 	{ Key = "Runt",     From = 1,  Base = 6, Per = 1.2,  Cap = 30 },
 	{ Key = "Grunt",    From = 2,  Base = 2, Per = 1.1,  Cap = 40 },
@@ -82,10 +88,17 @@ local FIRST_BOSS_WAVE = FACTIONS[1].BossWave
 local cache = {}
 
 local function healthMultiplier(wave : number) : number
-	local value = HEALTH.Start * HEALTH.EarlyGrowth ^ (math.min(wave, HEALTH.LateFrom) - 1)
-	if wave > HEALTH.LateFrom then
-		value *= HEALTH.LateGrowth ^ (wave - HEALTH.LateFrom)
+	local value = HEALTH.Start
+	local from = 1
+
+	for _, chunk in HEALTH.Chunks do
+		if wave <= from then break end
+
+		local to = math.min(wave, chunk.Until)
+		value += (to - from) * chunk.PerWave
+		from = chunk.Until
 	end
+
 	return value
 end
 
@@ -146,7 +159,6 @@ local function build(wave : number, preset)
 		end
 	end
 
-	-- Bosses: every BOSS_INTERVAL waves from the first boss wave, each faction from its own BossWave.
 	if wave >= FIRST_BOSS_WAVE and (wave - FIRST_BOSS_WAVE) % BOSS_INTERVAL == 0 then
 		for _, faction in FACTIONS do
 			if wave < faction.BossWave then continue end

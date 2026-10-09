@@ -156,6 +156,17 @@ function SuffocateAbilityController:start()
 				track:Play(0)
 				track:AdjustSpeed(GameClock.GetScale())
 				active.Track = track
+
+				-- Freezes on the last frame instead of snapping back to idle when the
+				-- animation is shorter than the suffocation.
+				local length = track.Length
+				if length > 0 then
+					GameClock.Delay(math.max(0, length - 0.05), function()
+						if self.Active[unitId] == active and active.Track == track and track.IsPlaying then
+							track:AdjustSpeed(0)
+						end
+					end)
+				end
 			end
 		end
 

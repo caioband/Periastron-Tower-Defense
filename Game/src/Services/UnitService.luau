@@ -2137,14 +2137,18 @@ function UnitService:executeCombo(entry, unitStats, step, targetId, weather : st
 	local unitName = entry.unitName
 	local unitPosition = entry.cf.Position
 
-	-- Frozen at the start of the step, for the same reason as a regular hit: a weather or
-	-- a card that comes in midway does not change a step already started.
 	local auraBonus = self:getAuraBonus(entry, weather)
 	local damage = combo.Damage and self:getDamage(entry, combo, weather) or 0
 	local range = self:getRange(entry, weather)
 
-	-- Where the target was when the step started: that is where the meteor falls.
 	local aimPos = targetId and mobService:getMobPosition(targetId)
+
+	local function targetPosition()
+		if targetId and mobService.ActiveMobs[targetId] then
+			return mobService:getMobPosition(targetId)
+		end
+		return nil
+	end
 
 	local function showHits(hits)
 		if #hits == 0 then return end
@@ -2157,42 +2161,68 @@ function UnitService:executeCombo(entry, unitStats, step, targetId, weather : st
 		GameClock.Wait(step.HitTime or 0)
 
 		if step.Combo == "Meteor" then
-			if not aimPos then return end
+			local startPos = targetPosition() or aimPos
+			if not startPos then return end
 
 			local fallTime = combo.FallTime or 1
 			for _, plr in ipairs(Players:GetPlayers()) do
-				Framework:Fire("ArchmageMeteor", plr, unitId, aimPos, fallTime, combo.Height or 15)
+				Framework:Fire("ArchmageMeteor", plr, unitId, startPos, fallTime, combo.Height or 15, targetId)
 			end
 
-			-- Damage lands on impact, along with the explosion the client plays.
-			GameClock.Wait(fallTime)
+			-- Homing: follows the target during the fall and lands where it is on impact.
+			-- If it dies mid-fall, the meteor lands where it was last seen.
+			local TRACK_INTERVAL = 0.1
+			local impactPos = startPos
+			local remaining = fallTime
+			while remaining > 0 do
+				local wait = math.min(TRACK_INTERVAL, remaining)
+				GameClock.Wait(wait)
+				remaining -= wait
+
+				impactPos = targetPosition() or impactPos
+			end
 
 			local radius = SharedConfig.UnitUpgradeConfig:GetMeteorRadius(unitName, entry.upgrades or 0)
 			local hits = {}
-			for _, mobId in mobService:GetMobsInRadius(aimPos, radius) do
+			for _, mobId in mobService:GetMobsInRadius(impactPos, radius) do
 				self:creditHit(entry, hits, mobId, damage, auraBonus)
 			end
 			showHits(hits)
 		elseif step.Combo == "Lightning" then
-			-- The line locks here, at the start of the damage: where the target is now, or where
-			-- it was at the start of the step if it already died.
-			local through = (targetId and mobService:getMobPosition(targetId)) or aimPos
+			local through = targetPosition() or aimPos
 			if not through then return end
 
 			local window = math.max(0, (step.HitEnd or step.HitTime or 0) - (step.HitTime or 0))
 			local interval = math.max(0.05, combo.Interval or 0.1)
 			local ticks = math.max(1, math.floor(window / interval + 1e-6))
 
+			local stunDuration = combo.Stun or 0
+			local stunLockout = combo.StunLockout or 0
+			local stunned = {}
+
 			for _, plr in ipairs(Players:GetPlayers()) do
 				Framework:Fire("ArchmageLightning", plr, unitId, through, window)
 			end
 
 			for tick = 1, ticks do
-				-- Whoever is on the line **on this** tick: an enemy entering the line in the
-				-- middle of the bolt takes damage too.
 				local hits = {}
 				for _, mobId in mobService:GetMobsAlongLine(unitPosition, through, range, combo.Width or PIERCE_WIDTH) do
 					self:creditHit(entry, hits, mobId, damage, auraBonus)
+
+					-- One stun per enemy per beam. The lockout is shared by every Archmage on the
+					-- map: once any Archmage stuns an enemy, no Archmage can stun it again until
+					-- `StunLockout` has passed, so stacked Archmages cannot chain-stun.
+					if stunDuration > 0 and not stunned[mobId] then
+						local mob = mobService.ActiveMobs[mobId]
+						if mob then
+							local now = GameClock.Now()
+							if now >= (mob.ArchmageStunLockUntil or 0) then
+								stunned[mobId] = true
+								mob.ArchmageStunLockUntil = now + stunLockout
+								mobService:StunMob(mobId, stunDuration, entry.ownerUserId)
+							end
+						end
+					end
 				end
 				showHits(hits)
 

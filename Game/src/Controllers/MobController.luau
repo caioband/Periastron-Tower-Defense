@@ -167,6 +167,10 @@ end
 
 
 local function flashMob(mob)
+	-- Decorative, like the other VFX: with the "VFX" setting off, no highlight per hit.
+	local settings = Framework:Get("SettingsController", false, false)
+	if settings and not settings:Get("VFX") then return end
+
 	local existing = mob:FindFirstChild("HitFlash")
 	if existing then
 		existing:Destroy()

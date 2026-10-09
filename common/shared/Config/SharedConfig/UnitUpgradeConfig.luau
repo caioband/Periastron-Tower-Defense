@@ -382,7 +382,7 @@ UnitUpgradeConfig.Units = {
 		BaseCost = 300,
 		CostMultiplier = 1.7,
 		DamageMultiplier = 1.15,
-		CooldownMultiplier = (6.5 / UnitStats["Archmage"].Cooldown) ^ (1 / UnitUpgradeConfig.MaxUpgrades),
+		Cooldowns = { 8, 7.67, 7.36, 7.06, 6.28, 6 },
 	},
 }
 

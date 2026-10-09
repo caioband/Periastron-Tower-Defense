@@ -5,19 +5,18 @@ SuffocateAbility.Enemies = {
 }
 
 SuffocateAbility.Threshold = 0.7
-SuffocateAbility.CastTime = 1.75
+SuffocateAbility.CastTime = 2.85
 SuffocateAbility.StopWhileCasting = true
 SuffocateAbility.EnemyAnim = "Suffocate"
 
 SuffocateAbility.CastVFX = "SuffocateCast"
-SuffocateAbility.CastPart = "Right Arm"	
+SuffocateAbility.CastPart = "Right Arm"
 
-
-SuffocateAbility.CastVFXTime = 1
+SuffocateAbility.CastVFXTime = 2.85
 
 SuffocateAbility.UnitAnim = "Suffocated"
 SuffocateAbility.UnitVFX = "VictimVFX"
-SuffocateAbility.Duration = 4
+SuffocateAbility.Duration = 10
 SuffocateAbility.FadeTime = 0.6
 SuffocateAbility.ExceptUnits = {}
 

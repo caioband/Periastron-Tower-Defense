@@ -151,8 +151,8 @@ local UnitStats = {
 		Hits = 1,
 		Combo = {
 			Meteor = { Damage = 120, Radius = 8, MaxRadius = 10, FallTime = 1, Height = 15 },
-			Lightning = { Damage = 25, Interval = 0.1, Width = 2 },
-			Teleport = {},
+			Lightning = { Damage = 25, Interval = 0.1, Width = 2, Stun = 1, StunLockout = 2.5 },
+			Teleport = {}, 
 		},
 	},
 

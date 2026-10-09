@@ -1363,7 +1363,7 @@ end
 	after the same `fallTime` on `GameClock`, and at 2x a real-time Tween would explode
 	after the enemy had already taken the damage.
 ]=]
-function VFXController:PlayMeteor(unitId : string, aimPos : Vector3, fallTime : number?, height : number?)
+function VFXController:PlayMeteor(unitId : string, aimPos : Vector3, fallTime : number?, height : number?, targetId : string?)
 	if typeof(aimPos) ~= "Vector3" then return end
 
 	local template = self.Library[METEOR_VFX_NAME]
@@ -1376,17 +1376,30 @@ function VFXController:PlayMeteor(unitId : string, aimPos : Vector3, fallTime : 
 	local root = model and (model:FindFirstChild(UNIT_ROOT_NAME) or model.PrimaryPart)
 	local origin = (root and root.Position or aimPos) + Vector3.new(0, tonumber(height) or 15, 0)
 
+	local mobs = self.Controllers.MobController
+	local function targetModel()
+		local mob = targetId and mobs and mobs.SpawnedMobs and mobs.SpawnedMobs[targetId]
+		if mob and mob.Parent then
+			return mob
+		end
+		return nil
+	end
+
+	-- Keeps the server's aim height relative to the model, so the meteor lands
+	-- where it used to, just following the enemy.
+	local tracked = targetModel()
+	local offset = if tracked then aimPos - tracked:GetPivot().Position else Vector3.zero
+	local target = aimPos
+
 	local meteor = looseVFXClone(template)
 	local explosion = meteor:FindFirstChild(METEOR_EXPLOSION_NAME)
 
-	local heading = aimPos - origin
+	local heading = target - origin
 	local rotation = if heading.Magnitude > 1e-3 then CFrame.lookAt(Vector3.zero, heading) else CFrame.identity
 
 	setClonePivot(meteor, CFrame.new(origin) * rotation)
 	meteor.Parent = VFX.temp
 
-	-- With the "VFX" setting off only the rock falls: it is what shows where the damage
-	-- lands. The trail and the explosion are decoration.
 	local effects = self:effectsOn()
 
 	if effects then
@@ -1402,9 +1415,21 @@ function VFXController:PlayMeteor(unitId : string, aimPos : Vector3, fallTime : 
 			return
 		end
 
+		local mob = targetModel()
+		if mob then
+			target = mob:GetPivot().Position + offset
+		end
+
 		elapsed += GameClock.Scaled(dt)
 		local alpha = math.min(1, elapsed / duration)
-		setClonePivot(meteor, CFrame.new(origin:Lerp(aimPos, alpha)) * rotation)
+		local position = origin:Lerp(target, alpha)
+
+		local toTarget = target - position
+		if toTarget.Magnitude > 1e-3 then
+			rotation = CFrame.lookAt(Vector3.zero, toTarget)
+		end
+
+		setClonePivot(meteor, CFrame.new(position) * rotation)
 
 		if alpha < 1 then return end
 		connection:Disconnect()
@@ -1529,8 +1554,8 @@ function VFXController:construct()
 
 	-- The Archmage's attacks that have visuals. The server decides the aim and timing
 	-- (`UnitService:executeCombo`); only the drawing comes from here.
-	Framework:Listen("ArchmageMeteor", function(unitId : string, aimPos : Vector3, fallTime : number, height : number)
-		self:PlayMeteor(unitId, aimPos, fallTime, height)
+	Framework:Listen("ArchmageMeteor", function(unitId : string, aimPos : Vector3, fallTime : number, height : number, targetId : string?)
+		self:PlayMeteor(unitId, aimPos, fallTime, height, targetId)
 	end)
 
 	Framework:Listen("ArchmageLightning", function(unitId : string, throughPos : Vector3, duration : number)
