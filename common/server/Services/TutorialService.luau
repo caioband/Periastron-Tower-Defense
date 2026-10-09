@@ -23,35 +23,24 @@ local Config = SharedConfig.TutorialConfig
 local AnalyticsConfig = ServerConfig.Analytics
 
 --[[
-	Players who have not done the tutorial get the offer on arriving in the Lobby.
+	Players who have not done the tutorial are sent straight into it on arriving
+	in the Lobby. There is no offer: `Tutorial = false` means "teleport them".
 
-	The profile keeps a boolean: `Tutorial`. `false` is the only thing that makes the
-	offer appear: this service reads the key when the profile loads and, if it is
-	`false`, sends `TutorialPrompt` to the client; `TutorialController` puts the
-	dialog on screen.
+	The profile keeps a boolean: `Tutorial`. The key becomes `true` when they win
+	the 5 waves, over in the other place (`:Complete`).
 
-	**Both answers settle the matter**, along different paths:
+	**Abandoning the match midway leaves the key at `false`**: a player who left
+	before the end is sent back in on their next Lobby arrival and restarts from
+	wave 1.
 
-	  - **accepting** teleports the player alone to the tutorial map (`:Start`), and
-	    the key becomes `true` when they win the 5 waves, over in the other place
-	    (`:Complete`);
-	  - **declining** writes `true` right away. Declining is an answer, not a
-	    postponement: someone who said "no" is not asked again on every Lobby visit.
+	If the teleport fails, the old Yes/No offer is shown as a fallback, so the
+	player is never left with nothing. Declining it still settles the matter.
 
-	**Abandoning the match midway leaves the key at `false`**: a player who accepted
-	and left before the end is asked again and restarts from wave 1. A half-played
-	match state exists nowhere, and returning to wave 3 with an empty map would be
-	worse than restarting.
+	**Lobby only.** The gate is `PlaceId` against the Lobby id of the current
+	environment (`Environment.IsPlace("Lobby")`), so the QA Lobby does it too.
 
-	**Lobby only.** The service is in `common/` because the game is a single
-	universe, but offering the tutorial to someone who just landed mid-match would
-	be worse than not offering it. The gate is `PlaceId` against
-	the Lobby id of the current environment (`Environment.IsPlace("Lobby")`), so
-	the QA Lobby offers it too.
-
-	> In an unpublished place (a loose `.rbxl` in Studio) `PlaceId` is 0 and the
-	> offer does not appear on its own. To see the dialog in that case there is
-	> Cmdr's `tutorial`, which goes through the same `:Prompt`.
+	> In an unpublished place (a loose `.rbxl` in Studio) `PlaceId` is 0 and
+	> nothing happens on its own. Cmdr's `tutorial` still shows the offer dialog.
 
 	See docs/common/tutorial.md.
 ]]
@@ -63,32 +52,12 @@ local TutorialService = {
 	}
 }
 
--- The profile key. A constant because it appears in both the read and the write,
--- and both must be the same word.
 local DATA_KEY = "Tutorial"
 
---[[
-	[Player] = true for players who arrived with the `TutorialDone` ticket on teleport.
-
-	It is what separates a real return from Cmdr's `tutorialshop`: both run the same
-	flow on screen, and only one is a player finishing the tutorial. Without this,
-	testing the shop step would send funnel step 13 to the dashboard.
-]]
 TutorialService.Returned = {}
 
 --[[ INTERNAL ]]
 
---[=[
-	Has the "tutorial" matter been settled for this profile?
-
-	Two shapes come through here. Today's is the boolean. The other is the
-	`{ Match, Shop, Crates }` table this key briefly was, which `DataService`'s
-	reconcile does **not** undo on its own, because it only fills in what is
-	missing. It reads as settled when the match had been won.
-
-	Without this, a profile from that window would read as "done" just because the
-	table is a truthy value, and would never get the offer again.
-]=]
 local function isDone(data : any) : boolean
 	local stored = data and data[DATA_KEY]
 
@@ -99,12 +68,6 @@ local function isDone(data : any) : boolean
 	return stored == true
 end
 
---[=[
-	A step of the onboarding funnel, if `AnalyticsService` is up.
-
-	It should never be missing (it is `common/` and loads in both places), but the
-	measuring service must not be what stops the tutorial from happening.
-]=]
 function TutorialService:funnel(player : Player, stepName : string)
 	local analytics = self.Services.AnalyticsService
 	if not analytics then return end
@@ -112,19 +75,16 @@ function TutorialService:funnel(player : Player, stepName : string)
 	analytics:LogFunnelStep(player, stepName)
 end
 
---[=[
-	Is this place the Lobby?
-]=]
 function TutorialService:isLobby() : boolean
 	return Environment.IsPlace("Lobby")
 end
 
 --[=[
-	Offers it to players who have not done it.
+	Sends players who have not done the tutorial straight into it.
 
-	The read goes through `DataService:Get`, which only calls back with the profile
-	open and the `Loaded` tag set, that is, never before the client has what it needs
-	to draw the dialog.
+	The delay gives the Lobby a moment to load before the teleport starts. Both
+	funnel steps are still logged so the onboarding dashboard keeps its shape.
+	If the teleport fails, the offer dialog is shown instead.
 ]=]
 function TutorialService:offer(player : Player)
 	local dataService = self.Services.DataService
@@ -134,21 +94,20 @@ function TutorialService:offer(player : Player)
 		if isDone(data) then return end
 		if not player.Parent then return end
 
-		-- The funnel's first step is here, not in `:Prompt`: that is the entry for Cmdr's
-		-- `tutorial` command, and the funnel measures players, not tests.
 		self:funnel(player, "PromptShown")
 
-		self:Prompt({ player })
+		task.delay(Config.PromptDelay or 0, function()
+			if not player.Parent then return end
+
+			self:funnel(player, "Accepted")
+
+			if not self:Start(player) then
+				self:Prompt({ player })
+			end
+		end)
 	end)
 end
 
---[=[
-	A player who just won the tutorial gets the nudge toward the shop.
-
-	The signal is the `TutorialDone` the match server attached to the teleport back,
-	not the profile. It applies to **this** Lobby arrival and nothing else: leaving
-	and returning does not bring the pointer back, which is right for a nudge.
-]=]
 function TutorialService:shopPrompt(player : Player)
 	if not self:isLobby() then return end
 
@@ -161,8 +120,6 @@ function TutorialService:shopPrompt(player : Player)
 		return
 	end
 
-	-- The ticket is proof they came from a won match: from here on, the funnel's
-	-- last two steps count for this player.
 	self.Returned[player] = true
 
 	self:funnel(player, "BackToLobby")
@@ -170,13 +127,6 @@ function TutorialService:shopPrompt(player : Player)
 	self:PromptShop({ player })
 end
 
---[=[
-	The crate was bought: removes the shop pointer.
-
-	Connected to `ShopService`'s `ItemPurchased` signal. Listening instead of
-	grafting keeps the purchase free of tutorial lines, the same way the placement
-	step listens to `UnitPlaced` instead of living inside `PlaceUnit`.
-]=]
 function TutorialService:watchShop()
 	if not self:isLobby() then return end
 
@@ -200,28 +150,12 @@ end
 
 --[[ API ]]
 
---[=[
-	Sends the offer without looking at the profile. This is how Cmdr's `tutorial`
-	gets in, and it lets you see the dialog without resetting your own data.
-]=]
 function TutorialService:Prompt(players : { Player })
 	for _, player in players do
 		Framework:Fire("TutorialPrompt", player)
 	end
 end
 
---[=[
-	The tutorial started: sends the player to the tutorial map.
-
-	The teleport carries **two** things: the map, which the other side's `MapService`
-	already knows how to read, and the `Tutorial` flag, which is what makes
-	`TutorialMatchService` impose the preset and the script. Both are needed and say
-	different things: loading the Tutorial map without the flag is a regular match on
-	it, which is how the map gets tested.
-
-	It goes **alone**, not through the portal: the tutorial is a guided single-player
-	match, and adding someone to it would get in the way of both.
-]=]
 function TutorialService:Start(player : Player)
 	local match = Config.Match
 
@@ -245,26 +179,11 @@ function TutorialService:Start(player : Player)
 	return true
 end
 
---[=[
-	Opens the **second part**, the one that happens in the Lobby after the match: the
-	dialog and the shop button highlight, which close when the crate is bought.
-
-	Normally the `TutorialDone` ticket from the teleport back triggers it (see
-	`shopPrompt`). Through here it opens without any ticket, which is what the
-	`tutorialshop` command needs: testing this step without winning the five waves
-	first.
-]=]
 function TutorialService:PromptShop(players : { Player })
 	local crateService = Framework:Get("CrateService", false, false)
 	local guarantee = Config.CrateGuarantee
 
 	for _, player in players do
-		--[[
-			The crate the flow asks the player to buy comes with a guaranteed epic unit.
-			The mark is set **here**, on the server, when the step opens: the client
-			never asks for a rarity, so there is no way to forge one by opening another
-			crate.
-		]]
 		if crateService and crateService.ForceRarity and guarantee then
 			crateService:ForceRarity(player, guarantee.Rarity)
 		end
@@ -273,17 +192,6 @@ function TutorialService:PromptShop(players : { Player })
 	end
 end
 
---[=[
-	Returns the player to the state of someone who never saw the tutorial.
-
-	It is a test tool: the matter is settled on the first answer (winning **or**
-	declining), and without this, checking the offer a second time would require
-	deleting the profile.
-
-	It reopens the dialog right away when they are in the Lobby, which is what the
-	tester wants to see and what `PlayerDataLoaded` would do on the next join. It
-	touches nothing else: units, coins, and crates stay where they were.
-]=]
 function TutorialService:Reset(player : Player)
 	local dataService = self.Services.DataService
 	if not dataService then
@@ -301,14 +209,6 @@ function TutorialService:Reset(player : Player)
 	return true
 end
 
---[=[
-	Settles the matter: the offer no longer returns for this player.
-
-	The two paths that call this say different things to the player and the same
-	thing to the profile: won the 5 waves, or answered that they do not want it. The
-	key does not store **which** one, on purpose: nothing in the game asks that, and
-	a key that answers more than it is asked is a key that will end up wrong.
-]=]
 function TutorialService:MarkDone(player : Player)
 	local dataService = self.Services.DataService
 	if not dataService then return end
@@ -318,9 +218,6 @@ function TutorialService:MarkDone(player : Player)
 	end)
 end
 
---[=[
-	The tutorial match was won. Called from the other place, at the end of the 5 waves.
-]=]
 function TutorialService:Complete(player : Player)
 	self:MarkDone(player)
 end
@@ -328,22 +225,10 @@ end
 --[[ LIFECYCLE ]]
 
 function TutorialService:construct()
-	-- The event identifier is created on the server: without this empty `Listen`,
-	-- the client's `Listen` would wait ten seconds for an event nobody registered,
-	-- and take the rest of its `construct` down with it. It applies in both places,
-	-- including the one that offers no tutorial, because the controller is common.
 	Framework:Listen("TutorialPrompt", function() end)
 	Framework:Listen("TutorialShopPrompt", function() end)
 	Framework:Listen("TutorialShopDone", function() end)
 
-	--[[
-		The end of the unboxing, which is the tutorial's last step and the only one
-		only the client sees happen: the server knows about the purchase
-		(`ItemPurchased`), not the animation that came after.
-
-		The teleport ticket authorizes it: without `Returned`, Cmdr's `tutorialshop`
-		would send step 13 to the dashboard on every test.
-	]]
 	Framework:Listen("TutorialShopFinished", function(player : Player)
 		if not self.Returned[player] then return end
 
@@ -354,11 +239,6 @@ function TutorialService:construct()
 
 	Framework:Listen("TutorialAnswered", function(player : Player, accepted : any)
 		if accepted ~= true then
-			-- Declining is an answer, and an answer settles it: someone who said "no" is not
-			-- asked again every time they enter the Lobby.
-			--
-			-- The funnel alone cannot tell this "no" from an ignored dialog box: both stop at
-			-- step 1. That is why declining is an event.
 			local analytics = self.Services.AnalyticsService
 			if analytics then
 				analytics:LogEvent(player, AnalyticsConfig.Events.Declined)
@@ -384,7 +264,7 @@ function TutorialService:construct()
 
 	local dataService = self.Services.DataService
 	if not dataService then
-		log:Warn("no DataService; the tutorial offer will not be sent.")
+		log:Warn("no DataService; the tutorial will not start.")
 
 		return
 	end
@@ -394,7 +274,6 @@ function TutorialService:construct()
 		self:shopPrompt(player)
 	end)
 
-	-- Players who loaded before this service started: their signal already fired.
 	for _, player in Players:GetPlayers() do
 		self:offer(player)
 		self:shopPrompt(player)
