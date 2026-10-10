@@ -17,7 +17,12 @@ local log = Log.new("RuneService")
 local RuneConfig = SharedConfig.RuneConfig
 
 --[[
-	Active runes (`Data.Runes`): their clock and their bonus, in every place.
+	Runes on the profile, in every place:
+
+	  - **Unused** (`Data.Inventory.Runes`, `{ ["XP:2"] = amount }`): bought in the
+	    shop, waiting in the backpack. `GiveItem` adds and removes them.
+	  - **Active** (`Data.Runes`, `{ [Id] = { Tier, Remaining } }`): their clock and
+	    their bonus. `Activate` moves one from the backpack to here.
 
 	**The clock only runs while the profile is open here.** The profile keeps the
 	seconds left; this service subtracts the time since its last write every
@@ -35,7 +40,8 @@ local RuneConfig = SharedConfig.RuneConfig
 	round, and `GetBonus` never returns less than the lock until `Unlock`. A rune
 	that runs out on Nightmare's wave 34 still pays the end of that match.
 
-	Selling runes is the Lobby's `RuneShopService`; this service only grants them.
+	Selling runes is the Lobby's `RuneShopService`; this service stores, activates
+	and grants them.
 
 	See docs/common/runes.md.
 ]]
@@ -86,7 +92,7 @@ end
 
 --[=[
 	Subtracts the whole seconds played since the last write, and runs `mutate` on the
-	settled table in the **same** `Update`: a purchase sees the real time left, and
+	settled table in the **same** `Update`: an activation sees the real time left, and
 	nothing yields between reading and writing.
 
 	Without `mutate` and without an active rune it writes nothing (only the clock
@@ -196,10 +202,70 @@ function RuneService:UnlockAll()
 	table.clear(self.Locks)
 end
 
+--- How many unused runes of a tier the player holds in the backpack.
+function RuneService:GetItemCount(player : Player, id : string, tier : number) : number
+	local profile = self:_profileOf(player)
+	return RuneConfig.itemCount(profile and profile.Inventory, id, tier)
+end
+
 --[=[
-	Grants a rune by the rules in `RuneConfig.purchaseAction`: the same tier extends,
-	a higher one replaces, a lower one is refused. **Charges nothing**: that is the
-	shop's job, which refunds when this returns false.
+	Adds (or removes, with a negative `amount`) unused runes of a tier in the
+	backpack. Default 1. **Charges nothing**: that is the shop's job.
+
+	The check and the write are one `Update`, which does not yield, so two quick
+	activations cannot spend the same last rune.
+
+	Returns true, or false and the reason: `"UnknownRune"`, `"NotLoaded"`,
+	`"BackpackFull"` (past `RuneConfig.MAX_ITEMS`), `"NotOwned"` (would go below zero).
+]=]
+function RuneService:GiveItem(player : Player, id : string, tier : number, amount : number?) : (boolean, string?)
+	if not RuneConfig.getTier(id, tier) then
+		return false, "UnknownRune"
+	end
+
+	if not self:_profileOf(player) then
+		return false, "NotLoaded"
+	end
+
+	local delta = if typeof(amount) == "number" then math.floor(amount) else 1
+	local key = RuneConfig.itemKey(id, tier)
+	local applied, reason = false, nil
+
+	self.Services.DataService:Update(player, "Inventory", function(inventory)
+		inventory = typeof(inventory) == "table" and inventory or {}
+
+		local items = typeof(inventory.Runes) == "table" and inventory.Runes or {}
+		local owned = math.max(math.floor(tonumber(items[key]) or 0), 0)
+		local nextAmount = owned + delta
+
+		if nextAmount > RuneConfig.MAX_ITEMS then
+			reason = "BackpackFull"
+			return inventory
+		end
+
+		if nextAmount < 0 then
+			reason = "NotOwned"
+			return inventory
+		end
+
+		items[key] = if nextAmount > 0 then nextAmount else nil
+		inventory.Runes = items
+		applied = true
+
+		return inventory
+	end)
+
+	if not applied then
+		return false, reason or "NotLoaded"
+	end
+
+	return true, nil
+end
+
+--[=[
+	Grants an active rune by the rules in `RuneConfig.purchaseAction`: the same tier
+	extends, a higher one replaces, a lower one is refused. **Takes nothing from the
+	backpack**: `Activate` does that and refunds when this returns false.
 
 	`seconds` overrides `DURATION` (the `rune` admin command, to test expiry).
 
@@ -238,7 +304,46 @@ function RuneService:Grant(player : Player, id : string, tier : number, seconds 
 end
 
 --[=[
-	Removes one rune, or every rune when `id` is nil. For the admin commands.
+	Activates one unused rune from the backpack: checks the tier against the **live**
+	active rune, takes one from `Inventory.Runes`, then grants it. Nothing yields
+	between the check and the grant, and a refused grant puts the rune back.
+
+	Returns true and the action (`"New"`, `"Extend"`, `"Upgrade"`), or false and the
+	reason: `"UnknownRune"`, `"NotLoaded"`, `"LowerTier"`, `"NotOwned"`.
+]=]
+function RuneService:Activate(player : Player, id : any, tier : any) : (boolean, string?)
+	if not RuneConfig.getTier(id, tier) then
+		return false, "UnknownRune"
+	end
+
+	if not self:_profileOf(player) then
+		return false, "NotLoaded"
+	end
+
+	-- Checked before spending, so the common refusal never touches the backpack.
+	local action, reason = RuneConfig.purchaseAction(self:GetEntry(player, id), tier)
+	if not action then
+		return false, reason
+	end
+
+	local spent, spendReason = self:GiveItem(player, id, tier, -1)
+	if not spent then
+		return false, spendReason
+	end
+
+	local granted, result = self:Grant(player, id, tier)
+
+	if not granted then
+		self:GiveItem(player, id, tier, 1)
+		return false, result
+	end
+
+	return true, result
+end
+
+--[=[
+	Removes one active rune, or every active rune when `id` is nil. For the admin
+	commands. The backpack is not touched.
 
 	The match lock goes too: a rune cleared mid-match no longer pays that match, so
 	what the tester sees at the end matches what they cleared.

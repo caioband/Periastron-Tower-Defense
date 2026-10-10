@@ -28,11 +28,15 @@ local UnitStats = SharedConfig.UnitStats
 local Framework = Me.new()
 local log = Log.new("CrateService")
 
+-- The `RuneConfig` id whose bonus multiplies crate luck.
+local LUCK_RUNE = "Luck"
+
 local CrateService = {
 	Services = {
 		DataService = {},
 		IndexService = {},
 		ContractService = {},
+		RuneService = {},
 	},
 
 	Signals = {
@@ -163,22 +167,6 @@ function CrateService:_rollCrateUpgrade(crateRarity : string) : (string, { strin
 end
 
 --[=[
-	Rolls a unit rarity out of a crate's pool. Returns nil when the crate has no pool.
-
-	`profile` is the opener's profile, and it only serves luck: the `+30% Luck` gamepass
-	multiplies the weight of rarities from Epic up (see `GamepassConfig.LUCK_MIN_RARITY`).
-	Without a profile (or without the pass) the multiplier is 1 and the math comes out
-	exactly as without it.
-
-	**Luck raises the top ones and leaves the bottom ones alone**, and that is enough: the
-	draw normalizes by the sum of weights, so raising Epic+ pushes Common and Rare down on
-	its own. Touching both sides would be two numbers to keep in sync.
-
-	It also does not make the published chance false: the shop's `GetDisplayOdds` stays
-	the raw pool, which is what a player **without** the pass gets. A pass that improves
-	on what it promises does not make the shop number a lie.
-]=]
---[=[
 	Marks this player's next crate with a rarity.
 
 	It is single use and does not stack: marking twice still applies to one crate only. It
@@ -248,7 +236,23 @@ function CrateService:_guaranteedRarity(profile : any) : string?
 	return guarantee.Rarity
 end
 
-function CrateService:_rollRarity(crateRarity : string, profile : any) : string?
+--[=[
+	Rolls a unit rarity out of a crate's pool. Returns nil when the crate has no pool.
+
+	`profile` is the opener's profile, and it serves the `+30% Luck` gamepass, which
+	multiplies the weight of rarities from Epic up (see `GamepassConfig.LUCK_MIN_RARITY`).
+	`luckMultiplier` is the opener's Luck rune (`RuneService:GetMultiplier`), applied on
+	top of the pass. Without either the multiplier is 1 and the math comes out exactly as
+	without them.
+
+	**Luck raises the top ones and leaves the bottom ones alone**, and that is enough: the
+	draw normalizes by the sum of weights, so raising Epic+ pushes Common and Rare down on
+	its own. Touching both sides would be two numbers to keep in sync.
+
+	It also does not make the published chance false: the shop's `GetDisplayOdds` stays
+	the raw pool, which is what a player **without** luck gets.
+]=]
+function CrateService:_rollRarity(crateRarity : string, profile : any, luckMultiplier : number?) : string?
 	local guaranteed = self:_guaranteedRarity(profile)
 	if guaranteed then
 		log:Debug(`starter guarantee: {guaranteed} on this opening.`)
@@ -262,7 +266,7 @@ function CrateService:_rollRarity(crateRarity : string, profile : any) : string?
 		return nil
 	end
 
-	local luck = GamepassConfig.luckMultiplier(profile)
+	local luck = GamepassConfig.luckMultiplier(profile) * (luckMultiplier or 1)
 
 	local function weightOf(rarity : string) : number
 		local weight = pool[rarity] or 0
@@ -417,15 +421,16 @@ export type UnboxingResult = {
 	Runs a crate opening end to end: upgrade chain, rarity out of the resulting pool,
 	then a unit of that rarity. Pure roll -- nothing is written or sent.
 
-	`profile` belongs to the opener, and only luck reads it (see `_rollRarity`). Without
-	it the draw is that of a player with no gamepass at all: that is what makes Cmdr's
-	`unbox` roll the crate "stock" when nobody passes a profile.
+	`profile` belongs to the opener, and only the gamepass luck reads it (see
+	`_rollRarity`). `luckMultiplier` is the opener's Luck rune. Without either the draw is
+	that of a player with no luck at all: that is what makes Cmdr's `unbox` roll the crate
+	"stock" when nobody passes a profile.
 
 	`forcedRarity` is the guarantee (see `_dueRarity`): when present, it overrides the
 	rarity draw. The upgrade still rolls (the reel shows the crate upgrading the same
 	way); only the delivered rarity was already decided.
 ]=]
-function CrateService:RollCrate(rarity : string, profile : any, forcedRarity : string?) : UnboxingResult?
+function CrateService:RollCrate(rarity : string, profile : any, forcedRarity : string?, luckMultiplier : number?) : UnboxingResult?
 	local resolvedRarity = CrateConfig.resolveRarity(rarity)
 	if not resolvedRarity then
 		log:StudioWarn(string.format("%q is not a valid crate rarity.", tostring(rarity)))
@@ -434,7 +439,7 @@ function CrateService:RollCrate(rarity : string, profile : any, forcedRarity : s
 
 	local poolCrate, upgrades = self:_rollCrateUpgrade(resolvedRarity)
 
-	local rolledRarity = forcedRarity or self:_rollRarity(poolCrate, profile)
+	local rolledRarity = forcedRarity or self:_rollRarity(poolCrate, profile, luckMultiplier)
 	if not rolledRarity then
 		return nil
 	end
@@ -466,6 +471,16 @@ function CrateService:_profileOf(Player : Player) : any
 	return entry and entry.Profile.Data or nil
 end
 
+--- The player's Luck rune multiplier (1 without one).
+function CrateService:_runeLuckOf(Player : Player) : number
+	local RuneService = self.Services.RuneService
+	if not RuneService or not RuneService.GetMultiplier then
+		return 1
+	end
+
+	return RuneService:GetMultiplier(Player, LUCK_RUNE)
+end
+
 --[=[
 	Sends the opening to the whole Lobby, not only the opener.
 
@@ -490,7 +505,7 @@ end
 	point, used by the cmdr command. :OpenCrate is the one the player drives.
 ]=]
 function CrateService:PlayUnboxing(Player : Player, rarity : string) : UnboxingResult?
-	local result = self:RollCrate(rarity, self:_profileOf(Player))
+	local result = self:RollCrate(rarity, self:_profileOf(Player), nil, self:_runeLuckOf(Player))
 	if not result then
 		return nil
 	end
@@ -562,7 +577,7 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 	]]
 	local dueRarity = self:ConsumeForcedRarity(Player) or self:_dueRarity(resolvedRarity, profile)
 
-	local result = self:RollCrate(resolvedRarity, profile, dueRarity)
+	local result = self:RollCrate(resolvedRarity, profile, dueRarity, self:_runeLuckOf(Player))
 	if not result then
 		-- The roll is what failed, so hand the crate back instead of eating it.
 		self:GiveCrates(Player, resolvedRarity, 1)

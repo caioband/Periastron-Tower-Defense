@@ -1,34 +1,44 @@
 --[[
-	Runes: temporary buffs bought with shards in the Lobby rune shop
+	Runes: temporary buffs bought with shards or coins in the Lobby rune shop
 	(`StarterGui.ShopUI.RuneShop`).
 
-	Each rune has three tiers. A tier only changes the bonus and the price; the
-	duration is the same for every tier (`DURATION`).
+	Each rune has three tiers. A tier only changes the bonus, the price and the
+	icon; the duration is the same for every tier (`DURATION`).
+
+	## Buying puts the rune in the backpack
+
+	A purchase starts nothing: it adds one unused rune of that tier to
+	`Inventory.Runes` (`{ ["XP:2"] = amount }`, see `itemKey`). The backpack
+	(`crateui`, see `CrateController`) lists them next to the crates, and clicking
+	one activates it (`RuneService:Activate`).
 
 	## The time only runs while the player is in the game
 
-	The profile keeps the seconds **left**, not an expiry date
-	(`Runes = { [Id] = { Tier, Remaining } }`). `RuneService` counts down while the
-	profile is open on a server (Lobby, Game, or AFK), so time offline and time spent
-	teleporting between places are free.
+	Active runes live in `Runes = { [Id] = { Tier, Remaining } }`: the seconds
+	**left**, not an expiry date. `RuneService` counts down while the profile is open
+	on a server (Lobby, Game, or AFK), so time offline and time spent teleporting
+	between places are free.
 
-	## Buying again
+	## Activating again
 
 	Only one tier of each rune is active at a time (`purchaseAction`):
 
 	  - The same tier adds another `DURATION` on top of what is left.
 	  - A higher tier replaces the active one and starts a fresh `DURATION`.
-	  - A lower tier is refused while a higher one is active.
+	  - A lower tier stays in the backpack while a higher one is active.
 
 	## Where the bonus applies
 
-	The Shards rune multiplies the shards from the end-of-match reward, on top of
-	the game passes (`WaveService:rewardsFor`). A rune that is active at any point
-	of a match covers the whole match, even if it runs out before the last wave
-	(`RuneService:Lock`).
+	  - Shards, XP, Coins: the end-of-match reward (`WaveService`, Game).
+	  - Luck: the weight of `GamepassConfig.LUCK_MIN_RARITY` and up in crate
+	    openings, on top of the Luck gamepass (`CrateService:_rollRarity`).
 
-	This module is shared because both sides read it: the client to draw the shop
-	and the countdown, the server to charge and to apply the bonus.
+	A rune that is active at any point of a match covers the whole match, even if it
+	runs out before the last wave (`RuneService:Lock`).
+
+	This module is shared because both sides read it: the client to draw the shop,
+	the backpack and the countdown, the server to charge, store, activate and apply
+	the bonus.
 
 	See docs/common/runes.md and docs/lobby/rune-shop.md.
 ]]
@@ -53,13 +63,19 @@ RuneConfig.CURRENCIES = {
 	Cash = { Name = "Coins", Color = Color3.fromRGB(211, 170, 88) },
 }
 
--- How long one purchase lasts, in seconds of play. The same for every tier.
+-- How long one activation lasts, in seconds of play. The same for every tier.
 RuneConfig.DURATION = 25 * 60
+
+-- The most unused runes of one tier the backpack holds.
+RuneConfig.MAX_ITEMS = 999
 
 export type Tier = {
 	-- Added to the multiplier: 0.10 is +10%.
 	Bonus : number,
 	Price : number,
+
+	-- The icon, in the shop's `RuneDisplay` and on the backpack entry.
+	Image : string,
 }
 
 export type Rune = {
@@ -79,7 +95,7 @@ export type Rune = {
 
 --[=[
 	Every rune the shop sells. To add one, add an entry and author a frame with the
-	same `Id` in `RuneShop.Runes`; then make the reward it boosts read
+	same `Id` in `RuneShop.Runes`; then make whatever it boosts read
 	`RuneService:GetMultiplier(player, Id)`.
 
 	Prices are steep on purpose: a full Nightmare run pays 5 shards.
@@ -90,9 +106,39 @@ RuneConfig.Runes = {
 		DisplayName = "SHARD",
 		Effect = "SHARDS GAIN",
 		Tiers = {
-			{ Bonus = 0.10, Price = 10 },
-			{ Bonus = 0.20, Price = 20 },
-			{ Bonus = 0.35, Price = 40 },
+			{ Bonus = 0.10, Price = 10, Image = "rbxassetid://88402687357237" },
+			{ Bonus = 0.20, Price = 20, Image = "rbxassetid://88402687357237" },
+			{ Bonus = 0.35, Price = 40, Image = "rbxassetid://88402687357237" },
+		},
+	},
+	{
+		Id = "XP",
+		DisplayName = "XP",
+		Effect = "XP GAIN",
+		Tiers = {
+			{ Bonus = 0.10, Price = 10, Image = "rbxassetid://137226523573786" },
+			{ Bonus = 0.20, Price = 20, Image = "rbxassetid://138727960028563" },
+			{ Bonus = 0.35, Price = 30, Image = "rbxassetid://79906812063384" },
+		},
+	},
+	{
+		Id = "Luck",
+		DisplayName = "LUCK",
+		Effect = "LUCK",
+		Tiers = {
+			{ Bonus = 0.15, Price = 15, Image = "rbxassetid://112502034665841" },
+			{ Bonus = 0.30, Price = 30, Image = "rbxassetid://85068238348607" },
+			{ Bonus = 0.50, Price = 60, Image = "rbxassetid://116415870242131" },
+		},
+	},
+	{
+		Id = "Coins",
+		DisplayName = "COIN",
+		Effect = "COINS GAIN",
+		Tiers = {
+			{ Bonus = 0.10, Price = 10, Image = "rbxassetid://108295233460302" },
+			{ Bonus = 0.20, Price = 20, Image = "rbxassetid://95035819193811" },
+			{ Bonus = 0.35, Price = 40, Image = "rbxassetid://71219658978172" },
 		},
 	},
 } :: { Rune }
@@ -112,6 +158,7 @@ RuneConfig.Gui = {
 	Panel = "Runes",
 
 	-- Inside each rune's frame (named after its `Id`, a child of `Panel`).
+	-- `Display` is the ImageLabel that carries the selected tier's `Image`.
 	Display = "RuneDisplay",
 	Previous = "Previous",
 	Next = "Next",
@@ -142,7 +189,10 @@ RuneConfig.TIER_FORMAT = "TIER %s"
 -- `20 Shards`: the price, with commas, and the currency's `Name`.
 RuneConfig.PRICE_FORMAT = "%s %s"
 
--- On the button while a higher tier of the same rune is active.
+-- `XP II`: a backpack entry's name, the rune and its tier.
+RuneConfig.ITEM_NAME_FORMAT = "%s %s"
+
+-- On a backpack entry while a higher tier of the same rune is active.
 RuneConfig.BLOCKED_TEXT = "HIGHER ACTIVE"
 
 -- `+20% SHARDS GAIN (25m)`: the bonus in whole percent, the effect, the duration.
@@ -217,10 +267,10 @@ function RuneConfig.entryOf(runes : any, id : string) : { Tier : number, Remaini
 end
 
 --[=[
-	What buying `tier` does with `active` (the record from `entryOf`, or nil):
+	What activating `tier` does with `active` (the record from `entryOf`, or nil):
 	`"New"`, `"Extend"`, `"Upgrade"`, or nil plus `"LowerTier"` when it is refused.
 
-	The client uses it to dim the button and the server to decide, so both sides
+	The backpack uses it to dim an entry and the server to decide, so both sides
 	always agree.
 ]=]
 function RuneConfig.purchaseAction(active : { Tier : number, Remaining : number }?, tier : number) : (string?, string?)
@@ -237,6 +287,58 @@ function RuneConfig.purchaseAction(active : { Tier : number, Remaining : number 
 	end
 
 	return nil, "LowerTier"
+end
+
+--- The `Inventory.Runes` key of an unused rune: `XP:2`.
+function RuneConfig.itemKey(id : string, tier : number) : string
+	return `{id}:{tier}`
+end
+
+--- The rune and tier behind an `itemKey`, or nil when it is not one.
+function RuneConfig.parseItemKey(key : any) : (string?, number?)
+	if typeof(key) ~= "string" then
+		return nil, nil
+	end
+
+	local id, tier = string.match(key, "^(.+):(%d+)$")
+	return id, tonumber(tier)
+end
+
+--- How many unused runes of a tier `inventory` (the profile's `Inventory`) holds.
+function RuneConfig.itemCount(inventory : any, id : string, tier : number) : number
+	local items = typeof(inventory) == "table" and inventory.Runes or nil
+	if typeof(items) ~= "table" then
+		return 0
+	end
+
+	local amount = tonumber(items[RuneConfig.itemKey(id, tier)]) or 0
+	return math.max(math.floor(amount), 0)
+end
+
+export type Item = {
+	Id : string,
+	Tier : number,
+	Amount : number,
+}
+
+--[=[
+	Every unused rune in `inventory`, in catalog order and tier 1 first. Keys for a
+	rune or tier that left the config are skipped.
+]=]
+function RuneConfig.readItems(inventory : any) : { Item }
+	local items = {}
+
+	for _, rune in RuneConfig.Runes do
+		for tier in rune.Tiers do
+			local amount = RuneConfig.itemCount(inventory, rune.Id, tier)
+
+			if amount > 0 then
+				table.insert(items, { Id = rune.Id, Tier = tier, Amount = amount })
+			end
+		end
+	end
+
+	return items
 end
 
 function RuneConfig.tierName(tier : number) : string

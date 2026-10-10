@@ -52,12 +52,16 @@ local COUNTDOWN_INTERVAL = 1
 
 	Each rune has an authored frame in `Runes`, named after its `Id`. The arrows on
 	`RuneDisplay` step through the tiers, and the frame shows the selected tier's
-	bonus and price. The `ActiveRunes` list on the side shows every active rune with
-	its time left.
+	icon, bonus and price. The `ActiveRunes` list on the side shows every active rune
+	with its time left.
+
+	**Buying stores, it does not activate.** The rune goes to the backpack, where
+	`CrateController` lists it and activates it on click, so the Buy button is never
+	blocked by an active tier.
 
 	**This controller decides nothing.** The click sends "rune X, tier N", and
-	`RuneShopService` charges and grants. What the screen shows comes from the
-	profile replica (`Data.Runes`), which is the same write the server just made.
+	`RuneShopService` charges and stores. What the screen shows comes from the
+	profile replica (`Data.Runes`).
 
 	**The countdown runs here.** The server only writes the time left every 30
 	seconds (see `RuneService`), so the list counts down from the last write it
@@ -90,8 +94,8 @@ local RuneShopController = {
 		PurchaseRequested = Signal.new(),
 
 		-- (id : string, tier : number, success : boolean, result : string?) -- `result`
-		-- is the action on success (New, Extend, Upgrade) and the reason otherwise
-		-- (UnknownRune, NotLoaded, LowerTier, NotEnoughCurrency).
+		-- is `Stored` on success and the reason otherwise (UnknownRune, NotLoaded,
+		-- BackpackFull, NotEnoughCurrency).
 		PurchaseResult = Signal.new(),
 	},
 }
@@ -139,7 +143,7 @@ function RuneShopController:_step(id : string, step : number)
 	self:_renderRune(id)
 end
 
---- Writes a rune's frame: name, tier, bonus line, and the buy button.
+--- Writes a rune's frame: icon, name, tier, bonus line, and the buy button.
 function RuneShopController:_renderRune(id : string)
 	local row = self.Rows[id]
 	local rune = RuneConfig.Get(id)
@@ -150,6 +154,10 @@ function RuneShopController:_renderRune(id : string)
 
 	local tier = self:_selectedTier(id)
 	local definition = rune.Tiers[tier]
+
+	if row.Display and definition.Image and definition.Image ~= "" then
+		row.Display.Image = definition.Image
+	end
 
 	if row.Name then
 		row.Name.Text = rune.DisplayName
@@ -168,18 +176,10 @@ function RuneShopController:_renderRune(id : string)
 		)
 	end
 
-	--[[
-		A lower tier than the active one cannot be bought (the server refuses with
-		`LowerTier`), so the button says so and stops taking clicks instead of letting
-		the player find out by clicking.
-	]]
-	local action = RuneConfig.purchaseAction(self:_activeEntry(id), tier)
 	local currency = RuneConfig.CURRENCIES[RuneConfig.currencyOf(rune)]
 
 	if row.BuyLabel then
-		row.BuyLabel.Text = if action
-			then string.format(RuneConfig.PRICE_FORMAT, UIUtil.formatCommas(definition.Price), currency.Name)
-			else RuneConfig.BLOCKED_TEXT
+		row.BuyLabel.Text = string.format(RuneConfig.PRICE_FORMAT, UIUtil.formatCommas(definition.Price), currency.Name)
 
 		-- The outline carries the currency's color, as on the crate shop's buttons.
 		local stroke = row.BuyLabel:FindFirstChildWhichIsA("UIStroke")
@@ -189,8 +189,8 @@ function RuneShopController:_renderRune(id : string)
 	end
 
 	if row.Buy then
-		row.Buy.Active = action ~= nil
-		row.Buy.AutoButtonColor = action ~= nil
+		row.Buy.Active = true
+		row.Buy.AutoButtonColor = true
 	end
 end
 
@@ -243,7 +243,7 @@ end
 
 --[=[
 	Rewrites the time left on each active row. A rune that just ran out redraws
-	everything: it leaves the list, and a tier it was blocking becomes buyable.
+	everything: it leaves the list.
 ]=]
 function RuneShopController:_tick()
 	for id, label in self.ActiveLabels do
@@ -275,10 +275,6 @@ end
 function RuneShopController:_requestPurchase(id : string)
 	local tier = self:_selectedTier(id)
 
-	if not RuneConfig.purchaseAction(self:_activeEntry(id), tier) then
-		return
-	end
-
 	self.Signals.PurchaseRequested:Fire(id, tier)
 	Framework:Fire("RequestBuyRune", id, tier)
 end
@@ -301,6 +297,7 @@ function RuneShopController:_bindRune(panel : GuiObject, rune, maid)
 	local buy = find(frame, GUI.Buy, "GuiButton")
 
 	local row = {
+		Display = find(frame, GUI.Display, "ImageLabel"),
 		Name = find(display, GUI.Name, "TextLabel"),
 		Tier = find(display, GUI.Tier, "TextLabel"),
 		Description = find(frame, GUI.Description, "TextLabel"),
@@ -495,7 +492,6 @@ function RuneShopController:construct()
 		local rune = RuneConfig.Get(id)
 
 		if success and rune then
-			-- The sound comes first; the screen follows the replica write on its own.
 			local music = self.Controllers.MusicController
 			local sound = BUY_SOUNDS[RuneConfig.currencyOf(rune)]
 
@@ -596,7 +592,7 @@ function RuneShopController:init()
 	-- [Id] = the tier on screen, once the player picked one with the arrows.
 	self.Selected = {}
 
-	-- [Id] = the labels and button of the rune's frame, per `ShopUI` copy.
+	-- [Id] = the icon, labels and button of the rune's frame, per `ShopUI` copy.
 	self.Rows = {}
 
 	self.ActiveList = nil

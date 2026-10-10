@@ -18,13 +18,15 @@ local Framework = Me.new()
 local log = Log.new("RuneShopService")
 
 --[=[
-	The Lobby rune shop: charges the price and hands the rune to `RuneService`.
+	The Lobby rune shop and the backpack's runes.
+
+	**Buying** charges the price and puts one unused rune in the backpack
+	(`RuneService:GiveItem`); nothing starts. **Activating** (a click on the backpack
+	entry) hands it to `RuneService:Activate`, which checks the tier against the live
+	active rune, spends it and grants it.
 
 	The client sends "rune X, tier N" and decides nothing else. The price and its
-	currency come from `RuneConfig`, and whether the tier can be bought (the same tier
-	extends, a higher one replaces, a lower one is refused) is checked against the **live** rune before
-	charging, and again inside `RuneService:Grant`'s write, which refunds when two
-	clicks in the same frame race each other.
+	currency come from `RuneConfig`.
 
 	See docs/lobby/rune-shop.md.
 ]=]
@@ -35,8 +37,11 @@ local RuneShopService = {
 	},
 
 	Signals = {
-		-- (Player, id : string, tier : number, action : string, price : number)
+		-- (Player, id : string, tier : number, result : string, price : number)
 		RunePurchased = Signal.new(),
+
+		-- (Player, id : string, tier : number, action : string)
+		RuneActivated = Signal.new(),
 	},
 }
 
@@ -54,9 +59,9 @@ end
 --[[ API ]]
 
 --[=[
-	Buys a rune tier for the player. Returns true and the action (`"New"`, `"Extend"`,
-	`"Upgrade"`), or false and the reason: `"UnknownRune"`, `"NotLoaded"`,
-	`"LowerTier"`, `"NotEnoughCurrency"`.
+	Buys a rune tier into the player's backpack. Returns true and `"Stored"`, or false
+	and the reason: `"UnknownRune"`, `"NotLoaded"`, `"BackpackFull"`,
+	`"NotEnoughCurrency"`.
 
 	The balance check and the charge are one `Update`, which does not yield, so two
 	quick clicks cannot spend the same shards.
@@ -77,10 +82,9 @@ function RuneShopService:Purchase(player : Player, id : any, tier : any) : (bool
 		return false, "NotLoaded"
 	end
 
-	-- Checked before charging, so the common refusal never touches the balance.
-	local action, reason = RuneConfig.purchaseAction(runeService:GetEntry(player, id), tier)
-	if not action then
-		return false, reason
+	-- Checked before charging, so a full backpack never touches the balance.
+	if runeService:GetItemCount(player, id, tier) >= RuneConfig.MAX_ITEMS then
+		return false, "BackpackFull"
 	end
 
 	local price = definition.Price
@@ -105,15 +109,35 @@ function RuneShopService:Purchase(player : Player, id : any, tier : any) : (bool
 		return false, "NotEnoughCurrency"
 	end
 
-	local granted, result = runeService:Grant(player, id, tier)
+	local stored, reason = runeService:GiveItem(player, id, tier, 1)
 
-	if not granted then
+	if not stored then
 		self:_refund(player, currency, price)
-		return false, result
+		return false, reason
 	end
 
-	self.Signals.RunePurchased:Fire(player, id, tier, result, price)
-	return true, result
+	self.Signals.RunePurchased:Fire(player, id, tier, "Stored", price)
+	return true, "Stored"
+end
+
+--[=[
+	Activates one of the player's unused runes. Returns true and the action (`"New"`,
+	`"Extend"`, `"Upgrade"`), or false and the reason: `"UnknownRune"`, `"NotLoaded"`,
+	`"LowerTier"`, `"NotOwned"`.
+]=]
+function RuneShopService:Activate(player : Player, id : any, tier : any) : (boolean, string?)
+	local runeService = self.Services.RuneService
+	if not runeService then
+		return false, "NotLoaded"
+	end
+
+	local success, result = runeService:Activate(player, id, tier)
+
+	if success then
+		self.Signals.RuneActivated:Fire(player, id, tier, result)
+	end
+
+	return success, result
 end
 
 --[[ LIFECYCLE ]]
@@ -123,6 +147,12 @@ function RuneShopService:construct()
 		local success, result = self:Purchase(player, id, tier)
 
 		Framework:Fire("RunePurchaseResult", player, id, tier, success, result)
+	end)
+
+	Framework:Listen("RequestActivateRune", function(player : Player, id : any, tier : any)
+		local success, result = self:Activate(player, id, tier)
+
+		Framework:Fire("RuneActivateResult", player, id, tier, success, result)
 	end)
 end
 
@@ -135,9 +165,10 @@ function RuneShopService:start()
 end
 
 function RuneShopService:init()
-	-- Declared here so the client's `Listen` does not wait for the first purchase to
-	-- create the event (see docs/architecture/me-framework.md).
+	-- Declared here so the client's `Listen` does not wait for the first purchase or
+	-- activation to create the event (see docs/architecture/me-framework.md).
 	Framework:Listen("RunePurchaseResult", function() end)
+	Framework:Listen("RuneActivateResult", function() end)
 end
 
 return RuneShopService
