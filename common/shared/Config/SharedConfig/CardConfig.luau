@@ -85,9 +85,11 @@ CardConfig.Icons = {
 	["Subspace Tripminer"] = "rbxassetid://130513046357852",
 	Archmage = "rbxassetid://114668138717801",
 	Archer = "rbxassetid://111421285376457",
-	Bonfire = "rbxassetid://116877116738728", -- TODO: Replace with actual art
-	Vindicator = "rbxassetid://77799937837921", -- TODO: Replace with actual art
-	Necromancer = "rbxassetid://77799937837921"
+	Bonfire = "rbxassetid://90573317539959", -- TODO: Replace with actual art
+	Vindicator = "rbxassetid://139427010390860", -- TODO: Replace with actual art
+	Necromancer = "rbxassetid://71602492100553",
+	Cryomancer = "rbxassetid://135577855711453",
+	Volt = "rbxassetid://138208228552168",
 
 }
 

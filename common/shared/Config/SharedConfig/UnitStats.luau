@@ -929,7 +929,7 @@ local UnitStats = {
 		},
 	},
 
-		["Necromancer"] = {
+	["Necromancer"] = {
 		Rarity = "Cosmic",
 		Class = "Ranged",
 		Cost = 425,
@@ -939,6 +939,7 @@ local UnitStats = {
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
+		AOE = { Radius = 3 },
 		Projectile = { Asset = "NecroVfx", Speed = 60 },
 		Necromancy = {
 			Health = {
