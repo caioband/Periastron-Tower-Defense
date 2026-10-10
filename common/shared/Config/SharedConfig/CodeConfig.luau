@@ -68,6 +68,7 @@ CodeConfig.Messages = {
 	Empty = "Type a code first.",
 	Invalid = "Invalid code.",
 	Expired = "This code has expired.",
+	MissingPass = "You don't own the game pass this code is for.",
 	AlreadyRedeemed = "You already redeemed this code.",
 	LowLevel = "Reach level %s to redeem codes!",
 	NotInGroup = "Join our group to redeem codes!",

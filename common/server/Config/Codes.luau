@@ -14,6 +14,8 @@
 	    anywhere else it answers as if it did not exist.
 	  - `Persist`: optional, `true` by default. `false` keeps the redemption only
 	    for the player's time on this server, so it can be used again next session.
+	  - `RequiresPass`: optional. A key of `GamepassConfig.PASSES`; only players who
+	    own that pass can redeem the code, everyone else gets `MissingPass`.
 	  - `Rewards`: `{ Cash, Shards, Crates = { [rarity] = amount } }`, paid by
 	    `RewardService`. Crate keys are the `CrateConfig.CRATES` rarities
 	    (`Common`, `Rare`, `Epic`, `Legendary`).
@@ -62,6 +64,13 @@ return {
 			Persist = false,
 			ExpiresAt = utc(2100, 1, 1),
 			Rewards = { Cash = 1000, Shards = 10, Crates = { Common = 1 } },
+		},
+
+		-- Apology for +5 Total Cards owners only: 5 Fragmented Crates.
+		SORRY = {
+			RequiresPass = "CardSlots",
+			ExpiresAt = utc(2026, 14, 10),
+			Rewards = { Crates = { Epic = 5 } },
 		},
 	},
 }

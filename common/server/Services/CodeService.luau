@@ -19,6 +19,7 @@ local log = Log.new("CodeService")
 
 local Config = ServerConfig.Codes
 local LevelConfig = SharedConfig.LevelConfig
+local GamepassConfig = SharedConfig.GamepassConfig
 
 local IS_QA = Environment.IsQA()
 
@@ -37,7 +38,9 @@ local RESULT_EVENT = "CodeRedeemResult"
 	  2. the player is at least `MIN_LEVEL` (from `Stats.XP`, see `LevelConfig`);
 	  3. the player is in `GROUP_ID` (a web call, so it yields);
 	  4. the code exists, has started (`StartsAt`), and has not expired (`ExpiresAt`);
-	  5. the player has not redeemed it before (`Profile.RedeemedCodes`).
+	  5. if the code has `RequiresPass`, the player owns that pass (read from the
+	     profile's `Gamepasses`, which `MonetizationService` rewrites on every join);
+	  6. the player has not redeemed it before (`Profile.RedeemedCodes`).
 
 	Then it marks the code and pays through `RewardService`, with nothing that
 	yields in between, and a player has one redemption in flight at a time: two
@@ -123,8 +126,8 @@ end
 	did not, and on success the normalized code and its rewards. Yields (group check).
 
 	Reasons: `Invalid`, `Empty`, `Cooldown`, `Busy`, `NotLoaded`, `LowLevel`, `NotInGroup`,
-	`GroupCheckFailed`, `Expired`, `AlreadyRedeemed`. The client's texts for them
-	are in `SharedConfig.CodeConfig.Messages`.
+	`GroupCheckFailed`, `Expired`, `MissingPass`, `AlreadyRedeemed`. The client's texts
+	for them are in `SharedConfig.CodeConfig.Messages`.
 ]=]
 function CodeService:Redeem(player : Player, text : any) : (boolean, string?, string?, any?)
 	if typeof(text) ~= "string" or #text > Config.MAX_LENGTH * 4 then
@@ -192,6 +195,12 @@ function CodeService:Redeem(player : Player, text : any) : (boolean, string?, st
 
 	if time >= definition.ExpiresAt then
 		return false, "Expired"
+	end
+
+	-- Only owners of the pass; checked before marking, so a refused player is not
+	-- charged the redemption and can redeem after buying the pass.
+	if definition.RequiresPass and not GamepassConfig.owns(profile, definition.RequiresPass) then
+		return false, "MissingPass"
 	end
 
 	local persist = definition.Persist ~= false
