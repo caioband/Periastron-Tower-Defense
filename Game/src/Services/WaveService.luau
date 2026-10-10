@@ -46,6 +46,13 @@ local BASE_WINNING_XP = DataConfig.BASE_WINNING_XP
 -- (`WinCash`/`WinShards`), not a multiplied base; only XP still works that way.
 local DifficultyConfig = ServerConfig.Difficulty
 
+-- The `RuneConfig` ids that multiply each end-of-match currency in `rewardsFor`.
+local REWARD_RUNES = {
+	coins = "Coins",
+	shards = "Shards",
+	xp = "XP",
+}
+
 --[[
 	Round states. `Finished` is the only one where the play-again vote accepts votes;
 	before that the button is not even on screen.
@@ -80,7 +87,8 @@ local WaveService = {
 		SuffocateAbilityService = {},
 		NecromancerService = {},
 
-		-- The Shards rune's bonus in `rewardsFor`, and the match lock in `StartRound`.
+		-- The Coins, Shards and XP runes' bonus in `rewardsFor`, and the match lock in
+		-- `StartRound`.
 		RuneService = {},
 	},
 	Signals = {
@@ -408,9 +416,10 @@ end
 
 --[=[
 	**This** player's reward: the match base, already multiplied by the gamepasses their
-	profile declares (2x Coins, 1.5x Shards, the VIP's XP), and shards by the player's
-	Shards rune (`RuneService`). The two multiply: 1.5x Shards with a +20% rune is 1.8x.
-	The rune reads the match's lock, so one that ran out mid-match still pays it.
+	profile declares (2x Coins, 1.5x Shards, the VIP's XP), and by the player's runes
+	(`RuneService`): Coins, Shards and XP, one per currency (`REWARD_RUNES`). The two
+	multiply: 1.5x Shards with a +20% rune is 1.8x. The runes read the match's lock, so
+	one that ran out mid-match still pays it.
 
 	The base is a single one for the whole room: it comes from the waves survived and the
 	difficulty, which belong to the match and not to anyone. What belongs to each player
@@ -429,12 +438,15 @@ function WaveService:rewardsFor(player : Player, rewards)
 	local profile = entry and entry.Profile.Data or nil
 
 	local runeService = self.Services.RuneService
-	local shardRune = if runeService then runeService:GetMultiplier(player, "Shards") else 1
+
+	local function runeOf(currency : string) : number
+		return if runeService then runeService:GetMultiplier(player, REWARD_RUNES[currency]) else 1
+	end
 
 	return {
-		coins = math.floor(rewards.coins * GamepassConfig.coinMultiplier(profile) + 0.5),
-		shards = math.floor(rewards.shards * GamepassConfig.shardMultiplier(profile) * shardRune + 0.5),
-		xp = math.floor(rewards.xp * GamepassConfig.xpMultiplier(profile) + 0.5),
+		coins = math.floor(rewards.coins * GamepassConfig.coinMultiplier(profile) * runeOf("coins") + 0.5),
+		shards = math.floor(rewards.shards * GamepassConfig.shardMultiplier(profile) * runeOf("shards") + 0.5),
+		xp = math.floor(rewards.xp * GamepassConfig.xpMultiplier(profile) * runeOf("xp") + 0.5),
 	}
 end
 
