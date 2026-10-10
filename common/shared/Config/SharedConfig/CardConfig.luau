@@ -40,7 +40,7 @@ CardConfig.Images = {
 	Cryomancer = "rbxassetid://109821143712853",
 	Vindicator = "rbxassetid://130740288231397",
 	Volt = "rbxassetid://115436373491774",
-	Necromancer = "rbxassetid://0",
+	Necromancer = "rbxassetid://133903816622368",
 
 }
 
@@ -87,7 +87,7 @@ CardConfig.Icons = {
 	Archer = "rbxassetid://111421285376457",
 	Bonfire = "rbxassetid://116877116738728", -- TODO: Replace with actual art
 	Vindicator = "rbxassetid://77799937837921", -- TODO: Replace with actual art
-	Necromancer = "rbxassetid://0"
+	Necromancer = "rbxassetid://133903816622368"
 
 }
 
@@ -138,7 +138,7 @@ CardConfig.IndexImages = {
 	Cryomancer = { Locked = "rbxassetid://88227960714771", Unlocked = "rbxassetid://88118640086913" },
 	Vindicator = { Locked = "rbxassetid://83846373389394", Unlocked = "rbxassetid://83026555203229" },
 	Volt = { Locked = "rbxassetid://123863331948712", Unlocked = "rbxassetid://99828619754778" },
-	Necromancer = { Locked = "rbxassetid://0", Unlocked = "rbxassetid://0" },
+	Necromancer = { Locked = "rbxassetid://114705807622416", Unlocked = "rbxassetid://128005768457545" },
 
 }
 

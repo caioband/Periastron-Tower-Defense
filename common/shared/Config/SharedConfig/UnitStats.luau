@@ -689,7 +689,7 @@ local UnitStats = {
 		Rarity = "Rare",
 		Class = "Fire",
 		Cost = 150,
-		Damage = 15,
+		Damage = 7,
 		Range = 10,
 		Cooldown = 2.58,
 		AttackType = "SingleShot",
@@ -712,7 +712,7 @@ local UnitStats = {
 			tripmine's 6) and the cooldown is long. If it needs reining in, the place is
 			the radius.
 		]]
-		AOE = { Radius = 2.5 },
+		AOE = { Radius = 3 },
 
 		Burn = { Damage = 3, Ticks = 12, Interval = 0.75 },
 		RangeStats = {
@@ -879,18 +879,29 @@ local UnitStats = {
 	of 15. Its value is the time it buys the other towers, not the damage.
 	Numbers are provisional.
 ]]
+	--[[
+	A melee unit that shoves enemies back along the track. Each hit pushes the enemy
+	it struck and up to 2 more within 6 studs of it, 3 studs each (bosses only a
+	quarter of that). Only the enemy it struck takes damage; the others are just pushed.
+
+	Damage is the old 20 divided by 2.3, left unrounded on purpose: every reader rounds
+	once at the end (`UnitService:getDamage`, `UnitUpgradeConfig:GetDamage`), so each
+	level lands on the old ladder / 2.3. 9 damage every 1.5 s is 6 DPS, or 3.4 per 100
+	cash. Its value is the time it buys the other towers, not the damage.
+	Numbers are provisional.
+]]
 	["Vindicator"] = {
 		Rarity = "Rare",
 		Class = "Melee",
 		Cost = 175,
-		Damage = 20,
+		Damage = 20 / 2.3,
 		Range = 4,
 		Cooldown = 1.5,
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
 		Knockback = {
-			Distance = 3,
+			Distance = 3,	
 			Cooldown = 0.5,
 			BossScale = 0.25,
 			Radius = 6,
@@ -901,9 +912,9 @@ local UnitStats = {
 		},
 	},
 
-	["Necromancer"] = {
-		Rarity = "Legendary",
-		Class = "Magic",
+		["Necromancer"] = {
+		Rarity = "Cosmic",
+		Class = "Ranged",
 		Cost = 425,
 		Damage = 14,
 		Range = 10,
@@ -911,6 +922,7 @@ local UnitStats = {
 		AttackType = "SingleShot",
 		HitInterval = 0,
 		Hits = 1,
+		Projectile = { Asset = "NecroVfx", Speed = 60 },
 		Necromancy = {
 			Health = {
 				Scale = { 0.3, 0.35, 0.4, 0.45, 0.5, 0.6 },

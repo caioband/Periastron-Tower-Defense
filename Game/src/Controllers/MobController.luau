@@ -43,6 +43,23 @@ local HIT_FLASH_TIME = 0.12
 local SHOCK_HIGHLIGHT = "ShockHighlight"
 local SHOCK_COLOR = Color3.fromRGB(255, 200, 60)
 
+--[=[
+	The Vindicator's knockback hop.
+
+	`MobTeleported` tagged `KNOCKBACK_KIND` does not snap the model: the path position
+	jumps at once (the server's truth, so both simulations stay in step), and only the
+	**drawing** catches up, sliding back from where it stood and arcing up and down on
+	the way. The enemy keeps walking during the hop, the same as on the server.
+
+	The height follows the push, so a boss (a quarter of the distance) only bumps.
+	Match time, like everything else here: at 3x the hop lasts a third as long.
+]=]
+local KNOCKBACK_KIND = "Knockback"
+local BOUNCE_DURATION = 0.35
+local BOUNCE_HEIGHT_PER_STUD = 0.35
+local BOUNCE_MIN_HEIGHT = 0.3
+local BOUNCE_MAX_HEIGHT = 1.2
+
 local SHAKE_DURATION = 0.6
 local SHAKE_MAGNITUDE = 0.35
 local SHAKE_FREQUENCY = 18
@@ -66,6 +83,12 @@ local function shakeScreen()
 		)
 		camera.CFrame = camera.CFrame * CFrame.new(offset)
 	end)
+end
+
+--- The player's "VFX" setting; decorative motion follows it like the other effects.
+local function effectsOn() : boolean
+	local settings = Framework:Get("SettingsController", false, false)
+	return settings == nil or settings:Get("VFX")
 end
 
 --[=[
@@ -644,6 +667,31 @@ function MobController:applyTimeScale(scale : number)
 	end
 end
 
+--[=[
+	How far the drawing sits from the path point this frame during a knockback hop,
+	and advances the hop's clock. Zero, and the hop cleared, once it lands.
+
+	`slide` is where the model stood minus where the push put it: it starts there and
+	eases to nothing. The arc is a half sine, up and back down over the same time.
+]=]
+local function stepBounce(data, scaledDt : number) : Vector3
+	local bounce = data.bounce
+	if not bounce then return Vector3.zero end
+
+	bounce.elapsed += scaledDt
+	local t = math.clamp(bounce.elapsed / BOUNCE_DURATION, 0, 1)
+
+	if t >= 1 then
+		data.bounce = nil
+		return Vector3.zero
+	end
+
+	local eased = 1 - (1 - t) ^ 2
+	local lift = math.sin(math.pi * t) * bounce.height
+
+	return bounce.slide * (1 - eased) + Vector3.new(0, lift, 0)
+end
+
 function MobController:startMovementLoop()
 	RunService.Heartbeat:Connect(function(dt)
 		--[[
@@ -656,6 +704,8 @@ function MobController:startMovementLoop()
 			self.TimeScale = scale
 			self:applyTimeScale(scale)
 		end
+
+		local scaledDt = GameClock.Scaled(dt)
 
 		for mobId, data in self.MobMovement do
 			local mobClone = data.model
@@ -700,7 +750,7 @@ function MobController:startMovementLoop()
 				17 studs, the screen would reach the base almost 5 studs ahead, more than a
 				melee unit's range.
 			]]
-			local remaining = data.speed * GameClock.Scaled(dt)
+			local remaining = data.speed * scaledDt
 			local lookTarget3D = nil
 
 			while remaining > 0 and data.pointIndex <= #points do
@@ -726,16 +776,22 @@ function MobController:startMovementLoop()
 			data.pathPos = pos
 
 			local nextPos = pos + Vector3.new(0, extentsSize.Y / 2, 0)
+			local drawCFrame
 			if lookTarget3D then
 				local lookTarget = Vector3.new(lookTarget3D.X, nextPos.Y, lookTarget3D.Z)
 				if (lookTarget - nextPos).Magnitude > 0.01 then
-					mobClone:PivotTo(CFrame.lookAt(nextPos, lookTarget))
+					drawCFrame = CFrame.lookAt(nextPos, lookTarget)
 				else
-					mobClone:PivotTo(CFrame.new(nextPos) * currentPivot.Rotation)
+					drawCFrame = CFrame.new(nextPos) * currentPivot.Rotation
 				end
 			else
-				mobClone:PivotTo(CFrame.new(nextPos) * currentPivot.Rotation)
+				drawCFrame = CFrame.new(nextPos) * currentPivot.Rotation
 			end
+
+			-- Only the drawing moves: `pathPos` and `MobLastPosition` stay on the path.
+			local offset = stepBounce(data, scaledDt)
+			mobClone:PivotTo(CFrame.new(offset) * drawCFrame)
+
 			self.MobLastPosition[mobId] = nextPos
 		end
 	end)
@@ -798,17 +854,28 @@ function MobController:construct()
 	end)
 
 	--[[
-		The Archmage's Teleport threw the enemy back on the path. The server sends the new
-		distance, and from here the model reappears there: the movement loop chases
-		`pointIndex`, so it becomes the first point after that distance.
+		The enemy was moved back on the path: the Archmage's Teleport, the Suffocate
+		ability, or the Vindicator's knockback. The server sends the new distance, and the
+		movement loop chases `pointIndex` from there, so it becomes the first point after
+		that distance.
+
+		A teleport snaps the model. A knockback (`kind == KNOCKBACK_KIND`) moves the path
+		position just the same but leaves the model where it stands and hands the gap to
+		`bounce`, which the movement loop closes as a slide and a hop (see `stepBounce`).
+		The gap is measured from where the model is **drawn**, so a push landing mid-hop
+		continues from the air instead of jumping.
 	]]
-	Framework:Listen("MobTeleported", function(mobId, distance)
+	Framework:Listen("MobTeleported", function(mobId, distance, kind)
 		local movement = self.MobMovement[mobId]
 		local smooth = movement and movement.smooth
 		if not smooth or typeof(distance) ~= "number" then return end
 
 		local position = PathUtil.GetPositionAtDistance(smooth, distance)
 		if not position then return end
+
+		local model = movement.model
+		local halfHeight = movement.extentsSize.Y / 2
+		local drawnGround = (model and model.Parent) and (model:GetPivot().Position - Vector3.new(0, halfHeight, 0)) or nil
 
 		local nextIndex = #smooth.points + 1
 		for index, at in ipairs(smooth.cumulative) do
@@ -820,9 +887,20 @@ function MobController:construct()
 		movement.pointIndex = math.max(2, nextIndex)
 		movement.pathPos = position
 
-		local model = movement.model
+		if kind == KNOCKBACK_KIND and drawnGround and effectsOn() then
+			local slide = drawnGround - position
+			local push = Vector3.new(slide.X, 0, slide.Z).Magnitude
+			local height = math.clamp(push * BOUNCE_HEIGHT_PER_STUD, BOUNCE_MIN_HEIGHT, BOUNCE_MAX_HEIGHT)
+
+			movement.bounce = { elapsed = 0, slide = slide, height = height }
+			self.MobLastPosition[mobId] = position + Vector3.new(0, halfHeight, 0)
+			return
+		end
+
+		movement.bounce = nil
+
 		if model and model.Parent then
-			local height = position.Y + (movement.extentsSize.Y / 2)
+			local height = position.Y + halfHeight
 			model:PivotTo(CFrame.new(position.X, height, position.Z) * model:GetPivot().Rotation)
 			self.MobLastPosition[mobId] = model:GetPivot().Position
 		end

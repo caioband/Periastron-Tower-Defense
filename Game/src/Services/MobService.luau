@@ -1041,6 +1041,9 @@ end
 	Pushes an enemy back along the track by `distance` studs (never past the start).
 	Only `Distance` moves, same as `TeleportMobBack`, so turn gimmicks do not refire.
 	`cooldown` is per enemy, so a fast unit cannot pin one in place.
+
+	The event carries `"Knockback"` so the client draws a slide and a hop instead of
+	the Archmage's instant teleport; the position it sends is the same either way.
 ]=]
 function MobService:KnockbackMob(mobId : string, distance : number?, cooldown : number?, bossScale : number?) : boolean
 	local mob = self.ActiveMobs[mobId]
@@ -1067,7 +1070,7 @@ function MobService:KnockbackMob(mobId : string, distance : number?, cooldown : 
 	self.PreviousPositionCache[mobId] = nil
 
 	for _, player in Players:GetPlayers() do
-		Framework:Fire("MobTeleported", player, mobId, target)
+		Framework:Fire("MobTeleported", player, mobId, target, "Knockback")
 	end
 
 	return true
