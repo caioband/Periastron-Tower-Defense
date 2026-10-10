@@ -66,11 +66,11 @@ return {
 			Rewards = { Cash = 1000, Shards = 10, Crates = { Common = 1 } },
 		},
 
-		-- Apology for +5 Total Cards owners only: 5 Fragmented Crates.
+		-- Apology for +5 Total Cards owners only: 3 Fragmented Crates.
 		SORRY = {
 			RequiresPass = "CardSlots",
-			ExpiresAt = utc(2026, 14, 10),
-			Rewards = { Crates = { Epic = 5 } },
-		},
+			ExpiresAt = utc(2026, 10, 14, 23),
+			Rewards = { Crates = { Epic = 3 } },
+		},	
 	},
 }
