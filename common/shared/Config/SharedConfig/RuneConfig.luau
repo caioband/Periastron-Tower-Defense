@@ -142,9 +142,9 @@ RuneConfig.Runes = {
 		DisplayName = "COIN",
 		Effect = "COINS GAIN",
 		Tiers = {
-			{ Bonus = 0.10, Price = 4, Image = "rbxassetid://108295233460302" },
-			{ Bonus = 0.20, Price = 7, Image = "rbxassetid://95035819193811" },
-			{ Bonus = 0.35, Price = 10, Image = "rbxassetid://71219658978172" },
+			{ Bonus = 0.10, Price = 8, Image = "rbxassetid://108295233460302" },
+			{ Bonus = 0.20, Price = 15, Image = "rbxassetid://95035819193811" },
+			{ Bonus = 0.35, Price = 20, Image = "rbxassetid://71219658978172" },
 		},
 	},
 } :: { Rune }
