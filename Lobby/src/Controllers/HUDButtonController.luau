@@ -18,17 +18,19 @@ local HUD_UI_NAME = "HUD"
 local WAIT_TIMEOUT = 10
 
 --[=[
-	The two HUD columns and where hover pushes each one's button. With AnchorPoint 0.5
+	The HUD columns and where hover pushes each one's button. With AnchorPoint 0.5
 	inside the wrapper (and `X.Scale = 0.5` at rest), 0.3 is a fifth of the width to the
 	side; Y and the offsets stay as they are.
 
-	Both columns have the same structure, and only the direction changes: the right one
-	slides left (0.3) and the left one mirrors it (0.7): the button always moves
-	**inward** on the screen, not past the edge.
+	Every column has the same structure, and only the direction changes: the right-side
+	ones (`HUDFrame` and the lone `HUDTopRight` Settings button) slide left (0.3) and the
+	left one mirrors it (0.7): the button always moves **inward** on the screen, not past
+	the edge.
 ]=]
 local HUD_FRAMES = {
 	{ Name = "HUDFrame", HoverX = 0.3 },
 	{ Name = "HUDLeft", HoverX = 0.7 },
+	{ Name = "HUDTopRight", HoverX = 0.3 },
 }
 
 local SLIDE_INFO = TweenInfo.new(0.28, Enum.EasingStyle.Circular, Enum.EasingDirection.Out)
@@ -41,9 +43,9 @@ local HOVER_SOUND = "UIHover"
 local CLICK_SOUND = "UIClick"
 
 --[=[
-	The feedback for the buttons in the `StarterGui.HUD` columns (`HUDFrame` on the right
-	and `HUDLeft` on the left): the button slides out of the column when the mouse enters,
-	returns when it leaves, and shrinks while pressed.
+	The feedback for the buttons in the `StarterGui.HUD` columns (`HUDFrame` on the right,
+	`HUDLeft` on the left, and `HUDTopRight` in the corner): the button slides out of the
+	column when the mouse enters, returns when it leaves, and shrinks while pressed.
 
 	Only the visual part and the sound live here. Each panel's controller still opens the
 	shop, the backpack, and the deck, through the same button's `Activated`, which is why
@@ -166,7 +168,7 @@ function HUDButtonController:_bindFrame(hudFrame : Instance, hoverX : number)
 end
 
 --[=[
-	Binds to a copy of the HUD: both columns, each with its direction. A column that does
+	Binds to a copy of the HUD: every column, each with its direction. A column that does
 	not exist in that copy is just left out; the others keep animating.
 ]=]
 function HUDButtonController:_bindHud(screenGui : ScreenGui)

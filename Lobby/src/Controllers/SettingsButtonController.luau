@@ -14,14 +14,14 @@ local log = Log.new("SettingsButtonController")
 --[[ CONSTANTS ]]
 
 --[=[
-	The HUD button that opens the settings: `HUD.HUDLeft.Wrapper.Settings`, below
-	`Contracts` and `RobuxShop` in the left column.
+	The HUD button that opens the settings: `HUD.HUDTopRight.Wrapper.Settings`, on its
+	own in the top-right corner.
 
 	Only the Lobby has this HUD, so the names live here and not in `SettingsConfig`,
 	which is in the `Shared` Package every place receives.
 ]=]
 local HUD_UI_NAME = "HUD"
-local HUD_FRAME_NAME = "HUDLeft"
+local HUD_FRAME_NAME = "HUDTopRight"
 local HUD_BUTTON_NAME = "Settings"
 
 local WAIT_TIMEOUT = 10
@@ -34,8 +34,9 @@ local WAIT_TIMEOUT = 10
 	follows the panel's `OpenChanged`, so opening from here selects it too, and the
 	X closes both.
 
-	The button's slide and sink belong to `HUDButtonController`, which animates both
-	columns. The HUD is `ResetOnSpawn`, so the bind runs again on every new copy.
+	The button's slide and sink belong to `HUDButtonController`, which animates every
+	HUD column, `HUDTopRight` included. The HUD is `ResetOnSpawn`, so the bind runs
+	again on every new copy.
 
 	See docs/common/settings.md.
 ]=]

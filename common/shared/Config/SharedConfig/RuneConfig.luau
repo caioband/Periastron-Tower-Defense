@@ -98,27 +98,33 @@ export type Rune = {
 	same `Id` in `RuneShop.Runes`; then make whatever it boosts read
 	`RuneService:GetMultiplier(player, Id)`.
 
-	Prices are steep on purpose: a full Nightmare run pays 5 shards.
+	Prices are set against what a complete run pays (`WinCash` and `WinShards` in
+	`Config.Difficulty`): about 100 coins and 1 shard on Easy, 900 coins and 5 shards
+	on Nightmare. The Shard and XP runes cost coins, tier I about an Easy run and tier
+	III about a Nightmare run; XP sits below Shard because shards buy crates. Luck
+	stays in shards, the crate wallet it pays off in.
 ]=]
 RuneConfig.Runes = {
 	{
 		Id = "Shards",
 		DisplayName = "SHARD",
 		Effect = "SHARDS GAIN",
+		Currency = "Cash",
 		Tiers = {
-			{ Bonus = 0.10, Price = 10, Image = "rbxassetid://88402687357237" },
-			{ Bonus = 0.20, Price = 20, Image = "rbxassetid://88402687357237" },
-			{ Bonus = 0.35, Price = 40, Image = "rbxassetid://88402687357237" },
+			{ Bonus = 0.10, Price = 1000, Image = "rbxassetid://88402687357237" },
+			{ Bonus = 0.20, Price = 2000, Image = "rbxassetid://88402687357237" },
+			{ Bonus = 0.35, Price = 3500, Image = "rbxassetid://88402687357237" },
 		},
 	},
 	{
 		Id = "XP",
 		DisplayName = "XP",
 		Effect = "XP GAIN",
+		Currency = "Cash",
 		Tiers = {
-			{ Bonus = 0.10, Price = 10, Image = "rbxassetid://137226523573786" },
-			{ Bonus = 0.20, Price = 20, Image = "rbxassetid://138727960028563" },
-			{ Bonus = 0.35, Price = 30, Image = "rbxassetid://79906812063384" },
+			{ Bonus = 0.10, Price = 1000, Image = "rbxassetid://137226523573786" },
+			{ Bonus = 0.20, Price = 2000, Image = "rbxassetid://138727960028563" },
+			{ Bonus = 0.35, Price = 3500, Image = "rbxassetid://79906812063384" },
 		},
 	},
 	{
@@ -126,9 +132,9 @@ RuneConfig.Runes = {
 		DisplayName = "LUCK",
 		Effect = "LUCK",
 		Tiers = {
-			{ Bonus = 0.15, Price = 15, Image = "rbxassetid://112502034665841" },
-			{ Bonus = 0.30, Price = 30, Image = "rbxassetid://85068238348607" },
-			{ Bonus = 0.50, Price = 60, Image = "rbxassetid://116415870242131" },
+			{ Bonus = 0.05, Price = 8, Image = "rbxassetid://112502034665841" },
+			{ Bonus = 0.10, Price = 15, Image = "rbxassetid://85068238348607" },
+			{ Bonus = 0.15, Price = 20, Image = "rbxassetid://116415870242131" },
 		},
 	},
 	{
