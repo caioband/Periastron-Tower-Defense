@@ -16,6 +16,8 @@
 	    for the player's time on this server, so it can be used again next session.
 	  - `RequiresPass`: optional. A key of `GamepassConfig.PASSES`; only players who
 	    own that pass can redeem the code, everyone else gets `MissingPass`.
+	  - `MinLevel`: optional. The level this code asks for, on top of the global
+	    `MIN_LEVEL`; below it the player gets `LowLevel` with this number.
 	  - `Rewards`: `{ Cash, Shards, Crates = { [rarity] = amount } }`, paid by
 	    `RewardService`. Crate keys are the `CrateConfig.CRATES` rarities
 	    (`Common`, `Rare`, `Epic`, `Legendary`).
@@ -71,6 +73,13 @@ return {
 			RequiresPass = "CardSlots",
 			ExpiresAt = utc(2026, 10, 14, 23),
 			Rewards = { Crates = { Epic = 3 } },
-		},	
+		},
+
+		-- Update 2: level 5 and up.
+		UPDATE2 = {
+			MinLevel = 5,
+			ExpiresAt = utc(2026, 11, 10),
+			Rewards = { Cash = 500, Shards = 3 },
+		},
 	},
 }

@@ -38,9 +38,10 @@ local RESULT_EVENT = "CodeRedeemResult"
 	  2. the player is at least `MIN_LEVEL` (from `Stats.XP`, see `LevelConfig`);
 	  3. the player is in `GROUP_ID` (a web call, so it yields);
 	  4. the code exists, has started (`StartsAt`), and has not expired (`ExpiresAt`);
-	  5. if the code has `RequiresPass`, the player owns that pass (read from the
+	  5. if the code has `MinLevel`, the player is at least that level;
+	  6. if the code has `RequiresPass`, the player owns that pass (read from the
 	     profile's `Gamepasses`, which `MonetizationService` rewrites on every join);
-	  6. the player has not redeemed it before (`Profile.RedeemedCodes`).
+	  7. the player has not redeemed it before (`Profile.RedeemedCodes`).
 
 	Then it marks the code and pays through `RewardService`, with nothing that
 	yields in between, and a player has one redemption in flight at a time: two
@@ -54,6 +55,9 @@ local RESULT_EVENT = "CodeRedeemResult"
 	The group is checked before the code so a player outside it always gets the
 	join prompt, whatever they typed. A code that has not started answers
 	`Invalid`, the same as one that does not exist, so it cannot be found early.
+
+	A code's own `MinLevel` is checked only once the code is known to exist: asking
+	for it earlier would tell a guesser which codes are real.
 
 	`IsInGroup` is cached for the whole session on the server, so a player who joins
 	the group mid-session would keep failing. On a "no", `GetGroupsAsync`, which is
@@ -84,6 +88,14 @@ local CodeService = {
 
 local function normalize(text : string) : string
 	return string.upper((string.gsub(text, "^%s*(.-)%s*$", "%1")))
+end
+
+--- The player's level from a profile's `Stats.XP`.
+local function levelOf(profile : any) : number
+	local stats = typeof(profile) == "table" and profile.Stats or nil
+	local xp = typeof(stats) == "table" and tonumber(stats.XP) or 0
+
+	return LevelConfig:Resolve(xp).Level
 end
 
 function CodeService:_profileOf(player : Player) : any
@@ -123,13 +135,14 @@ end
 
 --[=[
 	Tries to redeem `text` for `player`. Returns whether it paid, the reason when it
-	did not, and on success the normalized code and its rewards. Yields (group check).
+	did not, on success the normalized code and its rewards, and on `LowLevel` the
+	level that was required. Yields (group check).
 
 	Reasons: `Invalid`, `Empty`, `Cooldown`, `Busy`, `NotLoaded`, `LowLevel`, `NotInGroup`,
 	`GroupCheckFailed`, `Expired`, `MissingPass`, `AlreadyRedeemed`. The client's texts
 	for them are in `SharedConfig.CodeConfig.Messages`.
 ]=]
-function CodeService:Redeem(player : Player, text : any) : (boolean, string?, string?, any?)
+function CodeService:Redeem(player : Player, text : any) : (boolean, string?, string?, any?, number?)
 	if typeof(text) ~= "string" or #text > Config.MAX_LENGTH * 4 then
 		return false, "Invalid"
 	end
@@ -161,10 +174,8 @@ function CodeService:Redeem(player : Player, text : any) : (boolean, string?, st
 	end
 
 	-- Before the group: no web call, and no join prompt for a code they cannot use yet.
-	local stats = loaded.Stats
-	local xp = typeof(stats) == "table" and tonumber(stats.XP) or 0
-	if LevelConfig:Resolve(xp).Level < Config.MIN_LEVEL then
-		return false, "LowLevel"
+	if levelOf(loaded) < Config.MIN_LEVEL then
+		return false, "LowLevel", nil, nil, Config.MIN_LEVEL
 	end
 
 	self.Busy[player] = true
@@ -195,6 +206,13 @@ function CodeService:Redeem(player : Player, text : any) : (boolean, string?, st
 
 	if time >= definition.ExpiresAt then
 		return false, "Expired"
+	end
+
+	-- The code's own level, on top of the global one. Not marked, so the player can
+	-- come back once they reach it.
+	local codeLevel = tonumber(definition.MinLevel)
+	if codeLevel and levelOf(profile) < codeLevel then
+		return false, "LowLevel", nil, nil, codeLevel
 	end
 
 	-- Only owners of the pass; checked before marking, so a refused player is not
@@ -243,7 +261,7 @@ function CodeService:construct()
 			return
 		end
 
-		local success, reason, code, rewards = self:Redeem(player, text)
+		local success, reason, code, rewards, requiredLevel = self:Redeem(player, text)
 
 		if not player.Parent then
 			return
@@ -259,8 +277,9 @@ function CodeService:construct()
 			-- The client opens the join prompt for this group.
 			GroupId = if reason == "NotInGroup" then Config.GROUP_ID else nil,
 
-			-- The client writes the required level into the message.
-			MinLevel = if reason == "LowLevel" then Config.MIN_LEVEL else nil,
+			-- The client writes the required level into the message: the global one, or
+			-- the code's own when it asks for more.
+			MinLevel = if reason == "LowLevel" then (requiredLevel or Config.MIN_LEVEL) else nil,
 		})
 	end)
 
