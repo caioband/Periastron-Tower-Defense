@@ -111,9 +111,9 @@ RuneConfig.Runes = {
 		Effect = "SHARDS GAIN",
 		Currency = "Cash",
 		Tiers = {
-			{ Bonus = 0.10, Price = 1000, Image = "rbxassetid://88402687357237" },
-			{ Bonus = 0.20, Price = 2000, Image = "rbxassetid://88402687357237" },
-			{ Bonus = 0.35, Price = 3500, Image = "rbxassetid://88402687357237" },
+			{ Bonus = 0.10, Price = 3000, Image = "rbxassetid://88402687357237" },
+			{ Bonus = 0.20, Price = 6000, Image = "rbxassetid://88402687357237" },
+			{ Bonus = 0.35, Price = 10000, Image = "rbxassetid://88402687357237" },
 		},
 	},
 	{
@@ -122,9 +122,9 @@ RuneConfig.Runes = {
 		Effect = "XP GAIN",
 		Currency = "Cash",
 		Tiers = {
-			{ Bonus = 0.10, Price = 1000, Image = "rbxassetid://137226523573786" },
-			{ Bonus = 0.20, Price = 2000, Image = "rbxassetid://138727960028563" },
-			{ Bonus = 0.35, Price = 3500, Image = "rbxassetid://79906812063384" },
+			{ Bonus = 0.10, Price = 3000, Image = "rbxassetid://137226523573786" },
+			{ Bonus = 0.20, Price = 6000, Image = "rbxassetid://138727960028563" },
+			{ Bonus = 0.35, Price = 10000, Image = "rbxassetid://79906812063384" },
 		},
 	},
 	{
