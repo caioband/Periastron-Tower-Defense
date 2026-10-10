@@ -36,7 +36,7 @@ Constants at the top of `NextEventController`:
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `EVENT_ID` | `"2563198703431189098"` | The event, the same in every environment |
+| `EVENT_ID` | `"2141559620710302327"` | The event, the same in every environment |
 | `REFRESH_INTERVAL` | `300` | Seconds between reads of the event |
 | `TIMER_FORMAT` | `"%02d Days : %02d Hours : %02d Minutes : %02d Seconds"` | The countdown text |
 | `NOTIFIED_TEXT` | `"Notified ✓"` | The prompt's text once the player is going; before that it keeps the text authored in Studio (`Notify`) |

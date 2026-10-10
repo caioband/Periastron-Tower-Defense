@@ -41,7 +41,7 @@ local log = Log.new("NextEventController")
 --[[ CONSTANTS ]]
 
 -- The experience event, the same in every environment.
-local EVENT_ID = "2563198703431189098"
+local EVENT_ID = "2141559620710302327"
 
 local PART_NAME = "NEXTEVENT"
 local BILLBOARD_NAME = "BillboardGui"
