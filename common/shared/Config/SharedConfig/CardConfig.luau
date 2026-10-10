@@ -87,7 +87,7 @@ CardConfig.Icons = {
 	Archer = "rbxassetid://111421285376457",
 	Bonfire = "rbxassetid://116877116738728", -- TODO: Replace with actual art
 	Vindicator = "rbxassetid://77799937837921", -- TODO: Replace with actual art
-	Necromancer = "rbxassetid://133903816622368"
+	Necromancer = "rbxassetid://77799937837921"
 
 }
 
