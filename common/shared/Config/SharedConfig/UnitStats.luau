@@ -712,7 +712,7 @@ local UnitStats = {
 			tripmine's 6) and the cooldown is long. If it needs reining in, the place is
 			the radius.
 		]]
-		AOE = { Radius = 2 },
+		AOE = { Radius = 2.5 },
 
 		Burn = { Damage = 3, Ticks = 12, Interval = 0.75 },
 		RangeStats = {
