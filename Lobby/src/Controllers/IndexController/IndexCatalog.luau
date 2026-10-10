@@ -24,10 +24,12 @@ local WeatherConfig = SharedConfig.WeatherConfig
 	from `RarityConfig`, unit types and weather numbers from `WeatherConfig.Indicator`). Whether the player discovered an entry is
 	not here: that is the profile (`IndexConfig`), read by `IndexController`.
 
-	Each entry is `{ Key, Name, Image?, LockedImage? }`. `Key` is the same key the
-	profile stores; `Image` is what the item button and the preview show for the
-	categories drawn as a picture (and the units that have Index art). An entry
-	without `Image` is drawn as its 3D model.
+	Each entry is `{ Key, Name, Image?, LockedImage?, PreviewImage? }`. `Key` is the
+	same key the profile stores; `Image` is what the item button and the preview show
+	for the categories drawn as a picture (and the units that have Index art). An
+	entry without `Image` is drawn as its 3D model. `PreviewImage` replaces `Image`
+	in the preview only: a map's button shows its Index art, and its preview the
+	same picture as the map picker.
 ]]
 
 local IndexCatalog = {}
@@ -263,7 +265,8 @@ local function mapEntries()
 		table.insert(entries, {
 			Key = key,
 			Name = map.DisplayName or key,
-			Image = map.Image,
+			Image = map.IndexImage or map.Image,
+			PreviewImage = map.Image,
 			Wins = map.WinsRequired or 0,
 		})
 	end

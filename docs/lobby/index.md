@@ -43,7 +43,13 @@ It opens from `HUD.HUDLeft.Wrapper.Index` through `ProximityPanel`, with no map 
 | `NextPreviousButtons` | Turns pages in a loop (last to first and back); the label shows `page/total` |
 | `PreviewContainer.PreviewItem` | The selected item: `ViewportFrame` for units and enemies, `Icon` for weathers and maps |
 | `PreviewContainer.Description` | The description, written by [`RichTextController`](../common/rich-text.md) into `DescriptionText` (any GuiObject; a frame filling `Description` is created when Studio has none) |
-| `MarkersContainer`, `a`, `ExpandedPreview` | Not wired yet |
+| `MarkersContainer` | One bookmark per category, named like it (`Units`, `Enemies`, `Weathers`, `Maps`); a click opens that page. The open category's bookmark turns transparent and takes no clicks, keeping its slot in the `UIListLayout` |
+| `CurrentSection` | The open category's bookmark. Both arts (here and in the container) are `SECTION_IMAGES` in `IndexController` |
+| `a`, `ExpandedPreview` | Not wired yet |
+
+Changing category with the book open (a bookmark or Next/Previous) plays one of the page-turn sounds in `SECTION_SOUNDS`, at random and never the same twice in a row.
+The controller builds them in `SoundService.IndexSFX` and plays them through `MusicController:PlaySFX`, so the settings' SFX volume and mute apply.
+Opening the book plays nothing.
 
 How each category draws its item:
 
@@ -52,7 +58,7 @@ How each category draws its item:
 | Units | `CardConfig.IndexImages[unit].Unlocked` in `Icon` | the `Locked` art, button black, padlock |
 | Enemies | the model in `ViewportFrame`, walking and spinning | the same model all black, button black, padlock |
 | Weathers | `WeatherConfig.Indicator.Icons` in `Icon` | no picture, button black, padlock |
-| Maps | `MapConfig.MAPS[map].Image` in `Icon` | no picture, button black, padlock |
+| Maps | `MapConfig.MAPS[map].IndexImage` (falls back to `Image`) in `Icon`; the preview shows `Image`, the map picker's picture | no picture, button black, padlock |
 
 A unit without `IndexImages` art falls back to its model, like an enemy.
 Locked items take no clicks and do not grow on hover.

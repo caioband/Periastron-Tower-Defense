@@ -12,7 +12,10 @@
 
 	`DisplayName` is the only part players read, so it is free to differ from the
 	key -- which is not. `Image` is what the map template in `ChooseMaps` and the
-	portal billboard show.
+	portal billboard show. `IndexImage` is the map's item button in the Index (its
+	preview shows `Image`, like the map picker), apart from `Image` so each can
+	change on its own. Volcano still repeats its `Image` there, until its Index art
+	exists; without the field, the Index falls back to `Image`.
 
 	`Music` is the track name in `SoundService.SharedSounds.Musics`, and it is only
 	needed when the track is **not** named like the key. `MapService` sends this
@@ -41,6 +44,7 @@ module.MAPS = {
 		DisplayName = "Farm",
 		WinsRequired = 0,
 		Image = "rbxassetid://91827512669644",
+		IndexImage = "rbxassetid://134889398940282",
 	},
 
 	-- The folder in `ServerStorage.Maps` is "Desert", with one S, and the key must
@@ -49,12 +53,14 @@ module.MAPS = {
 		DisplayName = "Desert",
 		WinsRequired = 2,
 		Image = "rbxassetid://115008998327555",
+		IndexImage = "rbxassetid://124881823090136",
 	},
 
 	["Snowy"] = {
 		DisplayName = "Snowy",
 		WinsRequired = 3,
 		Image = "rbxassetid://110763146643497",
+		IndexImage = "rbxassetid://71579061428500",
 	},
 
 	["SnowyCastle"] = {
@@ -63,6 +69,7 @@ module.MAPS = {
 		Music = "Snowy Castle",
 		WinsRequired = 4,
 		Image = "rbxassetid://82438762834917",
+		IndexImage = "rbxassetid://122289557219975",
 	},
 
 	-- The folder in `ServerStorage.Maps` is "Mountain", singular, and the key must
@@ -72,18 +79,21 @@ module.MAPS = {
 		DisplayName = "Mountains",
 		WinsRequired = 5,
 		Image = "rbxassetid://111816748733146",
+		IndexImage = "rbxassetid://81043528652201",
 	},
 
 	["Cave"] = {
 		DisplayName = "Cave",
 		WinsRequired = 6,
 		Image = "rbxassetid://90052719869168",
+		IndexImage = "rbxassetid://90926006085448",
 	},
 
 	["Volcano"] = {
 		DisplayName = "Volcano",
 		WinsRequired = 8,
 		Image = "rbxassetid://102911300807811",
+		IndexImage = "rbxassetid://102911300807811",
 	},
 
 	-- Beach, Swamp, and Pale Garden have no track in `SharedSounds.Musics` yet: the
@@ -92,12 +102,14 @@ module.MAPS = {
 		DisplayName = "Beach",
 		WinsRequired = 11,
 		Image = "rbxassetid://98956022122852",
+		IndexImage = "rbxassetid://77471496157497",
 	},
 
 	["Swamp"] = {
 		DisplayName = "Swamp",
 		WinsRequired = 13,
 		Image = "rbxassetid://115839585540675",
+		IndexImage = "rbxassetid://82590607432784",
 	},
 
 	-- The folder in `ServerStorage.Maps` has a space in its name, and so does the key.
@@ -105,6 +117,7 @@ module.MAPS = {
 		DisplayName = "Pale Garden",
 		WinsRequired = 16,
 		Image = "rbxassetid://119383142532337",
+		IndexImage = "rbxassetid://91937010857732",
 	},
 }
 

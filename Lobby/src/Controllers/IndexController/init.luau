@@ -1,6 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local SoundService = game:GetService("SoundService")
 local TextService = game:GetService("TextService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -31,7 +32,9 @@ local log = Log.new("IndexController")
 --[=[
 	`Index.Frame.ImageLabel`, the book. The left page holds the items
 	(`ItemsContainer.ItemsScrolling`, whose `Wrapper` is the template for each item)
-	and the page buttons; the right page holds the preview.
+	and the page buttons; the right page holds the preview. `MarkersContainer` holds
+	one bookmark per category, named like it, and `CurrentSection` is the current
+	category's bookmark.
 ]=]
 local GUI = {
 	ScreenGui = "Index",
@@ -46,6 +49,9 @@ local GUI = {
 	Viewport = "ViewportFrame",
 	New = "New",
 	Locked = "LockedIMG",
+
+	Markers = "MarkersContainer",
+	CurrentSection = "CurrentSection",
 
 	Pages = "NextPreviousButtons",
 	Next = "Next",
@@ -62,6 +68,23 @@ local GUI = {
 	DescriptionText = "DescriptionText",
 }
 
+--[=[
+	The page-turn sounds, one at random on each change of category, never the same
+	twice in a row (`_playSectionSound`).
+
+	They are not in `SharedSounds` (a Package both places load) nor authored in Studio:
+	`_createSectionSounds` builds them in a loose folder at the root of `SoundService`,
+	where `MusicController:PlaySFX` finds them by name, like the shop's `BuySFX`. Going
+	through it keeps the volume and the SFX mute of the settings.
+]=]
+local SECTION_SOUND_FOLDER = "IndexSFX"
+local SECTION_SOUNDS = {
+	IndexSection1 = "rbxassetid://112562510931077",
+	IndexSection2 = "rbxassetid://114179811399833",
+	IndexSection3 = "rbxassetid://107275512140331",
+	IndexSection4 = "rbxassetid://106335048156295",
+}
+
 local HUD_UI_NAME = "HUD"
 local HUD_FRAME_NAME = "HUDLeft"
 local HUD_BUTTON_NAME = "Index"
@@ -76,6 +99,18 @@ local OPEN_ANIMATION = "OpenShop"
 local PAGE_PREFIX = "Items_"
 
 local LOCKED_COLOR = Color3.new(0, 0, 0)
+
+--[=[
+	Each category's bookmark art: `Current` in `CurrentSection`, `Marker` in its
+	button in `MarkersContainer`. The open category's marker hides, as if its
+	bookmark had moved to the page.
+]=]
+local SECTION_IMAGES = {
+	Units = { Current = "rbxassetid://87257100439608", Marker = "rbxassetid://87023931202045" },
+	Enemies = { Current = "rbxassetid://79700165951565", Marker = "rbxassetid://81767660168798" },
+	Weathers = { Current = "rbxassetid://136766090689275", Marker = "rbxassetid://127873587165215" },
+	Maps = { Current = "rbxassetid://84304214915848", Marker = "rbxassetid://108464035515424" },
+}
 
 local EMPTY_TEXT = "Nothing discovered here yet."
 
@@ -140,6 +175,7 @@ local IndexController = {
 	Controllers = {
 		DataController = {},
 		InterfaceController = {},
+		MusicController = {},
 		RichTextController = {},
 	},
 }
@@ -426,7 +462,7 @@ function IndexController:_renderPreview()
 
 	if category == "Weathers" or category == "Maps" then
 		if view.PreviewIcon then
-			view.PreviewIcon.Image = entry.Image or ""
+			view.PreviewIcon.Image = entry.PreviewImage or entry.Image or ""
 			view.PreviewIcon.Visible = true
 		end
 
@@ -474,9 +510,90 @@ function IndexController:_updateActivity()
 	end
 end
 
+--[=[
+	Puts the current category's bookmark in `CurrentSection` and hides its marker.
+
+	Hidden by transparency, not `Visible`: `MarkersContainer`'s `UIListLayout` skips
+	invisible children, and the markers below would move up into the gap.
+]=]
+function IndexController:_applySection()
+	local view = self.View
+	if not view then return end
+
+	local category = self:_currentCategory()
+	local images = SECTION_IMAGES[category]
+
+	if view.CurrentSection and images then
+		view.CurrentSection.Image = images.Current
+	end
+
+	for name, marker in view.Markers do
+		local shown = name ~= category
+		marker.ImageTransparency = if shown then 0 else 1
+		marker.Interactable = shown
+	end
+end
+
+--- Builds the page-turn sounds and has them downloaded. See `SECTION_SOUNDS`.
+function IndexController:_createSectionSounds()
+	local folder = SoundService:FindFirstChild(SECTION_SOUND_FOLDER)
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = SECTION_SOUND_FOLDER
+		folder.Parent = SoundService
+	end
+
+	for name, soundId in SECTION_SOUNDS do
+		if not folder:FindFirstChild(name) then
+			local sound = Instance.new("Sound")
+			sound.Name = name
+			sound.SoundId = soundId
+			sound.Parent = folder
+		end
+
+		table.insert(self.SectionSounds, name)
+	end
+
+	table.sort(self.SectionSounds)
+
+	local music = self.Controllers.MusicController
+	if music then
+		music:PreloadSFX(self.SectionSounds)
+	end
+end
+
+--- One page-turn sound at random, never the one played last.
+function IndexController:_playSectionSound()
+	local music = self.Controllers.MusicController
+	local sounds = self.SectionSounds
+	if not music or #sounds == 0 then return end
+
+	local last = self.LastSectionSound
+	local index
+
+	if last and #sounds > 1 then
+		-- Draws among the others: from the last one on, each shifts one up.
+		index = math.random(#sounds - 1)
+		if index >= last then
+			index += 1
+		end
+	else
+		index = math.random(#sounds)
+	end
+
+	self.LastSectionSound = index
+	music:PlaySFX(sounds[index])
+end
+
 function IndexController:_showPage(pageIndex : number)
 	local count = #IndexConfig.CATEGORIES
+	local previous = self.Page
 	self.Page = ((pageIndex - 1) % count) + 1
+
+	-- Only a change of category with the book open: opening it shows the same page.
+	if self.IsOpen and self.Page ~= previous then
+		self:_playSectionSound()
+	end
 
 	local category = self:_currentCategory()
 	self:_buildPage(category)
@@ -490,6 +607,7 @@ function IndexController:_showPage(pageIndex : number)
 		view.PageLabel.Text = `{self.Page}/{count}`
 	end
 
+	self:_applySection()
 	self:_ensureSelection(category)
 	self:_renderPreview()
 	self:_updateActivity()
@@ -674,6 +792,8 @@ function IndexController:_onBind(panel : GuiObject, maid)
 	scrolling.Parent = nil
 
 	local pages = panel:FindFirstChild(GUI.Pages)
+	local markers = panel:FindFirstChild(GUI.Markers)
+	local currentSection = panel:FindFirstChild(GUI.CurrentSection)
 	local preview = panel:FindFirstChild(GUI.Preview)
 	local previewItem = preview and preview:FindFirstChild(GUI.PreviewItem)
 	local description = preview and preview:FindFirstChild(GUI.Description)
@@ -687,6 +807,9 @@ function IndexController:_onBind(panel : GuiObject, maid)
 		ScrollTemplate = scrolling,
 		WrapperTemplate = wrapper,
 		PageLabel = if pageLabel and pageLabel:IsA("TextLabel") then pageLabel else nil,
+		CurrentSection = if currentSection and currentSection:IsA("ImageButton") then currentSection else nil,
+		-- [category] = its button in `MarkersContainer`.
+		Markers = {},
 		PreviewIcon = if previewIcon and previewIcon:IsA("ImageLabel") then previewIcon else nil,
 		PreviewViewport = if previewViewport and previewViewport:IsA("ViewportFrame") then previewViewport else nil,
 		Description = if description and description:IsA("ScrollingFrame") then description else nil,
@@ -716,9 +839,33 @@ function IndexController:_onBind(panel : GuiObject, maid)
 		end
 	end
 
+	-- Each bookmark opens its category's page.
+	for pageIndex, category in IndexConfig.CATEGORIES do
+		local marker = markers and markers:FindFirstChild(category)
+
+		if marker and marker:IsA("ImageButton") then
+			local images = SECTION_IMAGES[category]
+			if images then
+				marker.Image = images.Marker
+			end
+
+			self.View.Markers[category] = marker
+
+			maid:GiveTask(marker.Activated:Connect(function()
+				self:_showPage(pageIndex)
+			end))
+
+			ButtonUtil.bindFeedback(marker, maid)
+		else
+			log:StudioWarn(`no {GUI.Markers}.{category}; that bookmark does nothing.`)
+		end
+	end
+
 	if self.View.PageLabel then
 		self.View.PageLabel.Text = `{self.Page}/{#IndexConfig.CATEGORIES}`
 	end
+
+	self:_applySection()
 end
 
 --- Hooks the HUD button. Its own maid: the HUD and `Index` reset at different times.
@@ -874,6 +1021,7 @@ function IndexController:construct()
 
 	self.Proximity:Start()
 
+	self:_createSectionSounds()
 	self:_observeUI()
 	self:_watchProfile()
 	self:_watchSpin()
@@ -924,6 +1072,10 @@ function IndexController:init()
 	-- The description's pending write, and the measured sizes. See `_writeDescription`.
 	self.DescriptionToken = 0
 	self.DescriptionSizes = {}
+
+	-- The page-turn sounds' names, and the index of the last one played.
+	self.SectionSounds = {}
+	self.LastSectionSound = nil
 end
 
 return IndexController
