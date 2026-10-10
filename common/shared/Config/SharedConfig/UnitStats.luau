@@ -890,6 +890,22 @@ local UnitStats = {
 	cash. Its value is the time it buys the other towers, not the damage.
 	Numbers are provisional.
 ]]
+	--[[
+	A melee unit that shoves enemies back along the track. Each push moves the enemy
+	it struck and up to 2 more within 6 studs of it, 3 studs each (bosses only a
+	quarter of that). Only the enemy it struck takes damage; the others are just pushed.
+
+	The push has two cooldowns. `Cooldown` is per enemy, so no tower pins one in place.
+	`UnitCooldown` is per tower: after a push lands, that Vindicator keeps attacking at
+	its normal rate but pushes nobody for 2.5 s. At a 1.5 s attack, that is a push about
+	every other swing.
+
+	Damage is the old 20 divided by 2.3, left unrounded on purpose: every reader rounds
+	once at the end (`UnitService:getDamage`, `UnitUpgradeConfig:GetDamage`), so each
+	level lands on the old ladder / 2.3. 9 damage every 1.5 s is 6 DPS, or 3.4 per 100
+	cash. Its value is the time it buys the other towers, not the damage.
+	Numbers are provisional.
+]]
 	["Vindicator"] = {
 		Rarity = "Rare",
 		Class = "Melee",
@@ -901,8 +917,9 @@ local UnitStats = {
 		HitInterval = 0,
 		Hits = 1,
 		Knockback = {
-			Distance = 3,	
+			Distance = 3,
 			Cooldown = 0.5,
+			UnitCooldown = 2.5,
 			BossScale = 0.25,
 			Radius = 6,
 			MaxTargets = 3,

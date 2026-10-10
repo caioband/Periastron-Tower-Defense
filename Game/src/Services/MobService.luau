@@ -812,16 +812,18 @@ end
 	The ticks charge on behalf of whoever **lit** the fire: its `ownerUserId` takes the
 	cash to the end, even if another player hits the target meanwhile.
 
+	The ticks are `Fire` damage for `ResistanceConfig`, the class of the unit that lights
+	them, so a fire-resistant enemy shrugs off the burn the same way it shrugs off the shot.
+
 	The visual comes from here through `MobBurning`, because only the server knows whether
 	the hit lit a new fire or landed on something already burning. Today the Pyre burns.
 ]=]
-function MobService:ApplyBleed(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?, vulnerability : number?)
+function MobService:ApplyBurn(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?)
 	self:applyDamageOverTime(mobId, damage, ticks, interval, ownerUserId, {
-		UntilKey = "BleedingUntil",
-		Event = "MobBleeding",
-		VulnerabilityKey = "BleedVulnerability",
-		Vulnerability = vulnerability,
-		DamageClass = "Melee",
+		UntilKey = "BurningUntil",
+		Event = "MobBurning",
+		CardStat = "Burn",
+		DamageClass = "Fire",
 	})
 end
 
@@ -840,6 +842,8 @@ end
 	the value belongs to whoever opened the wound: whoever refreshes the bleed later (only
 	once the deadline ends, by the no-stacking rule) writes theirs on top.
 
+	The ticks are `Melee` damage for `ResistanceConfig`, the class of the units that bleed.
+
 	No card changes bleeding: Fire Hazard is for fire. The visual comes through
 	`MobBleeding` (`BleedVFX`). Today the Slasher and the Berserker bleed, with the same 30%
 	wound, and by the no-stacking rule the two together open a single wound.
@@ -850,6 +854,7 @@ function MobService:ApplyBleed(mobId : string, damage : number?, ticks : number?
 		Event = "MobBleeding",
 		VulnerabilityKey = "BleedVulnerability",
 		Vulnerability = vulnerability,
+		DamageClass = "Melee",
 	})
 end
 
@@ -864,6 +869,8 @@ end
 	`kind.VulnerabilityKey` and `kind.Vulnerability` are for an effect that also makes the
 	target more fragile while it lasts (today only bleeding): the number is stored on the
 	enemy and `DamageMob` charges it, by the same `kind.UntilKey` deadline.
+
+	`kind.DamageClass` is the class `DamageMob` hands `ResistanceConfig` for each tick.
 ]=]
 function MobService:applyDamageOverTime(mobId : string, damage : number?, ticks : number?, interval : number?, ownerUserId : number?, kind)
 	local mob = self.ActiveMobs[mobId]
@@ -900,7 +907,7 @@ function MobService:applyDamageOverTime(mobId : string, damage : number?, ticks 
 			local multiplier = if kind.CardStat then self:cardStat(kind.CardStat) else 1
 			local tick = math.max(1, math.floor(damage * multiplier + 0.5))
 			local dealt = self:DamageMob(mobId, tick, ownerUserId, nil, nil, kind.DamageClass)
-			
+
 			-- `DamageMob` does not notify the screen: a regular hit's number and health bar
 			-- come from the unit's `AttackVisual`, and a tick has no unit.
 			if dealt > 0 then

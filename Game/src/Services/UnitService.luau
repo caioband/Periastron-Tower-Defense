@@ -1260,9 +1260,24 @@ function UnitService:creditDamage(entry, mobId, damage : number, auraBonus : num
 			self.Services.MobService:ApplyBleed(mobId, bleed.Damage, bleed.Ticks, bleed.Interval, entry.ownerUserId, bleed.Vulnerability)
 		end
 
+		--[[
+			The push, gated per tower by `Knockback.UnitCooldown`: the hit above always
+			lands, and only the shove waits. The clock starts only when someone was
+			actually pushed, so a swing on enemies still inside their own per-enemy
+			`Cooldown` (or a boss at the end of the track) does not waste the tower's push.
+			Match time, like everything else: at 2x the 2.5 s pass in half the time.
+		]]
 		local knockback = stats and stats.Knockback
 		if knockback then
-			self.Services.MobService:KnockbackArea(mobId, knockbackCenter, knockback)
+			local now = GameClock.Now()
+
+			if now >= (entry.knockbackReadyAt or 0) then
+				local pushed = self.Services.MobService:KnockbackArea(mobId, knockbackCenter, knockback)
+
+				if pushed > 0 then
+					entry.knockbackReadyAt = now + (knockback.UnitCooldown or 0)
+				end
+			end
 		end
 
 		--[[

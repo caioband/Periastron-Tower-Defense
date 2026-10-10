@@ -864,6 +864,9 @@ function MobController:construct()
 		`bounce`, which the movement loop closes as a slide and a hop (see `stepBounce`).
 		The gap is measured from where the model is **drawn**, so a push landing mid-hop
 		continues from the air instead of jumping.
+
+		The hop ignores the "VFX" setting on purpose: it is not decoration but the only
+		thing that shows the enemy was pushed rather than teleported.
 	]]
 	Framework:Listen("MobTeleported", function(mobId, distance, kind)
 		local movement = self.MobMovement[mobId]
@@ -887,7 +890,7 @@ function MobController:construct()
 		movement.pointIndex = math.max(2, nextIndex)
 		movement.pathPos = position
 
-		if kind == KNOCKBACK_KIND and drawnGround and effectsOn() then
+		if kind == KNOCKBACK_KIND and drawnGround then
 			local slide = drawnGround - position
 			local push = Vector3.new(slide.X, 0, slide.Z).Magnitude
 			local height = math.clamp(push * BOUNCE_HEIGHT_PER_STUD, BOUNCE_MIN_HEIGHT, BOUNCE_MAX_HEIGHT)
@@ -1020,7 +1023,8 @@ function MobController:construct()
 	end)
 
 	Framework:Listen("UpdateBaseHealth", function(current, max)
-		if current < (self.lastBaseHealth or max) then
+		-- Decorative, like the other effects: with the "VFX" setting off, no shake.
+		if current < (self.lastBaseHealth or max) and effectsOn() then
 			shakeScreen()
 		end
 		self.lastBaseHealth = current
