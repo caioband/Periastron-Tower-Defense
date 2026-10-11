@@ -267,6 +267,7 @@ local SharedConfig = require(Configs.SharedConfig)
 local TargetPriority = SharedConfig.TargetPriority
 local ClassConfig = SharedConfig.ClassConfig
 local CardConfig = SharedConfig.CardConfig
+local GamepadConfig = SharedConfig.GamepadConfig
 local UIUtil = require(Utils.UIUtil)
 local PointerUtil = require(Utils.PointerUtil)
 
@@ -297,6 +298,34 @@ local KEYBINDS = {
 	Sell = Enum.KeyCode.X,
 }
 
+--[[
+	The same three actions on a controller. They live in `GamepadConfig` so the hint bar,
+	placement, and this card agree on which button is which.
+
+	B is also the global "back" button (`GamepadController`). While the card is open it is
+	claimed through a context (`GAMEPAD_CONTEXT`), so B upgrades instead of hiding the
+	cursor; an open menu still takes B first.
+]]
+local GAMEPAD_KEYBINDS = {
+	Upgrade = GamepadConfig.TOWER_UPGRADE_KEY,
+	Priority = GamepadConfig.TOWER_PRIORITY_KEY,
+	Sell = GamepadConfig.TOWER_SELL_KEY,
+}
+
+local GAMEPAD_CONTEXT = "TowerCard"
+
+--[=[
+	`GamepadController`, borrowed without yielding: it lives in Common and loads in
+	both places, but this module is required on demand and must never wait on it.
+]=]
+local function getGamepad()
+	return Framework:Get("GamepadController", false, false)
+end
+
+local function isGamepadInput(input : InputObject) : boolean
+	return string.find(input.UserInputType.Name, "^Gamepad") ~= nil
+end
+
 --[=[
 	`text` with the shortcut key at the end: "SELL $250" becomes "SELL $250 [X]".
 
@@ -307,6 +336,9 @@ local KEYBINDS = {
 	The keyboard listener below does not depend on this check: someone who happens to
 	have a keyboard attached to a touch device can still use the shortcut, they just do
 	not see the hint on screen.
+
+	Controller buttons are not written here: the hint bar at the bottom of the screen
+	already shows them with the real button art for the pad in hand.
 ]=]
 local function withBind(text : string, keyCode : Enum.KeyCode) : string
 	if not PointerUtil.isPC() then
@@ -535,6 +567,18 @@ local function findJumpButton() : GuiObject?
 	return button and button:IsA("GuiObject") and button or nil
 end
 
+--[=[
+	Whether a card button can be pressed right now: on screen and not locked. The same
+	two properties `isButtonActive` reads inside `create`, without the card's own
+	`Visible`, which is still false while `create` fills the card for the first time.
+]=]
+local function isButtonUsable(button : Instance?) : boolean
+	return button ~= nil
+		and button:IsA("GuiObject")
+		and button.Visible
+		and button.Active
+end
+
 function module:create(unitModel, ...)
 	if self.maid then
 		self.maid:Destroy()
@@ -547,9 +591,9 @@ function module:create(unitModel, ...)
 	--[[
 		The card's three actions, each in its own function.
 
-		The click and the keyboard shortcut call the same function, so there is no second
-		copy of the rules to drift from the first: the upgrade's level cap applies to both
-		through the same `if`.
+		The click, the keyboard shortcut and the controller button call the same function,
+		so there is no second copy of the rules to drift from the first: the upgrade's level
+		cap applies to all three through the same `if`.
 
 		The drag lock (`isClickSuppressed`) stays out of them on purpose: it exists to
 		swallow the click that ends a drag, and someone who pressed a key dragged no card.
@@ -686,8 +730,9 @@ function module:create(unitModel, ...)
 	end
 
 	--[[
-		The shortcuts. A single listener for all three, bound to the maid: they are born
-		and die with the card, and a key must not outlive the card that announced it.
+		The shortcuts. A single listener for keyboard and controller, bound to the maid:
+		they are born and die with the card, and a key must not outlive the card that
+		announced it.
 
 		What enables each key is the button's own `Visible`, not a copy of its rules:
 		that is where "only the owner sells and upgrades" (`refreshOwnership`) and "Farms
@@ -704,14 +749,34 @@ function module:create(unitModel, ...)
 			upgrade in the tutorial; see `refreshOwnership`) refuses the click through
 			`Active = false`, and without this line the shortcut would be its back door.
 		]]
-		return CardUpgrade.Visible
-			and button ~= nil
-			and button:IsA("GuiObject")
-			and button.Visible
-			and button.Active
+		return CardUpgrade.Visible and isButtonUsable(button)
 	end
 
 	self.maid:GiveTask(UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		--[[
+			Controller buttons skip `gameProcessed`: B/X/Y are not GUI clicks, and the
+			virtual cursor resting over any frame would otherwise swallow them. What the
+			filter protected against is checked directly: a focused text box (typing), the
+			Roblox menu, and any panel opened over the card, which gets B and blocks the
+			rest so a menu over the tower never sells it.
+		]]
+		if isGamepadInput(input) then
+			if UserInputService:GetFocusedTextBox() then return end
+
+			local gamepad = getGamepad()
+			if gamepad and (gamepad:IsBlocked() or gamepad:HasOpenPanel()) then return end
+
+			if input.KeyCode == GAMEPAD_KEYBINDS.Upgrade then
+				if isButtonActive(upgradeButton) then doUpgrade() end
+			elseif input.KeyCode == GAMEPAD_KEYBINDS.Priority then
+				if isButtonActive(priorityButton) then doPriority() end
+			elseif input.KeyCode == GAMEPAD_KEYBINDS.Sell then
+				if isButtonActive(sellButton) then doSell() end
+			end
+
+			return
+		end
+
 		if gameProcessed then return end
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 
@@ -1044,7 +1109,11 @@ function module:refreshPreview()
 	local upgradeConfig = SharedConfig.UnitUpgradeConfig
 	local level = unitModel and unitModel:GetAttribute("Upgrades") or 0
 
-	local shouldShow = self.previewHovered or PointerUtil.isTouchOnly()
+	--[[
+		A controller has no hover either: the virtual cursor is usually off while the card
+		is open, since B/X/Y act on the card directly. Like touch, the preview stays up.
+	]]
+	local shouldShow = self.previewHovered or PointerUtil.isTouchOnly() or PointerUtil.isGamepad()
 	if not unitModel or not unitModel.Parent or upgradeConfig:IsMaxed(level) then
 		shouldShow = false
 	end
@@ -1112,6 +1181,49 @@ function module:refreshPriority()
 	button.Visible = isOwnedByMe(unitModel) and not (unitStats and (unitStats.Farm or unitStats.SlowAura))
 
 	label.Text = withBind(TargetPriority.Label(unitModel:GetAttribute("TargetPriority")), KEYBINDS.Priority)
+
+	self:refreshGamepadContext()
+end
+
+--[=[
+	Tells `GamepadController` which controller buttons the card owns right now, and
+	what to call them in the hint bar.
+
+	Read from the buttons themselves through `isButtonUsable`, the same rule the keys
+	follow: someone else's tower claims nothing (B stays "back"), a Farm claims no Y, and
+	the tutorial's locked upgrade and sell claim neither B nor X.
+
+	Called from `refreshPriority`, which `refresh` reaches last, so it runs after
+	ownership, the tutorial lock and the priority button have all been decided.
+]=]
+function module:refreshGamepadContext()
+	local gamepad = getGamepad()
+	if not gamepad then return end
+
+	local unitModel = self.currentUnit
+	if not unitModel or not unitModel.Parent then
+		gamepad:ClearContext(GAMEPAD_CONTEXT)
+		return
+	end
+
+	local binds = {}
+
+	if isButtonUsable(CardUpgrade:FindFirstChild("UpgradeCost")) then
+		local level = unitModel:GetAttribute("Upgrades") or 0
+		local maxed = SharedConfig.UnitUpgradeConfig:IsMaxed(level)
+
+		table.insert(binds, { Key = GAMEPAD_KEYBINDS.Upgrade, Label = if maxed then "Max Level" else "Upgrade" })
+	end
+
+	if isButtonUsable(CardUpgrade:FindFirstChild("Sell")) then
+		table.insert(binds, { Key = GAMEPAD_KEYBINDS.Sell, Label = "Sell" })
+	end
+
+	if isButtonUsable(CardUpgrade:FindFirstChild("Priority")) then
+		table.insert(binds, { Key = GAMEPAD_KEYBINDS.Priority, Label = "Priority" })
+	end
+
+	gamepad:SetContext(GAMEPAD_CONTEXT, binds)
 end
 
 function module:refreshDamageDone()
@@ -1131,6 +1243,11 @@ function module:destroy()
 	end
 
 	self.maid = nil
+
+	local gamepad = getGamepad()
+	if gamepad then
+		gamepad:ClearContext(GAMEPAD_CONTEXT)
+	end
 
 	-- The card only leaves the screen when the shrink animation ends. If a new unit
 	-- is selected in the meantime, `create`'s `playScale` cancels this tween and

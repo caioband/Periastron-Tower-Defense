@@ -5,10 +5,13 @@
 	nothing useful on a phone: there is no mouse to follow, and a touch arrives as
 	`Enum.UserInputType.Touch`, so a click never happened.
 
-	Here both devices sit behind the same API:
-	  - `getScreenPosition()` returns the mouse on PC and the last touch on a phone;
-	  - `onPointerAction()` calls back on a click (PC) or a short tap (phone),
-	    always with the screen position.
+	Here every device sits behind the same API:
+	  - `getScreenPosition()` returns the mouse on PC, the last touch on a phone, the
+	    virtual cursor on a gamepad with the cursor on, and the screen center on a
+	    gamepad with it off;
+	  - `onPointerAction()` calls back on a click (PC), a short tap (phone), or R2 on
+	    a gamepad (at the virtual cursor, or at the screen center with it off), always
+	    with the screen position.
 
 	Client module: `UserInputService` does not exist on the server, so every access
 	goes through a `RunService:IsClient()` guard. See docs/common/controls.md.
@@ -19,6 +22,13 @@ local RunService = game:GetService("RunService")
 
 local UserInputService = RunService:IsClient() and game:GetService("UserInputService") or nil
 local GuiService = RunService:IsClient() and game:GetService("GuiService") or nil
+local GamepadService = RunService:IsClient() and game:GetService("GamepadService") or nil
+
+-- Required directly, not through `SharedConfig`: this util is required by half the
+-- client, and pulling every config module in with it for one key is not worth it.
+local GamepadConfig = require(
+	script.Parent.Parent:WaitForChild("Config"):WaitForChild("SharedConfig"):WaitForChild("GamepadConfig")
+)
 
 local PointerUtil = {}
 
@@ -80,6 +90,21 @@ local function toViewportPoint(position : Vector2) : Vector2
 end
 
 --[=[
+	The center of the 3D view, in ray space. What a gamepad player aims with when
+	the virtual cursor is off.
+]=]
+local function getViewportCenter() : Vector2?
+	local camera = workspace.CurrentCamera
+	if not camera then return nil end
+
+	return camera.ViewportSize / 2
+end
+
+local function isGamepadInput(input : InputObject) : boolean
+	return string.find(input.UserInputType.Name, "^Gamepad") ~= nil
+end
+
+--[=[
 	An `InputObject` position in the space the camera ray expects.
 
 	Public because not everyone consumes touches through `onPointerAction`: mobile
@@ -92,6 +117,29 @@ end
 ]=]
 function PointerUtil.toViewportPoint(position : Vector2) : Vector2
 	return toViewportPoint(position)
+end
+
+--[=[
+	Whether a ray-space point (what `getScreenPosition` returns) lands on interface
+	that takes input: a button, or anything `Active`.
+
+	A mouse click gets this for free through `gameProcessedEvent`. R2 does not: it is
+	not a click, so nothing in the interface "consumes" it, and the virtual cursor
+	sitting on the upgrade card would otherwise select the tower behind the card.
+]=]
+function PointerUtil.isOverInterface(position : Vector2) : boolean
+	local playerGui = Players.LocalPlayer and Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	if not playerGui then return false end
+
+	local guiPosition = position + getViewportOriginOffset()
+
+	for _, object in playerGui:GetGuiObjectsAtPosition(guiPosition.X, guiPosition.Y) do
+		if object.Visible and (object:IsA("GuiButton") or object.Active) then
+			return true
+		end
+	end
+
+	return false
 end
 
 --[[
@@ -151,8 +199,37 @@ function PointerUtil.isPC() : boolean
 end
 
 --[=[
+	True while the player is using a gamepad: a console, or a PC whose last input
+	came from a controller.
+]=]
+function PointerUtil.isGamepad() : boolean
+	if not UserInputService then return false end
+
+	local ok, preferred = pcall(function()
+		return UserInputService.PreferredInput
+	end)
+
+	if ok and preferred ~= nil then
+		return preferred == Enum.PreferredInput.Gamepad
+	end
+
+	return string.find(UserInputService:GetLastInputType().Name, "^Gamepad") ~= nil
+end
+
+--[=[
+	True while Roblox's gamepad virtual cursor is on screen.
+]=]
+function PointerUtil.isGamepadCursorEnabled() : boolean
+	if not GamepadService then return false end
+	return GamepadService.GamepadCursorEnabled
+end
+
+--[=[
 	Where the pointer is on screen, in the coordinate `Camera:ViewportPointToRay`
 	expects.
+
+	On a gamepad it is the virtual cursor while it is on (it moves the mouse
+	location), and the center of the screen while it is off.
 
 	On a phone it returns `nil` until the player has touched the screen once: before
 	the first touch there is no "where the finger is", and the caller must decide
@@ -160,6 +237,14 @@ end
 ]=]
 function PointerUtil.getScreenPosition() : Vector2?
 	if not UserInputService then return nil end
+
+	if PointerUtil.isGamepadCursorEnabled() then
+		return UserInputService:GetMouseLocation()
+	end
+
+	if PointerUtil.isGamepad() then
+		return getViewportCenter()
+	end
 
 	if UserInputService.MouseEnabled then
 		return UserInputService:GetMouseLocation()
@@ -179,8 +264,14 @@ end
 	TAP_MAX_DURATION. Dragging calls nothing, so the player can still turn the
 	camera with a unit in hand.
 
-	Input the interface already consumed is ignored in both cases, so pressing a HUD
-	button does not also trigger what is in the world behind it.
+	On a gamepad it is `GamepadConfig.WORLD_ACTION_KEY` (R2): at the virtual cursor
+	when it is on, at the screen center when it is off. A stays the GUI click and the
+	jump.
+
+	R2 skips the `gameProcessedEvent` filter on purpose: Roblox's `ControlModule` binds
+	it for tool activation, which can mark it processed when nothing actually used it.
+	What the filter protected against (pressing through interface) is checked by hand
+	with `isOverInterface`.
 
 	Returns the function that disconnects everything, ready for a Maid.
 ]=]
@@ -194,6 +285,26 @@ function PointerUtil.onPointerAction(callback : (Vector2) -> ()) : () -> ()
 	local touchStartClock = 0
 
 	table.insert(connections, UserInputService.InputBegan:Connect(function(input, processed)
+		if isGamepadInput(input) then
+			if input.KeyCode ~= GamepadConfig.WORLD_ACTION_KEY then return end
+			if UserInputService:GetFocusedTextBox() then return end
+			if GuiService and GuiService.MenuIsOpen then return end
+
+			if PointerUtil.isGamepadCursorEnabled() then
+				local position = UserInputService:GetMouseLocation()
+				if PointerUtil.isOverInterface(position) then return end
+
+				callback(position)
+			else
+				local center = getViewportCenter()
+				if center then
+					callback(center)
+				end
+			end
+
+			return
+		end
+
 		if processed then return end
 
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then

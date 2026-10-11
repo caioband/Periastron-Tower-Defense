@@ -89,7 +89,7 @@ CardConfig.Icons = {
 	Vindicator = "rbxassetid://139427010390860", -- TODO: Replace with actual art
 	Necromancer = "rbxassetid://71602492100553",
 	Cryomancer = "rbxassetid://135577855711453",
-	Volt = "rbxassetid://138208228552168",
+	Volt = "rbxassetid://138208228552168", 
 
 }
 

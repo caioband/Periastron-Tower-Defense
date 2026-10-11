@@ -24,6 +24,7 @@ local UnitClass = require(Classes.Unit)
 
 local SharedConfig = require(Configs.SharedConfig)
 local TargetPriority = SharedConfig.TargetPriority
+local GamepadConfig = SharedConfig.GamepadConfig
 local ClientConfig = require(Configs.Client)
 local PointerUtil = require(Utils.PointerUtil)
 local PlacementUtil = require(Utils.PlacementUtil)
@@ -498,6 +499,47 @@ local DOUBLE_TAP_RADIUS = 55
 ]]
 local GHOST_TAP_MIN_RADIUS = 60
 
+--[[ GAMEPAD PLACEMENT ]]
+
+--[[
+	Controller placement and selection:
+
+	| Action | Button |
+	| select a tower / place the ghost | `GamepadConfig.WORLD_ACTION_KEY` (R2) |
+	| rotate the ghost | `GamepadConfig.PLACE_ROTATE_KEY` (Y) |
+	| cancel placement | `GamepadConfig.PLACE_CANCEL_KEY` (B) |
+
+	The ghost follows `PointerUtil.getScreenPosition()`, which on a gamepad is the virtual
+	cursor when it is on and the screen center (the reticle) when it is off, so the
+	camera stick is the aim and nothing here has to move the ghost by hand.
+
+	Each name below is a `GamepadController` context: it claims the buttons (B stops
+	meaning "back" while a ghost is out) and labels them in the hint bar.
+]]
+local GAMEPAD_SELECT_CONTEXT = "TowerSelect"
+local GAMEPAD_PLACEMENT_CONTEXT = "TowerPlacement"
+local GAMEPAD_RETICLE_OWNER = "UnitPlacement"
+
+--[[
+	How long after a gamepad placement R2 is ignored by tower selection.
+
+	Placement and selection both listen to R2. Placement confirms and ends `isPlacing`
+	within the same input, so a selection listener that happens to run after it would see
+	"not placing" and select whatever tower is under the reticle. The window only has to
+	outlast that one input.
+]]
+local PLACEMENT_SELECT_GUARD = 0.2
+
+--- `GamepadController`, borrowed without yielding: it is in Common, this is in Game, and
+--- neither may wait on the other during boot.
+local function getGamepad()
+	return Framework:Get("GamepadController", false, false)
+end
+
+local function isGamepadInput(input : InputObject) : boolean
+	return string.find(input.UserInputType.Name, "^Gamepad") ~= nil
+end
+
 local UnitPlacementController = {
 	Controllers = {
 		TargetingController = {},
@@ -523,6 +565,8 @@ UnitPlacementController.isPlacing = false
 -- Total damage per unitId. Kept outside the model because the server batch may
 -- arrive before `ReplicateUnit` creates the unit.
 UnitPlacementController.damageDoneById = {}
+-- `os.clock()` of the last confirmed placement. See `PLACEMENT_SELECT_GUARD`.
+UnitPlacementController.placementConfirmedAt = 0
 
 function UnitPlacementController:getGroundExcludeList(extra)
 	local list = {}
@@ -1193,7 +1237,8 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		raycastParams.FilterDescendantsInstances = filterList
 
 		-- With a mouse the aim is where the cursor is now; on touch it is where the finger
-		-- last touched, which only changes when the player touches again.
+		-- last touched, which only changes when the player touches again. On a gamepad it
+		-- is the virtual cursor, or the screen center with the cursor off.
 		local pointerPosition = if isTouch then touchTarget else PointerUtil.getScreenPosition()
 
 		--[=[
@@ -1356,8 +1401,9 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	end
 
 	--[[
-		Drops the unit where the ghost is. It lives in its own function because it has two
-		entry points: the mouse click on PC and the double tap on touch.
+		Drops the unit where the ghost is. It lives in its own function because it has
+		three entry points: the mouse click on PC, the double tap on touch, and R2 on a
+		controller.
 	]]
 	local function confirmPlacement()
 		if not self.isPlacing then return end
@@ -1394,6 +1440,9 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		local placedCF = targetCF
 		local onConfirm = options.OnConfirm
 
+		-- See `PLACEMENT_SELECT_GUARD`: the R2 that placed must not also select.
+		self.placementConfirmedAt = os.clock()
+
 		-- Restoring the path's appearance is left to the maid, just
 		-- below: a single owner for both exit paths.
 		placementRing:Destroy()
@@ -1414,7 +1463,7 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 
 	--[[
 		Gives up the unit in hand. On both PC and touch it is clicking or tapping the
-		equipped card again; this is the shared exit.
+		equipped card again; on a controller it is also B. This is the shared exit.
 	]]
 	local function cancelPlacement()
 		--[[
@@ -1432,6 +1481,34 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	end
 
 	maid:GiveTask(UserInputService.InputBegan:Connect(function(input, processed)
+		--[[
+			Controller buttons skip `processed`: R2 is bound by Roblox's `ControlModule` for
+			tool activation and can arrive marked processed with nothing having used it.
+			What the filter guarded against is checked directly instead: typing, the Roblox
+			menu, a panel open over the map, and the virtual cursor resting on interface.
+		]]
+		if isGamepadInput(input) then
+			if UserInputService:GetFocusedTextBox() then return end
+
+			local gamepad = getGamepad()
+			if gamepad and (gamepad:IsBlocked() or gamepad:HasOpenPanel()) then return end
+
+			if input.KeyCode == GamepadConfig.WORLD_ACTION_KEY then
+				if PointerUtil.isGamepadCursorEnabled()
+					and PointerUtil.isOverInterface(UserInputService:GetMouseLocation()) then
+					return
+				end
+
+				confirmPlacement()
+			elseif input.KeyCode == GamepadConfig.PLACE_ROTATE_KEY then
+				rotateGhost()
+			elseif input.KeyCode == GamepadConfig.PLACE_CANCEL_KEY then
+				cancelPlacement()
+			end
+
+			return
+		end
+
 		if processed then return end
 
 		if input.KeyCode == Enum.KeyCode.R then
@@ -1442,6 +1519,23 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 			confirmPlacement()
 		end
 	end))
+
+	--[[
+		While the ghost is out, R2/Y/B belong to placement. Claiming B is what stops
+		`GamepadController` from reading it as "back" at the same time as the cancel above.
+	]]
+	local gamepad = getGamepad()
+	if gamepad then
+		gamepad:SetContext(GAMEPAD_PLACEMENT_CONTEXT, {
+			{ Key = GamepadConfig.WORLD_ACTION_KEY, Label = "Place" },
+			{ Key = GamepadConfig.PLACE_ROTATE_KEY, Label = "Rotate" },
+			{ Key = GamepadConfig.PLACE_CANCEL_KEY, Label = "Cancel" },
+		})
+
+		maid:GiveTask(function()
+			gamepad:ClearContext(GAMEPAD_PLACEMENT_CONTEXT)
+		end)
+	end
 
 	if isTouch then
 		local mobileButtons = Framework:Get("MobileButtons")
@@ -1764,6 +1858,40 @@ function UnitPlacementController:findUnitAt(instance : Instance?) : Model?
 end
 
 --[=[
+	The placed unit whose pivot lands closest to `screenPosition` on screen, within
+	`radius` pixels, or nil.
+
+	Aim assist for a controller with the cursor off. The aim there is the screen center,
+	and steering a thumbstick camera so the exact center pixel lands on a small tower
+	across the map is a chore. A tower close to the reticle counts as aimed at.
+
+	Units behind the camera are skipped (`Z <= 0`): `WorldToViewportPoint` mirrors them
+	onto the screen and they would win from behind the player.
+]=]
+function UnitPlacementController:findUnitNearScreenPoint(screenPosition : Vector2, radius : number) : Model?
+	local camera = workspace.CurrentCamera
+	if not camera then return nil end
+
+	local best = nil
+	local bestDistance = radius
+
+	for unitModel, _ in pairs(self.createdClasses) do
+		if not unitModel.Parent then continue end
+
+		local point, onScreen = camera:WorldToViewportPoint(unitModel:GetPivot().Position)
+		if not onScreen or point.Z <= 0 then continue end
+
+		local distance = (Vector2.new(point.X, point.Y) - screenPosition).Magnitude
+		if distance <= bestDistance then
+			best = unitModel
+			bestDistance = distance
+		end
+	end
+
+	return best
+end
+
+--[=[
 	The unit the pointer is aiming at: its model and `unitId`.
 
 	It exists for the round cards that ask for a tower (Bloxy Cola, Bloxiade, Zippers).
@@ -1802,14 +1930,17 @@ end
 
 function UnitPlacementController:construct()
 	--[[
-		A mouse click on PC, a short tap on mobile: in both cases what arrives here is a
-		point on the screen, and the rest of the path is the same.
+		A mouse click on PC, a short tap on mobile, R2 on a controller: in all cases what
+		arrives here is a point on the screen, and the rest of the path is the same.
 
 		With a unit in hand that point belongs to placement (that is where it moves the
 		ghost), so selection gets out of the way.
 	]]
 	PointerUtil.onPointerAction(function(screenPosition)
 		if self.isPlacing then return end
+
+		-- The R2 that just placed a unit is not also a selection. See `PLACEMENT_SELECT_GUARD`.
+		if os.clock() - self.placementConfirmedAt < PLACEMENT_SELECT_GUARD then return end
 
 		--[[
 			A round card is asking for a target: the click is its.
@@ -1823,6 +1954,15 @@ function UnitPlacementController:construct()
 
 		local hit = self:raycastFromPointer(screenPosition)
 		local foundUnit = hit and self:findUnitAt(hit.Instance) or nil
+
+		-- Aim assist with the reticle: see `findUnitNearScreenPoint`. The virtual cursor
+		-- does not get it, since it can be steered onto the tower precisely.
+		if not foundUnit and PointerUtil.isGamepad() and not PointerUtil.isGamepadCursorEnabled() then
+			local camera = workspace.CurrentCamera
+			local radius = camera and camera.ViewportSize.Y * GamepadConfig.AIM_ASSIST_RADIUS or 0
+
+			foundUnit = self:findUnitNearScreenPoint(screenPosition, radius)
+		end
 
 		if foundUnit then
 			self:selectUnit(foundUnit)
@@ -2037,7 +2177,22 @@ end
 
 
 
+--[=[
+	The controller side of selection, set up in `start` because `GamepadController` is in
+	Common and only guaranteed to exist once every controller has loaded.
+
+	The reticle marks where R2 aims with the cursor off, and the always-on "Select" hint
+	tells a controller player that R2 is how a tower is picked. Placement's "Place"
+	replaces it in the hint bar while a ghost is out.
+]=]
 function UnitPlacementController:start()
+	local gamepad = getGamepad()
+	if not gamepad then return end
+
+	gamepad:RequestReticle(GAMEPAD_RETICLE_OWNER, true)
+	gamepad:SetContext(GAMEPAD_SELECT_CONTEXT, {
+		{ Key = GamepadConfig.WORLD_ACTION_KEY, Label = "Select" },
+	})
 end
 
 function UnitPlacementController:init()

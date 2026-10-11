@@ -1,4 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -8,6 +9,7 @@ local Configs = Shared:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 
 local DeckConfig = SharedConfig.DeckConfig
+local GamepadConfig = SharedConfig.GamepadConfig
 
 local Me = require(Vendor.Me)
 
@@ -15,6 +17,24 @@ local Framework = Me.new()
 
 -- The card-selected sound, in SoundService.SharedSounds.SFX.
 local CARD_SOUND = "CardFlip"
+
+--[[
+	The bumpers walk the hotbar: RB to the next card, LB to the previous one, wrapping
+	at both ends. Equipping through them is the same as clicking the card, so the ghost
+	comes out and the controller places it with R2.
+
+	`GAMEPAD_CONTEXT` puts both in the hint bar (see `GamepadController:SetContext`).
+]]
+local GAMEPAD_CONTEXT = "Hotbar"
+
+--- `GamepadController`, borrowed without yielding: it is in Common, this is in Game.
+local function getGamepad()
+	return Framework:Get("GamepadController", false, false)
+end
+
+local function isGamepadInput(input : InputObject) : boolean
+	return string.find(input.UserInputType.Name, "^Gamepad") ~= nil
+end
 
 --[=[
 	The bridge between the profile's deck and the match hotbar.
@@ -43,6 +63,9 @@ local CardController = {
 	CardCounts = {},
 	Cash = 0,
 	Equipped = nil,
+
+	-- The hotbar as last drawn, in on-screen order. What the bumpers walk through.
+	Hotbar = {},
 
 	-- The hotbar imposed by the tutorial, when there is one. Nil in a regular match.
 	TutorialDeck = nil,
@@ -88,6 +111,26 @@ function CardController:_playCardSound()
 end
 
 --[=[
+	Whether this card can go into the hand now: it has units left and the tutorial
+	allows it. The same two rules `_onCardActivated` applies to a click, in one place so
+	the bumpers skip exactly the cards a click would refuse.
+]=]
+function CardController:_isPickable(unitName : string) : boolean
+	if (self.CardCounts[unitName] or 0) <= 0 then
+		return false
+	end
+
+	-- The tutorial asks for a specific card on some steps. This is only interface
+	-- courtesy: `TutorialMatchService` does the real refusing, on the server.
+	local tutorial = self.Controllers.TutorialStepController
+	if tutorial and not tutorial:AllowsCard(unitName) then
+		return false
+	end
+
+	return true
+end
+
+--[=[
 	A click on a card.
 
 	Clicking the card already in hand drops the unit; clicking another switches. With
@@ -95,14 +138,7 @@ end
 	because of its own counter.
 ]=]
 function CardController:_onCardActivated(unitName : string)
-	if (self.CardCounts[unitName] or 0) <= 0 then
-		return
-	end
-
-	-- The tutorial asks for a specific card on some steps. This is only interface
-	-- courtesy: `TutorialMatchService` does the real refusing, on the server.
-	local tutorial = self.Controllers.TutorialStepController
-	if tutorial and not tutorial:AllowsCard(unitName) then
+	if not self:_isPickable(unitName) then
 		return
 	end
 
@@ -119,6 +155,33 @@ function CardController:_onCardActivated(unitName : string)
 
 	self.Controllers.UnitPlacementController:visualize(unitName)
 	self:_setEquipped(unitName)
+end
+
+--[=[
+	Whether the hand is free for the bumpers to change.
+
+	Two cases where it is not, and both belong to round cards, not the hotbar:
+
+	- a round card is asking for a target (`pointerLocked`): it already emptied the hand,
+	  and filling it again would put a ghost over what the card is aiming at;
+	- a ghost is out with **no** hotbar card equipped: that is Zippers moving a tower
+	  through `visualize` with options, and swapping it for a unit would drop the move.
+]=]
+function CardController:_canCycle() : boolean
+	local placement = self.Controllers.UnitPlacementController
+	if not placement then
+		return false
+	end
+
+	if placement.pointerLocked then
+		return false
+	end
+
+	if placement.isPlacing and not self.Equipped then
+		return false
+	end
+
+	return true
 end
 
 --[=[
@@ -140,6 +203,8 @@ function CardController:_render()
 	-- In the tutorial the cards do not come from the profile: they are the ones the server sent.
 	local hotbar = self.TutorialDeck or DeckConfig.unitList(DeckConfig.resolve(profile))
 
+	self.Hotbar = hotbar
+
 	self:_component("set", hotbar, self.CardCounts, function(unitName : string)
 		self:_onCardActivated(unitName)
 	end)
@@ -154,6 +219,29 @@ function CardController:_render()
 	self:_component("setSelected", self.Equipped)
 end
 
+--[=[
+	The bumpers. Controller buttons skip `gameProcessed`: Satchel binds LB/RB through
+	`ContextActionService` for tool switching, which can mark them processed even in a
+	match with no tools. What the filter guarded against is checked directly: typing,
+	the Roblox menu, cutscenes, and a panel open over the map.
+]=]
+function CardController:_bindGamepad()
+	UserInputService.InputBegan:Connect(function(input : InputObject)
+		local key = input.KeyCode
+		if key ~= GamepadConfig.CARD_NEXT_KEY and key ~= GamepadConfig.CARD_PREVIOUS_KEY then
+			return
+		end
+
+		if not isGamepadInput(input) then return end
+		if UserInputService:GetFocusedTextBox() then return end
+
+		local gamepad = getGamepad()
+		if gamepad and (gamepad:IsBlocked() or gamepad:HasOpenPanel()) then return end
+
+		self:CycleEquipped(if key == GamepadConfig.CARD_NEXT_KEY then 1 else -1)
+	end)
+end
+
 --[[ EXTERNAL ]]
 
 --[=[
@@ -162,6 +250,37 @@ end
 ]=]
 function CardController:setUnequipState()
 	self:_setEquipped(nil)
+end
+
+--[=[
+	Puts the next (`direction = 1`) or previous (`-1`) card in hand, wrapping at both
+	ends of the hotbar.
+
+	With an empty hand, next starts at the first card and previous at the last. Cards
+	`_isPickable` refuses (none left, locked by the tutorial) are skipped, and if no
+	other card qualifies the hand stays as it is. It goes through `_onCardActivated`,
+	so it is exactly a click on that card: ghost out, card grown, `CardFlip` played.
+]=]
+function CardController:CycleEquipped(direction : number)
+	local hotbar = self.Hotbar
+	local count = hotbar and #hotbar or 0
+
+	if count == 0 or not self:_canCycle() then
+		return
+	end
+
+	local current = self.Equipped and table.find(hotbar, self.Equipped)
+	local origin = current or (if direction > 0 then 0 else count + 1)
+
+	for step = 1, count do
+		local index = ((origin - 1 + direction * step) % count) + 1
+		local unitName = hotbar[index]
+
+		if unitName ~= self.Equipped and self:_isPickable(unitName) then
+			self:_onCardActivated(unitName)
+			return
+		end
+	end
 end
 
 function CardController:construct()
@@ -213,6 +332,16 @@ function CardController:construct()
 			self:_component("refreshWeather")
 		end)
 	end)
+
+	self:_bindGamepad()
+
+	local gamepad = getGamepad()
+	if gamepad then
+		gamepad:SetContext(GAMEPAD_CONTEXT, {
+			{ Key = GamepadConfig.CARD_PREVIOUS_KEY, Label = "Prev Card" },
+			{ Key = GamepadConfig.CARD_NEXT_KEY, Label = "Next Card" },
+		})
+	end
 
 	task.spawn(function()
 		self:_render()
