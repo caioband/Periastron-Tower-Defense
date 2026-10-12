@@ -17,6 +17,7 @@
 	| `Enemies` | the enemy **spawns** in a match the player is in (`MobService`) |
 	| `Weathers` | the weather **goes live** in the player's match (`WeatherRoundService`); the warning alone does not count |
 	| `Maps` | the player **enters** the map (`MapService`) |
+	| `Skins` | the player **owns** the skin (`SkinService`, on grant and on profile load) |
 
 	A new category reaches old profiles through `DataService`'s reconcile, so no
 	migration is needed.
@@ -35,8 +36,8 @@
 	(`IndexController`).
 
 	Discovering is **not** owning. The Index is memory: a sold unit (or a map the
-	player can no longer pick) stays discovered. The profile's `Units` answers "owns
-	it now", not this table.
+	player can no longer pick, or a skin taken back) stays discovered. The profile's
+	`Units` and `Skins` answer "owns it now", not this table.
 ]]
 
 local IndexConfig = {}
@@ -47,6 +48,7 @@ IndexConfig.CATEGORIES = {
 	"Enemies",
 	"Weathers",
 	"Maps",
+	"Skins",
 }
 
 --- The profile keys: what was discovered, and what of that was already clicked.
@@ -79,6 +81,10 @@ local KNOWN = {
 
 	Maps = function(key : string) : boolean
 		return require(script.Parent.MapConfig).MAPS[key] ~= nil
+	end,
+
+	Skins = function(key : string) : boolean
+		return require(script.Parent.SkinConfig).Get(key) ~= nil
 	end,
 }
 

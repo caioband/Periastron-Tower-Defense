@@ -18,6 +18,7 @@ local log = Log.new("SkinService")
 local SkinConfig = SharedConfig.SkinConfig
 local KEY = SkinConfig.PROFILE_KEY
 
+local INDEX_CATEGORY = "Skins"
 local REQUEST_COOLDOWN = 0.25
 
 --[[
@@ -31,6 +32,9 @@ local REQUEST_COOLDOWN = 0.25
 	What each player wears is also published on the Player as `EquippedSkins` (JSON),
 	because other clients need it to dress that player's units in a match and the
 	replica only reaches its owner.
+
+	Owning a skin also discovers it in the Index (`Skins` category), on grant and on
+	every profile load, so skins owned before the page existed show up too.
 ]]
 
 local SkinService = {
@@ -69,6 +73,30 @@ function SkinService:_publish(player : Player)
 	player:SetAttribute(SkinConfig.ATTRIBUTE, if ok then encoded else "")
 end
 
+-- Writes every owned, known skin into the Index. `IndexService` skips what is already there.
+function SkinService:_discover(player : Player)
+	local skins = self:_get(player)
+	if not skins then
+		return
+	end
+
+	local ids = {}
+	for id in skins.Owned do
+		if SkinConfig.Get(id) then
+			table.insert(ids, id)
+		end
+	end
+
+	if #ids == 0 then
+		return
+	end
+
+	local indexService = Framework:Get("IndexService", false, false)
+	if indexService and indexService.UnlockMany then
+		indexService:UnlockMany(player, INDEX_CATEGORY, ids)
+	end
+end
+
 function SkinService:_sync(player : Player)
 	if not self:_profile(player) then
 		return
@@ -79,6 +107,7 @@ function SkinService:_sync(player : Player)
 	end)
 
 	self:_publish(player)
+	self:_discover(player)
 end
 
 -- Runs `mutate(skins)` inside one profile write. `mutate` returns a reason to refuse.
@@ -139,10 +168,16 @@ function SkinService:Grant(player : Player, id : string) : (boolean, string?)
 		return false, "UnknownSkin"
 	end
 
-	return self:_write(player, function(skins)
+	local ok, reason = self:_write(player, function(skins)
 		skins.Owned[id] = true
 		return nil
 	end)
+
+	if ok then
+		self:_discover(player)
+	end
+
+	return ok, reason
 end
 
 function SkinService:Revoke(player : Player, id : string) : (boolean, string?)

@@ -280,11 +280,33 @@ local function mapEntries()
 	return entries
 end
 
+--[=[
+	One entry per skin in `SkinConfig`, in its `Order`. No `Image`: a skin is drawn as
+	its 3D model (`Assets.Skins`), the silhouette while not owned.
+]=]
+local function skinEntries()
+	local SkinConfig = SharedConfig.SkinConfig
+	local entries = {}
+
+	for _, id in SkinConfig.ordered() do
+		local skin = SkinConfig.Skins[id]
+
+		table.insert(entries, {
+			Key = id,
+			Name = skin.DisplayName or id,
+			Unit = skin.Unit,
+		})
+	end
+
+	return entries
+end
+
 local BUILDERS = {
 	Units = unitEntries,
 	Enemies = enemyEntries,
 	Weathers = weatherEntries,
 	Maps = mapEntries,
+	Skins = skinEntries,
 }
 
 --[[ DESCRIPTIONS ]]
@@ -409,11 +431,33 @@ local function describeMap(entry) : string
 	return compose(entry.Name, nil, lines)
 end
 
+--- The unit the skin belongs to, in its rarity's color, its own description, and where to equip it.
+local function describeSkin(entry) : string
+	local skin = SharedConfig.SkinConfig.Get(entry.Key) or {}
+	local stats = UnitStats[entry.Unit] or {}
+	local rarity = RarityConfig.getColor(stats.Rarity)
+	local rarityColor = rgb(rarity and rarity:Lerp(Color3.new(1, 1, 1), RARITY_LIGHTEN))
+	local unitName = UNIT_NAMES[entry.Unit] or tostring(entry.Unit)
+
+	local lines = {
+		`Skin for the {paint(unitName, rarityColor)}`,
+	}
+
+	if typeof(skin.Description) == "string" and skin.Description ~= "" then
+		table.insert(lines, skin.Description)
+	end
+
+	table.insert(lines, `Changes the tower's model and card art. Equip it from the {paint("Backpack", C.Cash)}.`)
+
+	return compose(entry.Name, C.Magic, lines)
+end
+
 local DESCRIBERS = {
 	Units = describeUnit,
 	Enemies = describeEnemy,
 	Weathers = describeWeather,
 	Maps = describeMap,
+	Skins = describeSkin,
 }
 
 --[[ API ]]

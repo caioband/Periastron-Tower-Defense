@@ -10,6 +10,7 @@ SkinConfig.Skins = {
 	AwesomeSkin = {
 		Unit = "Sword",
 		DisplayName = "Awesome Skin",
+		Description = "test skin lol",		
 		Image = "rbxassetid://82984850115176",
 		Card = "rbxassetid://82984850115176",
 		Icon = "rbxassetid://82984850115176",
