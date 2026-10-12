@@ -65,6 +65,8 @@ return {
 		roundcash = true,
 		friendinvite = true,
 		friendinvitestats = true,
+		-- Gives, takes, equips or unequips nametags, so cosmetics can be tested without an admin.
+		nametag = true,
 		-- Wipes only the profile in the QA universe's own DataStore; refuses in Production.
 		datareset = true,
 		-- Clears the profile's `Tutorial` flag, so the tutorial can be tested again.
