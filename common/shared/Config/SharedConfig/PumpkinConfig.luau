@@ -1,0 +1,23 @@
+return {
+	Enabled = true,
+	PerWave = {
+		Tutorial = 0,
+		Easy = 5,
+		Medium = 10,
+		Hard = 15,
+		Impossible = 20,
+		Nightmare = 25,
+		Endless = 1,
+	},
+	Lifetime = 45,
+	AwardUncollected = true,
+	CollectRadius = 5,
+	ServerCollectTolerance = 8,
+	HoverHeight = 1.5,
+	BobHeight = 0.35,
+	BobSpeed = 2.5,
+	SpinSpeed = 45,
+	BounceHeight = 4,
+	BounceTime = 0.7,
+	PopupTime = 1,
+}
