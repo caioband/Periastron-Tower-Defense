@@ -11,9 +11,6 @@ local TargetPriority = SharedConfig.TargetPriority
 local TargetingController = {
 	Controllers = {
 		WeatherController = {},
-
-		-- The one that knows a unit's real range: the table's, with weather and round
-		-- cards. See the aiming loop.
 		UnitPlacementController = {},
 	}
 }
@@ -22,6 +19,9 @@ TargetingController.ActiveUnits = {}
 TargetingController.ActiveMobs = {}
 TargetingController.SliceIndex = 1
 TargetingController.UnitsPerFrame = 4
+
+local scratchA = { distance = 0, health = 0, progress = 0 }
+local scratchB = { distance = 0, health = 0, progress = 0 }
 
 function TargetingController:RegisterUnit(unitClass)
 	table.insert(self.ActiveUnits, unitClass)
@@ -35,24 +35,17 @@ function TargetingController:UnregisterUnit(unitClass)
 end
 
 function TargetingController:RegisterMob(mobModel)
-	table.insert(self.ActiveMobs, mobModel)
+	self.ActiveMobs[mobModel] = true
 end
 
 function TargetingController:UnregisterMob(mobModel)
-	local index = table.find(self.ActiveMobs, mobModel)
-	if index then
-		table.remove(self.ActiveMobs, index)
-	end
+	self.ActiveMobs[mobModel] = nil
 end
 
---[=[
-	`MobController`, borrowed: it owns each enemy's walk, and the path distance the
-	priorities compare comes from it (`GetPathDistance`).
+function TargetingController:ClearMobs()
+	table.clear(self.ActiveMobs)
+end
 
-	A non-yielding lookup, cached the first time it succeeds: this controller and
-	`MobController` reference each other, and waiting for one another in `init` would
-	block both.
-]=]
 function TargetingController:getMobController()
 	if not self.mobController then
 		self.mobController = Framework:Get("MobController", false, false)
@@ -61,35 +54,30 @@ function TargetingController:getMobController()
 	return self.mobController
 end
 
---[=[
-	The target the unit faces. The server decides damage; this is only where the unit
-	looks, which is why the criterion must be the SAME on both sides, and it comes
-	from the shared `TargetPriority`. Each enemy's health is read from the attribute
-	`MobController` keeps on the model, and its progress from `GetPathDistance`, the
-	client's twin of the server's `mob.Distance`.
-]=]
 function TargetingController:FindBestTarget(unitPosition, maxRange, priority)
 	local bestMob = nil
 	local best = nil
+	local candidate = scratchA
 
 	local mobController = self:getMobController()
 
-	for _, mob in ipairs(self.ActiveMobs) do
-		if not mob or not mob.Parent then continue end
+	for mob in self.ActiveMobs do
+		if not mob.Parent then
+			self.ActiveMobs[mob] = nil
+			continue
+		end
 
-		local mobPosition = mob:GetPivot().Position
-		local distance = (mobPosition - unitPosition).Magnitude
+		local distance = (mob:GetPivot().Position - unitPosition).Magnitude
 		if distance > maxRange then continue end
 
-		local candidate = {
-			distance = distance,
-			health = mob:GetAttribute("Health") or 0,
-			progress = mobController and mobController:GetPathDistance(mob) or 0,
-		}
+		candidate.distance = distance
+		candidate.health = mob:GetAttribute("Health") or 0
+		candidate.progress = mobController and mobController:GetPathDistance(mob) or 0
 
 		if TargetPriority.IsBetter(priority, candidate, best) then
 			best = candidate
 			bestMob = mob
+			candidate = if candidate == scratchA then scratchB else scratchA
 		end
 	end
 
@@ -101,8 +89,6 @@ function TargetingController:StartLoop()
 		local totalUnits = #self.ActiveUnits
 		if totalUnits == 0 then return end
 
-		-- One read per frame: the fog's range applies to every unit in the slice, and
-		-- querying per unit would only waste.
 		local weatherController = self.Controllers.WeatherController
 		local weather = weatherController and weatherController:GetCurrent() or nil
 
@@ -115,12 +101,6 @@ function TargetingController:StartLoop()
 			local unitClass = self.ActiveUnits[self.SliceIndex]
 			if unitClass and unitClass.model and unitClass.model.Parent then
 				local unitPosition = unitClass.model:GetPivot().Position
-				--[[
-					Range goes through `UnitPlacementController` so round cards apply to it:
-					the server aims with the card-adjusted range, and this loop makes the
-					model look at the target. Diverging would have the unit facing an enemy
-					it cannot reach (or with its back to one it can).
-				]]
 				local placement = self.Controllers.UnitPlacementController
 				local range = if placement
 					then placement:getUnitRange(unitClass.name, unitClass.upgrades or 0, unitPosition, unitClass.unitId)

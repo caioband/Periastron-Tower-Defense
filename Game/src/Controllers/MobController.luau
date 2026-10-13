@@ -29,31 +29,9 @@ local log = Log.new("MobController")
 local HIT_FLASH_COLOR = Color3.fromRGB(255, 50, 50)
 local HIT_FLASH_TIME = 0.12
 
---[[
-	The highlight for enemies that took a shock: the Electro's bolt.
-
-	The same yellow, the same transparencies, and the same idea as the stunned-unit
-	highlight (`UnitPlacementController`): "this one is stopped". It lasts exactly as
-	long as the jolt, which is short; it is what lets the player see the queue froze,
-	instead of just seeing the bolt go by and the enemies keep walking.
-
-	Its own name so it does not fight the red `HitFlash`, which flashes over it on
-	every hit and goes away on its own.
-]]
 local SHOCK_HIGHLIGHT = "ShockHighlight"
 local SHOCK_COLOR = Color3.fromRGB(255, 200, 60)
 
---[=[
-	The Vindicator's knockback hop.
-
-	`MobTeleported` tagged `KNOCKBACK_KIND` does not snap the model: the path position
-	jumps at once (the server's truth, so both simulations stay in step), and only the
-	**drawing** catches up, sliding back from where it stood and arcing up and down on
-	the way. The enemy keeps walking during the hop, the same as on the server.
-
-	The height follows the push, so a boss (a quarter of the distance) only bumps.
-	Match time, like everything else here: at 3x the hop lasts a third as long.
-]=]
 local KNOCKBACK_KIND = "Knockback"
 local BOUNCE_DURATION = 0.35
 local BOUNCE_HEIGHT_PER_STUD = 0.35
@@ -63,6 +41,23 @@ local BOUNCE_MAX_HEIGHT = 1.2
 local SHAKE_DURATION = 0.6
 local SHAKE_MAGNITUDE = 0.35
 local SHAKE_FREQUENCY = 18
+
+local GRID_REFRESH_INTERVAL = 1
+local GRID_CHECK_INTERVAL = 0.2
+local GRID_CAST_LIFT = Vector3.new(0, 5, 0)
+local GRID_CAST_DIRECTION = Vector3.new(0, -15, 0)
+
+local LAST_POSITION_TTL = 2
+
+local MAX_DAMAGE_NUMBERS = 40
+local DAMAGE_NUMBER_DURATION = 0.8
+local DAMAGE_WIGGLE_FREQ = 18
+local DAMAGE_WIGGLE_AMP = 22
+local DAMAGE_FLOAT_RISE = Vector3.new(0, 2.5, 0)
+local DAMAGE_FONT = Font.new("rbxassetid://12187371840", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+
+local HEALTH_TWEEN_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local TRACK_KEYS = { "slowTrack", "fastTrack", "walkTrack" }
 
 local function shakeScreen()
 	local camera = workspace.CurrentCamera
@@ -85,19 +80,11 @@ local function shakeScreen()
 	end)
 end
 
---- The player's "VFX" setting; decorative motion follows it like the other effects.
 local function effectsOn() : boolean
 	local settings = Framework:Get("SettingsController", false, false)
 	return settings == nil or settings:Get("VFX")
 end
 
---[=[
-	The model this enemy wears: the model with the entity's own name, in the folder
-	the entity names (`Folder` in `SharedConfig.Mob`).
-
-	A missing model is an art mistake, and the right answer to it is the enemy
-	showing up as `EnemyRig` with a warning in the console, not the match stopping.
-]=]
 local function resolveMobModel(entityName : string) : Instance?
 	local entity = MobConfig.Entities[entityName]
 	local folder = entity and MobSets:FindFirstChild(entity.Folder or "")
@@ -127,7 +114,6 @@ local function getAverageSpeed(mobName)
 	return (startSpeed + endSpeed) / 2
 end
 
-local healthBarTweens = {}
 local alwaysShowHealthBars = false
 
 local function getHealthBillboard(mob)
@@ -136,96 +122,75 @@ local function getHealthBillboard(mob)
 	return attachment:FindFirstChildOfClass("BillboardGui")
 end
 
-local function updateHealthBar(mob, current, max, instant)
-	-- Health also goes to an attribute on the model: that is how
-	-- `TargetingController` finds the weakest or strongest enemy in range without
-	-- asking MobController anything. It sits before the exits below on
-	-- purpose: an enemy without a health bar is still a target.
+local function resolveHealthUi(mob)
+	local billboard = getHealthBillboard(mob)
+	local bar = billboard and billboard:FindFirstChild("Bar")
+
+	return {
+		billboard = billboard,
+		clip = bar and bar:FindFirstChild("ScaleThis"),
+		text = bar and bar:FindFirstChildOfClass("TextLabel"),
+		name = billboard and billboard:FindFirstChild("MobName"),
+		tween = nil,
+	}
+end
+
+local function updateHealthBar(mob, hdata, instant)
+	local current, max = hdata.current, hdata.max
 	mob:SetAttribute("Health", current)
 
-	local attachment = mob:FindFirstChild("HealthAttachment")
-	if not attachment then return end
-
-	local billboard = attachment:FindFirstChildOfClass("BillboardGui")
-	if not billboard then return end
-
-	local outerImage = billboard:FindFirstChild("Bar")
-	if not outerImage then return end
-
-	local clip = outerImage:FindFirstChild("ScaleThis")
+	local ui = hdata.ui
+	local clip = ui and ui.clip
 	if not clip then return end
 
-	local ratio = math.clamp(current / math.max(max, 1), 0, 1)
-	local targetSize = UDim2.new(ratio, 0, 1, 0)
+	local targetSize = UDim2.new(math.clamp(current / math.max(max, 1), 0, 1), 0, 1, 0)
 
-	local existing = healthBarTweens[clip]
-	if existing then
-		existing:Cancel()
-		healthBarTweens[clip] = nil
+	if ui.tween then
+		ui.tween:Cancel()
+		ui.tween = nil
 	end
 
 	if instant then
 		clip.Size = targetSize
 	else
-		local tween = TweenService:Create(clip, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = targetSize })
-		healthBarTweens[clip] = tween
-		tween.Completed:Connect(function()
-			if healthBarTweens[clip] == tween then
-				healthBarTweens[clip] = nil
-			end
-		end)
+		local tween = TweenService:Create(clip, HEALTH_TWEEN_INFO, { Size = targetSize })
+		ui.tween = tween
 		tween:Play()
 	end
 
-	local textLabel = outerImage:FindFirstChildOfClass("TextLabel")
-	if textLabel then
-		textLabel.Text = math.ceil(math.max(current, 0)) .. "/" .. max
+	if ui.text then
+		ui.text.Text = math.ceil(math.max(current, 0)) .. "/" .. max
 	end
-
-	local mobNameLabel = billboard:FindFirstChild("MobName")
-	local mobName = mob and mob.Name or ""
-
-	if mobNameLabel then mobNameLabel.Text = mobName end
 end
 
+local flashTokens = {}
 
 local function flashMob(mob)
-	-- Decorative, like the other VFX: with the "VFX" setting off, no highlight per hit.
-	local settings = Framework:Get("SettingsController", false, false)
-	if settings and not settings:Get("VFX") then return end
+	if not effectsOn() then return end
 
-	local existing = mob:FindFirstChild("HitFlash")
-	if existing then
-		existing:Destroy()
+	local highlight = mob:FindFirstChild("HitFlash")
+	if not highlight then
+		highlight = Instance.new("Highlight")
+		highlight.Name = "HitFlash"
+		highlight.FillColor = HIT_FLASH_COLOR
+		highlight.OutlineColor = HIT_FLASH_COLOR
+		highlight.FillTransparency = 0.2
+		highlight.OutlineTransparency = 1
+		highlight.Parent = mob
 	end
 
-	local highlight = Instance.new("Highlight")
-	highlight.Name = "HitFlash"
-	highlight.FillColor = HIT_FLASH_COLOR
-	highlight.OutlineColor = HIT_FLASH_COLOR
-	highlight.FillTransparency = 0.2
-	highlight.OutlineTransparency = 1
-	highlight.Parent = mob
+	highlight.Enabled = true
+
+	local token = (flashTokens[mob] or 0) + 1
+	flashTokens[mob] = token
 
 	task.delay(HIT_FLASH_TIME, function()
-		if highlight and highlight.Parent then
-			highlight:Destroy()
+		if flashTokens[mob] == token and highlight.Parent then
+			highlight.Enabled = false
 		end
 	end)
 end
 
---[=[
-	Paints an enemy yellow while the shock's jolt lasts.
-
-	One highlight per enemy: a shock on top of another replaces the highlight and
-	restarts the timer, instead of stacking two Highlights fighting over the same
-	model, which is the same thing `MobService:StunMob` does with the jolt itself,
-	where the longer deadline wins.
-
-	The wait runs on the **match** clock, like `StunMob`'s on the other side: at 3x
-	the 0.3s end in a tenth of a real second, and the highlight must go off with them,
-	or it would outlive its own reason.
-]=]
 local function shockMob(mob, duration : number)
 	local existing = mob:FindFirstChild(SHOCK_HIGHLIGHT)
 	if existing then
@@ -247,60 +212,29 @@ local function shockMob(mob, duration : number)
 	end)
 end
 
-local function spawnDamageNumber(mobOrPosition, damage)
-	-- The player's "Damage Numbers" setting. The health bar still shows the hit.
-	local settings = Framework:Get("SettingsController", false, false)
-	if settings and not settings:Get("DamageNumbers") then return end
+local damageNumbers = {}
+local damageNumberLoop = nil
+local damageNumberTemplate = nil
 
-	local rootPart = nil
-	local worldPos = nil
-
-	if typeof(mobOrPosition) == "Instance" then
-		rootPart = mobOrPosition:FindFirstChild("HumanoidRootPart") or mobOrPosition.PrimaryPart
-		if rootPart then
-			worldPos = rootPart.Position
-		end
-	elseif typeof(mobOrPosition) == "Vector3" then
-		worldPos = mobOrPosition
+local function getDamageNumberTemplate()
+	if damageNumberTemplate then
+		return damageNumberTemplate
 	end
-
-	if not worldPos then return end
 
 	local billboard = Instance.new("BillboardGui")
 	billboard.Size = UDim2.new(0, 60, 0, 30)
-	billboard.StudsOffset = Vector3.new(math.random(-10, 10) * 0.1, 2.5, 0)
 	billboard.AlwaysOnTop = true
 	billboard.LightInfluence = 0
 
-	if rootPart then
-		billboard.Adornee = rootPart
-		billboard.Parent = rootPart
-	else
-		local anchor = Instance.new("Part")
-		anchor.Anchored = true
-		anchor.CanCollide = false
-		anchor.CanQuery = false
-		anchor.CanTouch = false
-		anchor.Transparency = 1
-		anchor.Size = Vector3.new(0.1, 0.1, 0.1)
-		anchor.Position = worldPos
-		anchor.Parent = workspace
-		billboard.Adornee = anchor
-		billboard.Parent = anchor
-		task.delay(2, function()
-			if anchor and anchor.Parent then anchor:Destroy() end
-		end)
-	end
-
 	local label = Instance.new("TextLabel")
+	label.Name = "Label"
 	label.Size = UDim2.fromScale(1, 1)
 	label.BackgroundTransparency = 1
-	label.Text = tostring(damage)
 	label.TextColor3 = Color3.fromRGB(255, 60, 60)
 	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	label.TextStrokeTransparency = 0
 	label.TextScaled = true
-	label.FontFace = Font.new("rbxassetid://12187371840", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+	label.FontFace = DAMAGE_FONT
 	label.Parent = billboard
 
 	local stroke = Instance.new("UIStroke")
@@ -308,31 +242,146 @@ local function spawnDamageNumber(mobOrPosition, damage)
 	stroke.Thickness = 2
 	stroke.Parent = label
 
-	local startOffset = billboard.StudsOffset
-	local floatTarget = startOffset + Vector3.new(0, 2.5, 0)
-	local elapsed = 0
-	local duration = 0.8
-	local WIGGLE_FREQ = 18
-	local WIGGLE_AMP = 22
+	damageNumberTemplate = billboard
+	return billboard
+end
 
-	local conn
-	conn = RunService.RenderStepped:Connect(function(dt)
-		elapsed += dt
-		local t = math.min(elapsed / duration, 1)
+local function stepDamageNumbers(dt)
+	for index = #damageNumbers, 1, -1 do
+		local entry = damageNumbers[index]
+		entry.elapsed += dt
+
+		local t = math.min(entry.elapsed / DAMAGE_NUMBER_DURATION, 1)
+		local billboard = entry.billboard
+
+		if t >= 1 or not billboard.Parent then
+			billboard:Destroy()
+			local last = #damageNumbers
+			damageNumbers[index] = damageNumbers[last]
+			damageNumbers[last] = nil
+			continue
+		end
+
 		local eased = 1 - (1 - t) ^ 2
+		billboard.StudsOffset = entry.start:Lerp(entry.target, eased)
 
-		billboard.StudsOffset = startOffset:Lerp(floatTarget, eased)
-		local decay = 1 - t
-		label.Rotation = math.sin(elapsed * WIGGLE_FREQ) * WIGGLE_AMP * decay
+		local label = entry.label
+		label.Rotation = math.sin(entry.elapsed * DAMAGE_WIGGLE_FREQ) * DAMAGE_WIGGLE_AMP * (1 - t)
+
 		local alpha = math.clamp((t - 0.4) / 0.6, 0, 1)
 		label.TextTransparency = alpha
 		label.TextStrokeTransparency = alpha
+	end
 
-		if t >= 1 then
-			conn:Disconnect()
-			billboard:Destroy()
+	if #damageNumbers == 0 and damageNumberLoop then
+		damageNumberLoop:Disconnect()
+		damageNumberLoop = nil
+	end
+end
+
+local function spawnDamageNumber(mobOrPosition, damage)
+	local settings = Framework:Get("SettingsController", false, false)
+	if settings and not settings:Get("DamageNumbers") then return end
+	if #damageNumbers >= MAX_DAMAGE_NUMBERS then return end
+
+	local rootPart = nil
+	local worldPos = nil
+
+	if typeof(mobOrPosition) == "Instance" then
+		rootPart = mobOrPosition:FindFirstChild("HumanoidRootPart") or mobOrPosition.PrimaryPart
+		if not rootPart then return end
+	elseif typeof(mobOrPosition) == "Vector3" then
+		worldPos = mobOrPosition
+	else
+		return
+	end
+
+	local billboard = getDamageNumberTemplate():Clone()
+	local start = Vector3.new(math.random(-10, 10) * 0.1, 2.5, 0)
+	billboard.StudsOffset = start
+
+	if rootPart then
+		billboard.Adornee = rootPart
+		billboard.Parent = rootPart
+	else
+		billboard.Adornee = workspace.Terrain
+		billboard.StudsOffsetWorldSpace = worldPos
+		billboard.Parent = workspace.Terrain
+	end
+
+	local label = billboard.Label
+	label.Text = tostring(damage)
+
+	table.insert(damageNumbers, {
+		billboard = billboard,
+		label = label,
+		start = start,
+		target = start + DAMAGE_FLOAT_RISE,
+		elapsed = 0,
+	})
+
+	if not damageNumberLoop then
+		damageNumberLoop = RunService.RenderStepped:Connect(stepDamageNumbers)
+	end
+end
+
+local gridParams = RaycastParams.new()
+gridParams.FilterType = Enum.RaycastFilterType.Include
+local gridEmpty = true
+local gridDirty = true
+local gridRefreshedAt = 0
+
+local function markGridDirty()
+	gridDirty = true
+end
+
+CollectionService:GetInstanceAddedSignal("Grid"):Connect(markGridDirty)
+CollectionService:GetInstanceRemovedSignal("Grid"):Connect(markGridDirty)
+
+local function refreshGrid(now : number)
+	gridDirty = false
+	gridRefreshedAt = now
+
+	local parts = {}
+	for _, part in CollectionService:GetTagged("Grid") do
+		if part:IsA("BasePart") and part:IsDescendantOf(workspace) then
+			table.insert(parts, part)
 		end
-	end)
+	end
+
+	gridParams.FilterDescendantsInstances = parts
+	gridEmpty = #parts == 0
+end
+
+local function checkIsOnGrid(position : Vector3, castSize : Vector3) : boolean
+	local now = os.clock()
+	if gridDirty or now - gridRefreshedAt >= GRID_REFRESH_INTERVAL then
+		refreshGrid(now)
+	end
+
+	if gridEmpty then
+		return true
+	end
+
+	return workspace:Blockcast(CFrame.new(position + GRID_CAST_LIFT), castSize, GRID_CAST_DIRECTION, gridParams) ~= nil
+end
+
+local function stepBounce(data, scaledDt : number) : Vector3
+	local bounce = data.bounce
+	if not bounce then return Vector3.zero end
+
+	bounce.elapsed += scaledDt
+	local t = math.clamp(bounce.elapsed / BOUNCE_DURATION, 0, 1)
+
+	if t >= 1 then
+		data.bounce = nil
+		return Vector3.zero
+	end
+
+	local eased = 1 - (1 - t) ^ 2
+	local lift = math.sin(math.pi * t) * bounce.height
+
+	return bounce.slide * (1 - eased) + Vector3.new(0, lift, 0)
 end
 
 local MobController = {
@@ -346,46 +395,6 @@ MobController.MobHealth = {}
 MobController.MobMovement = {}
 MobController.MobLastPosition = {}
 
-local function checkIsOnGrid(position, size)
-	local gridParts = CollectionService:GetTagged("Grid")
-	if #gridParts == 0 then
-		return true
-	end
-
-	local cleanGridParts = {}
-	for _, part in ipairs(gridParts) do
-		if part:IsA("BasePart") and part:IsDescendantOf(workspace) then
-			table.insert(cleanGridParts, part)
-		end
-	end
-
-	if #cleanGridParts == 0 then
-		return true
-	end
-
-	local raycastParams = RaycastParams.new()
-	raycastParams.FilterType = Enum.RaycastFilterType.Include
-	raycastParams.FilterDescendantsInstances = cleanGridParts
-
-	local castCFrame = CFrame.new(position + Vector3.new(0, 5, 0))
-	local castSize = Vector3.new(size.X * 0.8, 0.2, size.Z * 0.8)
-	local rayDirection = Vector3.new(0, -15, 0)
-
-	local result = workspace:Blockcast(castCFrame, castSize, rayDirection, raycastParams)
-	return result ~= nil
-end
-
---[=[
-	The current map's routes, identical to the server's: both sides build them from
-	the same replicated nodes, so the index drawn there is valid here.
-
-	Built once per map rather than on every enemy spawn; the cache drops on round
-	restart.
-
-	Yields: waits for the nodes to arrive complete before the first build. If they do
-	not, it builds what it can but does not cache, so the next enemy tries again
-	instead of dragging a truncated path through the whole round.
-]=]
 function MobController:getRoutes()
 	if not self.Routes then
 		local nodesFolder = workspace.PathScriptable.Nodes
@@ -405,14 +414,6 @@ function MobController:getRoutes()
 	return self.Routes
 end
 
---[=[
-	The path nodes with each one's distance to the first, for `TargetingController`'s
-	`Farthest` priority.
-
-	They come from the same routes as movement, which is what makes client and server
-	measure an enemy's progress on the same ruler. An incomplete path is not cached,
-	for the same reason as `getRoutes`: the next request tries again.
-]=]
 function MobController:getNodeDistances()
 	if not self.NodeDistances then
 		local nodeDistances = PathUtil.BuildNodeDistances(self:getRoutes())
@@ -444,8 +445,50 @@ function MobController:GetPathDistance(mobModel : Instance) : number?
 	return (smooth.cumulative[previous] or 0) + (pathPos - from).Magnitude
 end
 
+function MobController:removeMob(mobId, playDeath : boolean?)
+	local mob = self.SpawnedMobs[mobId]
 
+	local hdata = self.MobHealth[mobId]
+	if hdata and hdata.ui and hdata.ui.tween then
+		hdata.ui.tween:Cancel()
+		hdata.ui.tween = nil
+	end
 
+	if mob then
+		if self.hoveredMob == mob then
+			self.hoveredMob = nil
+		end
+
+		if mob.Parent then
+			local position = mob:GetPivot().Position
+			self.MobLastPosition[mobId] = position
+
+			if playDeath and self.Controllers.VFXController then
+				self.Controllers.VFXController:Play("DeathVFX", position)
+			end
+		end
+
+		local targeting = self.Controllers.TargetingController
+		if targeting and targeting.UnregisterMob then
+			targeting:UnregisterMob(mob)
+		end
+
+		flashTokens[mob] = nil
+		mob:Destroy()
+	end
+
+	self.SpawnedMobs[mobId] = nil
+	self.MobMovement[mobId] = nil
+	self.MobHealth[mobId] = nil
+
+	if self.MobLastPosition[mobId] then
+		task.delay(LAST_POSITION_TTL, function()
+			if not self.SpawnedMobs[mobId] then
+				self.MobLastPosition[mobId] = nil
+			end
+		end)
+	end
+end
 
 function MobController:createEntity(entityData)
 	local mobName = entityData.Name or "CourageBearer"
@@ -467,6 +510,7 @@ function MobController:createEntity(entityData)
 		if part:IsA("BasePart") then
 			part.Anchored = part.Name == "HumanoidRootPart"
 			part.CanCollide = false
+			part.CanTouch = false
 		end
 	end
 
@@ -489,11 +533,19 @@ function MobController:createEntity(entityData)
 
 	mobClone.Parent = workspace
 
-	self.MobHealth[mobId] = { current = entityData.Health or entityData.MaxHealth or 100, max = entityData.MaxHealth or 100 }
-	updateHealthBar(mobClone, self.MobHealth[mobId].current, self.MobHealth[mobId].max, true)
+	local hdata = {
+		current = entityData.Health or entityData.MaxHealth or 100,
+		max = entityData.MaxHealth or 100,
+		ui = resolveHealthUi(mobClone),
+	}
+	self.MobHealth[mobId] = hdata
 
-	-- The route comes from the server: with a fork, client and server must walk
-	-- exactly the same polyline, or the two simulations diverge.
+	if hdata.ui.name then
+		hdata.ui.name.Text = mobClone.Name
+	end
+
+	updateHealthBar(mobClone, hdata, true)
+
 	local routes = self:getRoutes()
 	local route = routes[entityData.Route or 1] or routes[1]
 
@@ -501,19 +553,11 @@ function MobController:createEntity(entityData)
 		mobName, #routes, tostring(entityData.Route), route and "found" or "NOT FOUND",
 		#workspace.PathScriptable.Nodes:GetChildren()))
 
-	--[[
-		Without a route there is nowhere to walk, and what came next (`route.smooth`)
-		would error mid-setup: the model already cloned and in the Workspace, but with
-		no position or movement: an enemy invisible to the player and alive for the
-		server, which kept telling towers to shoot at it.
-	]]
 	if not route then
 		log:StudioWarn(string.format("mob '%s' has no route (%d built, %d nodes in the folder); not drawing it.",
 			mobName, #routes, #workspace.PathScriptable.Nodes:GetChildren()))
 
-		mobClone:Destroy()
-		self.SpawnedMobs[mobId] = nil
-
+		self:removeMob(mobId, false)
 		return
 	end
 
@@ -528,13 +572,6 @@ function MobController:createEntity(entityData)
 	local targetHeight = startPosition.Y + (currentSize.Y / 2)
 	local verticalAdjustment = targetHeight - bottomOffset
 
-	--[[
-		How far the model's center is above the path. `TargetingController` subtracts
-		this before asking which node the enemy is on: the server measures from the path
-		point, and without the offset the two would pick different nodes near the middle
-		of each segment: the tower would look at one enemy and the damage would go to
-		another.
-	]]
 	mobClone:SetAttribute("PathOffsetY", currentSize.Y / 2)
 
 	mobClone:PivotTo(currentPivot * CFrame.new(0, verticalAdjustment, 0))
@@ -545,25 +582,17 @@ function MobController:createEntity(entityData)
 		speed = speed,
 		pointIndex = 2,
 		points = smooth.points,
-		-- Where the enemy is on the path, on the ground. See the movement loop.
 		pathPos = startPosition,
-		-- The whole path, not just the points: `MobTeleported` needs the accumulated
-		-- distances to find where the enemy reappears.
 		smooth = smooth,
 		extentsSize = extentsSize,
+		rotation = mobClone:GetPivot().Rotation,
+		gridCastSize = Vector3.new(extentsSize.X * 0.8, 0.2, extentsSize.Z * 0.8),
+		gridIndex = 0,
+		gridCheckAt = 0,
 	}
 
 	local slowWalk = mobModel:FindFirstChild("SlowWalk")
 	local fastWalk = mobModel:FindFirstChild("FastWalk")
-	--[[
-		The generic walk from `Assets.Entities.Walk` closes the ladder.
-
-		The rigs are all R6 with the same part names, so one animation works on any of
-		them. What it avoids is the worst possible outcome for a model whose animation
-		has not been published yet: the enemy **sliding** across the map in a T-pose.
-		Half the Astral cast is in that state today: it has the `KeyframeSequence` in
-		Moon Animator's `AnimSaves` and no `Animation`.
-	]]
 	local walkAnim = mobModel:FindFirstChild("Walk") or Mobs:FindFirstChild("Walk")
 
 	local animationController = mobClone:FindFirstChild("AnimationController") or Instance.new("AnimationController", mobClone)
@@ -600,19 +629,6 @@ function MobController:updateWalkAnimation(mobId)
 	targetTrack:AdjustSpeed(self.TimeScale or 1)
 end
 
---[=[
-	Plays a one-off animation of the model, by name, on top of the walk.
-
-	One per name, stored in `oneShotTracks` and never reloaded: asking twice plays the
-	same track again, not two overlapping tracks.
-
-	A model without the animation leaves quietly. That is the normal case, not an
-	error: the gimmick that asks for `Rush` belongs to the entity whose model has the
-	animation (see `SharedConfig.Mob`), and reaching here without it is already the
-	path of someone who gave a gimmick to the wrong entity. The `IsA` is there because
-	`FindFirstChild` matches by name, and a Part called `Rush` would pass straight
-	through until it errored in `LoadAnimation`.
-]=]
 function MobController:playOneShotAnimation(mobId : string, animationName : string)
 	local movement = self.MobMovement[mobId]
 	local mob = movement and movement.model
@@ -642,63 +658,25 @@ function MobController:playAttackAnimation(mobId)
 	self:playOneShotAnimation(mobId, "Attack")
 end
 
---[=[
-	Puts enemy animations at the match speed.
-
-	Without this, the model slides at 2x: it walks twice the distance per second with
-	the walk playing at the usual pace. It applies to the attack for the same reason:
-	the server hits twice as fast.
-]=]
 function MobController:applyTimeScale(scale : number)
 	for _, data in self.MobMovement do
-		for _, key in { "slowTrack", "fastTrack", "walkTrack" } do
+		for _, key in TRACK_KEYS do
 			local track = data[key]
 			if track then
 				track:AdjustSpeed(scale)
 			end
 		end
 
-		-- One-offs come in here for the same reason as walks: `Rush` lasts
-		-- 3.25s of match time, and at 2x it must fit in 1.6s of screen time, or the
-		-- burst the server already applied goes out before the animation reaches it.
-		for _, track in data.oneShotTracks or {} do
-			track:AdjustSpeed(scale)
+		if data.oneShotTracks then
+			for _, track in data.oneShotTracks do
+				track:AdjustSpeed(scale)
+			end
 		end
 	end
 end
 
---[=[
-	How far the drawing sits from the path point this frame during a knockback hop,
-	and advances the hop's clock. Zero, and the hop cleared, once it lands.
-
-	`slide` is where the model stood minus where the push put it: it starts there and
-	eases to nothing. The arc is a half sine, up and back down over the same time.
-]=]
-local function stepBounce(data, scaledDt : number) : Vector3
-	local bounce = data.bounce
-	if not bounce then return Vector3.zero end
-
-	bounce.elapsed += scaledDt
-	local t = math.clamp(bounce.elapsed / BOUNCE_DURATION, 0, 1)
-
-	if t >= 1 then
-		data.bounce = nil
-		return Vector3.zero
-	end
-
-	local eased = 1 - (1 - t) ^ 2
-	local lift = math.sin(math.pi * t) * bounce.height
-
-	return bounce.slide * (1 - eased) + Vector3.new(0, lift, 0)
-end
-
 function MobController:startMovementLoop()
 	RunService.Heartbeat:Connect(function(dt)
-		--[[
-			The scale is read from the clock every frame instead of pushed by
-			`SpeedController`: it is two comparisons, and in exchange this loop does not
-			depend on the order controllers start in or on who notified whom.
-		]]
 		local scale = GameClock.GetScale()
 		if scale ~= self.TimeScale then
 			self.TimeScale = scale
@@ -706,50 +684,28 @@ function MobController:startMovementLoop()
 		end
 
 		local scaledDt = GameClock.Scaled(dt)
+		local clock = os.clock()
 
 		for mobId, data in self.MobMovement do
 			local mobClone = data.model
 			if not mobClone or not mobClone.Parent then
-				self.MobMovement[mobId] = nil
+				self:removeMob(mobId, false)
 				continue
 			end
 
 			local points = data.points
 			if data.pointIndex > #points then
-				mobClone:Destroy()
-				self.SpawnedMobs[mobId] = nil
-				self.MobMovement[mobId] = nil
+				self:removeMob(mobId, false)
 				continue
 			end
 
 			local extentsSize = data.extentsSize
-			local currentPivot = mobClone:GetPivot()
-			local currentPos = currentPivot.Position
-
-			if not checkIsOnGrid(currentPos, extentsSize) then
-				mobClone:Destroy()
-				self.SpawnedMobs[mobId] = nil
-				self.MobMovement[mobId] = nil
-				continue
+			local pos = data.pathPos
+			if not pos then
+				local currentPos = mobClone:GetPivot().Position
+				pos = Vector3.new(currentPos.X, currentPos.Y - (extentsSize.Y / 2), currentPos.Z)
 			end
 
-			--[[
-				The path point where the enemy is, stored instead of reread from the model:
-				the model is only its drawing, and rebuilding the position from the pivot
-				every frame would accumulate `PivotTo`'s rounding error.
-			]]
-			local pos = data.pathPos or Vector3.new(currentPos.X, currentPos.Y - (extentsSize.Y / 2), currentPos.Z)
-
-			--[[
-				The same sped-up `dt` `MobService` uses to add distance on its side, and the
-				same ruler: distance is spent in 3D, along the smoothed path's segments,
-				which is how `PathUtil`'s `cumulative` measures the server's `mob.Distance`.
-
-				Spending it only on the plane would make the model walk faster than the
-				server on a ramp, and the error is never corrected: on Mountain, which rises
-				17 studs, the screen would reach the base almost 5 studs ahead, more than a
-				melee unit's range.
-			]]
 			local remaining = data.speed * scaledDt
 			local lookTarget3D = nil
 
@@ -776,19 +732,31 @@ function MobController:startMovementLoop()
 			data.pathPos = pos
 
 			local nextPos = pos + Vector3.new(0, extentsSize.Y / 2, 0)
+
+			if data.pointIndex ~= data.gridIndex or clock >= data.gridCheckAt then
+				data.gridIndex = data.pointIndex
+				data.gridCheckAt = clock + GRID_CHECK_INTERVAL
+
+				if not checkIsOnGrid(nextPos, data.gridCastSize) then
+					self:removeMob(mobId, false)
+					continue
+				end
+			end
+
 			local drawCFrame
 			if lookTarget3D then
 				local lookTarget = Vector3.new(lookTarget3D.X, nextPos.Y, lookTarget3D.Z)
 				if (lookTarget - nextPos).Magnitude > 0.01 then
 					drawCFrame = CFrame.lookAt(nextPos, lookTarget)
 				else
-					drawCFrame = CFrame.new(nextPos) * currentPivot.Rotation
+					drawCFrame = CFrame.new(nextPos) * data.rotation
 				end
 			else
-				drawCFrame = CFrame.new(nextPos) * currentPivot.Rotation
+				drawCFrame = CFrame.new(nextPos) * data.rotation
 			end
 
-			-- Only the drawing moves: `pathPos` and `MobLastPosition` stay on the path.
+			data.rotation = drawCFrame.Rotation
+
 			local offset = stepBounce(data, scaledDt)
 			mobClone:PivotTo(CFrame.new(offset) * drawCFrame)
 
@@ -798,9 +766,10 @@ function MobController:startMovementLoop()
 end
 
 function MobController:startHoverLoop()
-	-- Without a mouse there is no hovering over anything: on mobile the loop would only
-	-- spend a raycast every 0.05s to never find any enemy.
 	if PointerUtil.isTouchOnly() then return end
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
 
 	local accum = 0
 	RunService.RenderStepped:Connect(function(dt)
@@ -814,27 +783,29 @@ function MobController:startHoverLoop()
 		local camera = workspace.CurrentCamera
 		local ray = camera:ViewportPointToRay(pointerPosition.X, pointerPosition.Y)
 
-		local params = RaycastParams.new()
-		params.FilterType = Enum.RaycastFilterType.Exclude
 		local character = Players.LocalPlayer.Character
-		params.FilterDescendantsInstances = character and {character} or {}
+		params.FilterDescendantsInstances = character and { character } or {}
 
 		local result = workspace:Raycast(ray.Origin, ray.Direction * 1000, params)
 		local hovered = nil
 		if result then
-			local inst = result.Instance
-			for _, mob in self.SpawnedMobs do
-				if mob and mob.Parent and (inst == mob or inst:IsDescendantOf(mob)) then
-					hovered = mob
+			local model = result.Instance:FindFirstAncestorOfClass("Model")
+			while model do
+				local id = model:GetAttribute("MobID")
+				if id then
+					if self.SpawnedMobs[id] == model then
+						hovered = model
+					end
 					break
 				end
+				model = model:FindFirstAncestorOfClass("Model")
 			end
 		end
 
 		if hovered ~= self.hoveredMob then
 			if self.hoveredMob and self.hoveredMob.Parent then
 				local bb = getHealthBillboard(self.hoveredMob)
-					if bb then bb.Enabled = alwaysShowHealthBars end
+				if bb then bb.Enabled = alwaysShowHealthBars end
 			end
 			self.hoveredMob = hovered
 			if hovered then
@@ -853,21 +824,6 @@ function MobController:construct()
 		self:createEntity(entityData)
 	end)
 
-	--[[
-		The enemy was moved back on the path: the Archmage's Teleport, the Suffocate
-		ability, or the Vindicator's knockback. The server sends the new distance, and the
-		movement loop chases `pointIndex` from there, so it becomes the first point after
-		that distance.
-
-		A teleport snaps the model. A knockback (`kind == KNOCKBACK_KIND`) moves the path
-		position just the same but leaves the model where it stands and hands the gap to
-		`bounce`, which the movement loop closes as a slide and a hop (see `stepBounce`).
-		The gap is measured from where the model is **drawn**, so a push landing mid-hop
-		continues from the air instead of jumping.
-
-		The hop ignores the "VFX" setting on purpose: it is not decoration but the only
-		thing that shows the enemy was pushed rather than teleported.
-	]]
 	Framework:Listen("MobTeleported", function(mobId, distance, kind)
 		local movement = self.MobMovement[mobId]
 		local smooth = movement and movement.smooth
@@ -926,33 +882,9 @@ function MobController:construct()
 	end)
 
 	Framework:Listen("KillClientMob", function(mobId)
-		local mob = self.SpawnedMobs[mobId]
-		if mob then
-			if self.hoveredMob == mob then
-				self.hoveredMob = nil
-			end
-			if mob.Parent then
-				local position = mob:GetPivot().Position
-				self.MobLastPosition[mobId] = position
-
-				self.Controllers.VFXController:Play("DeathVFX", position)
-			end
-			mob:Destroy()
-			self.SpawnedMobs[mobId] = nil
-		end
-		self.MobMovement[mobId] = nil
-		self.MobHealth[mobId] = nil
+		self:removeMob(mobId, true)
 	end)
 
-	--[[
-		Damage that did not come from a unit's hit: burn and bleed ticks
-		(`MobService:applyDamageOverTime`) and a tripmine explosion
-		(`UnitService:stepTripmines`).
-
-		The number and the health bar, like an `AttackVisual` hit just below, but without
-		the flash: it would blink over the effect's Highlight on every tick, and the mine
-		already has its own explosion.
-	]]
 	Framework:Listen("MobDamageTick", function(mobId, damage)
 		local mob = self.SpawnedMobs[mobId]
 		if not mob or not mob.Parent or typeof(damage) ~= "number" then return end
@@ -962,7 +894,7 @@ function MobController:construct()
 		local hdata = self.MobHealth[mobId]
 		if hdata then
 			hdata.current = math.max(0, hdata.current - damage)
-			updateHealthBar(mob, hdata.current, hdata.max)
+			updateHealthBar(mob, hdata)
 		end
 	end)
 
@@ -971,23 +903,23 @@ function MobController:construct()
 		local impactPos = (primaryMob and primaryMob.Parent and primaryMob:GetPivot().Position)
 			or self.MobLastPosition[primaryMobId]
 
-	for _, hit in hits do
-		local mob = self.SpawnedMobs[hit.mobId]
-		if mob and mob.Parent then
-			flashMob(mob)
-			spawnDamageNumber(mob, hit.damage)
-			local hdata = self.MobHealth[hit.mobId]
-			if hdata then
-				hdata.current = math.max(0, hdata.current - hit.damage)
-				updateHealthBar(mob, hdata.current, hdata.max)
-			end
-		else
-			local lastPos = self.MobLastPosition[hit.mobId]
-			if lastPos then
-				spawnDamageNumber(lastPos, hit.damage)
+		for _, hit in hits do
+			local mob = self.SpawnedMobs[hit.mobId]
+			if mob and mob.Parent then
+				flashMob(mob)
+				spawnDamageNumber(mob, hit.damage)
+				local hdata = self.MobHealth[hit.mobId]
+				if hdata then
+					hdata.current = math.max(0, hdata.current - hit.damage)
+					updateHealthBar(mob, hdata)
+				end
+			else
+				local lastPos = self.MobLastPosition[hit.mobId]
+				if lastPos then
+					spawnDamageNumber(lastPos, hit.damage)
+				end
 			end
 		end
-	end
 
 		if self.Controllers.VFXController then
 			self.Controllers.VFXController:Trigger(unitName, "OnHit", {
@@ -998,15 +930,6 @@ function MobController:construct()
 		end
 	end)
 
-	--[[
-		The Electro's bolt: `VFXController` draws the arc and the highlight of the enemies
-		it touched comes from here. Both listen to the same event on purpose: it is the
-		same pair as `UnitStunned`, where the unit highlight and the freeze VFX also come
-		separately.
-
-		Without `stun` (the unit stops nobody) there is no highlight: it says the enemy is
-		stuck, not that it took damage; that is already the red `HitFlash`.
-	]]
 	Framework:Listen("ChainLightning", function(arc)
 		if typeof(arc) ~= "table" or typeof(arc.targets) ~= "table" then return end
 
@@ -1016,14 +939,12 @@ function MobController:construct()
 		for _, target in arc.targets do
 			local mob = self.SpawnedMobs[target.mobId]
 			if mob and mob.Parent then
-				-- Per link: a Volt charge on that enemy holds its jolt longer.
 				shockMob(mob, tonumber(target.stun) or duration)
 			end
 		end
 	end)
 
 	Framework:Listen("UpdateBaseHealth", function(current, max)
-		-- Decorative, like the other effects: with the "VFX" setting off, no shake.
 		if current < (self.lastBaseHealth or max) and effectsOn() then
 			shakeScreen()
 		end
@@ -1034,10 +955,10 @@ function MobController:construct()
 		self:clearAllMobs()
 	end)
 
-	-- The map may have changed between rounds; the routes are rebuilt on the next enemy.
 	Framework:Listen("RoundRestarted", function()
 		self.Routes = nil
 		self.NodeDistances = nil
+		gridDirty = true
 		self:clearAllMobs()
 	end)
 
@@ -1051,18 +972,31 @@ function MobController:construct()
 end
 
 function MobController:clearAllMobs()
+	for _, hdata in self.MobHealth do
+		if hdata.ui and hdata.ui.tween then
+			hdata.ui.tween:Cancel()
+		end
+	end
+
 	for _, mob in self.SpawnedMobs do
 		if mob and mob.Parent then
 			mob:Destroy()
 		end
 	end
+
+	local targeting = self.Controllers.TargetingController
+	if targeting and targeting.ClearMobs then
+		targeting:ClearMobs()
+	end
+
+	self.hoveredMob = nil
+	table.clear(flashTokens)
 	table.clear(self.SpawnedMobs)
 	table.clear(self.MobMovement)
 	table.clear(self.MobHealth)
 	table.clear(self.MobLastPosition)
 end
 
---- Applies the "Always Show Health Bars" setting to every enemy already on the map.
 function MobController:setAlwaysShowHealthBars(enabled : boolean)
 	alwaysShowHealthBars = enabled
 
