@@ -21,18 +21,18 @@ local log = Log.new("CratePityController")
 --[[ CONSTANTS ]]
 
 --[=[
-	The UI path: `crateui.Frame.Rectangle.Pity`, a list with one authored
+	The UI path: `backpackui.Frame.Backpack.Pity`, a list with one authored
 	`RarityContainer`, the **template**: hidden, and cloned once per rarity with a
 	guarantee.
 
-	`crateui.Frame.Rectangle.PityTitle` is the toggle text: "> Show Pity chances"
+	`backpackui.Frame.Backpack.PityTitle` is the toggle text: "> Show Pity chances"
 	while the list is hidden, "V Pity Chances" while it is shown. Clicking or tapping
 	it flips between the two. The list starts hidden.
 ]=]
 local GUI = {
-	ScreenGui = "crateui",
+	ScreenGui = "backpackui",
 	Wrapper = "Frame",
-	Panel = "Rectangle",
+	Panel = "Backpack",
 	List = "Pity",
 	Title = "PityTitle",
 	Template = "RarityContainer",
@@ -88,8 +88,8 @@ local function orderedRarities() : { string }
 end
 
 --[=[
-	Creates the rows, once per copy of `crateui`. Each row is painted with its rarity's
-	color: the bar's fill and the name.
+	Creates the rows, once per copy of `backpackui`. Each row is painted with its
+	rarity's color: the bar's fill and the name.
 ]=]
 function CratePityController:_buildRows()
 	local list, template = self.List, self.Template
@@ -218,8 +218,8 @@ function CratePityController:_bindToggle(title : Instance?, list : GuiObject)
 end
 
 --[=[
-	Binds to a `crateui` copy. It has `ResetOnSpawn`, so this runs again for every copy
-	the engine parents into `PlayerGui`, and the old rows go with the old copy.
+	Binds to a `backpackui` copy. It has `ResetOnSpawn`, so this runs again for every
+	copy the engine parents into `PlayerGui`, and the old rows go with the old copy.
 ]=]
 function CratePityController:_bindUI(screenGui : ScreenGui)
 	self.RowMaid:DoCleaning()
@@ -236,9 +236,9 @@ function CratePityController:_bindUI(screenGui : ScreenGui)
 
 	--[[
 		A newer copy arrived while this one was waiting (the first spawn can swap
-		`crateui` right after join): that copy's bind owns the list now. Going on would
-		build the rows into the discarded copy, and the one on screen would keep the
-		template until the next profile change.
+		`backpackui` right after join): that copy's bind owns the list now. Going on
+		would build the rows into the discarded copy, and the one on screen would keep
+		the template until the next profile change.
 	]]
 	if self.Screen ~= screenGui then
 		return
@@ -338,13 +338,13 @@ end
 function CratePityController:init()
 	self.Maid = Maid.new()
 
-	-- The cloned rows and the title's click, per copy of `crateui`.
+	-- The cloned rows and the title's click, per copy of `backpackui`.
 	self.RowMaid = Maid.new()
 	self.Maid:GiveTask(self.RowMaid)
 
 	self.Replica = nil
 
-	-- The `crateui` copy being bound: an older bind still waiting gives up.
+	-- The `backpackui` copy being bound: an older bind still waiting gives up.
 	self.Screen = nil
 	self.List = nil
 	self.Title = nil

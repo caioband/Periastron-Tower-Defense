@@ -25,15 +25,25 @@ local Framework = Me.new()
 local log = Log.new("CrateController")
 
 --[[ CONSTANTS ]]
-local CRATE_UI_NAME = "crateui"
+local GUI = {
+	ScreenGui = "backpackui",
+	Wrapper = "Frame",
+	Panel = "Backpack",
+	Content = "Content",
+	CratesPage = "CratesPage",
+	RunesPage = "RunesPage",
+	Shelf = "CrateWrapper",
+}
+
 local ENTRY_NAME_PREFIX = "Crate_"
 local RUNE_ENTRY_PREFIX = "Rune_"
 local TEMPLATE_NAME = "cratetemplate"
+local WAIT_TIMEOUT = 10
 
 -- Crates the player does not own are hidden. Set to false to always show every rarity.
 local HIDE_EMPTY_CRATES = true
 
--- Runes come after every crate on the shelf.
+-- Runes sort after every crate (kept for anything reading LayoutOrder).
 local RUNE_LAYOUT_OFFSET = 1000
 
 -- Horizontal gap between entries, as a fraction of one entry's width.
@@ -43,9 +53,8 @@ local ENTRY_PADDING_SCALE = 0.1
 -- Vertical gap between rows, as a fraction of one entry's height.
 local ROW_GAP_SCALE = 0.12
 
--- Entries per row before wrapping: what fits the panel before the scrollbar.
--- Crates fill their rows first; runes start on the row under the last crate.
-local ENTRIES_PER_ROW = 5
+-- Entries per row before wrapping: what fits inside the backpack.
+local ENTRIES_PER_ROW = 3
 
 local GAIN_POP_SCALE = 1.15
 local GAIN_POP_INFO = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -63,13 +72,16 @@ local BLOCKED_CHECK_INTERVAL = 1
 local REQUEST_COOLDOWN = 0.5
 
 --[=[
-	The Backpack shelf (`crateui.Frame.Rectangle.scrollcrates.CrateWrapper`): one
-	entry per crate rarity the player owns, then one per unused rune tier
-	(`Inventory.Runes`) on the rows below, all cloned from `cratetemplate`.
+	The backpack's Crates and Runes tabs. Crates go on
+	`backpackui.Frame.Backpack.Content.CratesPage.CrateWrapper`, one entry per rarity
+	the player owns; runes go on `...RunesPage.CrateWrapper`, one entry per unused rune
+	tier (`Inventory.Runes`). Both are cloned from their page's `cratetemplate` and laid
+	out from the top of their own page.
 
 	Clicking a crate opens it; clicking a rune activates it (`RuneShopService`). A
 	rune whose lower tier cannot start while a higher one is active is dimmed and
 	says `HIGHER ACTIVE`; the server checks the same rule (`RuneConfig.purchaseAction`).
+	Which page is on screen is `BackpackTabController`'s.
 ]=]
 local CrateController = {
 	Controllers = {
@@ -128,16 +140,16 @@ local function addScale(entry : Instance)
 end
 
 --[=[
-	Rebuilds one entry per rarity and one per rune tier inside CrateWrapper, using
-	cratetemplate as the source. The template itself is kept hidden so the designer
-	can keep editing it.
+	Rebuilds one crate entry per rarity on the Crates page and one rune entry per tier
+	on the Runes page, each cloned from its page's `cratetemplate`. The templates stay
+	hidden so the designer can keep editing them.
 ]=]
-function CrateController:_buildEntries(wrapper : Instance, template : ImageButton)
+function CrateController:_buildEntries(crateWrapper : Instance, crateTemplate : GuiObject, runeWrapper : Instance, runeTemplate : GuiObject)
 	self.Entries = {}
 	self.RuneEntries = {}
 
 	for _, rarity in CrateConfig.getOrderedRarities() do
-		local entry = template:Clone()
+		local entry = crateTemplate:Clone()
 		entry.Name = ENTRY_NAME_PREFIX .. rarity
 		entry.Visible = false
 		entry.LayoutOrder = CrateConfig.CRATES[rarity].Order or 0
@@ -152,7 +164,7 @@ function CrateController:_buildEntries(wrapper : Instance, template : ImageButto
 			end))
 		end
 
-		entry.Parent = wrapper
+		entry.Parent = crateWrapper
 
 		self.Entries[rarity] = entry
 		self.UiMaid:GiveTask(entry)
@@ -165,7 +177,7 @@ function CrateController:_buildEntries(wrapper : Instance, template : ImageButto
 			order += 1
 
 			local id = rune.Id
-			local entry = template:Clone()
+			local entry = runeTemplate:Clone()
 			entry.Name = `{RUNE_ENTRY_PREFIX}{id}_{tier}`
 			entry.Visible = false
 			entry.LayoutOrder = RUNE_LAYOUT_OFFSET + order
@@ -178,7 +190,7 @@ function CrateController:_buildEntries(wrapper : Instance, template : ImageButto
 				end))
 			end
 
-			entry.Parent = wrapper
+			entry.Parent = runeWrapper
 
 			self.RuneEntries[RuneConfig.itemKey(id, tier)] = entry
 			self.UiMaid:GiveTask(entry)
@@ -201,11 +213,10 @@ function CrateController:_playGainEffect(entry : Instance)
 	popTween:Play()
 end
 
---- Puts an entry on the shelf grid: `index` is its place in its section (1-based),
---- `firstRow` the row that section starts on (0-based).
-local function placeOnGrid(entry : GuiObject, index : number, firstRow : number)
+--- Puts an entry on its page's grid: `index` is its place on the page (1-based).
+local function placeOnGrid(entry : GuiObject, index : number)
 	local column = (index - 1) % ENTRIES_PER_ROW
-	local row = firstRow + (index - 1) // ENTRIES_PER_ROW
+	local row = (index - 1) // ENTRIES_PER_ROW
 
 	entry.Position = UDim2.fromScale(
 		column * (1 + ENTRY_PADDING_SCALE),
@@ -214,17 +225,17 @@ local function placeOnGrid(entry : GuiObject, index : number, firstRow : number)
 end
 
 --[=[
-	Writes the crate and rune amounts into the UI. Crates fill the top rows and runes
-	start on the row under them. Entries gained since the last refresh get a small
-	pop, and CrateGained / RuneGained fire for anything the player just received.
+	Writes the crate and rune amounts into the UI, each from the top of its own page.
+	Entries gained since the last refresh get a small pop, and CrateGained / RuneGained
+	fire for anything the player just received.
 ]=]
 function CrateController:_render()
 	if not self.Entries or not self.RuneEntries then
 		return
 	end
 
-	local wrapper = self.Wrapper
-	if not wrapper or not wrapper.Parent then
+	local crateWrapper, runeWrapper = self.Wrapper, self.RuneWrapper
+	if not crateWrapper or not crateWrapper.Parent or not runeWrapper or not runeWrapper.Parent then
 		return
 	end
 
@@ -232,9 +243,10 @@ function CrateController:_render()
 	local crates = getCratesFromData(data)
 	local inventory = data and data.Inventory
 
-	-- Respect a layout the designer added to CrateWrapper; otherwise lay the entries
-	-- out ourselves as a grid, crates on top and runes underneath.
-	local hasLayout = wrapper:FindFirstChildWhichIsA("UIGridStyleLayout") ~= nil
+	-- Respect a layout the designer added to a CrateWrapper; otherwise lay the entries
+	-- out ourselves as a grid.
+	local crateHasLayout = crateWrapper:FindFirstChildWhichIsA("UIGridStyleLayout") ~= nil
+	local runeHasLayout = runeWrapper:FindFirstChildWhichIsA("UIGridStyleLayout") ~= nil
 	local crateCount = 0
 
 	for _, rarity in CrateConfig.getOrderedRarities() do
@@ -253,8 +265,8 @@ function CrateController:_render()
 		if shouldShow then
 			crateCount += 1
 
-			if not hasLayout then
-				placeOnGrid(entry, crateCount, 0)
+			if not crateHasLayout then
+				placeOnGrid(entry, crateCount)
 			end
 
 			local nameLabel = entry:FindFirstChild("cratename")
@@ -286,8 +298,6 @@ function CrateController:_render()
 		self.Cache[rarity] = amount
 	end
 
-	-- The first row under the crates; row 0 when the player owns none.
-	local runeFirstRow = math.ceil(crateCount / ENTRIES_PER_ROW)
 	local runeCount = 0
 	local hasBlocked = false
 
@@ -308,8 +318,8 @@ function CrateController:_render()
 			if shouldShow then
 				runeCount += 1
 
-				if not hasLayout then
-					placeOnGrid(entry, runeCount, runeFirstRow)
+				if not runeHasLayout then
+					placeOnGrid(entry, runeCount)
 				end
 
 				local allowed = RuneConfig.purchaseAction(self:_activeRune(rune.Id), tier) ~= nil
@@ -358,31 +368,57 @@ function CrateController:_render()
 	self.HasBlocked = hasBlocked
 end
 
+local function findShelf(content : Instance, pageName : string) : (Instance?, GuiObject?)
+	local page = content:WaitForChild(pageName, WAIT_TIMEOUT)
+	local wrapper = page and page:WaitForChild(GUI.Shelf, WAIT_TIMEOUT)
+	local template = wrapper and wrapper:WaitForChild(TEMPLATE_NAME, WAIT_TIMEOUT)
+
+	if template and template:IsA("GuiObject") then
+		return wrapper, template
+	end
+
+	return nil, nil
+end
+
 --[=[
-	Binds to a crateui instance. crateui has ResetOnSpawn enabled, so this runs again
-	for every fresh copy the engine parents into PlayerGui.
+	Binds to a backpackui instance. backpackui has ResetOnSpawn enabled, so this runs
+	again for every fresh copy the engine parents into PlayerGui.
 ]=]
 function CrateController:_bindUI(screenGui : ScreenGui)
 	self.UiMaid:DoCleaning()
 	self.Entries = nil
 	self.RuneEntries = nil
 	self.Wrapper = nil
+	self.RuneWrapper = nil
 
-	local frame = screenGui:WaitForChild("Frame", 10)
-	local rectangle = frame and frame:WaitForChild("Rectangle", 10)
-	local scroll = rectangle and rectangle:WaitForChild("scrollcrates", 10)
-	local wrapper = scroll and scroll:WaitForChild("CrateWrapper", 10)
-	local template = wrapper and wrapper:WaitForChild(TEMPLATE_NAME, 10)
+	local frame = screenGui:WaitForChild(GUI.Wrapper, WAIT_TIMEOUT)
+	local panel = frame and frame:WaitForChild(GUI.Panel, WAIT_TIMEOUT)
+	local content = panel and panel:WaitForChild(GUI.Content, WAIT_TIMEOUT)
 
-	if not template then
-		log:StudioWarn(`could not find {CRATE_UI_NAME}.Frame.Rectangle.scrollcrates.CrateWrapper.{TEMPLATE_NAME}`)
+	if not content then
+		log:StudioWarn(`could not find {GUI.ScreenGui}.{GUI.Wrapper}.{GUI.Panel}.{GUI.Content}`)
 		return
 	end
 
-	template.Visible = false
+	local crateWrapper, crateTemplate = findShelf(content, GUI.CratesPage)
+	local runeWrapper, runeTemplate = findShelf(content, GUI.RunesPage)
 
-	self.Wrapper = wrapper
-	self:_buildEntries(wrapper, template)
+	if not crateWrapper or not crateTemplate then
+		log:StudioWarn(`could not find {GUI.Content}.{GUI.CratesPage}.{GUI.Shelf}.{TEMPLATE_NAME}`)
+		return
+	end
+
+	if not runeWrapper or not runeTemplate then
+		log:StudioWarn(`could not find {GUI.Content}.{GUI.RunesPage}.{GUI.Shelf}.{TEMPLATE_NAME}`)
+		return
+	end
+
+	crateTemplate.Visible = false
+	runeTemplate.Visible = false
+
+	self.Wrapper = crateWrapper
+	self.RuneWrapper = runeWrapper
+	self:_buildEntries(crateWrapper, crateTemplate, runeWrapper, runeTemplate)
 
 	-- Force a full repaint for the new UI instances.
 	table.clear(self.Cache)
@@ -394,7 +430,7 @@ function CrateController:_observeUI()
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 	local function onChild(child : Instance)
-		if child.Name ~= CRATE_UI_NAME or not child:IsA("ScreenGui") then
+		if child.Name ~= GUI.ScreenGui or not child:IsA("ScreenGui") then
 			return
 		end
 
@@ -403,7 +439,7 @@ function CrateController:_observeUI()
 
 	self.Maid:GiveTask(playerGui.ChildAdded:Connect(onChild))
 
-	local existing = playerGui:FindFirstChild(CRATE_UI_NAME)
+	local existing = playerGui:FindFirstChild(GUI.ScreenGui)
 	if existing then
 		task.spawn(onChild, existing)
 	end
@@ -559,6 +595,7 @@ function CrateController:init()
 	self.Entries = nil
 	self.RuneEntries = nil
 	self.Wrapper = nil
+	self.RuneWrapper = nil
 	self.Replica = nil
 	self.LastRequest = 0
 

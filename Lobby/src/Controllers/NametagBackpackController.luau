@@ -16,12 +16,17 @@ local log = Log.new("NametagBackpackController")
 local NametagConfig = SharedConfig.NametagConfig
 
 --[[ CONSTANTS ]]
-local CRATE_UI_NAME = "crateui"
+local GUI = {
+	ScreenGui = "backpackui",
+	Wrapper = "Frame",
+	Panel = "Backpack",
+	Content = "Content",
+	Page = "NametagsPage",
+	Shelf = "CrateWrapper",
+}
+
 local TEMPLATE_NAME = "skintemplate"
 local ENTRY_PREFIX = "Nametag_"
-local CRATE_PREFIX = "Crate_"
-local RUNE_PREFIX = "Rune_"
-local SKIN_PREFIX = "Skin_"
 
 local IMAGE_NAME = "skinimg"
 local NAME_NAME = "skinname"
@@ -37,17 +42,14 @@ local CLICK_SOUND = "CardFlip"
 local LAYOUT_OFFSET = 4000
 local STATS_KEY = "Stats"
 
-local ENTRIES_PER_ROW = 5
+local ENTRIES_PER_ROW = 3
 local ENTRY_PADDING_SCALE = 0.1
 local ROW_GAP_SCALE = 0.12
 
-local BASE_SIZE_ATTRIBUTE = "AuthoredSize"
-local BASE_CANVAS_ATTRIBUTE = "AuthoredCanvasSize"
-local BOTTOM_PADDING = 0.25
-
 --[=[
-	The nametags on the Backpack shelf (`crateui...CrateWrapper`), cloned from the same
-	`skintemplate` the skins use.
+	The backpack's Nametags tab (`backpackui...Content.NametagsPage.CrateWrapper`),
+	cloned from that page's `skintemplate` and laid out from the top of the page. The
+	page's scroll height is `BackpackTabController`'s.
 
 	A card shows for every nametag that is available (free, owned, or level reached)
 	and for every level nametag not reached yet. Those are locked: greyed, the button
@@ -56,19 +58,8 @@ local BOTTOM_PADDING = 0.25
 
 	Clicking an available card or its `EquipButton` asks `NametagService` to equip or
 	unequip. The equipped look reads the attributes authored on `EquipButton`, exactly
-	like `SkinController`, so both shelves restyle together in Studio.
-
-	Cards sit on the grid after crates, runes and skins. With nothing equipped the
-	default nametag shows as equipped and ignores unequip.
-
-	**Canvas.** `CrateWrapper` is authored as a fraction of `scrollcrates`' canvas and
-	every card is placed in multiples of it, so growing the canvas grew the cards and
-	extra rows never fitted. Being last on the shelf, this controller owns the fit:
-	each layout pass pins `CrateWrapper` to the pixel size its authored scale gives at
-	the authored canvas (so cards look the same and still follow the screen), then
-	sizes the canvas to the lowest visible card plus `BOTTOM_PADDING` card heights,
-	never shorter than authored. Sizes are read without the open animation's `UIScale`.
-	The authored values are kept as attributes so a rebind never compounds them.
+	like `SkinController`, so both tabs restyle together in Studio. With nothing
+	equipped the default nametag shows as equipped and ignores unequip.
 ]=]
 local NametagBackpackController = {
 	Controllers = {
@@ -79,41 +70,11 @@ local NametagBackpackController = {
 
 --[[ INTERNAL ]]
 
-local function placeOnGrid(entry : GuiObject, index : number, firstRow : number)
+local function placeOnGrid(entry : GuiObject, index : number)
 	local column = (index - 1) % ENTRIES_PER_ROW
-	local row = firstRow + (index - 1) // ENTRIES_PER_ROW
+	local row = (index - 1) // ENTRIES_PER_ROW
 
 	entry.Position = UDim2.fromScale(column * (1 + ENTRY_PADDING_SCALE), row * (1 + ROW_GAP_SCALE))
-end
-
-local function hasPrefix(name : string, prefix : string) : boolean
-	return string.sub(name, 1, #prefix) == prefix
-end
-
-local function readAuthored(instance : Instance, property : string, attribute : string) : UDim2
-	local saved = instance:GetAttribute(attribute)
-	if typeof(saved) == "UDim2" then
-		return saved
-	end
-
-	local value = (instance :: any)[property] :: UDim2
-	instance:SetAttribute(attribute, value)
-	return value
-end
-
-local function cumulativeScale(gui : Instance) : number
-	local scale = 1
-	local current = gui
-
-	while current and not current:IsA("LayerCollector") do
-		local uiScale = current:FindFirstChildOfClass("UIScale")
-		if uiScale then
-			scale *= uiScale.Scale
-		end
-		current = current.Parent
-	end
-
-	return scale
 end
 
 function NametagBackpackController:_data()
@@ -249,58 +210,6 @@ function NametagBackpackController:_createEntry(id : string)
 	return entry
 end
 
-function NametagBackpackController:_fitCanvas()
-	local scroll = self.Scroll
-	local wrapper = self.Wrapper
-	if not scroll or not wrapper or not scroll.Parent or not wrapper.Parent then
-		return
-	end
-
-	local scale = cumulativeScale(scroll)
-	if scale < 0.01 then
-		return
-	end
-
-	local window = scroll.AbsoluteSize / scale
-	if window.X <= 0 or window.Y <= 0 then
-		return
-	end
-
-	local baseSize = self.BaseWrapperSize
-	local baseCanvas = self.BaseCanvas
-
-	local canvasWidth = math.max(baseCanvas.X.Scale * window.X + baseCanvas.X.Offset, window.X)
-	local authoredHeight = baseCanvas.Y.Scale * window.Y + baseCanvas.Y.Offset
-
-	local wrapperWidth = math.floor(baseSize.X.Scale * canvasWidth + baseSize.X.Offset + 0.5)
-	local wrapperHeight = math.floor(baseSize.Y.Scale * authoredHeight + baseSize.Y.Offset + 0.5)
-	if wrapperWidth <= 0 or wrapperHeight <= 0 then
-		return
-	end
-
-	local pinned = UDim2.fromOffset(wrapperWidth, wrapperHeight)
-	if wrapper.Size ~= pinned then
-		wrapper.Size = pinned
-	end
-
-	local bottom = 0
-	for _, child in wrapper:GetChildren() do
-		if child:IsA("GuiObject") and child.Visible then
-			local height = child.Size.Y.Scale * wrapperHeight + child.Size.Y.Offset
-			local top = child.Position.Y.Scale * wrapperHeight + child.Position.Y.Offset - child.AnchorPoint.Y * height
-			bottom = math.max(bottom, top + height)
-		end
-	end
-
-	local wrapperTop = wrapper.AbsolutePosition.Y / scale - scroll.AbsolutePosition.Y / scale + scroll.CanvasPosition.Y
-	local needed = math.ceil(math.max(authoredHeight, wrapperTop + bottom + wrapperHeight * BOTTOM_PADDING))
-
-	local canvas = UDim2.new(baseCanvas.X.Scale, baseCanvas.X.Offset, 0, needed)
-	if scroll.CanvasSize ~= canvas then
-		scroll.CanvasSize = canvas
-	end
-end
-
 function NametagBackpackController:_layout()
 	local wrapper = self.Wrapper
 	if not wrapper or not wrapper.Parent then
@@ -308,24 +217,6 @@ function NametagBackpackController:_layout()
 	end
 
 	local hasLayout = wrapper:FindFirstChildWhichIsA("UIGridStyleLayout") ~= nil
-	local crates, runes, skins = 0, 0, 0
-
-	for _, child in wrapper:GetChildren() do
-		if child:IsA("GuiObject") and child.Visible then
-			local name = child.Name
-			if hasPrefix(name, CRATE_PREFIX) then
-				crates += 1
-			elseif hasPrefix(name, RUNE_PREFIX) then
-				runes += 1
-			elseif hasPrefix(name, SKIN_PREFIX) then
-				skins += 1
-			end
-		end
-	end
-
-	local firstRow = math.ceil(crates / ENTRIES_PER_ROW)
-		+ math.ceil(runes / ENTRIES_PER_ROW)
-		+ math.ceil(skins / ENTRIES_PER_ROW)
 
 	for index, id in self.Order do
 		local entry = self.Entries[id]
@@ -333,12 +224,10 @@ function NametagBackpackController:_layout()
 			entry.Frame.LayoutOrder = LAYOUT_OFFSET + index
 
 			if not hasLayout then
-				placeOnGrid(entry.Frame, index, firstRow)
+				placeOnGrid(entry.Frame, index)
 			end
 		end
 	end
-
-	self:_fitCanvas()
 end
 
 function NametagBackpackController:_scheduleLayout()
@@ -412,59 +301,24 @@ function NametagBackpackController:_bindUI(screenGui : ScreenGui)
 	self:_clearEntries()
 	self.Wrapper = nil
 	self.Template = nil
-	self.Scroll = nil
 
-	local frame = screenGui:WaitForChild("Frame", WAIT_TIMEOUT)
-	local rectangle = frame and frame:WaitForChild("Rectangle", WAIT_TIMEOUT)
-	local scroll = rectangle and rectangle:WaitForChild("scrollcrates", WAIT_TIMEOUT)
-	local wrapper = scroll and scroll:WaitForChild("CrateWrapper", WAIT_TIMEOUT)
+	local frame = screenGui:WaitForChild(GUI.Wrapper, WAIT_TIMEOUT)
+	local panel = frame and frame:WaitForChild(GUI.Panel, WAIT_TIMEOUT)
+	local content = panel and panel:WaitForChild(GUI.Content, WAIT_TIMEOUT)
+	local page = content and content:WaitForChild(GUI.Page, WAIT_TIMEOUT)
+	local wrapper = page and page:WaitForChild(GUI.Shelf, WAIT_TIMEOUT)
 	local template = wrapper and wrapper:WaitForChild(TEMPLATE_NAME, WAIT_TIMEOUT)
 
-	if not template or not template:IsA("GuiObject") or not scroll:IsA("ScrollingFrame") then
-		log:StudioWarn(`could not find {CRATE_UI_NAME}.Frame.Rectangle.scrollcrates.CrateWrapper.{TEMPLATE_NAME}`)
+	if not template or not template:IsA("GuiObject") then
+		log:StudioWarn(`could not find {GUI.ScreenGui}.{GUI.Wrapper}.{GUI.Panel}.{GUI.Content}.{GUI.Page}.{GUI.Shelf}.{TEMPLATE_NAME}`)
 		return
 	end
 
+	template.Visible = false
+
 	self.Wrapper = wrapper
 	self.Template = template
-	self.Scroll = scroll
-	self.BaseWrapperSize = readAuthored(wrapper, "Size", BASE_SIZE_ATTRIBUTE)
-	self.BaseCanvas = readAuthored(scroll, "CanvasSize", BASE_CANVAS_ATTRIBUTE)
 	self:_readLook(template)
-
-	local function watch(child : Instance)
-		if not child:IsA("GuiObject") then
-			return
-		end
-
-		local name = child.Name
-		if hasPrefix(name, CRATE_PREFIX) or hasPrefix(name, RUNE_PREFIX) or hasPrefix(name, SKIN_PREFIX) then
-			self.UIMaid:GiveTask(child:GetPropertyChangedSignal("Visible"):Connect(function()
-				self:_scheduleLayout()
-			end))
-
-			self.UIMaid:GiveTask(child:GetPropertyChangedSignal("Position"):Connect(function()
-				self:_scheduleLayout()
-			end))
-		end
-	end
-
-	self.UIMaid:GiveTask(wrapper.ChildAdded:Connect(function(child)
-		watch(child)
-		self:_scheduleLayout()
-	end))
-
-	self.UIMaid:GiveTask(wrapper.ChildRemoved:Connect(function()
-		self:_scheduleLayout()
-	end))
-
-	self.UIMaid:GiveTask(scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		self:_scheduleLayout()
-	end))
-
-	for _, child in wrapper:GetChildren() do
-		watch(child)
-	end
 
 	self:_render()
 end
@@ -473,14 +327,14 @@ function NametagBackpackController:_observeUI()
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 	local function onChild(child : Instance)
-		if child:IsA("ScreenGui") and child.Name == CRATE_UI_NAME then
+		if child:IsA("ScreenGui") and child.Name == GUI.ScreenGui then
 			self:_bindUI(child)
 		end
 	end
 
 	self.Maid:GiveTask(playerGui.ChildAdded:Connect(onChild))
 
-	local existing = playerGui:FindFirstChild(CRATE_UI_NAME)
+	local existing = playerGui:FindFirstChild(GUI.ScreenGui)
 	if existing then
 		task.spawn(onChild, existing)
 	end
@@ -566,9 +420,6 @@ function NametagBackpackController:init()
 	self.LayoutQueued = false
 	self.LastRequest = 0
 	self.Look = nil
-	self.Scroll = nil
-	self.BaseWrapperSize = UDim2.new()
-	self.BaseCanvas = UDim2.new()
 end
 
 return NametagBackpackController

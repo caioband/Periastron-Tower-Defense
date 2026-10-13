@@ -572,8 +572,7 @@ TutorialConfig.Lobby = {
 		Pointing at the scroll caught the hidden template instead of the player's
 		crate: a highlight over something invisible looks like no highlight.
 	]]
-	CrateList = "crateui.Frame.Rectangle.scrollcrates.CrateWrapper",
-
+	CrateList = "backpackui.Frame.Backpack.Content.CratesPage.CrateWrapper",
 	--[[
 		The prefix of real entries (`Crate_Common`, `Crate_Rare`, ...) that
 		`CrateController` uses when cloning the template. Preferring the prefix tells

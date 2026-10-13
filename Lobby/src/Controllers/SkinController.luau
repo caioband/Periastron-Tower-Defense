@@ -17,11 +17,17 @@ local SkinConfig = SharedConfig.SkinConfig
 local CardConfig = SharedConfig.CardConfig
 
 --[[ CONSTANTS ]]
-local CRATE_UI_NAME = "crateui"
+local GUI = {
+	ScreenGui = "backpackui",
+	Wrapper = "Frame",
+	Panel = "Backpack",
+	Content = "Content",
+	Page = "SkinsPage",
+	Shelf = "CrateWrapper",
+}
+
 local TEMPLATE_NAME = "skintemplate"
 local ENTRY_PREFIX = "Skin_"
-local CRATE_PREFIX = "Crate_"
-local RUNE_PREFIX = "Rune_"
 
 local IMAGE_NAME = "skinimg"
 local NAME_NAME = "skinname"
@@ -34,15 +40,14 @@ local REQUEST_COOLDOWN = 0.3
 local CLICK_SOUND = "CardFlip"
 local LAYOUT_OFFSET = 3000
 
--- The same grid `CrateController` lays crates and runes on; skins start on the row
--- under the last rune.
-local ENTRIES_PER_ROW = 5
+local ENTRIES_PER_ROW = 3
 local ENTRY_PADDING_SCALE = 0.1
 local ROW_GAP_SCALE = 0.12
 
 --[=[
-	The skins on the Backpack shelf (`crateui...CrateWrapper`), one card per owned
-	skin, cloned from the authored `skintemplate`.
+	The backpack's Skins tab (`backpackui...Content.SkinsPage.CrateWrapper`), one card
+	per owned skin, cloned from the authored `skintemplate` and laid out from the top
+	of the page.
 
 	Clicking the card or its `EquipButton` asks `SkinService` to equip or unequip it.
 	The equipped look (button text, colours, `EquippedStroke`) reads the attributes
@@ -58,9 +63,9 @@ local SkinController = {
 
 --[[ INTERNAL ]]
 
-local function placeOnGrid(entry : GuiObject, index : number, firstRow : number)
+local function placeOnGrid(entry : GuiObject, index : number)
 	local column = (index - 1) % ENTRIES_PER_ROW
-	local row = firstRow + (index - 1) // ENTRIES_PER_ROW
+	local row = (index - 1) // ENTRIES_PER_ROW
 
 	entry.Position = UDim2.fromScale(column * (1 + ENTRY_PADDING_SCALE), row * (1 + ROW_GAP_SCALE))
 end
@@ -187,19 +192,6 @@ function SkinController:_layout()
 	end
 
 	local hasLayout = wrapper:FindFirstChildWhichIsA("UIGridStyleLayout") ~= nil
-	local crates, runes = 0, 0
-
-	for _, child in wrapper:GetChildren() do
-		if child:IsA("GuiObject") and child.Visible then
-			if string.sub(child.Name, 1, #CRATE_PREFIX) == CRATE_PREFIX then
-				crates += 1
-			elseif string.sub(child.Name, 1, #RUNE_PREFIX) == RUNE_PREFIX then
-				runes += 1
-			end
-		end
-	end
-
-	local firstRow = math.ceil(crates / ENTRIES_PER_ROW) + math.ceil(runes / ENTRIES_PER_ROW)
 
 	for index, id in self.Order do
 		local entry = self.Entries[id]
@@ -207,7 +199,7 @@ function SkinController:_layout()
 			entry.Frame.LayoutOrder = LAYOUT_OFFSET + index
 
 			if not hasLayout then
-				placeOnGrid(entry.Frame, index, firstRow)
+				placeOnGrid(entry.Frame, index)
 			end
 		end
 	end
@@ -281,14 +273,15 @@ function SkinController:_bindUI(screenGui : ScreenGui)
 	self.Wrapper = nil
 	self.Template = nil
 
-	local frame = screenGui:WaitForChild("Frame", WAIT_TIMEOUT)
-	local rectangle = frame and frame:WaitForChild("Rectangle", WAIT_TIMEOUT)
-	local scroll = rectangle and rectangle:WaitForChild("scrollcrates", WAIT_TIMEOUT)
-	local wrapper = scroll and scroll:WaitForChild("CrateWrapper", WAIT_TIMEOUT)
+	local frame = screenGui:WaitForChild(GUI.Wrapper, WAIT_TIMEOUT)
+	local panel = frame and frame:WaitForChild(GUI.Panel, WAIT_TIMEOUT)
+	local content = panel and panel:WaitForChild(GUI.Content, WAIT_TIMEOUT)
+	local page = content and content:WaitForChild(GUI.Page, WAIT_TIMEOUT)
+	local wrapper = page and page:WaitForChild(GUI.Shelf, WAIT_TIMEOUT)
 	local template = wrapper and wrapper:WaitForChild(TEMPLATE_NAME, WAIT_TIMEOUT)
 
 	if not template or not template:IsA("GuiObject") then
-		log:StudioWarn(`could not find {CRATE_UI_NAME}.Frame.Rectangle.scrollcrates.CrateWrapper.{TEMPLATE_NAME}`)
+		log:StudioWarn(`could not find {GUI.ScreenGui}.{GUI.Wrapper}.{GUI.Panel}.{GUI.Content}.{GUI.Page}.{GUI.Shelf}.{TEMPLATE_NAME}`)
 		return
 	end
 
@@ -298,34 +291,6 @@ function SkinController:_bindUI(screenGui : ScreenGui)
 	self.Template = template
 	self:_readLook(template)
 
-	-- Crate and rune rows come and go with the inventory; skins sit under them, so
-	-- every change to their visibility relays the skins out.
-	local function watch(child : Instance)
-		if not child:IsA("GuiObject") then
-			return
-		end
-
-		local name = child.Name
-		if string.sub(name, 1, #CRATE_PREFIX) == CRATE_PREFIX or string.sub(name, 1, #RUNE_PREFIX) == RUNE_PREFIX then
-			self.UIMaid:GiveTask(child:GetPropertyChangedSignal("Visible"):Connect(function()
-				self:_scheduleLayout()
-			end))
-		end
-	end
-
-	self.UIMaid:GiveTask(wrapper.ChildAdded:Connect(function(child)
-		watch(child)
-		self:_scheduleLayout()
-	end))
-
-	self.UIMaid:GiveTask(wrapper.ChildRemoved:Connect(function()
-		self:_scheduleLayout()
-	end))
-
-	for _, child in wrapper:GetChildren() do
-		watch(child)
-	end
-
 	self:_render()
 end
 
@@ -333,14 +298,14 @@ function SkinController:_observeUI()
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 	local function onChild(child : Instance)
-		if child:IsA("ScreenGui") and child.Name == CRATE_UI_NAME then
+		if child:IsA("ScreenGui") and child.Name == GUI.ScreenGui then
 			self:_bindUI(child)
 		end
 	end
 
 	self.Maid:GiveTask(playerGui.ChildAdded:Connect(onChild))
 
-	local existing = playerGui:FindFirstChild(CRATE_UI_NAME)
+	local existing = playerGui:FindFirstChild(GUI.ScreenGui)
 	if existing then
 		task.spawn(onChild, existing)
 	end

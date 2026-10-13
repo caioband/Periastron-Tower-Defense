@@ -20,19 +20,19 @@ local log = Log.new("BackpackRunesController")
 --[[ CONSTANTS ]]
 
 --[=[
-	The UI path: `crateui.Frame.Rectangle.ActiveRunes`, a list with one authored
+	The UI path: `backpackui.Frame.Backpack.ActiveRunes`, a list with one authored
 	`RuneActiveWrapper`, the **template**: hidden, and cloned once per active rune
 	(the text goes on its `Rune` label).
 
-	`crateui.Frame.Rectangle.ActiveRunesTitle` is the toggle text: "> Show Active
+	`backpackui.Frame.Backpack.ActiveRunesTitle` is the toggle text: "> Show Active
 	Runes" while the list is hidden, "V Active Runes" while it is shown. Clicking or
 	tapping it flips between the two. The list starts hidden, like the pity list on
 	the other side.
 ]=]
 local GUI = {
-	ScreenGui = "crateui",
+	ScreenGui = "backpackui",
 	Wrapper = "Frame",
-	Panel = "Rectangle",
+	Panel = "Backpack",
 	List = "ActiveRunes",
 	Title = "ActiveRunesTitle",
 	Template = "RuneActiveWrapper",
@@ -207,8 +207,8 @@ function BackpackRunesController:_bindToggle(title : Instance?, list : GuiObject
 end
 
 --[=[
-	Binds to a `crateui` copy. It has `ResetOnSpawn`, so this runs again for every copy
-	the engine parents into `PlayerGui`, and the old rows go with the old copy.
+	Binds to a `backpackui` copy. It has `ResetOnSpawn`, so this runs again for every
+	copy the engine parents into `PlayerGui`, and the old rows go with the old copy.
 ]=]
 function BackpackRunesController:_bindUI(screenGui : ScreenGui)
 	self.UiMaid:DoCleaning()
@@ -347,7 +347,7 @@ end
 function BackpackRunesController:init()
 	self.Maid = Maid.new()
 
-	-- The title's click, per copy of `crateui`.
+	-- The title's click, per copy of `backpackui`.
 	self.UiMaid = Maid.new()
 	self.Maid:GiveTask(self.UiMaid)
 
@@ -360,7 +360,7 @@ function BackpackRunesController:init()
 	-- `os.clock()` of the replica's last `Runes` write: the local countdown's zero.
 	self.Baseline = os.clock()
 
-	-- The `crateui` copy being bound: an older bind still waiting gives up.
+	-- The `backpackui` copy being bound: an older bind still waiting gives up.
 	self.Screen = nil
 	self.List = nil
 	self.Title = nil

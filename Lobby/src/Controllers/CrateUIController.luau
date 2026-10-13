@@ -20,14 +20,14 @@ local log = Log.new("CrateUIController")
 --[[ CONSTANTS ]]
 
 --[=[
-	The UI path: `crateui.Frame.Rectangle`, the same shape as `Contracts.Frame.MainBoard`.
-	`Frame` is the outer frame `ProximityPanel` shows and hides; `Rectangle` is the art
-	the `OpenShop` animation scales and fades.
+	The UI path: `backpackui.Frame.Backpack`. `Frame` is the outer frame `ProximityPanel`
+	shows and hides; `Backpack` is the art the `OpenShop` animation scales and fades.
+	The tabs and pages inside belong to `BackpackTabController`.
 ]=]
 local GUI = {
-	ScreenGui = "crateui",
+	ScreenGui = "backpackui",
 	Wrapper = "Frame",
-	Panel = "Rectangle",
+	Panel = "Backpack",
 	PityList = "Pity",
 }
 
@@ -39,7 +39,7 @@ local OPEN_ANIMATION = "OpenShop"
 local HIDE_REASON = "Backpack"
 
 --[=[
-	Owns the crate panel: the Backpack button opens it.
+	Owns the backpack panel: the Backpack button opens it.
 
 	The panel itself (frame, `OpenShop`, the blur, hiding the rest of the UI, and the X)
 	belongs to `ProximityPanel`, the same as the contracts board and the shops. **No
@@ -63,8 +63,8 @@ local CrateUIController = {
 --[[ INTERNAL ]]
 
 --[=[
-	Each new copy of `crateui` (it has `ResetOnSpawn`). `maid` is `ProximityPanel`'s bind
-	maid, cleaned on the next copy.
+	Each new copy of `backpackui` (it has `ResetOnSpawn`). `maid` is `ProximityPanel`'s
+	bind maid, cleaned on the next copy.
 ]=]
 function CrateUIController:_onBind(panel : GuiObject, maid : any)
 	-- The pity list scrolls as far as its rows go, however many there are.
@@ -97,7 +97,7 @@ function CrateUIController:_bindHud(screenGui : ScreenGui)
 	end))
 end
 
---- The HUD, through the Backpack button. `ProximityPanel` follows `crateui`.
+--- The HUD, through the Backpack button. `ProximityPanel` follows `backpackui`.
 function CrateUIController:_observeUI()
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
