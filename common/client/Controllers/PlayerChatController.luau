@@ -18,6 +18,7 @@ local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
 
 local GamepassConfig = SharedConfig.GamepassConfig
+local NametagConfig = SharedConfig.NametagConfig
 
 local Framework = Me.new()
 
@@ -31,21 +32,63 @@ local ExampleController = {
 local TWEEN_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
 --[[
-	The gamepass tag before the speaker's name: `[VIP] Someone: hi`.
+	The tags before the speaker's name: `[PROGRAMMER] [VIP] Someone: hi`.
 
-	**Why the attribute and not the profile.** The tag must appear on **other**
-	players' messages, and the profile replica only reaches its owner: this client
-	cannot read anyone else's `Gamepasses`. `MonetizationService` publishes one
-	attribute per pass with a `ChatTag` on the `Player`, and attributes replicate to
+	**Gamepass tag.** `MonetizationService` publishes one attribute per pass with a
+	`ChatTag` on the `Player`.
+
+	**Staff tag.** The equipped nametag is published as `EquippedNametag` on the
+	`Player` by `NametagService`. When it is a restricted nametag (`UserIds` in
+	`NametagConfig`), its `Title` becomes a tag, coloured with the first stop of its
+	Title gradient. Only the server can equip a restricted nametag, so nobody can show
+	someone else's tag.
+
+	**Why attributes and not the profile.** The tags must appear on **other** players'
+	messages, and the profile replica only reaches its owner. Attributes replicate to
 	the whole room; the server still writes, and this only reads.
 
 	**Why on the client.** `TextChatService`'s `OnIncomingMessage` is client-side by
-	nature: it only decorates what already arrived. Nothing here decides who is VIP;
-	the question to Roblox was asked once on the server, and this is the paint.
+	nature: it only decorates what already arrived. Nothing here decides who has what.
 
 	See docs/common/gamepasses.md.
 ]]
 local TAG_FORMAT = "[%s] "
+local COLORED_TAG_FORMAT = '<font color="#%s">[%s]</font> '
+
+--- The staff tag for an equipped restricted nametag: its Title and colour, or nil.
+local function staffTagOf(player : Player) : (string?, Color3?)
+	local id = player:GetAttribute(NametagConfig.ATTRIBUTE)
+	if typeof(id) ~= "string" or id == "" or not NametagConfig.IsRestricted(id) then
+		return nil, nil
+	end
+
+	local nametag = NametagConfig.Get(id)
+	local title = nametag and NametagConfig.nonEmpty(nametag.Title)
+	if not title then
+		return nil, nil
+	end
+
+	local style = nametag.Style and nametag.Style.Title
+	local gradient = style and style.Gradient
+	local color = if typeof(gradient) == "ColorSequence"
+		then gradient.Keypoints[1].Value
+		elseif style and typeof(style.TextColor3) == "Color3" then style.TextColor3
+		else Color3.new(1, 1, 1)
+
+	return title, color
+end
+
+--- The gamepass chat tag the server published for this player, or nil.
+local function passTagOf(player : Player) : string?
+	local owned = {}
+	for key, pass in GamepassConfig.PASSES do
+		if pass.ChatTag then
+			owned[key] = player:GetAttribute(GamepassConfig.attributeName(key)) == true
+		end
+	end
+
+	return GamepassConfig.chatTagOf(owned)
+end
 
 function ExampleController:construct()
 	self._maid = Maid.new()
@@ -79,15 +122,15 @@ function ExampleController:start()
 end
 
 --[=[
-	Puts the gamepass tag in front of the speaker's name.
+	Puts the staff tag and the gamepass tag in front of the speaker's name.
 
 	Only player messages are decorated: a nil `TextSource` is the system speaking
-	(joined, left, a command), and a `[VIP]` there would look like the server bought
-	the pass.
+	(joined, left, a command), and a tag there would look like the server bought a
+	pass or works on the game.
 
 	Returning `nil` leaves the message exactly as it arrived, which is what happens
-	for players with no tagged pass. The authored `PrefixText` already carries the
-	player's name: the tag goes **before** it, not in its place.
+	for players with no tag. The authored `PrefixText` already carries the player's
+	name: the tags go **before** it, not in its place.
 ]=]
 function ExampleController:_bindChatTags()
 	TextChatService.OnIncomingMessage = function(message : TextChatMessage)
@@ -101,25 +144,24 @@ function ExampleController:_bindChatTags()
 			return nil
 		end
 
-		--[[
-			What the server published: one attribute per pass with a `ChatTag`. The
-			config list is read instead of looking for `Pass_VIP` by hand, so a new
-			tagged pass needs no line here.
-		]]
-		local owned = {}
-		for key, pass in GamepassConfig.PASSES do
-			if pass.ChatTag then
-				owned[key] = player:GetAttribute(GamepassConfig.attributeName(key)) == true
-			end
+		local prefix = ""
+
+		local staffTitle, staffColor = staffTagOf(player)
+		if staffTitle and staffColor then
+			prefix ..= string.format(COLORED_TAG_FORMAT, staffColor:ToHex(), staffTitle)
 		end
 
-		local tag = GamepassConfig.chatTagOf(owned)
-		if not tag then
+		local passTag = passTagOf(player)
+		if passTag then
+			prefix ..= string.format(TAG_FORMAT, passTag)
+		end
+
+		if prefix == "" then
 			return nil
 		end
 
 		local properties = Instance.new("TextChatMessageProperties")
-		properties.PrefixText = string.format(TAG_FORMAT, tag) .. message.PrefixText
+		properties.PrefixText = prefix .. message.PrefixText
 
 		return properties
 	end

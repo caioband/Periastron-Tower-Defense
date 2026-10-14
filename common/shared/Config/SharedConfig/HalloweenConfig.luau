@@ -43,7 +43,7 @@ HalloweenConfig.KINDS = ContractConfig.KINDS
 HalloweenConfig.Events = ContractConfig.Events
 
 -- The order the sections appear in on the Quest tab.
-HalloweenConfig.KIND_ORDER = { "Daily", "Hourly", "Weekly" }
+HalloweenConfig.KIND_ORDER = { "Hourly", "Daily", "Weekly" }
 
 HalloweenConfig.PumpkinsPerWave = {
 	Easy = 5,
@@ -76,10 +76,17 @@ HalloweenConfig.Shop = {
 
 	Titles = {
 		{ Id = "PumpkinPatch", Price = 500 },
+		{ Id = "CandyCorn", Price = 500 },
 		{ Id = "GraveCandle", Price = 750 },
+		{ Id = "Bonechiller", Price = 750 },
+		{ Id = "Cobweb", Price = 750 },
 		{ Id = "Phantom", Price = 1000 },
+		{ Id = "Banshee", Price = 1000 },
 		{ Id = "WitchsBrew", Price = 1500 },
+		{ Id = "Nightshade", Price = 1500 },
+		{ Id = "Cursed", Price = 1500 },
 		{ Id = "BloodMoon", Price = 2500 },
+		{ Id = "SoulReaper", Price = 3000 },
 	},
 }
 

@@ -13,6 +13,25 @@ NametagConfig.LOCKED_FORMAT = "LVL %d"
 NametagConfig.TITLE_SCALE = 0.8
 NametagConfig.SHOW_OWN = true
 
+local RAINBOW = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 70)),
+	ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 160, 50)),
+	ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 235, 70)),
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(80, 230, 110)),
+	ColorSequenceKeypoint.new(0.67, Color3.fromRGB(70, 170, 255)),
+	ColorSequenceKeypoint.new(0.83, Color3.fromRGB(170, 100, 255)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 70, 70)),
+})
+
+--[[
+	`UserIds = { [userId] = true }` restricts a nametag to those players: the server
+	grants it to them on load, strips it from everyone else, and refuses to grant or
+	equip it for anyone not listed (see `NametagService`).
+
+	`Gamepass = "<GamepassConfig key>"` ties a nametag to a pass: the server grants it
+	while the player owns the pass (bought or gifted) and takes it away when they no
+	longer do.
+]]
 NametagConfig.Nametags = {
 	Default = {
 		DisplayName = "Default",
@@ -86,7 +105,7 @@ NametagConfig.Nametags = {
 	PumpkinPatch = {
 		DisplayName = "Pumpkin Patch",
 		Description = "Carved, lit, and grinning.",
-		Template = "Default",
+		Template = "HalloweenPumpkin",
 		Icon = "",
 		Free = false,
 		Order = 3,
@@ -251,6 +270,310 @@ NametagConfig.Nametags = {
 		},
 	},
 
+	CandyCorn = {
+		DisplayName = "Candy Corn",
+		Description = "Love it or hate it, it's here.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Order = 8,
+		Style = {
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(60, 24, 0),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 252, 240)),
+					ColorSequenceKeypoint.new(0.32, Color3.fromRGB(255, 252, 240)),
+					ColorSequenceKeypoint.new(0.34, Color3.fromRGB(255, 150, 20)),
+					ColorSequenceKeypoint.new(0.65, Color3.fromRGB(255, 150, 20)),
+					ColorSequenceKeypoint.new(0.67, Color3.fromRGB(255, 214, 40)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 214, 40)),
+				}),
+				GradientRotation = 90,
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(60, 24, 0),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 240, 200)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 160, 30)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 214, 40)),
+				}),
+				GradientRotation = 90,
+			},
+		},
+	},
+
+	Bonechiller = {
+		DisplayName = "Bonechiller",
+		Description = "Rattles when it walks.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Order = 9,
+		Style = {
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(26, 22, 18),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(240, 232, 210)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(176, 166, 146)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 252, 242)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(176, 166, 146)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(240, 232, 210)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.25 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(26, 22, 18),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(210, 200, 178)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 250, 236)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(210, 200, 178)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.25 },
+			},
+		},
+	},
+
+	Cobweb = {
+		DisplayName = "Cobweb",
+		Description = "Nobody's dusted in centuries.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Order = 10,
+		Style = {
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(14, 14, 18),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(96, 98, 108)),
+					ColorSequenceKeypoint.new(0.2, Color3.fromRGB(170, 172, 182)),
+					ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(0.6, Color3.fromRGB(170, 172, 182)),
+					ColorSequenceKeypoint.new(0.8, Color3.fromRGB(70, 72, 82)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(96, 98, 108)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.3 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(14, 14, 18),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(140, 142, 152)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(235, 236, 240)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(140, 142, 152)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.3 },
+			},
+		},
+	},
+
+	Banshee = {
+		DisplayName = "Banshee",
+		Description = "You'll hear it before you see it.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Order = 11,
+		Style = {
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(8, 18, 34),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 190, 255)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(220, 240, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(150, 160, 255)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(220, 240, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(120, 190, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.9 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(8, 18, 34),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(150, 205, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(235, 245, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 205, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.9 },
+			},
+		},
+	},
+
+	Nightshade = {
+		DisplayName = "Nightshade",
+		Description = "Pretty. Poisonous. Pick carefully.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Order = 12,
+		Style = {
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(10, 0, 16),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(110, 20, 170)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(30, 6, 46)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(230, 60, 200)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(30, 6, 46)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(110, 20, 170)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Rotate", Speed = 0.25 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(10, 0, 16),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(150, 50, 220)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 110, 220)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 50, 220)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Rotate", Speed = 0.25 },
+			},
+		},
+	},
+
+	Cursed = {
+		DisplayName = "Cursed",
+		Description = "Don't read it out loud.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Order = 13,
+		Style = {
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(0, 12, 0),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(110, 255, 60)),
+					ColorSequenceKeypoint.new(0.2, Color3.fromRGB(10, 30, 8)),
+					ColorSequenceKeypoint.new(0.4, Color3.fromRGB(190, 255, 120)),
+					ColorSequenceKeypoint.new(0.6, Color3.fromRGB(10, 30, 8)),
+					ColorSequenceKeypoint.new(0.8, Color3.fromRGB(60, 200, 30)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(110, 255, 60)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Rotate", Speed = 0.6 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(0, 12, 0),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(110, 255, 60)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(30, 90, 20)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(110, 255, 60)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Rotate", Speed = 0.6 },
+			},
+		},
+	},
+
+	SoulReaper = {
+		DisplayName = "Soul Reaper",
+		Description = "Collects what's owed.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "REAPER",
+		Order = 14,
+		Style = {
+			Title = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(10, 0, 0),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(200, 205, 215)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(60, 62, 70)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(60, 62, 70)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 205, 215)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.5 },
+			},
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(10, 0, 0),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(200, 10, 30)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(30, 0, 4)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 70, 70)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(30, 0, 4)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 10, 30)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.5 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(10, 0, 0),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(220, 40, 50)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(235, 235, 240)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 40, 50)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.5 },
+			},
+		},
+	},
+
+	VIP = {
+		DisplayName = "VIP",
+		Description = "Thanks for supporting the game.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "VIP",
+		Gamepass = "VIP",
+		Order = 40,
+		Style = {
+			Title = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(16, 12, 24),
+				StrokeThickness = 0.15,
+				Gradient = RAINBOW,
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.2 },
+			},
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(16, 12, 24),
+				StrokeThickness = 0.15,
+				Gradient = RAINBOW,
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.18 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(16, 12, 24),
+				Gradient = RAINBOW,
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.22 },
+			},
+		},
+	},
+
 	Tester = {
 		DisplayName = "Tester",
 		Description = "Found it, logged it, broke it again.",
@@ -299,6 +622,162 @@ NametagConfig.Nametags = {
 				}),
 				GradientRotation = 0,
 				Animation = { Mode = "Scroll", Speed = 0.6 },
+			},
+		},
+	},
+
+	Gode = {
+		DisplayName = "Gode",
+		Description = "One of a kind.",
+		Template = "DevGode",
+		Icon = "",
+		Free = false,
+		Title = "GODE",
+		UserIds = { [1038697440] = true },
+		Order = 60,
+		Style = {
+			Title = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(46, 18, 0),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 130, 20)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 160, 50)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 130, 20)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.7 },
+			},
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(46, 18, 0),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 130, 20)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 240, 220)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(255, 130, 20)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.5 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(46, 18, 0),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 150, 40)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 150, 40)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.5 },
+			},
+		},
+	},
+
+	Programmer = {
+		DisplayName = "Programmer",
+		Description = "It works on my machine.",
+		Template = "DevProgrammer",
+		Icon = "",
+		Free = false,
+		Title = "PROGRAMMER",
+		UserIds = { [4133615556] = true },
+		Order = 61,
+		Style = {
+			Title = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(26, 8, 46),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(170, 90, 255)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200, 140, 255)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 90, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.7 },
+			},
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(26, 8, 46),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(170, 90, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 225, 255)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(170, 90, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.5 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(26, 8, 46),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(185, 120, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(185, 120, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.5 },
+			},
+		},
+	},
+
+	Caio = {
+		DisplayName = "Caio",
+		Description = "The one who started it all.",
+		Template = "DevCaio",
+		Icon = "",
+		Free = false,
+		Title = "CAIO",
+		UserIds = { [46871391] = true },
+		Order = 62,
+		Style = {
+			Title = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(4, 18, 44),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 150, 255)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(110, 185, 255)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 150, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.7 },
+			},
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(4, 18, 44),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(60, 150, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(225, 240, 255)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(60, 150, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.5 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(4, 18, 44),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 170, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 170, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.5 },
 			},
 		},
 	},
@@ -472,6 +951,33 @@ end
 function NametagConfig.IsFree(id : any) : boolean
 	local nametag = NametagConfig.Get(id)
 	return nametag ~= nil and nametag.Free == true
+end
+
+--- Whether the nametag is limited to the players in its `UserIds`.
+function NametagConfig.IsRestricted(id : any) : boolean
+	local nametag = NametagConfig.Get(id)
+	return nametag ~= nil and typeof(nametag.UserIds) == "table"
+end
+
+--- Whether `userId` may own the nametag: always for unrestricted ones, only listed ids otherwise.
+function NametagConfig.AllowsUser(id : any, userId : number?) : boolean
+	local nametag = NametagConfig.Get(id)
+	if not nametag then
+		return false
+	end
+
+	if typeof(nametag.UserIds) ~= "table" then
+		return true
+	end
+
+	return userId ~= nil and nametag.UserIds[userId] == true
+end
+
+--- The `GamepassConfig` key the nametag comes with, or nil.
+function NametagConfig.GamepassOf(id : any) : string?
+	local nametag = NametagConfig.Get(id)
+	local pass = nametag and nametag.Gamepass
+	return if typeof(pass) == "string" and pass ~= "" then pass else nil
 end
 
 function NametagConfig.UnlockLevelOf(id : any) : number?

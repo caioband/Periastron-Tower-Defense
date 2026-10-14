@@ -15,9 +15,11 @@ local Framework = Me.new()
 local log = Log.new("NametagService")
 
 local NametagConfig = SharedConfig.NametagConfig
+local GamepassConfig = SharedConfig.GamepassConfig
 
 local KEY = NametagConfig.PROFILE_KEY
 local STATS_KEY = "Stats"
+local PASS_KEYS = { Gamepasses = true, GiftedPasses = true }
 local REQUEST_COOLDOWN = 0.25
 
 --[[
@@ -31,6 +33,14 @@ local REQUEST_COOLDOWN = 0.25
 	player's level reaches. Level nametags are never written to `Owned`: like the level
 	itself they are derived from `Stats.XP`, so they follow the curve and Cmdr `level`
 	without a migration, and dropping below the level takes them off.
+
+	**Restricted nametags** (`UserIds` in config) belong only to the listed players.
+	**Gamepass nametags** (`Gamepass` in config) belong to whoever owns that pass,
+	bought (`Gamepasses`) or gifted (`GiftedPasses`), read the same way
+	`MonetizationService` does. Every sync and write grants both kinds to the players
+	they belong to and strips them, owned or equipped, from everyone else; `Grant` and
+	`Equip` refuse them otherwise (Cmdr included). A change to either pass key resyncs,
+	so buying VIP mid-session unlocks its tag and a refund takes it away.
 
 	Every client draws every player's tag, and the replica only reaches its owner, so
 	this publishes on the Player:
@@ -71,6 +81,50 @@ function NametagService:_get(player : Player)
 	return NametagConfig.sanitize(data[KEY], NametagConfig.LevelOf(data))
 end
 
+--- Whether the profile has the pass, bought or gifted.
+local function ownsPass(data : any, key : string) : boolean
+	if GamepassConfig.owns(data, key) then
+		return true
+	end
+
+	local gifted = typeof(data) == "table" and data.GiftedPasses
+	return typeof(gifted) == "table" and gifted[key] ~= nil
+end
+
+--- Whether this player may have the nametag: listed for restricted ones, holding the pass for gamepass ones.
+function NametagService:_entitled(player : Player, id : string) : boolean
+	if not NametagConfig.AllowsUser(id, player.UserId) then
+		return false
+	end
+
+	local pass = NametagConfig.GamepassOf(id)
+	if pass then
+		return ownsPass(self:_profile(player), pass)
+	end
+
+	return true
+end
+
+--[=[
+	Brings restricted and gamepass nametags in line with the player: granted when they
+	are entitled, removed (and unequipped) when they are not.
+]=]
+function NametagService:_applyEntitlements(player : Player, nametags)
+	for id in NametagConfig.Nametags do
+		if not NametagConfig.IsRestricted(id) and not NametagConfig.GamepassOf(id) then continue end
+
+		if self:_entitled(player, id) then
+			nametags.Owned[id] = true
+		else
+			nametags.Owned[id] = nil
+
+			if nametags.Equipped == id then
+				nametags.Equipped = nil
+			end
+		end
+	end
+end
+
 function NametagService:_publish(player : Player)
 	local nametags = self:_get(player)
 	local equipped = nametags and nametags.Equipped or ""
@@ -100,7 +154,9 @@ function NametagService:_sync(player : Player)
 	local level = self:_level(player)
 
 	self.Services.DataService:Update(player, KEY, function(current)
-		return NametagConfig.sanitize(current, level)
+		local nametags = NametagConfig.sanitize(current, level)
+		self:_applyEntitlements(player, nametags)
+		return nametags
 	end)
 
 	self:_publishLevel(player)
@@ -118,6 +174,7 @@ function NametagService:_write(player : Player, mutate : (any, number) -> string
 	self.Services.DataService:Update(player, KEY, function(current)
 		local nametags = NametagConfig.sanitize(current, level)
 		reason = mutate(nametags, level)
+		self:_applyEntitlements(player, nametags)
 		return nametags
 	end)
 
@@ -129,6 +186,19 @@ function NametagService:_write(player : Player, mutate : (any, number) -> string
 
 	self.Signals.Changed:Fire(player)
 	return true, nil
+end
+
+function NametagService:_refusal(player : Player, id : string) : string?
+	if not NametagConfig.AllowsUser(id, player.UserId) then
+		return "Restricted"
+	end
+
+	local pass = NametagConfig.GamepassOf(id)
+	if pass and not ownsPass(self:_profile(player), pass) then
+		return "NeedsGamepass"
+	end
+
+	return nil
 end
 
 function NametagService:_onRequest(player : Player, id : any, action : string)
@@ -166,6 +236,10 @@ end
 --[[ API ]]
 
 function NametagService:Owns(player : Player, id : string) : boolean
+	if not self:_entitled(player, id) then
+		return false
+	end
+
 	local nametags = self:_get(player)
 	return NametagConfig.IsAvailable(id, nametags and nametags.Owned, self:_level(player))
 end
@@ -178,6 +252,11 @@ end
 function NametagService:Grant(player : Player, id : string) : (boolean, string?)
 	if not NametagConfig.Get(id) then
 		return false, "UnknownNametag"
+	end
+
+	local refusal = self:_refusal(player, id)
+	if refusal then
+		return false, refusal
 	end
 
 	return self:_write(player, function(nametags)
@@ -205,6 +284,11 @@ end
 function NametagService:Equip(player : Player, id : any) : (boolean, string?)
 	if not NametagConfig.Get(id) then
 		return false, "UnknownNametag"
+	end
+
+	local refusal = self:_refusal(player, id)
+	if refusal then
+		return false, refusal
 	end
 
 	return self:_write(player, function(nametags, level)
@@ -261,6 +345,8 @@ function NametagService:construct()
 		elseif key == STATS_KEY then
 			self:_publishLevel(player)
 			self:_publish(player)
+		elseif PASS_KEYS[key] then
+			self:_sync(player)
 		end
 	end)
 

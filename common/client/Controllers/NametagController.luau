@@ -25,6 +25,9 @@ local WAIT_TIMEOUT = 10
 local REQUEST_COOLDOWN = 0.3
 local SCROLL_SAMPLES = 16
 
+local EFFECTS_FOLDER = "NametagEffects"
+local EFFECT_HOLDER_SIZE = Vector3.new(0.05, 0.05, 0.05)
+
 --[=[
 	Draws every player's nametag, in every place.
 
@@ -35,11 +38,15 @@ local SCROLL_SAMPLES = 16
 	TextLabel somewhere inside it, so each one can be laid out freely in Studio.
 
 	**Effects.** A BillboardGui is 2D and cannot render particles, so a template
-	carries them in Attachments placed directly under it. On spawn each one is moved
-	onto the head, its `Position` read as an offset from the tag's centre (the tag's
-	final `StudsOffset.Y` plus `StudsOffsetWorldSpace`, after any title growth). They
-	live and die with the tag: rebuilding, unequipping, respawning or leaving removes
-	them.
+	carries them in Attachments placed directly under it. On spawn they move onto an
+	invisible client-only part (`Workspace.NametagEffects`) that **follows the text,
+	not the head**: every frame it is placed where the billboard draws (the head's
+	position, plus `StudsOffsetWorldSpace`, plus `StudsOffset` in camera space) and
+	turned to face the camera, like the billboard. So the effects never bob, tilt or
+	turn with the head's animation, and an Attachment's authored `Position` reads as an
+	offset from the text in screen directions (X right, Y up). `LockedToPart` emitters
+	lock to that part, so they stay glued to the name too. They live and die with the
+	tag: rebuilding, unequipping, respawning or leaving removes them.
 
 	**Title.** A nametag with `Title` gets a line above the name. If the template
 	already has a `Title` TextLabel it is used as authored. Otherwise `Username` is
@@ -200,23 +207,84 @@ function NametagController:_takeEffects(tag : BillboardGui) : { Attachment }
 	return effects
 end
 
+function NametagController:_effectsFolder() : Folder
+	local folder = self.EffectsFolder
+	if folder and folder.Parent then
+		return folder
+	end
+
+	folder = workspace:FindFirstChild(EFFECTS_FOLDER)
+	if not folder or not folder:IsA("Folder") then
+		folder = Instance.new("Folder")
+		folder.Name = EFFECTS_FOLDER
+		folder.Parent = workspace
+	end
+
+	self.EffectsFolder = folder
+	return folder
+end
+
+--- Where the billboard draws its centre this frame, and the camera's rotation.
+local function textFrame(tag : BillboardGui, head : BasePart) : CFrame
+	local camera = workspace.CurrentCamera
+	local rotation = if camera then camera.CFrame.Rotation else CFrame.identity
+	local position = head.Position + tag.StudsOffsetWorldSpace + rotation:VectorToWorldSpace(tag.StudsOffset)
+
+	return CFrame.new(position) * rotation
+end
+
+--[=[
+	Moves the template's effect Attachments onto a holder part that follows the text
+	(see `_stepEffects`). The Attachments keep their authored `Position`, now an
+	offset from the text in camera-aligned directions.
+]=]
 function NametagController:_mountEffects(tag : BillboardGui, head : BasePart, effects : { Attachment })
 	if #effects == 0 then
 		return
 	end
 
-	local anchor = Vector3.new(0, tag.StudsOffset.Y, 0) + tag.StudsOffsetWorldSpace
+	local holder = Instance.new("Part")
+	holder.Name = tag.Name
+	holder.Size = EFFECT_HOLDER_SIZE
+	holder.Transparency = 1
+	holder.Anchored = true
+	holder.CanCollide = false
+	holder.CanQuery = false
+	holder.CanTouch = false
+	holder.CastShadow = false
+	holder.Massless = true
+	holder.CFrame = textFrame(tag, head)
 
 	for _, attachment in effects do
-		attachment.Position = anchor + attachment.Position
-		attachment.Parent = head
+		attachment.Parent = holder
 	end
 
+	holder.Parent = self:_effectsFolder()
+
+	self.Effects[holder] = {
+		Tag = tag,
+		Head = head,
+	}
+
 	tag.Destroying:Connect(function()
-		for _, attachment in effects do
-			attachment:Destroy()
-		end
+		self.Effects[holder] = nil
+		holder:Destroy()
 	end)
+end
+
+function NametagController:_stepEffects()
+	for holder, record in self.Effects do
+		local tag = record.Tag
+		local head = record.Head
+
+		if not holder.Parent or not tag.Parent or not head.Parent then
+			self.Effects[holder] = nil
+			holder:Destroy()
+			continue
+		end
+
+		holder.CFrame = textFrame(tag, head)
+	end
 end
 
 function NametagController:_animate(gradient : UIGradient, animation : any, keypoints : { ColorSequenceKeypoint })
@@ -517,6 +585,10 @@ function NametagController:start()
 		if next(self.Animated) ~= nil then
 			self:_step()
 		end
+
+		if next(self.Effects) ~= nil then
+			self:_stepEffects()
+		end
 	end))
 
 	for _, player in Players:GetPlayers() do
@@ -543,6 +615,8 @@ function NametagController:init()
 	self.Maid = Maid.new()
 	self.Entries = {}
 	self.Animated = {}
+	self.Effects = {}
+	self.EffectsFolder = nil
 	self.LastRequest = 0
 	self.Replica = nil
 	self.Folder = nil
@@ -559,6 +633,12 @@ function NametagController:init()
 		end
 
 		table.clear(self.Animated)
+
+		for holder in self.Effects do
+			holder:Destroy()
+		end
+
+		table.clear(self.Effects)
 	end)
 end
 

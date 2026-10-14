@@ -2,20 +2,29 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
+local Configs = Shared:WaitForChild("Config")
 
 local Me = require(Vendor.Me)
 local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
+local SharedConfig = require(Configs.SharedConfig)
 
 local Framework = Me.new()
 local log = Log.new("LobbyMusicController")
 
+local EventCurrencyConfig = SharedConfig.EventCurrencyConfig
+
 --[[
 	Lobby music.
 
-	It plays everything in `SoundService.SharedSounds.Musics.Lobby`, in random order and
-	in an endless queue: it fades in, and each track that ends gives way to the next with
-	a transition. A new track in the game is just a matter of dropping the Sound in the
+	It plays everything in `SoundService.SharedSounds.Musics.Lobby` in an endless
+	queue: it fades in, and each track that ends gives way to the next with a
+	transition. A new track in the game is just a matter of dropping the Sound in the
 	folder: there is no name list here.
+
+	**Event priority.** While the event is on (`EventCurrencyConfig.Enabled`), the
+	`EVENT_TRACK` plays first on join and returns after every `EVENT_EVERY` other
+	tracks, which rotate in a shuffled order. With the event off, `EVENT_TRACK` is
+	left out and the queue is a plain shuffle of the rest.
 
 	MusicController plays; this controller only resolves *what* to play. The rule of
 	never repeating the track that just ended lives there, in `_advancePlaylist`, because
@@ -26,6 +35,12 @@ local log = Log.new("LobbyMusicController")
 
 local FOLDER = "Lobby"
 local FADE = 2
+
+-- The event's lobby track, by Sound name inside `FOLDER`.
+local EVENT_TRACK = "Halloween"
+
+-- How many other tracks play between two plays of `EVENT_TRACK`.
+local EVENT_EVERY = 1
 
 local LobbyMusicController = {
 	Controllers = {
@@ -58,6 +73,32 @@ function LobbyMusicController:getTrackNames(): { string }
 	return names
 end
 
+local function shuffle(list : { string })
+	for i = #list, 2, -1 do
+		local j = math.random(i)
+		list[i], list[j] = list[j], list[i]
+	end
+end
+
+--[=[
+	The event queue: `EVENT_TRACK` first, then `EVENT_EVERY` of the others, then
+	`EVENT_TRACK` again, until every other track has had its turn. The others are
+	shuffled once here; the queue itself loops in this order.
+]=]
+local function eventQueue(others : { string }) : { string }
+	local queue = { EVENT_TRACK }
+
+	for index, name in others do
+		table.insert(queue, name)
+
+		if index % EVENT_EVERY == 0 and index < #others then
+			table.insert(queue, EVENT_TRACK)
+		end
+	end
+
+	return queue
+end
+
 function LobbyMusicController:play()
 	local names = self:getTrackNames()
 	if #names == 0 then
@@ -65,11 +106,41 @@ function LobbyMusicController:play()
 		return
 	end
 
+	local hasEventTrack = table.find(names, EVENT_TRACK) ~= nil
+
+	local others = {}
+	for _, name in names do
+		if name ~= EVENT_TRACK then
+			table.insert(others, name)
+		end
+	end
+
+	if EventCurrencyConfig.Enabled and hasEventTrack then
+		shuffle(others)
+
+		self.Controllers.MusicController:PlayPlaylist(eventQueue(others), {
+			Shuffle = false,
+			Loop = true,
+			Fade = FADE,
+		})
+
+		return
+	end
+
+	if EventCurrencyConfig.Enabled and not hasEventTrack then
+		log:StudioWarn(`the event is on but there is no {EVENT_TRACK} in Musics.{FOLDER}; playing the normal queue.`)
+	end
+
+	if #others == 0 then
+		log:StudioWarn(`only {EVENT_TRACK} is in Musics.{FOLDER} and the event is off; nothing to play.`)
+		return
+	end
+
 	--[[
 		Shuffle already shuffles on entry, so the first track is any of them, and it
 		reshuffles every loop. Loop keeps the queue alive while the player is in the Lobby.
 	]]
-	self.Controllers.MusicController:PlayPlaylist(names, {
+	self.Controllers.MusicController:PlayPlaylist(others, {
 		Shuffle = true,
 		Loop = true,
 		Fade = FADE,
