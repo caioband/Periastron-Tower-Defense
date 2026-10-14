@@ -15,6 +15,8 @@ local log = Log.new("NametagBackpackController")
 
 local NametagConfig = SharedConfig.NametagConfig
 
+local LocalPlayer = Players.LocalPlayer
+
 --[[ CONSTANTS ]]
 local GUI = {
 	ScreenGui = "backpackui",
@@ -47,6 +49,31 @@ local ENTRY_PADDING_SCALE = 0.1
 local ROW_GAP_SCALE = 0.12
 
 --[=[
+	The live preview on each card: the local player's name in the nametag's
+	`Username` style and, when the nametag has a `Title`, that line above it in the
+	`Title` style. Styling and gradient animation are `NametagController`'s, the same
+	as on the real tag and in the Halloween shop.
+
+	It covers the card's full width between `skinname` and `skinunit`, on one line,
+	so `TextScaled` only shrinks it for long names. `skinimg` shows only a nametag's
+	own `Icon`; without one it is hidden, so the template's placeholder never shows.
+]=]
+local PREVIEW = {
+	Name = "Preview",
+	Font = Font.new("rbxasset://fonts/families/PressStart2P.json", Enum.FontWeight.Bold),
+	StrokeColor = Color3.fromRGB(8, 14, 18),
+	StrokeThickness = 2,
+	MaxTextSize = 40,
+	LockedTransparency = 0.6,
+	ZIndex = 4,
+
+	-- { X, Y, Width, Height } in scale of the card.
+	NameOnly = { 0.03, 0.26, 0.94, 0.3 },
+	TitleLine = { 0.03, 0.21, 0.94, 0.2 },
+	NameUnderTitle = { 0.03, 0.42, 0.94, 0.2 },
+}
+
+--[=[
 	The backpack's Nametags tab (`backpackui...Content.NametagsPage.CrateWrapper`),
 	cloned from that page's `skintemplate` and laid out from the top of the page. The
 	page's scroll height is `BackpackTabController`'s.
@@ -55,6 +82,8 @@ local ROW_GAP_SCALE = 0.12
 	and for every level nametag not reached yet. Those are locked: greyed, the button
 	reads the level they need, and clicking does nothing. They unlock on their own when
 	`Stats` changes in the replica.
+
+	Each card previews the nametag (see `PREVIEW`), animated like the real tag.
 
 	Clicking an available card or its `EquipButton` asks `NametagService` to equip or
 	unequip. The equipped look reads the attributes authored on `EquipButton`, exactly
@@ -65,6 +94,7 @@ local NametagBackpackController = {
 	Controllers = {
 		DataController = {},
 		MusicController = {},
+		NametagController = {},
 	},
 }
 
@@ -75,6 +105,33 @@ local function placeOnGrid(entry : GuiObject, index : number)
 	local row = (index - 1) // ENTRIES_PER_ROW
 
 	entry.Position = UDim2.fromScale(column * (1 + ENTRY_PADDING_SCALE), row * (1 + ROW_GAP_SCALE))
+end
+
+local function makePreviewLabel(name : string, parent : GuiObject, rect : { number }) : TextLabel
+	local label = Instance.new("TextLabel")
+	label.Name = name
+	label.BackgroundTransparency = 1
+	label.BorderSizePixel = 0
+	label.FontFace = PREVIEW.Font
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextScaled = true
+	label.TextWrapped = false
+	label.ZIndex = PREVIEW.ZIndex
+	label.Position = UDim2.fromScale(rect[1], rect[2])
+	label.Size = UDim2.fromScale(rect[3], rect[4])
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = PREVIEW.StrokeColor
+	stroke.Thickness = PREVIEW.StrokeThickness
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+	stroke.Parent = label
+
+	local limit = Instance.new("UITextSizeConstraint")
+	limit.MaxTextSize = PREVIEW.MaxTextSize
+	limit.Parent = label
+
+	label.Parent = parent
+	return label
 end
 
 function NametagBackpackController:_data()
@@ -93,6 +150,50 @@ end
 
 function NametagBackpackController:_equippedId(nametags) : string
 	return nametags.Equipped or NametagConfig.DEFAULT
+end
+
+function NametagBackpackController:_style(label : TextLabel, style : any)
+	local nametags = self.Controllers.NametagController
+	if nametags and nametags._applyStyle and typeof(style) == "table" then
+		nametags:_applyStyle(label, style)
+	end
+end
+
+--[=[
+	Draws the preview on the card: the Title line (if any) and the player's name,
+	each in its own style. Returns the labels so the locked state can fade them.
+]=]
+function NametagBackpackController:_buildPreview(frame : GuiObject, nametag) : { TextLabel }
+	local existing = frame:FindFirstChild(PREVIEW.Name)
+	if existing then
+		existing:Destroy()
+	end
+
+	local holder = Instance.new("Frame")
+	holder.Name = PREVIEW.Name
+	holder.BackgroundTransparency = 1
+	holder.BorderSizePixel = 0
+	holder.Size = UDim2.fromScale(1, 1)
+	holder.ZIndex = PREVIEW.ZIndex
+	holder.Parent = frame
+
+	local style = nametag.Style or {}
+	local title = NametagConfig.nonEmpty(nametag.Title)
+	local labels = {}
+
+	if title then
+		local titleLabel = makePreviewLabel("Title", holder, PREVIEW.TitleLine)
+		titleLabel.Text = string.upper(title)
+		self:_style(titleLabel, style.Title)
+		table.insert(labels, titleLabel)
+	end
+
+	local nameLabel = makePreviewLabel("Username", holder, if title then PREVIEW.NameUnderTitle else PREVIEW.NameOnly)
+	nameLabel.Text = LocalPlayer.DisplayName
+	self:_style(nameLabel, style.Username)
+	table.insert(labels, nameLabel)
+
+	return labels
 end
 
 function NametagBackpackController:_readLook(template : GuiObject)
@@ -147,6 +248,16 @@ function NametagBackpackController:_applyState(entry, state : string)
 	if entry.Stroke then
 		entry.Stroke.Enabled = equipped
 	end
+
+	local fade = if locked then PREVIEW.LockedTransparency else 0
+	for _, label in entry.Preview do
+		label.TextTransparency = fade
+
+		local stroke = label:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			stroke.Transparency = fade
+		end
+	end
 end
 
 function NametagBackpackController:_createEntry(id : string)
@@ -173,10 +284,15 @@ function NametagBackpackController:_createEntry(id : string)
 	end
 
 	local image = frame:FindFirstChild(IMAGE_NAME)
-	local art = NametagConfig.nonEmpty(nametag.Icon)
-	if image and image:IsA("ImageLabel") and art then
-		image.Image = art
+	if image and image:IsA("ImageLabel") then
+		local art = NametagConfig.nonEmpty(nametag.Icon)
+		image.Visible = art ~= nil
+		if art then
+			image.Image = art
+		end
 	end
+
+	local preview = self:_buildPreview(frame, nametag)
 
 	local button = frame:FindFirstChild(BUTTON_NAME)
 	local stroke = frame:FindFirstChild(STROKE_NAME)
@@ -187,6 +303,7 @@ function NametagBackpackController:_createEntry(id : string)
 		Button = button,
 		Label = button and button:FindFirstChildWhichIsA("TextLabel"),
 		Stroke = if stroke and stroke:IsA("UIStroke") then stroke else nil,
+		Preview = preview,
 		State = "Available",
 		Maid = Maid.new(),
 	}
