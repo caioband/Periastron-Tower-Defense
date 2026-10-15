@@ -81,6 +81,9 @@ TutorialConfig.Buttons = {
 	  - `LockRelease`: the lock's last-resort valve, in seconds.
 	  - `DisablePrompts`: turns proximity prompts (NPC talk, AFK area, Next Event)
 	    off on this client for the whole flow.
+	  - `WalkInAllow`: `ProximityPanel` names that may still open by walking into
+	    them during the flow. Empty keeps every shop, board and merchant shut;
+	    portals are not walk-in panels and always work.
 ]=]
 TutorialConfig.MapPick = {
 	SpawnPart = "PortalsTpPart",
@@ -117,6 +120,8 @@ TutorialConfig.MapPick = {
 
 	LockRelease = 600,
 	DisablePrompts = true,
+
+	WalkInAllow = {},
 
 	PollInterval = 0.25,
 }
@@ -335,6 +340,9 @@ TutorialConfig.Match = {
 --[=[
 	The Lobby half after the match: open the shop, buy the crate, open it.
 	It runs once, on the `TutorialDone` ticket the match server sends back.
+
+	`WalkInAllow`: `ProximityPanel` names that may still open by walking into them
+	during this flow. The shop stays allowed because the flow sends the player there.
 ]=]
 TutorialConfig.Lobby = {
 	Lines = {
@@ -355,6 +363,8 @@ TutorialConfig.Lobby = {
 		"[color=white]That's a[/color] [gradient=green]new unit[/gradient][color=white] for your deck.[/color][pause=0.4] You're ready — good luck out there!",
 	},
 
+	WalkInAllow = { "ShopController" },
+
 	PollInterval = 0.2,
 	WaitForUi = 5,
 	StallRelease = 25,
@@ -368,4 +378,4 @@ TutorialConfig.CrateGuarantee = {
 	Rarity = "Epic",
 }
  
-return TutorialConfig 
+return TutorialConfig

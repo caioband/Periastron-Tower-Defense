@@ -54,6 +54,12 @@ local RoundConfig = WeatherConfig.Round
 	active. Two overlapping warnings on screen and two sets of multipliers composing
 	would be unreadable on both sides.
 
+	**Challenge matches replace the die** (`challengeStep`): the challenge's weather
+	is on from wave 1 and changes every `RotateWaves` waves, as
+	`ChallengeConfig.weatherAt` says. The next change is still announced through the
+	usual warning when it is `LeadWaves` or fewer waves away, and the Weather Report
+	card still clears a single wave.
+
 	See docs/game/weather-in-match.md.
 ]]
 
@@ -364,9 +370,86 @@ function WeatherRoundService:Summon(weatherName : string, waves : number?) : (bo
 	return true
 end
 
+--[[ CHALLENGES ]]
 
+--[=[
+	A challenge match's wave: the challenge decides the weather, not the die.
 
+	The weather for this wave comes from `ChallengeService:GetWeather`, and it lasts
+	until the end of its block (`RotateWaves`). Changing weather goes through the
+	same `Apply` and `WeatherStarted` as a rolled one, so contracts, the Index, and
+	the indicator count it the same way. The next block's weather, when different,
+	is announced with the usual warning once it is `LeadWaves` or fewer waves away.
+]=]
+function WeatherRoundService:challengeStep(challengeService, waveNumber : number, maxWaves : number?)
+	if self.SkippedWave and waveNumber > self.SkippedWave then
+		self.SkippedWave = nil
+	end
 
+	local weatherName = challengeService:GetWeather(waveNumber)
+	if not weatherName then
+		self.Scheduled = nil
+		self.ScheduledWave = nil
+		self:ClearActive()
+		return
+	end
+
+	local weatherService = self.Services.WeatherService
+	if not weatherService then return end
+
+	local rotate = math.max(1, challengeService:GetRotateWaves())
+	local blockEnd = (math.floor((waveNumber - 1) / rotate) + 1) * rotate
+	if maxWaves then
+		blockEnd = math.min(blockEnd, maxWaves)
+	end
+
+	if weatherName ~= self.Active then
+		self.Scheduled = nil
+		self.ScheduledWave = nil
+
+		local ok, message = weatherService:Apply(weatherName, RoundConfig.TransitionTime)
+		if not ok then
+			log:Warn(string.format("could not apply challenge weather '%s' (%s).", weatherName, tostring(message)))
+
+			self.Active = nil
+			self.ActiveUntilWave = nil
+			self:broadcastDuration()
+			return
+		end
+
+		self.Active = weatherName
+		self.ActiveUntilWave = blockEnd
+
+		self:broadcastDuration()
+
+		log:Debug(string.format("challenge weather '%s' on wave %d, until wave %d.", weatherName, waveNumber, blockEnd))
+
+		self.Signals.WeatherStarted:Fire(weatherName)
+	else
+		self.ActiveUntilWave = blockEnd
+
+		if not weatherService:GetCurrent() then
+			self:resumeActive(waveNumber)
+		else
+			self:broadcastDuration()
+		end
+	end
+
+	local nextWave = blockEnd + 1
+	local lead = math.max(1, RoundConfig.LeadWaves or 1)
+
+	if maxWaves and nextWave > maxWaves then return end
+	if nextWave - waveNumber > lead or self.ScheduledWave == nextWave then return end
+
+	local nextWeather = challengeService:GetWeather(nextWave)
+	if not nextWeather or nextWeather == weatherName then return end
+
+	self.Scheduled = nextWeather
+	self.ScheduledWave = nextWave
+
+	self:broadcastWarning(nextWeather, nextWave - waveNumber)
+	log:Debug(string.format("wave %d: challenge weather '%s' announced for wave %d.", waveNumber, nextWeather, nextWave))
+end
 
 --[=[
 	A wave's step. Called by `WaveService`'s `WaveStarted` signal.
@@ -375,6 +458,12 @@ end
 	the die sees this wave's state and not the previous one's.
 ]=]
 function WeatherRoundService:OnWaveStarted(waveNumber : number, _preset, maxWaves : number)
+	local challengeService = Framework:Get("ChallengeService", false, false)
+	if challengeService and challengeService:IsActive() then
+		self:challengeStep(challengeService, waveNumber, maxWaves)
+		return
+	end
+
 	--[[
 		The wave Weather Report cleared is behind us.
 

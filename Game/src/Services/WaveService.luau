@@ -586,6 +586,12 @@ function WaveService:onRoundEnded(won : boolean)
 				end
 			end
 
+			-- A won challenge pays its reward once per period, on top of the match's.
+			local challengeService = Framework:Get("ChallengeService", false, false)
+			if challengeService and challengeService:IsActive() then
+				challengeService:Complete({ player })
+			end
+
 			--[[
 				The win on the profile. It is the only place that writes `Stats.Wins`: the
 				Lobby leaderstats' "Wins" column reads exactly this key, and without this it
@@ -720,7 +726,11 @@ function WaveService:runRound(generation : number)
 	local tutorial = self.Services.TutorialMatchService
 	local forced = tutorial and tutorial:GetForcedPreset()
 
-	local preset = forced or self.Services.DifficultyService:RunSelection(SELECTION_TIME)
+	-- A challenge does not vote either: its difficulty and modifiers come with it.
+	local challengeService = if forced then nil else Framework:Get("ChallengeService", false, false)
+	local challengePreset = challengeService and challengeService:IsActive() and challengeService:GetForcedPreset() or nil
+
+	local preset = forced or challengePreset or self.Services.DifficultyService:RunSelection(SELECTION_TIME)
 	if not self:isCurrent(generation) then return end
 	self.Difficulty = preset
 
@@ -728,6 +738,8 @@ function WaveService:runRound(generation : number)
 	-- state is what makes the hotbar appear on screen.
 	if forced then
 		self.Services.DifficultyService:Force(TutorialConfig.Match.Difficulty)
+	elseif challengePreset then
+		self.Services.DifficultyService:ForcePreset(challengePreset)
 	end
 
 	--[[

@@ -191,7 +191,15 @@ function UnitService:initPlayerCards(player)
 		local tutorial = self.Services.TutorialMatchService
 		local tutorialDeck = tutorial and tutorial:GetDeck()
 
+		-- A challenge bans towers: they stay in the hotbar with zero cards, so
+		-- `getCardCount` refuses placing them like any card that ran out.
+		local challengeService = if tutorialDeck then nil else Framework:Get("ChallengeService", false, false)
+
 		for unitName, amount in (tutorialDeck or DeckConfig.tally(deck)) do
+			if challengeService and challengeService:IsBanned(unitName) then
+				amount = 0
+			end
+
 			cards[unitName] = amount
 			cardMax[unitName] = amount
 		end

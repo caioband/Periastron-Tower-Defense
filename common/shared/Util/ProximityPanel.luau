@@ -31,6 +31,16 @@ local Log = require(script.Parent.Log)
 	that brings the player there from outside (the HUD teleport): it marks the entry
 	and opens, or the exit would never happen and the panel would stay on screen.
 
+	**Walk-in lock.** `LockWalkIn(reason, allow)` stops walking into a radius from
+	opening any panel whose `Name` is not in `allow` (the tutorial uses it so a new
+	player cannot wander into a shop and softlock the script). Crossings are still
+	tracked while locked, so lifting the lock while standing inside a radius does
+	not pop the panel open; the player has to leave and come back. Leaving still
+	closes. `Open`, `Toggle` and `EnterRange` are not affected: those come from
+	buttons, and the tutorial gates buttons through `ButtonGateController`. Several
+	reasons may hold a lock at once; a panel opens on walk-in only when every
+	active lock allows it.
+
 	**No map spot works too.** A panel with no place in the world (the Robux shop,
 	only a HUD button; the settings panel, only a TopbarPlus icon) has no
 	`GetReference`: distance is never measured, and it lives on
@@ -78,7 +88,7 @@ local FALLBACK_CLOSE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.Easi
 local FALLBACK_SCALE_NAME = "PanelScale"
 
 export type Options = {
-	-- The name shown in warnings.
+	-- The name shown in warnings. Also the name the walk-in lock's allow list matches.
 	Name : string,
 
 	-- `PlayerGui.<Folder?>.<ScreenGui>.<Wrapper>.<Panel>`. `Panel` is the art the
@@ -121,6 +131,12 @@ ProximityPanel.__index = ProximityPanel
 
 -- nil until looked up; false when the place has no Cascade.
 local AnimationService : any = nil
+
+-- [reason] = { [panelName] = true }: the panels each active lock still lets open on walk-in.
+local WalkInLocks : { [string] : { [string] : boolean } } = {}
+
+-- Every live panel, so a new lock can close the ones it forbids.
+local LivePanels = setmetatable({}, { __mode = "k" })
 
 --[=[
 	The Cascade runtime, or nil in a place without one.
@@ -182,7 +198,52 @@ function ProximityPanel.new(options : Options)
 	self.InRange = false
 	self.ProximityClock = 0
 
+	LivePanels[self] = true
+
 	return self
+end
+
+--[[ WALK-IN LOCK ]]
+
+--- Whether walking into this panel's radius may open it right now.
+function ProximityPanel.IsWalkInAllowed(name : string) : boolean
+	for _, allow in WalkInLocks do
+		if not allow[name] then
+			return false
+		end
+	end
+
+	return true
+end
+
+--- Whether any walk-in lock is active.
+function ProximityPanel.IsWalkInLocked() : boolean
+	return next(WalkInLocks) ~= nil
+end
+
+--[=[
+	Stops walk-in opening for every panel not named in `allow`, under `reason`.
+	Calling again with the same reason replaces its allow list. Walk-in panels that
+	are open and now forbidden close.
+]=]
+function ProximityPanel.LockWalkIn(reason : string, allow : { string }?)
+	local set = {}
+	for _, name in allow or {} do
+		set[name] = true
+	end
+
+	WalkInLocks[reason] = set
+
+	for panel in LivePanels do
+		if panel.Options.GetReference and panel:IsOpen() and not ProximityPanel.IsWalkInAllowed(panel.Options.Name) then
+			panel:Close()
+		end
+	end
+end
+
+--- Lifts the lock held under `reason`. Other reasons' locks stay.
+function ProximityPanel.UnlockWalkIn(reason : string)
+	WalkInLocks[reason] = nil
 end
 
 --[[ INTERNAL ]]
@@ -416,7 +477,9 @@ function ProximityPanel:_updateProximity()
 	self.InRange = inRange
 
 	if inRange then
-		self:Open()
+		if ProximityPanel.IsWalkInAllowed(self.Options.Name) then
+			self:Open()
+		end
 	else
 		self:Close()
 	end
@@ -613,6 +676,7 @@ function ProximityPanel:EnterRange()
 end
 
 function ProximityPanel:Destroy()
+	LivePanels[self] = nil
 	self.Maid:DoCleaning()
 end
 

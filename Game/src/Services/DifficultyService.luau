@@ -37,10 +37,22 @@ local DifficultyService = {
 	},
 	Votes = {},
 	Selected = nil,
-	SelectionActive = false
+	SelectionActive = false,
+
+	--[[
+		A whole preset imposed for the match (`ForcePreset`: challenges). While set, it
+		is what `GetSelected` returns, so everything that reads the difficulty
+		(`MobService`, `CardShopService`, weather) sees the modified numbers instead of
+		the plain preset with the same name.
+	]]
+	ForcedPreset = nil,
 }
 
 function DifficultyService:GetSelected()
+	if self.ForcedPreset then
+		return self.ForcedPreset
+	end
+
 	return DifficultyConfig.Get(self.Selected)
 end
 
@@ -173,13 +185,40 @@ end
 	exists for players landing in a started round.
 ]=]
 function DifficultyService:Force(name : string)
+	self.ForcedPreset = nil
 	self.Selected = name
 	self.SelectionActive = false
 
 	self:broadcastSelectionState(0)
 end
 
+--[=[
+	Imposes a **whole preset** without a vote: the challenges' difficulty with its
+	modifiers already applied (`ChallengeService:GetForcedPreset`).
+
+	Unlike `Force`, it goes the whole way a finished vote goes: the preset reaches
+	`MobService` (base health, starting cash) and `DifficultyLocked` goes out, and
+	`GetSelected` returns this preset for the rest of the match.
+]=]
+function DifficultyService:ForcePreset(preset)
+	self.ForcedPreset = preset
+	self.Selected = preset.Name
+	self.SelectionActive = false
+
+	self:broadcastSelectionState(0)
+
+	local mobService = self.Services.MobService
+	if mobService then
+		mobService:ApplyDifficulty(preset)
+	end
+
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("DifficultyLocked", player, preset.Name)
+	end
+end
+
 function DifficultyService:RunSelection(duration)
+	self.ForcedPreset = nil
 	self.Votes = {}
 	self.Selected = nil
 	self.SelectionActive = true
@@ -227,6 +266,7 @@ end
 ]=]
 function DifficultyService:ResetRound()
 	table.clear(self.Votes)
+	self.ForcedPreset = nil
 	self.Selected = nil
 	self.SelectionActive = false
 	self.SelectionEndsAt = nil

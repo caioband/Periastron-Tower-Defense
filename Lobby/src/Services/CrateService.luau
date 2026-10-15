@@ -31,6 +31,9 @@ local log = Log.new("CrateService")
 -- The `RuneConfig` id whose bonus multiplies crate luck.
 local LUCK_RUNE = "Luck"
 
+-- The most crates one bulk request may open. The backpack's biggest button is 30.
+local MAX_BULK_OPEN = 30
+
 local CrateService = {
 	Services = {
 		DataService = {},
@@ -51,6 +54,10 @@ local function clampAmount(amount : number?) : number
 	end
 
 	return math.clamp(math.floor(amount), 0, CrateConfig.MAX_CRATES_PER_RARITY)
+end
+
+local function rarityRank(rarity : string?) : number
+	return (rarity and table.find(RarityConfig.ORDER, rarity)) or 0
 end
 
 --[=[
@@ -417,6 +424,15 @@ export type UnboxingResult = {
 	Unit : string?,
 }
 
+export type BulkSummary = {
+	-- How many crates were actually opened.
+	Opened : number,
+	-- [rarity] = how many units of that rarity came out.
+	Rarities : { [string] : number },
+	-- [unitName] = how many copies came out.
+	Units : { [string] : number },
+}
+
 --[=[
 	Runs a crate opening end to end: upgrade chain, rarity out of the resulting pool,
 	then a unit of that rarity. Pure roll -- nothing is written or sent.
@@ -515,29 +531,15 @@ function CrateService:PlayUnboxing(Player : Player, rarity : string) : UnboxingR
 end
 
 --[=[
-	Opens one crate the player owns: spends it, rolls it, gives the unit and plays the
-	unboxing. Returns nil when the player owns none of that rarity.
-
-	The check and the decrement happen inside a single :Update callback, which does not
-	yield -- two clicks landing back to back cannot both spend the same last crate.
+	Spends up to `count` crates of a rarity in a single `:Update`, which does not yield:
+	two requests landing back to back cannot both spend the same crates. Returns how
+	many were actually spent (0 when the player owns none).
 ]=]
-function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResult?
-	local resolvedRarity = CrateConfig.resolveRarity(rarity)
-	if not resolvedRarity then
-		log:StudioWarn(string.format("%q is not a valid crate rarity.", tostring(rarity)))
-		return nil
-	end
-
-	local DataService = self.Services.DataService
-	if not DataService.Update then
-		log:Warn("DataService is not ready yet; ignoring the crate opening.")
-		return nil
-	end
-
-	local spent = false
+function CrateService:_spendCrates(Player : Player, resolvedRarity : string, count : number) : number
+	local spent = 0
 	local remaining = 0
 
-	DataService:Update(Player, "Inventory", function(currentInventory)
+	self.Services.DataService:Update(Player, "Inventory", function(currentInventory)
 		currentInventory = currentInventory or {}
 		currentInventory.Crates = currentInventory.Crates or CrateConfig.createEmptyCrates()
 
@@ -546,26 +548,35 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 			return currentInventory
 		end
 
-		remaining = owned - 1
+		spent = math.min(owned, count)
+		remaining = owned - spent
 		currentInventory.Crates[resolvedRarity] = remaining
-		spent = true
 
 		return currentInventory
 	end)
 
-	if not spent then
-		return nil
+	if spent > 0 then
+		self.Signals.CrateAmountChanged:Fire(Player, resolvedRarity, remaining, -spent)
 	end
 
-	self.Signals.CrateAmountChanged:Fire(Player, resolvedRarity, remaining, -1)
+	return spent
+end
+
+--[=[
+	Resolves one crate that was already spent: rolls it, moves the guarantee counts,
+	counts the opening, gives the unit, and records the Index and contracts. Sends
+	nothing to the clients. A failed roll hands the crate back and returns nil.
+]=]
+function CrateService:_resolveOpening(Player : Player, resolvedRarity : string) : UnboxingResult?
+	local DataService = self.Services.DataService
 
 	--[[
 		The guarantee: if some rarity came due on the shared count, it is already decided
 		before the draw (`_dueRarity`). The counts only move after the roll succeeds: a
 		failed opening returns the crate and does not count.
 
-		Nothing between reading the counts and writing them yields the thread, so two clicks
-		in a row do not read the same count before it moves.
+		Nothing between reading the counts and writing them yields the thread, so two
+		openings in a row do not read the same count before it moves.
 	]]
 	local profile = self:_profileOf(Player)
 
@@ -615,13 +626,122 @@ function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResu
 		end
 	end
 
+	return result
+end
+
+--[=[
+	Opens one crate the player owns: spends it, rolls it, gives the unit and plays the
+	unboxing. Returns nil when the player owns none of that rarity.
+]=]
+function CrateService:OpenCrate(Player : Player, rarity : string) : UnboxingResult?
+	local resolvedRarity = CrateConfig.resolveRarity(rarity)
+	if not resolvedRarity then
+		log:StudioWarn(string.format("%q is not a valid crate rarity.", tostring(rarity)))
+		return nil
+	end
+
+	if not self.Services.DataService.Update then
+		log:Warn("DataService is not ready yet; ignoring the crate opening.")
+		return nil
+	end
+
+	if self:_spendCrates(Player, resolvedRarity, 1) <= 0 then
+		return nil
+	end
+
+	local result = self:_resolveOpening(Player, resolvedRarity)
+	if not result then
+		return nil
+	end
+
 	self:_broadcastUnboxing(Player, result)
 	return result
+end
+
+--[=[
+	Opens up to `count` crates of a rarity at once (capped at `MAX_BULK_OPEN` and at what
+	the player owns).
+
+	Every crate is spent in one write and then resolved one by one, so the guarantee,
+	the tutorial mark, BoxesOpened, the Index and contracts all count each crate. Only
+	the best result (highest rarity, first one on a tie) plays the unboxing for the
+	Lobby; thirty crates at once would bury the plaza. The opener gets the whole batch
+	through `BulkUnboxResult`.
+]=]
+function CrateService:OpenCrates(Player : Player, rarity : string, count : number) : { UnboxingResult }?
+	local resolvedRarity = CrateConfig.resolveRarity(rarity)
+	if not resolvedRarity then
+		log:StudioWarn(string.format("%q is not a valid crate rarity.", tostring(rarity)))
+		return nil
+	end
+
+	if typeof(count) ~= "number" or count ~= count or count == math.huge then
+		return nil
+	end
+
+	count = math.clamp(math.floor(count), 1, MAX_BULK_OPEN)
+
+	if count == 1 then
+		local single = self:OpenCrate(Player, resolvedRarity)
+		return single and { single } or nil
+	end
+
+	if not self.Services.DataService.Update then
+		log:Warn("DataService is not ready yet; ignoring the crate opening.")
+		return nil
+	end
+
+	local spent = self:_spendCrates(Player, resolvedRarity, count)
+	if spent <= 0 then
+		return nil
+	end
+
+	local results = {}
+	local summary : BulkSummary = {
+		Opened = 0,
+		Rarities = {},
+		Units = {},
+	}
+
+	local best : UnboxingResult? = nil
+
+	for _ = 1, spent do
+		local result = self:_resolveOpening(Player, resolvedRarity)
+		if not result then
+			continue
+		end
+
+		table.insert(results, result)
+
+		summary.Opened += 1
+		summary.Rarities[result.Rarity] = (summary.Rarities[result.Rarity] or 0) + 1
+
+		if result.Unit then
+			summary.Units[result.Unit] = (summary.Units[result.Unit] or 0) + 1
+		end
+
+		if not best or rarityRank(result.Rarity) > rarityRank(best.Rarity) then
+			best = result
+		end
+	end
+
+	if not best then
+		return nil
+	end
+
+	self:_broadcastUnboxing(Player, best)
+	Framework:Fire("BulkUnboxResult", Player, resolvedRarity, summary, best)
+
+	return results
 end
 
 function CrateService:construct()
 	Framework:Listen("RequestOpenCrate", function(Player : Player, rarity : string)
 		self:OpenCrate(Player, rarity)
+	end)
+
+	Framework:Listen("RequestOpenCrates", function(Player : Player, rarity : string, count : number)
+		self:OpenCrates(Player, rarity, count)
 	end)
 end
 
@@ -634,10 +754,12 @@ function CrateService:start()
 end
 
 function CrateService:init()
-	-- The client connects to "PlayUnboxing" during its own init, but the server would
-	-- only create the event when it first fires it -- and Warp complains that it "is
-	-- taking too long to retrieve". Declared here like the other server-only events.
+	-- The client connects to "PlayUnboxing" and "BulkUnboxResult" during its own init,
+	-- but the server would only create the events when it first fires them -- and Warp
+	-- complains that they are "taking too long to retrieve". Declared here like the other
+	-- server-only events.
 	Framework:Listen("PlayUnboxing", function() end)
+	Framework:Listen("BulkUnboxResult", function() end)
 end
 
 return CrateService

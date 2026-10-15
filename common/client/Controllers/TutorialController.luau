@@ -6,18 +6,22 @@ local Player = Players.LocalPlayer
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
+local Util = Shared:WaitForChild("Util")
 
 local Configs = Shared:WaitForChild("Config")
 
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
+local ProximityPanel = require(Util:WaitForChild("ProximityPanel"))
 
 local Framework = Me.new()
 
 local Config = SharedConfig.TutorialConfig
 local PortalConfig = SharedConfig.PortalConfig
 local PICK = Config.MapPick
+
+local WALK_IN_REASON = "TutorialMapPick"
 
 --[[
 	The tutorial's Lobby voice.
@@ -30,8 +34,11 @@ local PICK = Config.MapPick
 	**The screen is locked for the whole flow.** Through `ButtonGateController`, only
 	what the current phase needs is clickable (`MapPick.Allow` while picking,
 	`MapPick.WaitingAllow` once the group is counting down), and proximity prompts
-	are switched off on this client (`MapPick.DisablePrompts`). Leaving the group,
-	or a teleport that failed and put the player back, resumes the pick.
+	are switched off on this client (`MapPick.DisablePrompts`). Walk-in panels (the
+	shops, the contracts board, the event merchant) do not open either, except those
+	named in `MapPick.WalkInAllow` (see `ProximityPanel.LockWalkIn`); portals are not
+	walk-in panels and keep working. Leaving the group, or a teleport that failed and
+	put the player back, resumes the pick.
 
 	**The old offer** (`TutorialPrompt`) is still here for Cmdr's `tutorial`;
 	accepting starts the map pick.
@@ -135,6 +142,15 @@ function TutorialController:setPromptsEnabled(enabled : boolean)
 	if self.PromptsWere ~= nil then
 		ProximityPromptService.Enabled = self.PromptsWere
 		self.PromptsWere = nil
+	end
+end
+
+--- Walk-in panels stay shut while the map pick runs, except `MapPick.WalkInAllow`.
+function TutorialController:setWalkInLocked(locked : boolean)
+	if locked then
+		ProximityPanel.LockWalkIn(WALK_IN_REASON, PICK.WalkInAllow)
+	else
+		ProximityPanel.UnlockWalkIn(WALK_IN_REASON)
 	end
 end
 
@@ -315,6 +331,7 @@ function TutorialController:RunMapPick()
 	self:clearPickVisuals()
 	self:lockScreen(PICK.Allow)
 	self:setPromptsEnabled(false)
+	self:setWalkInLocked(true)
 
 	local dialog = self.Controllers.DialogController
 
@@ -364,6 +381,7 @@ function TutorialController:StopMapPick()
 	self:clearPickVisuals()
 	self:unlockScreen()
 	self:setPromptsEnabled(true)
+	self:setWalkInLocked(false)
 end
 
 --[[ API ]]
@@ -455,4 +473,4 @@ function TutorialController:init()
 	self:construct()
 end
 
-return TutorialController 
+return TutorialController

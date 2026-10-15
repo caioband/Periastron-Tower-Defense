@@ -6,19 +6,23 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
+local Util = Shared:WaitForChild("Util")
 
 local Configs = Shared:WaitForChild("Config")
 
 local SharedConfig = require(Configs.SharedConfig)
 
 local Me = require(Vendor.Me)
-local Log = require(Shared:WaitForChild("Util"):WaitForChild("Log"))
+local Log = require(Util:WaitForChild("Log"))
+local ProximityPanel = require(Util:WaitForChild("ProximityPanel"))
 
 local Framework = Me.new()
 local log = Log.new("TutorialShopController")
 
 local TutorialConfig = SharedConfig.TutorialConfig
 local Config = TutorialConfig.Lobby
+
+local WALK_IN_REASON = "TutorialShop"
 
 --[[
 	The second half of the tutorial, in the Lobby, after the win.
@@ -39,6 +43,9 @@ local Config = TutorialConfig.Lobby
 	target (plus the dialog box, which is `TutorialConfig.ButtonGate.Always`), and the
 	rest stops accepting clicks. That keeps the player from opening the deck, entering
 	a portal, or buying another crate mid-script.
+
+	**Nothing opens by walking into it either**, except the panels in
+	`Lobby.WalkInAllow` (the shop the flow needs). See `ProximityPanel.LockWalkIn`.
 
 	The lock is on the buttons, and **not** on the highlight's `BlockInput`, on
 	purpose: that one covers the screen with frames that swallow any input, including
@@ -363,6 +370,8 @@ end
 function TutorialShopController:finish()
 	self.Running = false
 
+	ProximityPanel.UnlockWalkIn(WALK_IN_REASON)
+
 	local gate = self:controller("ButtonGateController")
 	if gate then
 		gate:Unlock()
@@ -596,6 +605,8 @@ function TutorialShopController:Start(fromCrate : boolean?)
 
 	self.Running = true
 	self.Unboxed = false
+
+	ProximityPanel.LockWalkIn(WALK_IN_REASON, Config.WalkInAllow)
 
 	-- Restarting through the second half does not undo the purchase: it happened, and
 	-- the server would not make it again.

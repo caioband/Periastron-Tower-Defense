@@ -33,6 +33,14 @@ local GUI = {
 	CratesPage = "CratesPage",
 	RunesPage = "RunesPage",
 	Shelf = "CrateWrapper",
+
+	Bulk = "BulkOpen",
+	BulkPreview = "Preview",
+	BulkImage = "CrateImg",
+	BulkName = "CrateName",
+	BulkAmount = "CrateAmount",
+	BulkLabel = "Label",
+	BulkButtons = { "OpenOne", "OpenMid", "OpenMax" },
 }
 
 local ENTRY_NAME_PREFIX = "Crate_"
@@ -71,6 +79,15 @@ local BLOCKED_CHECK_INTERVAL = 1
 -- requests from going out while the first one is still in flight.
 local REQUEST_COOLDOWN = 0.5
 
+-- The bulk panel's middle and bottom buttons. Below a step the player owns, that
+-- button becomes "OPEN REST" (everything left), or hides when the rest is already
+-- covered by the button above it.
+local BULK_MID = 15
+local BULK_MAX = 30
+
+-- How long the "OPENED x / BEST: y" line stays in the bulk preview.
+local BULK_SUMMARY_HOLD = 4
+
 --[=[
 	The backpack's Crates and Runes tabs. Crates go on
 	`backpackui.Frame.Backpack.Content.CratesPage.CrateWrapper`, one entry per rarity
@@ -78,10 +95,16 @@ local REQUEST_COOLDOWN = 0.5
 	tier (`Inventory.Runes`). Both are cloned from their page's `cratetemplate` and laid
 	out from the top of their own page.
 
-	Clicking a crate opens it; clicking a rune activates it (`RuneShopService`). A
-	rune whose lower tier cannot start while a higher one is active is dimmed and
-	says `HIGHER ACTIVE`; the server checks the same rule (`RuneConfig.purchaseAction`).
-	Which page is on screen is `BackpackTabController`'s.
+	Clicking a crate selects it and shows `Backpack.BulkOpen` on the right: OPEN 1,
+	OPEN 15 and OPEN 30, with the last step the player cannot afford turning into
+	OPEN REST. While the crate tutorial runs, clicking a crate opens one straight away
+	instead, which is the click that tutorial waits for. The panel hides when the
+	Crates page or the backpack closes, or when the selected crate runs out.
+
+	Clicking a rune activates it (`RuneShopService`). A rune whose lower tier cannot
+	start while a higher one is active is dimmed and says `HIGHER ACTIVE`; the server
+	checks the same rule (`RuneConfig.purchaseAction`). Which page is on screen is
+	`BackpackTabController`'s.
 ]=]
 local CrateController = {
 	Controllers = {
@@ -99,6 +122,12 @@ local CrateController = {
 		-- is the action on success (New, Extend, Upgrade) and the reason otherwise
 		-- (UnknownRune, NotLoaded, LowerTier, NotOwned).
 		RuneActivateResult = Signal.new(),
+
+		-- (rarity : string?) -- nil when the selection clears.
+		CrateSelected = Signal.new(),
+
+		-- (rarity : string, summary : { Opened : number, Rarities : { [string] : number }, Units : { [string] : number } }, best : any)
+		BulkOpened = Signal.new(),
 	},
 }
 
@@ -139,6 +168,12 @@ local function addScale(entry : Instance)
 	scale.Parent = entry
 end
 
+--- Whether the post-match crate tutorial is running: its step waits for a crate click to open one.
+local function tutorialRunning() : boolean
+	local tutorial = Framework:Get("TutorialShopController", false, false)
+	return tutorial ~= nil and tutorial.IsRunning ~= nil and tutorial:IsRunning() == true
+end
+
 --[=[
 	Rebuilds one crate entry per rarity on the Crates page and one rune entry per tier
 	on the Runes page, each cloned from its page's `cratetemplate`. The templates stay
@@ -156,11 +191,11 @@ function CrateController:_buildEntries(crateWrapper : Instance, crateTemplate : 
 
 		addScale(entry)
 
-		-- cratetemplate is an ImageButton: each entry is what the player clicks to open
-		-- that rarity.
+		-- cratetemplate is an ImageButton: each entry is what the player clicks to pick
+		-- that rarity in the bulk panel.
 		if entry:IsA("GuiButton") then
 			self.UiMaid:GiveTask(entry.Activated:Connect(function()
-				self:RequestOpen(rarity)
+				self:_onEntryClicked(rarity)
 			end))
 		end
 
@@ -196,6 +231,15 @@ function CrateController:_buildEntries(crateWrapper : Instance, crateTemplate : 
 			self.UiMaid:GiveTask(entry)
 		end
 	end
+end
+
+function CrateController:_onEntryClicked(rarity : string)
+	if tutorialRunning() then
+		self:RequestOpen(rarity)
+		return
+	end
+
+	self:Select(rarity)
 end
 
 function CrateController:_playGainEffect(entry : Instance)
@@ -366,6 +410,195 @@ function CrateController:_render()
 	end
 
 	self.HasBlocked = hasBlocked
+
+	self:_renderBulk()
+end
+
+--[[ BULK PANEL ]]
+
+local function setLabel(button : GuiObject, text : string)
+	local label = button:FindFirstChild(GUI.BulkLabel)
+	if label and label:IsA("TextLabel") then
+		label.Text = text
+	end
+end
+
+--[=[
+	What each bulk button opens for `amount` owned crates: { count, text } per slot,
+	or nil for a hidden slot.
+
+	  - slot 1: always OPEN 1;
+	  - slot 2: OPEN 15 once they own 15, otherwise OPEN REST (when more than one);
+	  - slot 3: OPEN 30 once they own 30, otherwise OPEN REST (only when the rest is
+	    more than slot 2 already opens).
+]=]
+local function bulkSlots(amount : number) : { { Count : number, Text : string }? }
+	local slots = {}
+
+	slots[1] = if amount >= 1 then { Count = 1, Text = "OPEN 1" } else nil
+
+	if amount >= BULK_MID then
+		slots[2] = { Count = BULK_MID, Text = `OPEN {BULK_MID}` }
+	elseif amount > 1 then
+		slots[2] = { Count = amount, Text = "OPEN REST" }
+	end
+
+	if amount >= BULK_MAX then
+		slots[3] = { Count = BULK_MAX, Text = `OPEN {BULK_MAX}` }
+	elseif amount > BULK_MID then
+		slots[3] = { Count = amount, Text = "OPEN REST" }
+	end
+
+	return slots
+end
+
+--[=[
+	Binds the bulk panel of a new backpackui copy. The panel and its buttons are
+	optional: without them, clicking a crate only selects it.
+]=]
+function CrateController:_bindBulk(frame : GuiObject, panel : Instance, cratesPage : GuiObject?)
+	self.Bulk = nil
+
+	local bulk = panel:WaitForChild(GUI.Bulk, WAIT_TIMEOUT)
+	if not bulk or not bulk:IsA("GuiObject") then
+		log:StudioWarn(`could not find {GUI.Panel}.{GUI.Bulk}`)
+		return
+	end
+
+	local preview = bulk:FindFirstChild(GUI.BulkPreview)
+
+	local state = {
+		Panel = bulk,
+		Image = preview and preview:FindFirstChild(GUI.BulkImage),
+		Name = preview and preview:FindFirstChild(GUI.BulkName),
+		Amount = preview and preview:FindFirstChild(GUI.BulkAmount),
+		Buttons = {},
+		Counts = {},
+		CratesPage = cratesPage,
+		Frame = frame,
+	}
+
+	for index, name in GUI.BulkButtons do
+		local button = bulk:FindFirstChild(name)
+		if not button or not button:IsA("GuiButton") then
+			log:StudioWarn(`could not find {GUI.Bulk}.{name}`)
+			continue
+		end
+
+		state.Buttons[index] = button
+
+		self.UiMaid:GiveTask(button.Activated:Connect(function()
+			local rarity = self.Selected
+			local count = state.Counts[index]
+
+			if rarity and count then
+				self:RequestOpenMany(rarity, count)
+			end
+		end))
+	end
+
+	bulk.Visible = false
+	self.Bulk = state
+
+	local function onHidden()
+		if not frame.Visible or (cratesPage and not cratesPage.Visible) then
+			self:Select(nil)
+		end
+	end
+
+	self.UiMaid:GiveTask(frame:GetPropertyChangedSignal("Visible"):Connect(onHidden))
+
+	if cratesPage then
+		self.UiMaid:GiveTask(cratesPage:GetPropertyChangedSignal("Visible"):Connect(onHidden))
+	end
+end
+
+--[=[
+	Paints the bulk panel for the selected crate: the preview and which buttons show.
+	A selection whose crate ran out clears itself. While a bulk summary is up, the
+	preview keeps it and only the buttons update.
+]=]
+function CrateController:_renderBulk()
+	local state = self.Bulk
+	if not state or not state.Panel.Parent then
+		return
+	end
+
+	local rarity = self.Selected
+	local amount = rarity and self:GetCrateAmount(rarity) or 0
+	local pageShown = state.CratesPage == nil or state.CratesPage.Visible
+
+	if not rarity or amount <= 0 or not pageShown then
+		if rarity and amount <= 0 then
+			self.Selected = nil
+			self.Signals.CrateSelected:Fire(nil)
+		end
+
+		state.Panel.Visible = false
+		return
+	end
+
+	local info = CrateConfig.CRATES[rarity]
+
+	if os.clock() >= self.SummaryUntil then
+		if state.Image and state.Image:IsA("ImageLabel") and info and info.Image and info.Image ~= "" then
+			state.Image.Image = info.Image
+		end
+
+		if state.Name and state.Name:IsA("TextLabel") then
+			state.Name.Text = string.upper((info and info.DisplayName) or rarity)
+		end
+
+		if state.Amount and state.Amount:IsA("TextLabel") then
+			state.Amount.Text = string.format("%sx", UIUtil.formatAbbreviated(amount))
+		end
+	end
+
+	local slots = bulkSlots(amount)
+
+	for index, button in state.Buttons do
+		local slot = slots[index]
+
+		button.Visible = slot ~= nil
+		state.Counts[index] = slot and slot.Count or nil
+
+		if slot then
+			setLabel(button, slot.Text)
+		end
+	end
+
+	state.Panel.Visible = true
+end
+
+--- Shows the result of a bulk opening in the preview for `BULK_SUMMARY_HOLD` seconds.
+function CrateController:_showBulkSummary(summary : any, best : any)
+	local state = self.Bulk
+	if not state then
+		return
+	end
+
+	local opened = typeof(summary) == "table" and tonumber(summary.Opened) or 0
+	local bestRarity = typeof(best) == "table" and best.Rarity or nil
+
+	self.SummaryUntil = os.clock() + BULK_SUMMARY_HOLD
+	local token = self.SummaryUntil
+
+	if state.Name and state.Name:IsA("TextLabel") then
+		state.Name.Text = `OPENED {opened}`
+	end
+
+	if state.Amount and state.Amount:IsA("TextLabel") then
+		state.Amount.Text = if bestRarity then `BEST: {string.upper(tostring(bestRarity))}` else ""
+	end
+
+	task.delay(BULK_SUMMARY_HOLD, function()
+		if self.SummaryUntil ~= token then
+			return
+		end
+
+		self.SummaryUntil = 0
+		self:_renderBulk()
+	end)
 end
 
 local function findShelf(content : Instance, pageName : string) : (Instance?, GuiObject?)
@@ -390,6 +623,9 @@ function CrateController:_bindUI(screenGui : ScreenGui)
 	self.RuneEntries = nil
 	self.Wrapper = nil
 	self.RuneWrapper = nil
+	self.Bulk = nil
+	self.Selected = nil
+	self.SummaryUntil = 0
 
 	local frame = screenGui:WaitForChild(GUI.Wrapper, WAIT_TIMEOUT)
 	local panel = frame and frame:WaitForChild(GUI.Panel, WAIT_TIMEOUT)
@@ -419,6 +655,9 @@ function CrateController:_bindUI(screenGui : ScreenGui)
 	self.Wrapper = crateWrapper
 	self.RuneWrapper = runeWrapper
 	self:_buildEntries(crateWrapper, crateTemplate, runeWrapper, runeTemplate)
+
+	local cratesPage = content:FindFirstChild(GUI.CratesPage)
+	self:_bindBulk(frame, panel, if cratesPage and cratesPage:IsA("GuiObject") then cratesPage else nil)
 
 	-- Force a full repaint for the new UI instances.
 	table.clear(self.Cache)
@@ -472,6 +711,29 @@ function CrateController:GetCrates() : { [string]: number }
 end
 
 --[=[
+	Picks the crate the bulk panel acts on, and shows the panel. `nil` clears the
+	selection and hides it.
+]=]
+function CrateController:Select(rarity : string?)
+	local resolved = rarity and CrateConfig.resolveRarity(rarity) or nil
+
+	if resolved == self.Selected then
+		self:_renderBulk()
+		return
+	end
+
+	self.Selected = resolved
+	self.SummaryUntil = 0
+
+	self.Signals.CrateSelected:Fire(resolved)
+	self:_renderBulk()
+end
+
+function CrateController:GetSelected() : string?
+	return self.Selected
+end
+
+--[=[
 	Asks the server to open one crate of a rarity.
 
 	The Backpack panel stays open on purpose: the player can keep opening crates
@@ -498,6 +760,39 @@ function CrateController:RequestOpen(rarity : string) : boolean
 	self.LastRequest = now
 
 	Framework:Fire("RequestOpenCrate", resolvedRarity)
+
+	return true
+end
+
+--[=[
+	Asks the server to open `count` crates of a rarity at once (capped at what the
+	player owns). One crate goes through the normal single opening.
+]=]
+function CrateController:RequestOpenMany(rarity : string, count : number) : boolean
+	local resolvedRarity = CrateConfig.resolveRarity(rarity)
+	if not resolvedRarity then
+		return false
+	end
+
+	local owned = self:GetCrateAmount(resolvedRarity)
+	count = math.min(math.floor(tonumber(count) or 0), owned)
+
+	if count <= 0 then
+		return false
+	end
+
+	if count == 1 then
+		return self:RequestOpen(resolvedRarity)
+	end
+
+	local now = os.clock()
+	if now - self.LastRequest < REQUEST_COOLDOWN then
+		return false
+	end
+
+	self.LastRequest = now
+
+	Framework:Fire("RequestOpenCrates", resolvedRarity, count)
 
 	return true
 end
@@ -577,6 +872,14 @@ function CrateController:construct()
 		self.Signals.RuneActivateResult:Fire(id, tier, success, result)
 	end)
 
+	Framework:Listen("BulkUnboxResult", function(rarity : string, summary : any, best : any)
+		if rarity == self.Selected then
+			self:_showBulkSummary(summary, best)
+		end
+
+		self.Signals.BulkOpened:Fire(rarity, summary, best)
+	end)
+
 	self:_observeUI()
 	self:_watchBlocked()
 end
@@ -598,6 +901,11 @@ function CrateController:init()
 	self.RuneWrapper = nil
 	self.Replica = nil
 	self.LastRequest = 0
+
+	-- The bulk panel: its UI, the crate it acts on, and until when the preview holds a summary.
+	self.Bulk = nil
+	self.Selected = nil
+	self.SummaryUntil = 0
 
 	-- `os.clock()` of the replica's last `Runes` write: the local countdown's zero.
 	self.RunesBaseline = os.clock()
