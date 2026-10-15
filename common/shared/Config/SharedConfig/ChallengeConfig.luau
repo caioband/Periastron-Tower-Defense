@@ -11,18 +11,20 @@
 	Determinism rule: every list fed to the RNG is built in a fixed order (sorted
 	unit names, `MapConfig.getOrderedMaps`, the arrays in `WeatherConfig.MapPools`,
 	`MODIFIER_ORDER`). Never iterate a dictionary with `pairs` order into the RNG.
-	Changing any of those lists, or `SALT`, changes the current period's board.
+	Changing any of those lists, the rules below, or `SALT` changes the current
+	period's board.
 
 	**Periods roll over at fixed times (UTC)**, the same as contracts: daily at
 	midnight, weekly on Monday 00:00 (the epoch was a Thursday, hence `Offset`).
 
-	**Weather runs the whole match.** `weatherAt(challenge, wave)` says which
-	weather is on for any wave, from wave 1, changing every `RotateWaves` waves
-	and never repeating the previous block when the list has more than one.
+	**Weather cycles.** A weather lasts `RotateWaves` waves, then the sky stays clear
+	for `ClearWaves` waves, and the cycle repeats from wave 1. With `ClearWaves = 0`
+	the weather never stops (dailies). A cycle never picks the same weather as the
+	one before it when the list has more than one.
 
 	**Modifiers are preset scales.** Each one multiplies fields of the difficulty
-	preset (`ServerScriptService.Config.Difficulty`), the same way the tutorial's
-	`PresetOverrides` replaces them: no new match mechanic is needed to run them.
+	preset (`ServerScriptService.Config.Difficulty`). After them, `MIN_LEAKS`
+	guarantees the base survives at least that many leaked enemies.
 
 	Profile record (`DATA_KEY`): `{ [kind] = { Period, Done = { ["slot"] = true } } }`.
 ]]
@@ -45,6 +47,13 @@ ChallengeConfig.SALT = 7919
 -- Seconds a player must wait between Play requests (covers a teleport in flight).
 ChallengeConfig.PLAY_COOLDOWN = 5
 
+-- The base always survives at least this many leaked enemies after modifiers.
+ChallengeConfig.MIN_LEAKS = 4
+
+-- Play is refused unless at least this many different towers in the player's
+-- equipped deck survive the bans.
+ChallengeConfig.MIN_PLAYABLE_DECK = 2
+
 -- Workspace attributes the Game place sets once the challenge is resolved, so
 -- clients can rebuild it with `get` (banned cards, weather panel, rules screen).
 ChallengeConfig.ATTRIBUTES = {
@@ -60,14 +69,15 @@ ChallengeConfig.KIND_ORDER = { "Daily", "Weekly" }
 
 	  - `Count`: challenges per period (the board's cards).
 	  - `Length` / `Offset`: the period, as in `ContractConfig.KINDS`.
-	  - `Difficulties`: preset names drawn from.
+	  - `SlotDifficulties`: the difficulty of each slot, in order. A slot without
+	    one draws from `Difficulties`.
 	  - `Maps.MinWins` / `Maps.MaxWins`: which maps qualify, by `WinsRequired`.
 	    Maps do not repeat within a period while there are enough of them.
-	  - `Bans`: how many random towers are banned (inclusive range). At least one
-	    unit is always left unbanned.
+	  - `Bans`: how many random towers are banned (inclusive range), and
+	    `PerRarity`, the most bans any one rarity tier can take.
 	  - `Weather.Harsh`: only the map's weathers listed in `HARSH_WEATHERS`
-	    (falls back to the full map pool when none are). `RotateWaves`: waves per
-	    weather before the next one.
+	    (falls back to the full map pool when none are). `RotateWaves`: waves each
+	    weather lasts. `ClearWaves`: clear waves after each weather.
 	  - `Modifiers`: how many entries of `MODIFIERS` are applied.
 	  - `Rewards`: paid once per challenge per period (`RewardService:Grant`).
 ]]
@@ -79,8 +89,8 @@ ChallengeConfig.KINDS = {
 
 		Difficulties = { "Easy", "Medium" },
 		Maps = { MinWins = 0 },
-		Bans = { Min = 2, Max = 4 },
-		Weather = { Harsh = false, RotateWaves = 4 },
+		Bans = { Min = 2, Max = 4, PerRarity = 1 },
+		Weather = { Harsh = false, RotateWaves = 4, ClearWaves = 0 },
 		Modifiers = { Min = 0, Max = 0 },
 
 		Rewards = { Cash = 300, Shards = 3 },
@@ -91,11 +101,12 @@ ChallengeConfig.KINDS = {
 		Length = WEEK,
 		Offset = 4 * DAY,
 
-		Difficulties = { "Hard", "Impossible", "Nightmare" },
+		SlotDifficulties = { "Hard", "Impossible" },
+		Difficulties = { "Hard", "Impossible" },
 		Maps = { MinWins = 5 },
-		Bans = { Min = 5, Max = 8 },
-		Weather = { Harsh = true, RotateWaves = 3 },
-		Modifiers = { Min = 1, Max = 2 },
+		Bans = { Min = 3, Max = 5, PerRarity = 1 },
+		Weather = { Harsh = true, RotateWaves = 3, ClearWaves = 2 },
+		Modifiers = { Min = 0, Max = 1 },
 
 		Rewards = { Cash = 1500, Shards = 15, Crates = { Epic = 1 } },
 	},
@@ -116,11 +127,11 @@ ChallengeConfig.HARSH_WEATHERS = {
 	rounded and kept at 1 or more, and a field that is 0 stays 0.
 ]]
 ChallengeConfig.MODIFIERS = {
-	GlassBase = { Name = "GLASS BASE", Scale = { BaseHealth = 0.6 } },
-	TightBudget = { Name = "TIGHT BUDGET", Scale = { StartingCash = 0.7 } },
-	ShortBreaks = { Name = "SHORT BREAKS", Scale = { IntermissionTime = 0.6 } },
-	HeavyHits = { Name = "HEAVY HITS", Scale = { MobDamage = 1.4 } },
-	LeanBounty = { Name = "LEAN BOUNTY", Scale = { RewardMultiplier = 0.8 } },
+	GlassBase = { Name = "GLASS BASE", Scale = { BaseHealth = 0.8 } },
+	TightBudget = { Name = "TIGHT BUDGET", Scale = { StartingCash = 0.85 } },
+	ShortBreaks = { Name = "SHORT BREAKS", Scale = { IntermissionTime = 0.75 } },
+	HeavyHits = { Name = "HEAVY HITS", Scale = { MobDamage = 1.2 } },
+	LeanBounty = { Name = "LEAN BOUNTY", Scale = { RewardMultiplier = 0.9 } },
 }
 
 -- Draw order for modifiers (part of the determinism rule above).
@@ -149,6 +160,31 @@ local function pickMany(source : { any }, count : number, rng : Random) : { any 
 	local picked = {}
 	for index = 1, math.min(count, #pool) do
 		picked[index] = pool[index]
+	end
+
+	return picked
+end
+
+--- Up to `count` units, at most `perRarity` from any one rarity tier.
+local function pickBans(units : { string }, count : number, perRarity : number?, rng : Random) : { string }
+	local pool = table.clone(units)
+	shuffle(pool, rng)
+
+	local picked = {}
+	local perTier = {}
+
+	for _, name in pool do
+		if #picked >= count then
+			break
+		end
+
+		local tier = UnitStats[name].Rarity
+		local used = perTier[tier] or 0
+
+		if perRarity == nil or used < perRarity then
+			perTier[tier] = used + 1
+			table.insert(picked, name)
+		end
 	end
 
 	return picked
@@ -257,6 +293,7 @@ export type Challenge = {
 	Difficulty : string,
 	Weathers : { string },
 	RotateWaves : number,
+	ClearWaves : number,
 	Bans : { string },
 	Banned : { [string] : boolean },
 	Modifiers : { string },
@@ -291,10 +328,12 @@ function ChallengeConfig.generate(kind : string, period : number) : { Challenge 
 
 	for slot = 1, rules.Count do
 		local map = maps[(slot - 1) % #maps + 1]
-		local difficulty = rules.Difficulties[rng:NextInteger(1, #rules.Difficulties)]
+
+		local fixed = rules.SlotDifficulties and rules.SlotDifficulties[slot]
+		local difficulty = fixed or rules.Difficulties[rng:NextInteger(1, #rules.Difficulties)]
 
 		local banCount = math.clamp(rng:NextInteger(rules.Bans.Min, rules.Bans.Max), 0, math.max(#units - 1, 0))
-		local bans = pickMany(units, banCount, rng)
+		local bans = pickBans(units, banCount, rules.Bans.PerRarity, rng)
 
 		local banned = {}
 		for _, unit in bans do
@@ -313,6 +352,7 @@ function ChallengeConfig.generate(kind : string, period : number) : { Challenge 
 			Difficulty = difficulty,
 			Weathers = table.freeze(weathersFor(map, rules.Weather.Harsh)),
 			RotateWaves = math.max(1, rules.Weather.RotateWaves or 1),
+			ClearWaves = math.max(0, rules.Weather.ClearWaves or 0),
 			Bans = table.freeze(bans),
 			Banned = table.freeze(banned),
 			Modifiers = table.freeze(modifiers),
@@ -376,10 +416,20 @@ function ChallengeConfig.isBanned(challenge : Challenge?, unitName : string?) : 
 	return challenge ~= nil and unitName ~= nil and challenge.Banned[unitName] == true
 end
 
+local function cycleOf(challenge : Challenge) : number
+	return challenge.RotateWaves + challenge.ClearWaves
+end
+
+local function blockOf(challenge : Challenge, wave : number) : (number, number)
+	local w = math.max(math.floor(wave), 1)
+	local cycle = cycleOf(challenge)
+
+	return math.floor((w - 1) / cycle), (w - 1) % cycle
+end
+
 --[=[
-	The weather on for `wave` (1-based), or nil when the map has no weathers.
-	Changes every `RotateWaves` waves; with two or more weathers, a block never
-	repeats the one before it.
+	The weather on for `wave` (1-based), or nil for a clear wave (or a map with no
+	weathers). Each cycle is `RotateWaves` of one weather and `ClearWaves` clear.
 ]=]
 function ChallengeConfig.weatherAt(challenge : Challenge?, wave : number) : string?
 	if not challenge then
@@ -392,11 +442,14 @@ function ChallengeConfig.weatherAt(challenge : Challenge?, wave : number) : stri
 		return nil
 	end
 
+	local block, position = blockOf(challenge, wave)
+	if position >= challenge.RotateWaves then
+		return nil
+	end
+
 	if count == 1 then
 		return weathers[1]
 	end
-
-	local block = math.floor((math.max(math.floor(wave), 1) - 1) / challenge.RotateWaves)
 
 	local function pick(index : number) : number
 		return Random.new(challenge.Seed + 7777 + index * 31):NextInteger(1, count)
@@ -410,7 +463,32 @@ function ChallengeConfig.weatherAt(challenge : Challenge?, wave : number) : stri
 	return weathers[chosen]
 end
 
---- A copy of `preset` with the challenge's modifiers applied.
+--- The last wave of the weather on at `wave`, or nil when `wave` is clear.
+function ChallengeConfig.weatherEnd(challenge : Challenge?, wave : number) : number?
+	if not challenge or not ChallengeConfig.weatherAt(challenge, wave) then
+		return nil
+	end
+
+	local block = blockOf(challenge, wave)
+	return block * cycleOf(challenge) + challenge.RotateWaves
+end
+
+--- The wave the next weather cycle starts after `wave`, and its weather.
+function ChallengeConfig.nextWeather(challenge : Challenge?, wave : number) : (number?, string?)
+	if not challenge or #challenge.Weathers == 0 then
+		return nil, nil
+	end
+
+	local block = blockOf(challenge, wave)
+	local start = (block + 1) * cycleOf(challenge) + 1
+
+	return start, ChallengeConfig.weatherAt(challenge, start)
+end
+
+--[=[
+	A copy of `preset` with the challenge's modifiers applied, and the base raised
+	when needed so it survives at least `MIN_LEAKS` leaked enemies.
+]=]
 function ChallengeConfig.applyModifiers(challenge : Challenge?, preset : { [string] : any }) : { [string] : any }
 	local copy = table.clone(preset)
 	if not challenge then
@@ -436,6 +514,14 @@ function ChallengeConfig.applyModifiers(challenge : Challenge?, preset : { [stri
 
 			copy[field] = scaled
 		end
+	end
+
+	local leaks = ChallengeConfig.MIN_LEAKS
+	local health, damage = copy.BaseHealth, copy.MobDamage
+
+	if leaks and typeof(health) == "number" and typeof(damage) == "number" and damage > 0
+		and health < damage * leaks then
+		copy.BaseHealth = damage * leaks
 	end
 
 	return copy

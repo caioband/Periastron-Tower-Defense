@@ -23,6 +23,7 @@ local Framework = Me.new()
 local log = Log.new("ChallengeService")
 
 local Config = SharedConfig.ChallengeConfig
+local DeckConfig = SharedConfig.DeckConfig
 local UnlockConfig = SharedConfig.DifficultyUnlockConfig
 local DifficultyConfig = ServerConfig.Difficulty
 
@@ -35,10 +36,11 @@ local STUDIO_ATTRIBUTE = "StudioChallenge"
 
 	**Lobby:** `RequestPlayChallenge(kind, slot)` checks the player may play it
 	(current period, profile loaded, not in a portal group, not mid-tutorial,
-	difficulty unlocked, owns at least one unbanned unit) and teleports them alone
-	to a reserved Game server. The teleport data is the usual portal shape
-	(`Map`, `Players`, `MaxPlayers`) plus `Challenge = { Kind, Period, Slot }`.
-	The answer goes back as `ChallengePlayResult(kind, slot, ok, reason)`.
+	difficulty unlocked, at least `MIN_PLAYABLE_DECK` towers of the equipped deck
+	left after the bans) and teleports them alone to a reserved Game server. The
+	teleport data is the usual portal shape (`Map`, `Players`, `MaxPlayers`) plus
+	`Challenge = { Kind, Period, Slot }`. The answer goes back as
+	`ChallengePlayResult(kind, slot, ok, reason)`.
 
 	**Game:** the first player's teleport data resolves the active challenge
 	(`ChallengeConfig.resolveRef`, which rebuilds it from the config, so nothing a
@@ -48,7 +50,7 @@ local STUDIO_ATTRIBUTE = "StudioChallenge"
 	  - `WaveService` -> `GetForcedPreset()`: the difficulty preset with the
 	    modifiers in, imposed through `DifficultyService:ForcePreset`.
 	  - `UnitService` -> `IsBanned(unitName)`: banned towers start with 0 cards.
-	  - `WeatherRoundService` -> `GetWeather(wave)` / `GetRotateWaves()`.
+	  - `WeatherRoundService` -> `GetWeather`, `GetWeatherEnd`, `GetNextWeather`.
 	  - `WaveService` on a win -> `Complete(players)`: pays `Rewards` once per
 	    challenge per period, marking the profile first and paying right after,
 	    with nothing yielding in between.
@@ -87,19 +89,25 @@ function ChallengeService:_profileOf(player : Player) : any
 	return entry and entry.Profile.Data or nil
 end
 
-local function ownsPlayableUnit(profile : any, challenge) : boolean
-	local units = typeof(profile) == "table" and profile.Units or nil
-	if typeof(units) ~= "table" then
-		return false
+--- How many different towers of the player's equipped deck the bans leave usable.
+local function playableDeckUnits(profile : any, challenge) : number
+	if typeof(profile) ~= "table" then
+		return 0
 	end
 
-	for unitName, amount in units do
+	local ok, deck = pcall(DeckConfig.resolve, profile)
+	if not ok or not deck then
+		return 0
+	end
+
+	local count = 0
+	for unitName, amount in DeckConfig.tally(deck) do
 		if (tonumber(amount) or 0) > 0 and not Config.isBanned(challenge, unitName) then
-			return true
+			count += 1
 		end
 	end
 
-	return false
+	return count
 end
 
 function ChallengeService:_readRef(player : Player) : any
@@ -227,8 +235,8 @@ end
 
 --[=[
 	Validates and teleports. Returns `ok, reason`; reasons: `Invalid`, `Cooldown`,
-	`NotLoaded`, `InGroup`, `Tutorial`, `DifficultyLocked`, `AllBanned`,
-	`TeleportFailed`.
+	`NotLoaded`, `InGroup`, `Tutorial`, `DifficultyLocked`, `AllBanned` (fewer than
+	`MIN_PLAYABLE_DECK` deck towers left after the bans), `TeleportFailed`.
 ]=]
 function ChallengeService:Play(player : Player, kind : any, slot : any) : (boolean, string?)
 	if not Config.isKind(kind) then
@@ -264,7 +272,7 @@ function ChallengeService:Play(player : Player, kind : any, slot : any) : (boole
 		return false, "DifficultyLocked"
 	end
 
-	if not ownsPlayableUnit(profile, challenge) then
+	if playableDeckUnits(profile, challenge) < Config.MIN_PLAYABLE_DECK then
 		return false, "AllBanned"
 	end
 
@@ -356,14 +364,19 @@ function ChallengeService:IsBanned(unitName : string?) : boolean
 	return Config.isBanned(self.Active, unitName)
 end
 
---- The weather that must be on for `wave`, or nil (no challenge, or no weathers).
+--- The weather that must be on for `wave`, or nil (clear wave, or no challenge).
 function ChallengeService:GetWeather(wave : number) : string?
 	return Config.weatherAt(self.Active, wave)
 end
 
---- How many waves each challenge weather lasts.
-function ChallengeService:GetRotateWaves() : number
-	return self.Active and self.Active.RotateWaves or 1
+--- The last wave of the weather on at `wave`, or nil when `wave` is clear.
+function ChallengeService:GetWeatherEnd(wave : number) : number?
+	return Config.weatherEnd(self.Active, wave)
+end
+
+--- The wave the next weather starts after `wave`, and which one.
+function ChallengeService:GetNextWeather(wave : number) : (number?, string?)
+	return Config.nextWeather(self.Active, wave)
 end
 
 --- Call on a won match. Pays each player once per challenge per period.
