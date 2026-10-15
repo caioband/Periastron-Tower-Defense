@@ -20,6 +20,9 @@ local SERVER = Config.Server
 local MOVE = Config.Movement
 local TALK = Config.Interaction
 
+local RESERVE_RADIUS = MOVE.ReserveRadius or 12
+local SETTING_KEY = "DisableNPCs"
+
 local Framework = Me.new()
 local log = Log.new("LobbyNPCController")
 
@@ -37,6 +40,7 @@ local rng = Random.new()
 local LobbyNPCController = {
 	Controllers = {
 		DialogController = {},
+		SettingsController = {},
 	},
 }
 
@@ -69,6 +73,15 @@ local function randomOffset() : Vector3
 	local angle = rng:NextNumber(0, math.pi * 2)
 	local spread = rng:NextNumber(0, MOVE.Spread)
 	return Vector3.new(math.cos(angle) * spread, 0, math.sin(angle) * spread)
+end
+
+local function shuffled(list : { any }) : { any }
+	local copy = table.clone(list)
+	for i = #copy, 2, -1 do
+		local j = rng:NextInteger(1, i)
+		copy[i], copy[j] = copy[j], copy[i]
+	end
+	return copy
 end
 
 --[[ BUBBLE ]]
@@ -236,17 +249,59 @@ function LobbyNPCController:_route(from, to) : { any }?
 	return path
 end
 
-function LobbyNPCController:_newRoute(npc)
-	for _ = 1, 10 do
-		local destination = self.Nodes[rng:NextInteger(1, #self.Nodes)]
-		local path = self:_route(npc.Node, destination)
+--[[ RESERVATIONS ]]
 
-		if path and #path >= MOVE.MinRouteNodes then
-			npc.Route = path
-			npc.RouteIndex = 1
-			return
+function LobbyNPCController:_reserve(npc, node)
+	self:_releaseReservation(npc)
+	self.Reserved[node] = npc
+	npc.Destination = node
+end
+
+function LobbyNPCController:_releaseReservation(npc)
+	local node = npc.Destination
+	if node and self.Reserved[node] == npc then
+		self.Reserved[node] = nil
+	end
+	npc.Destination = nil
+end
+
+function LobbyNPCController:_isFree(npc, node, spaced : boolean) : boolean
+	local holder = self.Reserved[node]
+	if holder and holder ~= npc then
+		return false
+	end
+
+	if not spaced then
+		return true
+	end
+
+	for reserved, owner in self.Reserved do
+		if owner ~= npc and (reserved.Position - node.Position).Magnitude < RESERVE_RADIUS then
+			return false
 		end
 	end
+
+	return true
+end
+
+function LobbyNPCController:_newRoute(npc)
+	for _, spaced in { true, false } do
+		for _, destination in shuffled(self.Nodes) do
+			if destination == npc.Node or not self:_isFree(npc, destination, spaced) then
+				continue
+			end
+
+			local path = self:_route(npc.Node, destination)
+			if path and #path >= MOVE.MinRouteNodes then
+				self:_reserve(npc, destination)
+				npc.Route = path
+				npc.RouteIndex = 1
+				return
+			end
+		end
+	end
+
+	self:_releaseReservation(npc)
 
 	local fallback = npc.Node.Neighbors[rng:NextInteger(1, math.max(#npc.Node.Neighbors, 1))]
 	npc.Route = { fallback or npc.Node }
@@ -309,6 +364,10 @@ function LobbyNPCController:_linesFor(npc) : { any }
 		return npc.Lines
 	end
 
+	if npc.Kind == "Self" and Config.SelfLines and #Config.SelfLines > 0 then
+		return Config.SelfLines
+	end
+
 	if npc.Kind == "Friend" and Config.FriendLines and #Config.FriendLines > 0 then
 		local pool = table.clone(Config.Lines)
 		for _, conversation in Config.FriendLines do
@@ -322,7 +381,7 @@ end
 
 function LobbyNPCController:_talk(npc)
 	local dialog = self.Controllers.DialogController
-	if self.Talking or not dialog or dialog:IsOpen() then
+	if self.Disabled or self.Talking or not dialog or dialog:IsOpen() then
 		return
 	end
 
@@ -366,6 +425,10 @@ function LobbyNPCController:_talk(npc)
 	end
 
 	task.delay(TALK.TalkDelay, function()
+		if self.Talking ~= npc then
+			return
+		end
+
 		local unsubscribe
 		unsubscribe = dialog:OnClosed(function()
 			if unsubscribe then
@@ -453,6 +516,8 @@ function LobbyNPCController:_run(npc)
 			self:_pause(npc)
 		end
 	end
+
+	self:_releaseReservation(npc)
 end
 
 --[[ SPAWNING ]]
@@ -478,7 +543,7 @@ function LobbyNPCController:_staffLines(key : string?)
 end
 
 function LobbyNPCController:_spawn(template : Model)
-	if self.Spawned[template] or not self.Container then
+	if self.Disabled or self.Spawned[template] or not self.Container then
 		return
 	end
 	self.Spawned[template] = true
@@ -560,6 +625,7 @@ function LobbyNPCController:_spawn(template : Model)
 		Kind = model:GetAttribute("Kind"),
 		Lines = self:_staffLines(model:GetAttribute("StaffKey")),
 		Node = startNode,
+		Destination = nil,
 		Route = nil,
 		RouteIndex = 1,
 		Offset = randomOffset(),
@@ -568,6 +634,7 @@ function LobbyNPCController:_spawn(template : Model)
 		Alive = true,
 	}
 
+	self:_reserve(npc, startNode)
 	self:_setAnimation(npc, "Idle")
 
 	self.Maid:GiveTask(humanoid.Running:Connect(function(speed : number)
@@ -586,6 +653,8 @@ function LobbyNPCController:_spawn(template : Model)
 		if not model:IsDescendantOf(workspace) then
 			npc.Alive = false
 			npc.Bubble:Destroy()
+			self:_releaseReservation(npc)
+
 			local index = table.find(self.NPCs, npc)
 			if index then
 				table.remove(self.NPCs, index)
@@ -601,6 +670,10 @@ function LobbyNPCController:_spawn(template : Model)
 end
 
 function LobbyNPCController:_watchFolder(folder : Instance)
+	if not table.find(self.Sources, folder) then
+		table.insert(self.Sources, folder)
+	end
+
 	local function onChild(child : Instance)
 		if child:IsA("Model") then
 			self:_spawn(child)
@@ -632,6 +705,74 @@ function LobbyNPCController:_watchSources()
 	end)
 end
 
+--[[ SETTING ]]
+
+function LobbyNPCController:_despawnAll()
+	if self.Talking then
+		local dialog = self.Controllers.DialogController
+		self.Talking = nil
+
+		if dialog and dialog:IsOpen() then
+			dialog:Close()
+		end
+	end
+
+	for _, npc in table.clone(self.NPCs) do
+		npc.Alive = false
+		if npc.Model then
+			npc.Model:Destroy()
+		end
+	end
+
+	table.clear(self.NPCs)
+	table.clear(self.Spawned)
+	table.clear(self.Reserved)
+	self.SpawnIndex = 0
+end
+
+function LobbyNPCController:_respawnAll()
+	for _, folder in self.Sources do
+		if folder.Parent then
+			for _, child in folder:GetChildren() do
+				if child:IsA("Model") then
+					task.spawn(function()
+						self:_spawn(child)
+					end)
+				end
+			end
+		end
+	end
+end
+
+function LobbyNPCController:_setDisabled(disabled : boolean)
+	if self.Disabled == disabled then
+		return
+	end
+
+	self.Disabled = disabled
+
+	if disabled then
+		self:_despawnAll()
+	else
+		self:_respawnAll()
+	end
+end
+
+function LobbyNPCController:_watchSetting()
+	local settings = self.Controllers.SettingsController
+	if not settings or not settings.Observe then
+		return
+	end
+
+	local connection = settings:Observe(SETTING_KEY, function(disabled : boolean)
+		self:_setDisabled(disabled == true)
+	end)
+
+	self.Maid:GiveTask(function()
+		connection:Disconnect()
+	end)
+end
+
 --[[ PLAYER ]]
 
 function LobbyNPCController:_watchCharacter()
@@ -655,6 +796,10 @@ function LobbyNPCController:_watchCharacter()
 end
 
 function LobbyNPCController:_step(deltaTime : number)
+	if self.Disabled then
+		return
+	end
+
 	local character = LocalPlayer.Character
 	local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
 	local now = os.clock()
@@ -701,12 +846,7 @@ function LobbyNPCController:construct()
 		return
 	end
 
-	local order = table.clone(self.Nodes)
-	for i = #order, 2, -1 do
-		local j = rng:NextInteger(1, i)
-		order[i], order[j] = order[j], order[i]
-	end
-	self.SpawnOrder = order
+	self.SpawnOrder = shuffled(self.Nodes)
 
 	local container = workspace:FindFirstChild(CONTAINER_NAME)
 	if not container then
@@ -716,6 +856,7 @@ function LobbyNPCController:construct()
 	end
 	self.Container = container
 
+	self:_watchSetting()
 	self:_watchCharacter()
 	self:_watchSources()
 
@@ -741,8 +882,11 @@ function LobbyNPCController:init()
 	self.SpawnOrder = {}
 	self.SpawnIndex = 0
 	self.Spawned = {}
+	self.Reserved = {}
+	self.Sources = {}
 	self.Container = nil
 	self.Talking = nil
+	self.Disabled = false
 end
 
 return LobbyNPCController

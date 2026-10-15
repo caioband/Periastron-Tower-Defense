@@ -99,6 +99,7 @@ SettingsConfig.KEEP_ON_SCREEN = { "TopbarStandard", "TopbarCentered" }
 	- `PostEffects`: the `POST_EFFECT_CLASSES` below, through `LightingController`.
 	- `WeatherEffects`: the weather particles, through `WeatherController`.
 	- `DamageNumbers`: the numbers over enemies, in `MobController`.
+	- `DisableNPCs`: the wandering lobby NPCs, in `LobbyNPCController` (Lobby only).
 ]=]
 SettingsConfig.List = {
 	{ Key = "AutoSkip", Label = "Auto Skip Waves", Default = false, Requires = "SkipPromptController" },
@@ -110,7 +111,7 @@ SettingsConfig.List = {
 	{ Key = "WeatherEffects", Label = "Weather Effects", Default = true },
 	{ Key = "DamageNumbers", Label = "Damage Numbers", Default = true, Requires = "MobController" },
 	{ Key = "HealthBars", Label = "Always Show Health Bars", Default = true, Requires = "MobController" },
-
+	{ Key = "DisableNPCs", Label = "Disable NPCs", Default = false, Requires = "LobbyNPCController" },
 }
 
 --[=[

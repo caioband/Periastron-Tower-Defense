@@ -298,6 +298,13 @@ function LobbyNPCService:_buildFor(player : Player)
 		task.wait(SERVER.BuildInterval)
 	end
 
+	if player.Parent and rng:NextNumber() < (Config.SelfChance or 0) then
+		local model = self:_buildModel(player.UserId, player.DisplayName, player.Name, "Self", nil)
+		if model then
+			model.Parent = folder
+		end
+	end
+
 	folder:SetAttribute("Ready", true)
 	self.Building[player] = nil
 end

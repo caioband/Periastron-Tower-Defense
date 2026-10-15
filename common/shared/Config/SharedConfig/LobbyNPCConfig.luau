@@ -2,7 +2,9 @@ local LobbyNPCConfig = {}
 
 LobbyNPCConfig.NodeFolders = { "NPCNodes", "NPCNodesBack" }
 
-LobbyNPCConfig.FriendCount = { Min = 8, Max = 9 }
+LobbyNPCConfig.FriendCount = { Min = 2, Max = 4 }
+
+LobbyNPCConfig.SelfChance = 0.15
 
 LobbyNPCConfig.FallbackUserIds = {}
 
@@ -40,7 +42,7 @@ LobbyNPCConfig.Bubble = {
 }
 
 LobbyNPCConfig.Display = {
-	NameDistance = 40,
+	NameDistance = 0,
 	NameColor = "255,210,90",
 }
 
@@ -136,8 +138,8 @@ LobbyNPCConfig.Staff = {
 				"I don't have bugs.[pause=0.4] I have [wiggle]undocumented features[/wiggle].",
 			},
 			{
-				"I Never intentonally code bugs..[pause=0.8]",
-				"...totally.",
+				"If I stop talking mid-sentence, it's because I forgot...[pause=0.8]",
+				"...What was we on about again..",
 			},
 		},
 	},
@@ -264,6 +266,29 @@ LobbyNPCConfig.FriendLines = {
 	},
 	{
 		"Ayy, it's {player}! Carry me pls.",
+	},
+}
+
+LobbyNPCConfig.SelfLines = {
+	{
+		"Hey wait...[pause=0.6] [shake]you're me...?[/shake]",
+		"Okay, which one of us is the NPC?[pause=0.5] Don't answer that.",
+	},
+	{
+		"Hey wait...[pause=0.6] you're me...",
+		"Nice outfit.[pause=0.4] Great taste.[pause=0.4] Obviously.",
+	},
+	{
+		"Hey wait...[pause=0.6] you're me...",
+		"If you're me, then who's been playing all those matches?",
+	},
+	{
+		"Hey wait...[pause=0.6] [wiggle]you're me...[/wiggle]",
+		"Quick, say something only I would know.[pause=0.8] ...Yeah, that checks out.",
+	},
+	{
+		"Hey wait...[pause=0.6] you're me...",
+		"Don't worry, I'll keep wandering. You go win some games for us, {player}.",
 	},
 }
 
