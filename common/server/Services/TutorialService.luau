@@ -23,24 +23,19 @@ local Config = SharedConfig.TutorialConfig
 local AnalyticsConfig = ServerConfig.Analytics
 
 --[[
-	Players who have not done the tutorial are sent straight into it on arriving
-	in the Lobby. There is no offer: `Tutorial = false` means "teleport them".
+	The tutorial's Lobby side.
 
-	The profile keeps a boolean: `Tutorial`. The key becomes `true` when they win
-	the 5 waves, over in the other place (`:Complete`).
+	A player whose profile has `Tutorial = false` is dropped on the portal plaza
+	and walked through picking a map (`BeginMapPick`). While that is pending,
+	`PortalService` makes their portal group solo and stamps `Tutorial = true` on
+	the teleport, which is what turns the match into the tutorial match.
 
-	**Abandoning the match midway leaves the key at `false`**: a player who left
-	before the end is sent back in on their next Lobby arrival and restarts from
-	wave 1.
+	The key becomes `true` when the tutorial match is won (`Complete`, called from
+	the Game place). Leaving midway leaves it `false`, so the next Lobby visit
+	starts the map pick again.
 
-	If the teleport fails, the old Yes/No offer is shown as a fallback, so the
-	player is never left with nothing. Declining it still settles the matter.
-
-	**Lobby only.** The gate is `PlaceId` against the Lobby id of the current
-	environment (`Environment.IsPlace("Lobby")`), so the QA Lobby does it too.
-
-	> In an unpublished place (a loose `.rbxl` in Studio) `PlaceId` is 0 and
-	> nothing happens on its own. Cmdr's `tutorial` still shows the offer dialog.
+	**Lobby only** for the automatic start (`Environment.IsPlace("Lobby")`). In an
+	unpublished place nothing starts on its own; Cmdr's `tutorial` still works.
 
 	See docs/common/tutorial.md.
 ]]
@@ -55,6 +50,7 @@ local TutorialService = {
 local DATA_KEY = "Tutorial"
 
 TutorialService.Returned = {}
+TutorialService.Pending = {}
 
 --[[ INTERNAL ]]
 
@@ -80,12 +76,28 @@ function TutorialService:isLobby() : boolean
 end
 
 --[=[
-	Sends players who have not done the tutorial straight into it.
-
-	The delay gives the Lobby a moment to load before the teleport starts. Both
-	funnel steps are still logged so the onboarding dashboard keeps its shape.
-	If the teleport fails, the offer dialog is shown instead.
+	Drops the player on the portal plaza marker. Waits for the character, since
+	the profile usually loads before it.
 ]=]
+function TutorialService:placeOnPlaza(player : Player)
+	local character = player.Character or player.CharacterAdded:Wait()
+	if not player.Parent or not character then return end
+
+	local root = character:WaitForChild("HumanoidRootPart", 10)
+	if not root then return end
+
+	local map = workspace:FindFirstChild("Map")
+	local marker = map and map:FindFirstChild(Config.MapPick.SpawnPart, true)
+
+	if not marker or not marker:IsA("BasePart") then
+		log:StudioWarn(`no {Config.MapPick.SpawnPart} under Workspace.Map; the player stays at the spawn.`)
+		return
+	end
+
+	character:PivotTo(marker.CFrame * CFrame.new(0, marker.Size.Y / 2 + Config.MapPick.SpawnHeightOffset, 0))
+	root.AssemblyLinearVelocity = Vector3.zero
+end
+
 function TutorialService:offer(player : Player)
 	local dataService = self.Services.DataService
 	if not dataService then return end
@@ -94,17 +106,7 @@ function TutorialService:offer(player : Player)
 		if isDone(data) then return end
 		if not player.Parent then return end
 
-		self:funnel(player, "PromptShown")
-
-		task.delay(Config.PromptDelay or 0, function()
-			if not player.Parent then return end
-
-			self:funnel(player, "Accepted")
-
-			if not self:Start(player) then
-				self:Prompt({ player })
-			end
-		end)
+		self:BeginMapPick(player)
 	end)
 end
 
@@ -150,12 +152,54 @@ end
 
 --[[ API ]]
 
+--[=[
+	Starts the map pick: the player lands on the portal plaza and the client walks
+	them to a portal and through the map panel.
+]=]
+function TutorialService:BeginMapPick(player : Player)
+	if not player.Parent then return end
+
+	self.Pending[player] = true
+	self:funnel(player, "PromptShown")
+
+	task.spawn(function()
+		self:placeOnPlaza(player)
+	end)
+
+	task.delay(Config.PromptDelay or 0, function()
+		if not player.Parent or not self.Pending[player] then return end
+
+		Framework:Fire("TutorialMapPick", player)
+	end)
+end
+
+--[=[
+	Whether this player's next portal group is the tutorial match.
+	`PortalService` asks this when the group opens.
+]=]
+function TutorialService:IsPending(player : Player) : boolean
+	return self.Pending[player] == true
+end
+
+--[=[
+	The player opened their tutorial portal group: the funnel's "accepted".
+]=]
+function TutorialService:NoteGroupCreated(player : Player)
+	if not self.Pending[player] then return end
+
+	self:funnel(player, "Accepted")
+end
+
 function TutorialService:Prompt(players : { Player })
 	for _, player in players do
 		Framework:Fire("TutorialPrompt", player)
 	end
 end
 
+--[=[
+	The direct teleport, kept for Cmdr and as a fallback. A normal run goes
+	through the portals instead.
+]=]
 function TutorialService:Start(player : Player)
 	local match = Config.Match
 
@@ -203,7 +247,7 @@ function TutorialService:Reset(player : Player)
 	end)
 
 	if self:isLobby() then
-		self:Prompt({ player })
+		self:BeginMapPick(player)
 	end
 
 	return true
@@ -212,6 +256,8 @@ end
 function TutorialService:MarkDone(player : Player)
 	local dataService = self.Services.DataService
 	if not dataService then return end
+
+	self.Pending[player] = nil
 
 	dataService:Update(player, DATA_KEY, function()
 		return true
@@ -226,6 +272,7 @@ end
 
 function TutorialService:construct()
 	Framework:Listen("TutorialPrompt", function() end)
+	Framework:Listen("TutorialMapPick", function() end)
 	Framework:Listen("TutorialShopPrompt", function() end)
 	Framework:Listen("TutorialShopDone", function() end)
 
@@ -249,13 +296,16 @@ function TutorialService:construct()
 			return
 		end
 
-		self:funnel(player, "Accepted")
-
-		self:Start(player)
+		if self:isLobby() then
+			self:BeginMapPick(player)
+		else
+			self:Start(player)
+		end
 	end)
 
 	Players.PlayerRemoving:Connect(function(player : Player)
 		self.Returned[player] = nil
+		self.Pending[player] = nil
 	end)
 
 	if not self:isLobby() then return end

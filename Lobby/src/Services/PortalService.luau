@@ -43,11 +43,18 @@ local TIMER_NAME = "Timer"
 	MemberCount, MaxPlayers, MapName, Launching), so a player walking up to a portal
 	knows whether to open the map panel or to join what is already there without
 	asking the server first.
+
+	**Tutorial groups.** A player with the tutorial pending (`TutorialService`) opens a
+	solo group, nobody can join it, and its teleport carries `Tutorial = true`: that
+	flag is what makes the Game place run the tutorial script on the chosen map.
 ]=]
 local PortalService = {
 	Services = {
 		-- Where the profile's wins come from, which is what unlocks a map.
 		DataService = {},
+
+		-- Whether the group opener is mid-tutorial.
+		TutorialService = {},
 	},
 
 	Signals = {
@@ -58,10 +65,6 @@ local PortalService = {
 
 --[[ INTERNAL ]]
 
---[=[
-	Reads one Portal model into the record the rest of the service works with.
-	Returns nil when the model is missing a part the portal cannot work without.
-]=]
 function PortalService:_readPortal(model : Model, id : number)
 	local enter = model:FindFirstChild(PortalConfig.ENTER_NAME)
 	local exit = model:FindFirstChild(PortalConfig.EXIT_NAME)
@@ -108,10 +111,6 @@ function PortalService:_setGate(portal, solid : boolean)
 	end
 end
 
---[=[
-	Mirrors the state of a portal onto its model, which is what every client reads to
-	know whether the portal is free, full or already leaving.
-]=]
 function PortalService:_publish(portal)
 	local group = portal.Group
 	local model = portal.Model
@@ -138,10 +137,6 @@ function PortalService:_updateBillboard(portal)
 	end
 end
 
---[=[
-	Drops a player on a marker part. `index` is their spot in the group, so four
-	members standing on the same pad do not end up inside each other.
-]=]
 function PortalService:_place(player : Player, cframe : CFrame, index : number)
 	local character = player.Character
 	if not character or not character.PrimaryPart then
@@ -167,14 +162,6 @@ function PortalService:_resetPortal(portal)
 	self:_publish(portal)
 end
 
---[=[
-	Called every time the member list changes.
-
-	The countdown is a deadline, not a number ticking down, so both rules are plain
-	arithmetic on it: filling up cuts what is left to FULL_COUNTDOWN, and dropping back
-	below the cap hands back the countdown from before -- minus the time the group spent
-	full, which is what stops "join, leave, join, leave" from freezing the portal.
-]=]
 function PortalService:_onMembersChanged(portal)
 	local group = portal.Group
 	local now = os.clock()
@@ -196,14 +183,6 @@ function PortalService:_onMembersChanged(portal)
 	self:_publish(portal)
 end
 
---[=[
-	Gives up on a launch: the members are put back outside the gate and the portal goes
-	back to being free.
-
-	This is the fallback for everything that can go wrong on the way out -- the reserve
-	call throwing, TeleportInitFailed coming back, or simply nobody having left by the
-	time LAUNCH_RESET is up.
-]=]
 function PortalService:_abortLaunch(portal, group, reason : string?)
 	if portal.Group ~= group then
 		return
@@ -223,13 +202,6 @@ function PortalService:_abortLaunch(portal, group, reason : string?)
 	self:_resetPortal(portal)
 end
 
---[=[
-	Reserves a private server for the group and sends everyone there, with the map and
-	the party in the teleport data.
-
-	One call for the whole group is what keeps them together: TeleportAsync reserves a
-	single server for the players it is handed.
-]=]
 function PortalService:_teleportGroup(portal, group)
 	local members = {}
 	local userIds = {}
@@ -252,6 +224,7 @@ function PortalService:_teleportGroup(portal, group)
 		Map = group.Map,
 		Players = userIds,
 		MaxPlayers = group.MaxPlayers,
+		Tutorial = group.Tutorial == true or nil,
 	})
 
 	local success, result = pcall(function()
@@ -263,11 +236,6 @@ function PortalService:_teleportGroup(portal, group)
 	end
 end
 
---[=[
-	Countdown reached zero: the group is locked in and every member plays the cutscene
-	on their own client. When the scene is over they are sent to a private server, and
-	if that does not happen the portal recycles itself.
-]=]
 function PortalService:_launch(portal)
 	local group = portal.Group
 	group.Launching = true
@@ -283,7 +251,6 @@ function PortalService:_launch(portal)
 	self.Signals.GroupLaunched:Fire(portal.Model, members, group.Map)
 
 	task.delay(PortalConfig.TELEPORT_DELAY, function()
-		-- The portal was already recycled meanwhile.
 		if portal.Group ~= group then
 			return
 		end
@@ -322,10 +289,6 @@ function PortalService:_step()
 	end
 end
 
---[=[
-	The portal a request is allowed to act on: the one the client named, as long as
-	the player is really standing next to it.
-]=]
 function PortalService:_resolveRequest(player : Player, portalId : number?)
 	if typeof(portalId) ~= "number" then
 		return nil
@@ -350,11 +313,15 @@ function PortalService:_resolveRequest(player : Player, portalId : number?)
 	return portal
 end
 
+--- Whether this player's group is the tutorial match.
+function PortalService:_isTutorial(player : Player) : boolean
+	local tutorialService = self.Services.TutorialService
+
+	return tutorialService ~= nil and tutorialService.IsPending ~= nil and tutorialService:IsPending(player)
+end
+
 --[[ EXTERNAL ]]
 
---[=[
-	The portal a player belongs to, or nil when they are not in a group.
-]=]
 function PortalService:GetPortalOf(player : Player)
 	for _, portal in self.Portals do
 		local group = portal.Group
@@ -366,14 +333,6 @@ function PortalService:GetPortalOf(player : Player)
 	return nil
 end
 
---[=[
-	The wins on the player's open profile.
-
-	A profile that has not loaded yet (or already closed) counts as zero, not "let it
-	through": one extra map opened by mistake would be worse than the player waiting for
-	the profile to arrive, and until then their screen also shows everything locked, by
-	the same math.
-]=]
 function PortalService:_winsOf(player : Player) : number
 	local dataService = self.Services.DataService
 	local profiles = dataService and dataService.Profiles
@@ -387,9 +346,6 @@ function PortalService:_winsOf(player : Player) : number
 	return typeof(stats) == "table" and math.floor(tonumber(stats.Wins) or 0) or 0
 end
 
---[=[
-	Opens a group on a free portal. Returns true when the group was created.
-]=]
 function PortalService:CreateGroup(player : Player, portalId : number, mapName : string, maxPlayers : number?) : boolean
 	if self:GetPortalOf(player) then
 		return false
@@ -406,16 +362,6 @@ function PortalService:CreateGroup(player : Player, portalId : number, mapName :
 		return false
 	end
 
-	--[[
-		The lock also applies here, not only on screen.
-
-		`ChooseMapsController` already does not allow clicking a locked map, but the client
-		chooses the map: it sends a name, and a name is something any client can send.
-		Without this line, the 8-win map would open for someone who never won a match.
-
-		It is the same math on both ends, with the same config: nothing here is secret, and
-		the client computing it too only lets the drawing arrive before the answer.
-	]]
 	if not MapConfig.isUnlocked(resolvedMap, self:_winsOf(player)) then
 		log:StudioWarn(string.format(
 			"%s asked for map %s, which needs %d wins.",
@@ -423,8 +369,12 @@ function PortalService:CreateGroup(player : Player, portalId : number, mapName :
 		return false
 	end
 
+	local tutorial = self:_isTutorial(player)
+
 	local requested = typeof(maxPlayers) == "number" and math.floor(maxPlayers) or PortalConfig.MIN_PLAYERS
-	local clamped = math.clamp(requested, PortalConfig.MIN_PLAYERS, PortalConfig.MAX_PLAYERS)
+	local clamped = if tutorial
+		then 1
+		else math.clamp(requested, PortalConfig.MIN_PLAYERS, PortalConfig.MAX_PLAYERS)
 
 	portal.Group = {
 		Owner = player,
@@ -436,6 +386,7 @@ function PortalService:CreateGroup(player : Player, portalId : number, mapName :
 		SavedRemaining = nil,
 		FullSince = nil,
 		Launching = false,
+		Tutorial = tutorial,
 	}
 
 	self:_setGate(portal, true)
@@ -445,12 +396,13 @@ function PortalService:CreateGroup(player : Player, portalId : number, mapName :
 	self:_onMembersChanged(portal)
 	self:_notify(player, portal)
 
+	if tutorial then
+		self.Services.TutorialService:NoteGroupCreated(player)
+	end
+
 	return true
 end
 
---[=[
-	Puts a player in the group that is already running on a portal.
-]=]
 function PortalService:JoinGroup(player : Player, portalId : number) : boolean
 	if self:GetPortalOf(player) then
 		return false
@@ -458,7 +410,7 @@ function PortalService:JoinGroup(player : Player, portalId : number) : boolean
 
 	local portal = self:_resolveRequest(player, portalId)
 	local group = portal and portal.Group
-	if not group or group.Launching or #group.Members >= group.MaxPlayers then
+	if not group or group.Launching or group.Tutorial or #group.Members >= group.MaxPlayers then
 		return false
 	end
 
@@ -471,10 +423,6 @@ function PortalService:JoinGroup(player : Player, portalId : number) : boolean
 	return true
 end
 
---[=[
-	Takes a player out of their group and drops them at the portal exit. The portal
-	goes back to being free once the last member is gone.
-]=]
 function PortalService:LeaveGroup(player : Player) : boolean
 	local portal = self:GetPortalOf(player)
 	if not portal then
@@ -500,10 +448,6 @@ function PortalService:LeaveGroup(player : Player) : boolean
 	return true
 end
 
---[=[
-	Respawning drops the player at the lobby spawn, so a member of a group is walked
-	back onto the pad they were standing on.
-]=]
 function PortalService:_onCharacterAdded(player : Player, character : Model)
 	local portal = self:GetPortalOf(player)
 	if not portal then
@@ -514,7 +458,6 @@ function PortalService:_onCharacterAdded(player : Player, character : Model)
 		return
 	end
 
-	-- The group may have moved on while the character was loading.
 	portal = self:GetPortalOf(player)
 	if not portal then
 		return
@@ -565,8 +508,6 @@ function PortalService:construct()
 		end
 	end))
 
-	-- The teleport call going through does not mean the player went: what went
-	-- wrong comes back here, one player at a time.
 	self.Maid:GiveTask(TeleportService.TeleportInitFailed:Connect(function(player : Player, result : Enum.TeleportResult, message : string)
 		local portal = self:GetPortalOf(player)
 		if not portal then
@@ -593,9 +534,6 @@ function PortalService:init()
 	self.Maid = Maid.new()
 	self.Portals = {}
 
-	-- The clients connect to these during their own init, and Warp only creates an
-	-- event once one of the two sides asks for it -- same reason CrateService declares
-	-- PlayUnboxing here.
 	Framework:Listen("PortalGroupChanged", function() end)
 	Framework:Listen("PlayPortalCutscene", function() end)
 end
