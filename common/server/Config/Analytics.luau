@@ -36,6 +36,7 @@ return {
 			"WeatherWarning",  -- 18 saw the weather warning
 			"WeatherArrived",  -- 19 saw the weather arrive
 			"FinishUp",        -- 20 the script's last lesson
+			"UpgradeTowers",   -- 21 learned upgrading and selling
 		},
 	},
 
@@ -43,4 +44,4 @@ return {
 		Declined = "TutorialDeclined",
 		Abandoned = "TutorialAbandoned",
 	},
-}
+} 

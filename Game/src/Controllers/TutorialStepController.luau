@@ -25,19 +25,32 @@ local SpeedConfig = SharedConfig.SpeedConfig
 	arrows, and the button lock, per step the server sends (`TutorialStep`,
 	`TutorialStepDone`).
 
-	The lock a step sets outlives the step unless the step says `UnlockOnDone`: the
-	reworked script releases the screen after each lesson so the rest of the match
-	plays like a normal game.
+	**Nothing runs ahead of the player.** With `Match.WaitForRead`, each line waits
+	for a click, and the step's highlight, arrow, and hotbar only come in once the
+	dialog is dismissed. An `Info` step tells the server it was read
+	(`TutorialStepRead`) when its dialog closes, which is what releases its wave.
 
-	`FreeSpeed` marks every speed step's game pass as owned **for this session**,
-	which is the tutorial server: the speed menu shows 2x unlocked here and nowhere
-	else.
+	**Purchase steps follow the shop.** The highlight sits on the round card shop's
+	edge button until the player opens the shop, moves to the offer once the cards
+	are on the table, and goes back to the button if the shop is closed unbought.
+
+	**Lesson locks.** `Match.LockedUntil` buttons stay unclickable until the step
+	that teaches them opens, held through `Interactable`, which
+	`ButtonGateController` (which owns `Active`) never touches. Upgrading and
+	selling stay locked until `Match.TowerActionsUntil` opens (see `IsTutorial`).
+
+	The step lock outlives the step unless the step says `UnlockOnDone`.
+
+	`FreeSpeed` marks every speed step's game pass as owned for this session (the
+	tutorial server), so 2x is unlocked here and nowhere else.
 
 	See docs/game/tutorial-match.md.
 ]]
 
 local UI_WAIT_FRAMES = 50
-local SPEECH_TIMEOUT = 20
+local SPEECH_TIMEOUT = 120
+local LESSON_LOCK_INTERVAL = 0.5
+local SHOP_WATCH_INTERVAL = 0.15
 
 local TutorialStepController = {
 	Controllers = {
@@ -52,13 +65,8 @@ local TutorialStepController = {
 }
 
 TutorialStepController.Step = nil :: any
-
--- Becomes `true` on the first step and never goes back.
 TutorialStepController.InTutorial = false
-
--- Whether this tutorial locks upgrading/selling and "PLAY AGAIN" (see `IsTutorial`).
 TutorialStepController.LockTowerActions = false
-
 TutorialStepController.SpeedGranted = false
 TutorialStepController.CardComponent = nil :: any
 TutorialStepController.LockedCards = {}
@@ -66,6 +74,13 @@ TutorialStepController.DeckHidden = false
 TutorialStepController.AllowedUnits = nil :: { [string] : boolean }?
 TutorialStepController.Arrows = {}
 TutorialStepController.StepConnections = {}
+
+-- Step Ids that have opened: what releases `LockedUntil` buttons and tower actions.
+TutorialStepController.Opened = {}
+
+-- `[GuiButton] = { Was : boolean, Connection }` for buttons held by a lesson lock.
+TutorialStepController.Held = {}
+TutorialStepController.LessonLoopRunning = false
 
 --[[ INTERNAL ]]
 
@@ -165,6 +180,116 @@ function TutorialStepController:grantFreeSpeed()
 	end
 end
 
+--[[ LESSON LOCKS ]]
+
+--- The buttons still waiting for their lesson: each entry's target and every button inside it.
+function TutorialStepController:lessonButtons() : { [GuiButton] : boolean }
+	local out = {}
+	local highlight = self.Controllers.HighlightController
+	if not highlight then return out end
+
+	for _, entry in (Config.Match.LockedUntil or {}) do
+		if self.Opened[entry.Step] then continue end
+
+		local target = highlight:Find(entry.Button)
+		if not target then continue end
+
+		if target:IsA("GuiButton") then
+			out[target] = true
+		end
+
+		for _, descendant in target:GetDescendants() do
+			if descendant:IsA("GuiButton") then
+				out[descendant] = true
+			end
+		end
+	end
+
+	return out
+end
+
+function TutorialStepController:releaseHeld(button : GuiButton)
+	local state = self.Held[button]
+	if not state then return end
+
+	self.Held[button] = nil
+	state.Connection:Disconnect()
+
+	if button.Parent then
+		button.Interactable = state.Was
+	end
+end
+
+--[=[
+	Holds every lesson-locked button at `Interactable = false` and gives back the
+	ones whose lesson has opened. Returns whether anything is still locked.
+]=]
+function TutorialStepController:refreshLessonLocks() : boolean
+	local wanted = self:lessonButtons()
+
+	for button in self.Held do
+		if not wanted[button] or not button.Parent then
+			self:releaseHeld(button)
+		end
+	end
+
+	for button in wanted do
+		if self.Held[button] then continue end
+
+		local state = { Was = button.Interactable }
+
+		state.Connection = button:GetPropertyChangedSignal("Interactable"):Connect(function()
+			if self.Held[button] == state and button.Interactable then
+				button.Interactable = false
+			end
+		end)
+
+		self.Held[button] = state
+		button.Interactable = false
+	end
+
+	local pending = false
+	for _, entry in (Config.Match.LockedUntil or {}) do
+		if not self.Opened[entry.Step] then
+			pending = true
+			break
+		end
+	end
+
+	return pending
+end
+
+function TutorialStepController:startLessonLocks()
+	if self.LessonLoopRunning then return end
+
+	self.LessonLoopRunning = true
+
+	task.spawn(function()
+		while self:refreshLessonLocks() do
+			task.wait(LESSON_LOCK_INTERVAL)
+		end
+
+		for button in self.Held do
+			self:releaseHeld(button)
+		end
+
+		self.LessonLoopRunning = false
+	end)
+end
+
+--[[ STEP DISPLAY ]]
+
+--- Tells the server an `Info` step's dialog has been read.
+function TutorialStepController:reportRead(step : any)
+	if not step or step.Kind ~= "Info" then return end
+
+	task.delay(step.ReadDelay or 0, function()
+		if self.Step ~= step then return end
+
+		Framework:Fire("TutorialStepRead", step.Id)
+	end)
+end
+
 function TutorialStepController:show(step : any)
 	self.Step = step
 
@@ -183,6 +308,7 @@ function TutorialStepController:show(step : any)
 
 			shown = true
 			self:showVisuals(step)
+			self:reportRead(step)
 		end
 
 		local disconnect
@@ -210,13 +336,14 @@ function TutorialStepController:show(step : any)
 			HideUI = false,
 			Blur = false,
 			Duck = false,
-			Auto = true,
+			Auto = not Config.Match.WaitForRead,
 		}))
 
 		return
 	end
 
 	self:showVisuals(step)
+	self:reportRead(step)
 end
 
 function TutorialStepController:showVisuals(step : any)
@@ -224,7 +351,12 @@ function TutorialStepController:showVisuals(step : any)
 	self:setAllowedCards(self:allowedOf(step))
 
 	local highlight = self.Controllers.HighlightController
-	if highlight then
+
+	if step.Kind == "Buy" then
+		-- The shop step drives its own highlight: the edge button first, the offer
+		-- only once the shop is open.
+		self:watchShop(step)
+	elseif highlight then
 		local target = self:cardOf(step.Unit)
 
 		if not target and step.Highlight then
@@ -238,7 +370,7 @@ function TutorialStepController:showVisuals(step : any)
 		self:refreshGate()
 	end
 
-	if step.Kind == "Buy" or step.Kind == "Use" then
+	if step.Kind == "Use" then
 		self:awaitCard(step)
 	end
 
@@ -266,6 +398,64 @@ function TutorialStepController:offerRow() : GuiObject?
 	local row = shop and shop.Row
 
 	return if row and row:IsA("GuiObject") and row.Parent then row else nil
+end
+
+--- Whether the shop has finished dealing its cards onto the table.
+function TutorialStepController:offerReady(step : any) : GuiObject?
+	if step.Card then
+		return self:artOf(self:offerCardOf(step.Card))
+	end
+
+	local row = self:offerRow()
+	if not row then return nil end
+
+	for _, child in row:GetChildren() do
+		if child:IsA("GuiObject") and child.Visible then
+			return row
+		end
+	end
+
+	return nil
+end
+
+--[=[
+	The purchase step's highlight, following the shop's own state.
+
+	Closed: the edge button the shop opens from (the step's `Highlight`). Open, with
+	the cards dealt: the card the step asks for, or the whole offer row when any
+	card will do. Closed again without buying: back to the button.
+]=]
+function TutorialStepController:watchShop(step : any)
+	local highlight = self.Controllers.HighlightController
+	local shop = self.Controllers.RoundCardShopController
+	if not highlight then return end
+
+	task.spawn(function()
+		local current = nil
+
+		while self.Step == step do
+			local target = nil
+
+			if shop and shop.ShopOpen == true then
+				target = self:offerReady(step)
+			elseif step.Highlight then
+				target = highlight:Find(step.Highlight)
+			end
+
+			if target and target ~= current then
+				if highlight:Show(target) then
+					current = target
+					self:refreshGate()
+				end
+			elseif not target and current and shop and shop.ShopOpen == true then
+				-- Opened, cards still dealing: nothing to point at for a moment.
+				highlight:Hide()
+				current = nil
+			end
+
+			task.wait(SHOP_WATCH_INTERVAL)
+		end
+	end)
 end
 
 function TutorialStepController:gateTargets(step : any, list : { any }?) : { any }
@@ -296,7 +486,6 @@ function TutorialStepController:gateTargets(step : any, list : { any }?) : { any
 			return if step.Card then self:offerCardOf(step.Card) else nil
 		end,
 
-		-- Every card on the shop table, for a step that lets the player pick any.
 		["@Offers"] = function()
 			return self:offerRow()
 		end,
@@ -385,26 +574,16 @@ function TutorialStepController:refreshGate()
 	end
 end
 
---[=[
-	Waits for the step's card and highlights it: the shop card for a purchase
-	(or the whole row when any card will do), the hand card for a use.
-]=]
+--- Waits for a `Use` step's card to land in the hand and highlights it.
 function TutorialStepController:awaitCard(step : any)
 	local highlight = self.Controllers.HighlightController
-	if not highlight then return end
-
-	if step.Kind == "Use" and not step.Card then return end
+	if not highlight or not step.Card then return end
 
 	task.spawn(function()
 		for _ = 1, UI_WAIT_FRAMES do
 			if self.Step ~= step then return end
 
-			local target
-			if step.Kind == "Buy" then
-				target = if step.Card then self:artOf(self:offerCardOf(step.Card)) else self:offerRow()
-			else
-				target = self:artOf(self:handCardOf(step.Card))
-			end
+			local target = self:artOf(self:handCardOf(step.Card))
 
 			if target and target.Visible and highlight:Show(target) then
 				self:refreshGate()
@@ -522,6 +701,7 @@ function TutorialStepController:reassert()
 
 			self:clearVisuals()
 			self:showVisuals(step)
+			self:reportRead(step)
 		end)
 
 		return
@@ -558,18 +738,33 @@ function TutorialStepController:AllowsCardUse(cardId : string) : boolean
 	return cardId == step.Card
 end
 
---[=[
-	Whether this tutorial locks the match's tower actions and "PLAY AGAIN".
+--- Whether upgrading and selling are still locked by the tutorial.
+function TutorialStepController:LocksTowerActions() : boolean
+	if not self.InTutorial then
+		return false
+	end
 
-	`ToggleTower` (upgrade/sell) and `ResultController` (play again) ask this. The
-	reworked tutorial is a full match, so with `LockTowerActions = false` this
-	answers `false` and both behave normally; the closing step's button whitelist
-	still keeps the results screen pointed at "BACK TO LOBBY".
+	if self.LockTowerActions then
+		return true
+	end
+
+	local gate = Config.Match.TowerActionsUntil
+
+	return gate ~= nil and not self.Opened[gate]
+end
+
+--[=[
+	Whether this tutorial currently locks the match's tower actions and "PLAY AGAIN".
+
+	`ToggleTower` (upgrade/sell) and `ResultController` (play again) ask this. It is
+	`true` until the `Match.TowerActionsUntil` step opens (or all match with
+	`LockTowerActions`), then `false`, and both behave normally. The closing step's
+	button whitelist still keeps the results screen pointed at "BACK TO LOBBY".
 
 	For "is this the tutorial match at all", use `IsTutorialMatch`.
 ]=]
 function TutorialStepController:IsTutorial() : boolean
-	return self.InTutorial == true and self.LockTowerActions == true
+	return self:LocksTowerActions()
 end
 
 function TutorialStepController:IsTutorialMatch() : boolean
@@ -602,6 +797,10 @@ function TutorialStepController:construct()
 		self.InTutorial = true
 		self.LockTowerActions = step.LockTowerActions == true
 
+		if typeof(step.Id) == "string" then
+			self.Opened[step.Id] = true
+		end
+
 		if step.FreeSpeed then
 			self:grantFreeSpeed()
 		end
@@ -609,6 +808,9 @@ function TutorialStepController:construct()
 		if type(step.Locked) == "table" then
 			self.LockedCards = step.Locked
 		end
+
+		self:startLessonLocks()
+		self:refreshLessonLocks()
 
 		self:clear()
 		self:show(step)

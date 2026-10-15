@@ -29,6 +29,9 @@ local AnalyticsConfig = ServerConfig.Analytics
 local INTERMISSION_WAVE = 0
 local SPAWN_POINT = "@Spawn"
 
+-- How often a held purchase step re-checks that the player can still afford a card.
+local ENSURE_INTERVAL = 0.5
+
 --[[
 	The tutorial match: what says this match is the tutorial, and what it imposes.
 
@@ -41,6 +44,11 @@ local SPAWN_POINT = "@Spawn"
 	card shop's schedule (`ShopIsScripted` / `ShouldOpenShop`). The map is whatever
 	the player picked; the deck is their own loadout unless `Match.Deck` says
 	otherwise.
+
+	**Nothing runs ahead of the lesson.** Info steps hold their wave until the
+	client reports the dialog was read (`TutorialStepRead`), purchase steps keep
+	cash topped up while they wait, and upgrading/selling stay refused until the
+	`Match.TowerActionsUntil` step opens.
 
 	The answer is decided once and cached: a server is a tutorial server or not for
 	its whole life.
@@ -63,6 +71,7 @@ TutorialMatchService.Step = nil :: any
 TutorialMatchService.Done = false
 TutorialMatchService.DeckUnlocked = false
 TutorialMatchService.Completed = {}
+TutorialMatchService.Opened = {}
 TutorialMatchService.Granted = {}
 TutorialMatchService.Tutorial = nil :: boolean?
 TutorialMatchService.Won = false
@@ -289,6 +298,7 @@ function TutorialMatchService:openStep(step : any)
 
 	self.Step = step
 	self.Done = false
+	self.Opened[step.Id] = true
 	self.LastWave = step.Wave or self.LastWave
 
 	if step.UnlocksDeck then
@@ -340,6 +350,7 @@ function TutorialMatchService:openStep(step : any)
 			Positions = positions,
 			Lines = step.Lines,
 			HideDeck = step.HideDeck,
+			ReadDelay = step.ReadDelay,
 
 			Locked = locked,
 			AllowedUnits = self:allowedUnits(),
@@ -357,6 +368,8 @@ function TutorialMatchService:openStep(step : any)
 	if step.AutoComplete then
 		task.delay(step.AutoComplete, function()
 			if self.Step == step and not self.Done then
+				log:StudioWarn(`step "{step.Id}" closed on its AutoComplete fallback; the read never arrived.`)
+
 				self:CompleteStep()
 			end
 		end)
@@ -437,10 +450,22 @@ local function maxCardPrice() : number
 	return highest
 end
 
+--- What a purchase step needs the player to be able to pay.
+function TutorialMatchService:requiredCash(step : any) : number
+	if step.Card then
+		local card = RoundCardConfig.Get(step.Card)
+		return card and RoundCardConfig.GetPrice(card) or 0
+	end
+
+	return maxCardPrice()
+end
+
 --[=[
 	A purchase step that holds the wave must never find a player without money.
 	Tops up only the difference: to the card's price, or, for "any card", to the
 	most expensive card so whatever is on the table is affordable.
+
+	Safe to call repeatedly: a player who already has enough gets nothing.
 ]=]
 function TutorialMatchService:ensureCash(step : any)
 	if not step.Ensure then return end
@@ -448,14 +473,7 @@ function TutorialMatchService:ensureCash(step : any)
 	local mobService = self.Services.MobService
 	if not mobService then return end
 
-	local price
-	if step.Card then
-		local card = RoundCardConfig.Get(step.Card)
-		price = card and RoundCardConfig.GetPrice(card) or 0
-	else
-		price = maxCardPrice()
-	end
-
+	local price = self:requiredCash(step)
 	if price <= 0 then return end
 
 	for _, player in Players:GetPlayers() do
@@ -487,6 +505,13 @@ function TutorialMatchService:grantCash(step : any)
 	log:Debug(`gave {amount} cash on step "{step.Id}".`)
 end
 
+--[=[
+	Holds the wave while its step is open.
+
+	A `Buy` step with `Ensure` keeps topping cash up while it waits: the player can
+	still place towers with the shop up, and spending below every card's price
+	there would leave a held wave with nothing to buy.
+]=]
 function TutorialMatchService:AwaitStep(wave : number)
 	local step = self.Step
 	if not step or not step.Hold then
@@ -497,6 +522,8 @@ function TutorialMatchService:AwaitStep(wave : number)
 		return
 	end
 
+	local lastEnsure = os.clock()
+
 	while self.Step == step and not self.Done do
 		if step.Kind == "Speed" then
 			local speed = self.Services.SpeedService
@@ -506,6 +533,11 @@ function TutorialMatchService:AwaitStep(wave : number)
 
 				break
 			end
+		end
+
+		if step.Kind == "Buy" and step.Ensure and os.clock() - lastEnsure >= ENSURE_INTERVAL then
+			lastEnsure = os.clock()
+			self:ensureCash(step)
 		end
 
 		task.wait(0.2)
@@ -550,6 +582,18 @@ function TutorialMatchService:CompleteStep()
 
 		Framework:Fire("TutorialStepDone", player, step.Id)
 	end
+end
+
+--[=[
+	The client finished reading an `Info` step's dialog. Only the open step, only
+	once, and only for `Info`: action steps close on the action itself.
+]=]
+function TutorialMatchService:NoteRead(id : any)
+	local step = self.Step
+	if not step or self.Done or step.Kind ~= "Info" then return end
+	if typeof(id) ~= "string" or step.Id ~= id then return end
+
+	self:CompleteStep()
 end
 
 --[[ SHOP ]]
@@ -675,12 +719,33 @@ end
 
 --[[ UNIT RULES ]]
 
+--[=[
+	Whether upgrading and selling are allowed yet. Locked for the whole match with
+	`LockTowerActions`, otherwise until the `TowerActionsUntil` step has opened.
+]=]
+function TutorialMatchService:towerActionsAllowed() : boolean
+	if not self:IsTutorial() then
+		return true
+	end
+
+	if Config.Match.LockTowerActions == true then
+		return false
+	end
+
+	local gate = Config.Match.TowerActionsUntil
+	if not gate then
+		return true
+	end
+
+	return self.Opened[gate] == true
+end
+
 function TutorialMatchService:CanUpgrade() : boolean
-	return not (self:IsTutorial() and Config.Match.LockTowerActions == true)
+	return self:towerActionsAllowed()
 end
 
 function TutorialMatchService:CanSell() : boolean
-	return not (self:IsTutorial() and Config.Match.LockTowerActions == true)
+	return self:towerActionsAllowed()
 end
 
 --[=[
@@ -763,6 +828,12 @@ function TutorialMatchService:construct()
 	Framework:Listen("TutorialStepDone", function() end)
 	Framework:Listen("TutorialDeck", function() end)
 
+	Framework:Listen("TutorialStepRead", function(_player : Player, id : any)
+		if not self:IsTutorial() then return end
+
+		self:NoteRead(id)
+	end)
+
 	task.spawn(function()
 		if not self:resolve() then return end
 
@@ -798,5 +869,5 @@ end
 
 function TutorialMatchService:init()
 end
-
+ 
 return TutorialMatchService

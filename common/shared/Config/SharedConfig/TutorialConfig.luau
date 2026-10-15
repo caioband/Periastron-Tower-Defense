@@ -41,7 +41,7 @@ end
 TutorialConfig.PromptDelay = 3
 
 --[=[
-	The button lock applied on top of every step that declares `Buttons`. See
+	The button lock applied on top of every tutorial lock. See
 	`ButtonGateController`.
 ]=]
 TutorialConfig.ButtonGate = {
@@ -74,6 +74,13 @@ TutorialConfig.Buttons = {
 	    in depth under `Workspace.Map` (the HUD play button uses the same one).
 	  - `SuggestedMap`: the map the highlight lands on in the panel.
 	  - `Gui`: screen paths from `PlayerGui`; `%s` in `MapEntry` is the map key.
+	  - `Allow` / `Block`: the click whitelist while picking a map. Everything else
+	    on screen is unclickable (movement, camera, and Cmdr stay free).
+	  - `WaitingAllow`: the whitelist once the portal group is open and counting
+	    down: only leaving the group.
+	  - `LockRelease`: the lock's last-resort valve, in seconds.
+	  - `DisablePrompts`: turns proximity prompts (NPC talk, AFK area, Next Event)
+	    off on this client for the whole flow.
 ]=]
 TutorialConfig.MapPick = {
 	SpawnPart = "PortalsTpPart",
@@ -94,6 +101,23 @@ TutorialConfig.MapPick = {
 		Confirm = "ChooseMaps.Lobby.Frame.Confirm",
 	},
 
+	Allow = {
+		"ChooseMaps",
+		"HUD.HUDMiddle.PlayButton",
+	},
+
+	Block = {
+		"ChooseMaps.Lobby.IncreasePlrs",
+		"ChooseMaps.Lobby.LowerPlrs",
+	},
+
+	WaitingAllow = {
+		"ExitGroupPortal",
+	},
+
+	LockRelease = 600,
+	DisablePrompts = true,
+
 	PollInterval = 0.25,
 }
 
@@ -102,7 +126,8 @@ TutorialConfig.MapPick = {
 
 	  - `Difficulty`: the preset the match imposes (the vote is skipped).
 	  - `PresetOverrides`: fields replaced on a copy of that preset, for this match
-	    only. `WeatherChance = 0` leaves weather to the script.
+	    only. `WeatherChance = 0` leaves weather to the script, and `MobDamage = 0`
+	    means escaped enemies never hurt the base, so the tutorial cannot be lost.
 	  - `Map`: only for Cmdr's fallback teleport; a real run uses the map the
 	    player picked at the portal.
 	  - `Deck` / `AllowedUnits`: `nil` means the player's own loadout, all of it.
@@ -110,14 +135,24 @@ TutorialConfig.MapPick = {
 	    here, so a step can force it open with `OpenShop`. With this `true`, the
 	    difficulty's normal shop waves still open on top of that.
 	  - `FreeSpeed`: every speed step's game pass counts as owned in this match.
-	  - `LockTowerActions`: `true` would lock upgrading and selling all match.
+	  - `LockTowerActions`: `true` locks upgrading and selling for the whole match.
+	  - `TowerActionsUntil`: the step Id that unlocks upgrading and selling. Until
+	    that step opens, both are refused on the server and locked on screen.
+	  - `WaitForRead`: step dialogs wait for the player to click through each line
+	    instead of advancing on their own.
+	  - `LockedUntil`: buttons that stay unclickable until a given step opens, so
+	    the player cannot get ahead of the lesson that teaches them. `Button` is a
+	    screen path; a frame locks every button inside it.
 	  - `StudioAttribute`: in Studio, set this attribute to `true` on
 	    `ServerStorage.Maps` to rehearse the script without a teleport.
 ]=]
 TutorialConfig.Match = {
 	Map = "Farm",
 	Difficulty = "Easy",
-	PresetOverrides = { WeatherChance = 0 },
+	PresetOverrides = {
+		WeatherChance = 0,
+		MobDamage = 0,
+	},
 
 	Deck = nil,
 	AllowedUnits = nil,
@@ -125,6 +160,13 @@ TutorialConfig.Match = {
 	KeepShopCalendar = true,
 	FreeSpeed = true,
 	LockTowerActions = false,
+	TowerActionsUntil = "UpgradeTowers",
+	WaitForRead = true,
+
+	LockedUntil = {
+		{ Button = "Interface.Speed", Step = "UseSpeed2x" },
+		{ Button = "Interface.SkipPrompt", Step = "FinishUp" },
+	},
 
 	StudioAttribute = "StudioTutorial",
 
@@ -142,9 +184,13 @@ TutorialConfig.Match = {
 		  - `Index`: the `SpeedConfig` step a `Speed` step waits for (3 = 2x).
 		  - `Card`: the card a `Buy`/`Use` step asks for; `nil` on `Buy` = any card.
 		  - `Ensure`: tops up match cash so the purchase is always affordable.
+		  - `GrantCash`: a flat amount paid once when the step opens.
 		  - `ScheduleWeather`: weathers to pick from (filtered by the map's pool),
 		    arriving next wave with the usual warning.
-		  - `AutoComplete`: seconds until an `Info` step closes on its own.
+		  - `ReadDelay`: for `Info` steps, extra seconds after the dialog closes
+		    before the step counts as read (keeps a highlight up a little longer).
+		  - `AutoComplete`: a fallback, in seconds, that closes an `Info` step if
+		    the read never arrives.
 		  - `Highlight`: a screen path the highlight wraps.
 		  - `Buttons`: the step's click whitelist (aliases: `@Deck`, `@Card`,
 		    `@Hand`, `@Offer`, `@Offers`, `@SpeedOptions`, `@Highlight`).
@@ -208,12 +254,26 @@ TutorialConfig.Match = {
 
 		{
 			Id = "CardTip",
-			Wave = 5,
+			Wave = 4,
 			Kind = "Info",
-			AutoComplete = 8,
+			Hold = true,
+			AutoComplete = 90,
 
 			Lines = {
-				"[color=white]Your card waits in your hand next to your towers.[/color][pause=0.3] Tap it whenever you want to use it.",
+				"[color=white]The card shop shows up every few waves.[/color][pause=0.3] Cards you buy wait in your hand next to your towers — tap one whenever you want to use it.",
+			},
+		},
+
+		{
+			Id = "UpgradeTowers",
+			Wave = 5,
+			Kind = "Info",
+			Hold = true,
+			AutoComplete = 90,
+
+			Lines = {
+				"[color=white]Time to get stronger.[/color][pause=0.3] Click one of your towers to [gradient=green]upgrade[/gradient][color=white] it.[/color]",
+				"[color=white]You can also[/color] [gradient=orange]sell[/gradient][color=white] a tower there to get some cash back.[/color]",
 			},
 		},
 
@@ -221,7 +281,8 @@ TutorialConfig.Match = {
 			Id = "WeatherWarning",
 			Wave = 6,
 			Kind = "Info",
-			AutoComplete = 10,
+			Hold = true,
+			AutoComplete = 90,
 
 			ScheduleWeather = { "Rain", "Fog", "Wind", "Drought", "Sandstorm", "Snow" },
 
@@ -235,12 +296,14 @@ TutorialConfig.Match = {
 			Id = "WeatherArrived",
 			Wave = 7,
 			Kind = "Info",
-			AutoComplete = 12,
+			Hold = true,
+			ReadDelay = 5,
+			AutoComplete = 90,
 
 			Highlight = "Interface.WeatherButton",
 
 			Lines = {
-				"[color=white]Here it is![/color][pause=0.3] Tap this icon any time to see exactly what the weather does.",
+				"[color=white]Here it is![/color][pause=0.3] Tap the weather icon any time to see exactly what it does.",
 			},
 		},
 
@@ -248,7 +311,8 @@ TutorialConfig.Match = {
 			Id = "FinishUp",
 			Wave = 9,
 			Kind = "Info",
-			AutoComplete = 8,
+			Hold = true,
+			AutoComplete = 90,
 
 			Lines = {
 				"[color=white]That's everything you need to know![/color][pause=0.4] Survive every wave to win the match — good luck!",
@@ -303,5 +367,5 @@ TutorialConfig.CrateGuarantee = {
 	Crates = 3,
 	Rarity = "Epic",
 }
-
-return TutorialConfig
+ 
+return TutorialConfig 

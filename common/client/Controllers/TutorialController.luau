@@ -1,5 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 
 local Player = Players.LocalPlayer
 
@@ -24,7 +25,13 @@ local PICK = Config.MapPick
 	**The map pick** (`TutorialMapPick`, sent by `TutorialService` to a first-time
 	player): a welcome, then an arrow at the nearest free portal. Once the map panel
 	opens, the highlight lands on the suggested map, then on Confirm once a map is
-	picked. The player's portal group opening ends it with one short line.
+	picked. Opening the portal group ends the pointing with one short line.
+
+	**The screen is locked for the whole flow.** Through `ButtonGateController`, only
+	what the current phase needs is clickable (`MapPick.Allow` while picking,
+	`MapPick.WaitingAllow` once the group is counting down), and proximity prompts
+	are switched off on this client (`MapPick.DisablePrompts`). Leaving the group,
+	or a teleport that failed and put the player back, resumes the pick.
 
 	**The old offer** (`TutorialPrompt`) is still here for Cmdr's `tutorial`;
 	accepting starts the map pick.
@@ -41,17 +48,21 @@ local TutorialController = {
 		RichTextController = {},
 		HighlightController = {},
 		ArrowController = {},
+		ButtonGateController = {},
 	}
 }
 
 TutorialController.Listeners = {}
 TutorialController.Session = 0
 
--- The map pick's state: which session runs it and what it is pointing at now.
+-- The map pick's state.
+TutorialController.PickActive = false
+TutorialController.Waiting = false
 TutorialController.PickSession = 0
 TutorialController.PickMode = nil :: string?
 TutorialController.PickArrow = nil :: any
 TutorialController.PickArrowTarget = nil :: BasePart?
+TutorialController.PromptsWere = nil :: boolean?
 
 --[[ INTERNAL ]]
 
@@ -80,6 +91,51 @@ function TutorialController:answer(accepted : boolean)
 	end
 
 	self.Controllers.DialogController:Close()
+end
+
+--[[ SCREEN LOCK ]]
+
+--- Locks the screen to `allow` plus the dialog box.
+function TutorialController:lockScreen(allow : { string }?)
+	local gate = self.Controllers.ButtonGateController
+	if not gate then return end
+
+	local list = table.clone(allow or {})
+	for _, entry in (Config.ButtonGate.Always or {}) do
+		table.insert(list, entry)
+	end
+
+	gate:Lock({
+		Allow = list,
+		Block = PICK.Block,
+		Ignore = Config.ButtonGate.Ignore,
+		Release = PICK.LockRelease,
+	})
+end
+
+function TutorialController:unlockScreen()
+	local gate = self.Controllers.ButtonGateController
+	if gate then
+		gate:Unlock()
+	end
+end
+
+function TutorialController:setPromptsEnabled(enabled : boolean)
+	if not PICK.DisablePrompts then return end
+
+	if not enabled then
+		if self.PromptsWere == nil then
+			self.PromptsWere = ProximityPromptService.Enabled
+		end
+
+		ProximityPromptService.Enabled = false
+		return
+	end
+
+	if self.PromptsWere ~= nil then
+		ProximityPromptService.Enabled = self.PromptsWere
+		self.PromptsWere = nil
+	end
 end
 
 --[[ MAP PICK ]]
@@ -145,9 +201,14 @@ function TutorialController:highlightPath(path : string)
 	if target then
 		highlight:Show(target)
 	end
+
+	local gate = self.Controllers.ButtonGateController
+	if gate then
+		gate:Refresh()
+	end
 end
 
-function TutorialController:clearPick()
+function TutorialController:clearPickVisuals()
 	self.PickMode = nil
 	self:clearArrow()
 
@@ -190,11 +251,33 @@ function TutorialController:updatePick()
 	self:pointAtPortal()
 end
 
-function TutorialController:finishPick(session : number)
-	if self.PickSession ~= session then return end
-
+--- Starts (or restarts) the pointing loop, under a fresh session.
+function TutorialController:startPointing()
 	self.PickSession += 1
-	self:clearPick()
+	local session = self.PickSession
+
+	self:clearPickVisuals()
+
+	task.spawn(function()
+		while self.PickSession == session and self.PickActive and not self.Waiting do
+			self:updatePick()
+			task.wait(PICK.PollInterval)
+		end
+	end)
+end
+
+--[=[
+	The portal group opened: pointing stops, the screen narrows to leaving the
+	group, and one closing line plays.
+]=]
+function TutorialController:onGroupJoined()
+	if not self.PickActive or self.Waiting then return end
+
+	self.Waiting = true
+	self.PickSession += 1
+
+	self:clearPickVisuals()
+	self:lockScreen(PICK.WaitingAllow)
 
 	local dialog = self.Controllers.DialogController
 	if dialog and PICK.ChosenLines then
@@ -207,26 +290,38 @@ function TutorialController:finishPick(session : number)
 end
 
 --[=[
-	Runs the map pick. The welcome plays first and alone; pointing starts when it
-	closes, and stops when the player's portal group opens.
+	Back outside a group (left it, or the teleport failed and the portal put the
+	player back): the pick resumes where it was, without the welcome.
+]=]
+function TutorialController:onGroupLeft()
+	if not self.PickActive or not self.Waiting then return end
+
+	self.Waiting = false
+
+	self:lockScreen(PICK.Allow)
+	self:startPointing()
+end
+
+--[=[
+	Runs the map pick. The screen locks first; the welcome plays alone, and
+	pointing starts when it closes.
 ]=]
 function TutorialController:RunMapPick()
+	self.PickActive = true
+	self.Waiting = false
 	self.PickSession += 1
 	local session = self.PickSession
 
-	self:clearPick()
+	self:clearPickVisuals()
+	self:lockScreen(PICK.Allow)
+	self:setPromptsEnabled(false)
 
 	local dialog = self.Controllers.DialogController
 
-	local function startPointing()
-		if self.PickSession ~= session then return end
+	local function begin()
+		if self.PickSession ~= session or not self.PickActive then return end
 
-		task.spawn(function()
-			while self.PickSession == session do
-				self:updatePick()
-				task.wait(PICK.PollInterval)
-			end
-		end)
+		self:startPointing()
 	end
 
 	local name = self:escapedName()
@@ -236,7 +331,7 @@ function TutorialController:RunMapPick()
 	end
 
 	if not dialog then
-		startPointing()
+		begin()
 		return
 	end
 
@@ -246,7 +341,7 @@ function TutorialController:RunMapPick()
 			disconnect()
 		end
 
-		startPointing()
+		begin()
 	end)
 
 	if not dialog:Play(lines, Config.Speech()) then
@@ -254,8 +349,21 @@ function TutorialController:RunMapPick()
 			disconnect()
 		end
 
-		startPointing()
+		begin()
 	end
+end
+
+--- Ends the map pick and gives the screen back.
+function TutorialController:StopMapPick()
+	if not self.PickActive then return end
+
+	self.PickActive = false
+	self.Waiting = false
+	self.PickSession += 1
+
+	self:clearPickVisuals()
+	self:unlockScreen()
+	self:setPromptsEnabled(true)
 end
 
 --[[ API ]]
@@ -303,8 +411,9 @@ function TutorialController:OnAnswer(callback : (accepted : boolean) -> ()) : ()
 	end
 end
 
+--- Whether the Lobby half of the tutorial is running (picking or waiting to leave).
 function TutorialController:IsPickingMap() : boolean
-	return self.PickMode ~= nil
+	return self.PickActive
 end
 
 --[[ LIFECYCLE ]]
@@ -325,8 +434,12 @@ function TutorialController:construct()
 	end)
 
 	Framework:Listen("PortalGroupChanged", function(portalId : any)
-		if typeof(portalId) == "number" and portalId > 0 then
-			self:finishPick(self.PickSession)
+		if typeof(portalId) ~= "number" then return end
+
+		if portalId > 0 then
+			self:onGroupJoined()
+		else
+			self:onGroupLeft()
 		end
 	end)
 end
@@ -342,4 +455,4 @@ function TutorialController:init()
 	self:construct()
 end
 
-return TutorialController
+return TutorialController 
