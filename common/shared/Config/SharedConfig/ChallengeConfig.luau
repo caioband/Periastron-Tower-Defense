@@ -26,6 +26,10 @@
 	preset (`ServerScriptService.Config.Difficulty`). After them, `MIN_LEAKS`
 	guarantees the base survives at least that many leaked enemies.
 
+	**Per-slot rules.** `SlotRules[slot]` overrides `Modifiers` and `Weather` for one
+	slot and can scale its `Rewards` (`RewardScale`): that is how Weekly 2 is the
+	harder, better-paying weekly.
+
 	Profile record (`DATA_KEY`): `{ [kind] = { Period, Done = { ["slot"] = true } } }`.
 ]]
 
@@ -80,6 +84,9 @@ ChallengeConfig.KIND_ORDER = { "Daily", "Weekly" }
 	    weather lasts. `ClearWaves`: clear waves after each weather.
 	  - `Modifiers`: how many entries of `MODIFIERS` are applied.
 	  - `Rewards`: paid once per challenge per period (`RewardService:Grant`).
+	  - `SlotRules[slot]`: `Modifiers` / `Weather` overrides for one slot, and
+	    `RewardScale`, a multiplier on that slot's `Rewards` (rounded; a crate
+	    count never drops below 1).
 ]]
 ChallengeConfig.KINDS = {
 	Daily = {
@@ -109,6 +116,15 @@ ChallengeConfig.KINDS = {
 		Modifiers = { Min = 0, Max = 1 },
 
 		Rewards = { Cash = 1500, Shards = 15, Crates = { Epic = 1 } },
+
+		-- Weekly 2: always modified, less time without weather, pays 1.5x.
+		SlotRules = {
+			[2] = {
+				Modifiers = { Min = 1, Max = 2 },
+				Weather = { Harsh = true, RotateWaves = 3, ClearWaves = 1 },
+				RewardScale = 1.5,
+			},
+		},
 	},
 }
 
@@ -243,6 +259,31 @@ local function weathersFor(mapName : string, harsh : boolean) : { string }
 	return list
 end
 
+--- `rewards` multiplied by `scale`, rounded. Crate counts never drop below 1.
+local function scaleRewards(rewards : { [string] : any }, scale : number?) : { [string] : any }
+	if not scale or scale == 1 then
+		return rewards
+	end
+
+	local scaled = {}
+
+	for key, value in rewards do
+		if key == "Crates" and typeof(value) == "table" then
+			local crates = {}
+			for rarity, amount in value do
+				crates[rarity] = math.max(1, math.floor(amount * scale + 0.5))
+			end
+			scaled.Crates = table.freeze(crates)
+		elseif typeof(value) == "number" then
+			scaled[key] = math.floor(value * scale + 0.5)
+		else
+			scaled[key] = value
+		end
+	end
+
+	return table.freeze(scaled)
+end
+
 local function isInteger(value : any) : boolean
 	return typeof(value) == "number" and value == value and value == math.floor(value)
 end
@@ -327,6 +368,10 @@ function ChallengeConfig.generate(kind : string, period : number) : { Challenge 
 	local list = {}
 
 	for slot = 1, rules.Count do
+		local slotRules = rules.SlotRules and rules.SlotRules[slot] or nil
+		local modifierRules = (slotRules and slotRules.Modifiers) or rules.Modifiers
+		local weatherRules = (slotRules and slotRules.Weather) or rules.Weather
+
 		local map = maps[(slot - 1) % #maps + 1]
 
 		local fixed = rules.SlotDifficulties and rules.SlotDifficulties[slot]
@@ -340,7 +385,7 @@ function ChallengeConfig.generate(kind : string, period : number) : { Challenge 
 			banned[unit] = true
 		end
 
-		local modifierCount = math.clamp(rng:NextInteger(rules.Modifiers.Min, rules.Modifiers.Max), 0, #ChallengeConfig.MODIFIER_ORDER)
+		local modifierCount = math.clamp(rng:NextInteger(modifierRules.Min, modifierRules.Max), 0, #ChallengeConfig.MODIFIER_ORDER)
 		local modifiers = pickMany(ChallengeConfig.MODIFIER_ORDER, modifierCount, rng)
 
 		list[slot] = table.freeze({
@@ -350,13 +395,13 @@ function ChallengeConfig.generate(kind : string, period : number) : { Challenge 
 			Slot = slot,
 			Map = map,
 			Difficulty = difficulty,
-			Weathers = table.freeze(weathersFor(map, rules.Weather.Harsh)),
-			RotateWaves = math.max(1, rules.Weather.RotateWaves or 1),
-			ClearWaves = math.max(0, rules.Weather.ClearWaves or 0),
+			Weathers = table.freeze(weathersFor(map, weatherRules.Harsh)),
+			RotateWaves = math.max(1, weatherRules.RotateWaves or 1),
+			ClearWaves = math.max(0, weatherRules.ClearWaves or 0),
 			Bans = table.freeze(bans),
 			Banned = table.freeze(banned),
 			Modifiers = table.freeze(modifiers),
-			Rewards = rules.Rewards,
+			Rewards = scaleRewards(rules.Rewards, slotRules and slotRules.RewardScale),
 			Seed = rng:NextInteger(1, 1073741823),
 		})
 	end
@@ -565,4 +610,4 @@ function ChallengeConfig.isCompleted(record : any, challenge : Challenge?) : boo
 	return entry.Done[tostring(challenge.Slot)] == true
 end
 
-return ChallengeConfig
+return ChallengeConfig  

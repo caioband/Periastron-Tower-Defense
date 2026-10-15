@@ -23,6 +23,14 @@ local TALK = Config.Interaction
 local RESERVE_RADIUS = MOVE.ReserveRadius or 12
 local SETTING_KEY = "DisableNPCs"
 
+-- How long a noticing NPC stays stopped before it moves on, even if the player
+-- is still next to it.
+local NOTICE_HOLD = TALK.NoticeHold or 3
+
+-- After moving on, how long the NPC ignores players, so it walks away instead of
+-- stopping again a step later.
+local NOTICE_COOLDOWN = TALK.NoticeCooldown or 8
+
 local Framework = Me.new()
 local log = Log.new("LobbyNPCController")
 
@@ -336,13 +344,22 @@ end
 
 --[[ STATE ]]
 
+--[=[
+	Stops the NPC to face the player, for at most `NOTICE_HOLD` seconds. An NPC that
+	just moved on (`IgnoreUntil`) does not stop again until its cooldown ends.
+]=]
 function LobbyNPCController:_notice(npc)
 	if npc.State ~= "Walking" then
 		return
 	end
 
+	if npc.IgnoreUntil and os.clock() < npc.IgnoreUntil then
+		return
+	end
+
 	npc.State = "Noticed"
 	npc.ReleaseAt = nil
+	npc.NoticedUntil = os.clock() + NOTICE_HOLD
 	npc.Humanoid.AutoRotate = false
 	npc.Humanoid:MoveTo(npc.Root.Position)
 	self:_setAnimation(npc, "Idle")
@@ -352,11 +369,22 @@ function LobbyNPCController:_notice(npc)
 	end
 end
 
-function LobbyNPCController:_release(npc)
+--[=[
+	Back to walking. `moveOn` means the stop ran out while the player was still
+	there: the NPC drops its route and picks a new destination elsewhere, so it
+	leaves instead of carrying on toward where the player stands.
+]=]
+function LobbyNPCController:_release(npc, moveOn : boolean?)
 	npc.State = "Walking"
 	npc.ReleaseAt = nil
+	npc.NoticedUntil = nil
+	npc.IgnoreUntil = os.clock() + NOTICE_COOLDOWN
 	npc.Humanoid.AutoRotate = true
 	npc.Bubble:Stop()
+
+	if moveOn then
+		npc.Route = nil
+	end
 end
 
 function LobbyNPCController:_linesFor(npc) : { any }
@@ -387,6 +415,7 @@ function LobbyNPCController:_talk(npc)
 
 	self.Talking = npc
 	npc.State = "Talking"
+	npc.NoticedUntil = nil
 	npc.Bubble:Stop()
 
 	for _, other in self.NPCs do
@@ -419,7 +448,9 @@ function LobbyNPCController:_talk(npc)
 		end
 
 		if npc.Alive then
+			-- The conversation counts as the stop: a fresh window after it, then it moves on.
 			npc.State = "Walking"
+			npc.IgnoreUntil = nil
 			self:_notice(npc)
 		end
 	end
@@ -631,6 +662,12 @@ function LobbyNPCController:_spawn(template : Model)
 		Offset = randomOffset(),
 		State = "Walking",
 		ReleaseAt = nil,
+
+		-- When the current stop runs out (`NOTICE_HOLD`), and until when the NPC
+		-- ignores players after moving on (`NOTICE_COOLDOWN`).
+		NoticedUntil = nil,
+		IgnoreUntil = nil,
+
 		Alive = true,
 	}
 
@@ -817,7 +854,10 @@ function LobbyNPCController:_step(deltaTime : number)
 				self:_notice(npc)
 			end
 		elseif npc.State == "Noticed" then
-			if distance > TALK.ReleaseRadius then
+			if npc.NoticedUntil and now >= npc.NoticedUntil then
+				-- Stopped long enough: move on somewhere else, even with the player still here.
+				self:_release(npc, true)
+			elseif distance > TALK.ReleaseRadius then
 				npc.ReleaseAt = npc.ReleaseAt or (now + TALK.ResumeDelay)
 				if now >= npc.ReleaseAt then
 					self:_release(npc)

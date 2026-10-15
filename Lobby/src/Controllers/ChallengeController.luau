@@ -13,10 +13,12 @@ local Log = require(Util:WaitForChild("Log"))
 local SharedConfig = require(Configs.SharedConfig)
 local ButtonUtil = require(Util.ButtonUtil)
 local ProximityPanel = require(Util.ProximityPanel)
+local UIUtil = require(Util.UIUtil)
 
 local ChallengeConfig = SharedConfig.ChallengeConfig
 local MapConfig = SharedConfig.MapConfig
 local CardConfig = SharedConfig.CardConfig
+local CrateConfig = SharedConfig.CrateConfig
 local UnlockConfig = SharedConfig.DifficultyUnlockConfig
 
 local Framework = Me.new()
@@ -46,6 +48,7 @@ local GUI = {
 	Gamemode = "Gamemode",
 	Play = "Play",
 	PlayText = "Text",
+	Rewards = "Rewards",
 }
 
 --[=[
@@ -82,6 +85,10 @@ local REASON_TEXT = {
 
 local REASON_HOLD = 2.5
 local LOCKED_TRANSPARENCY = 0.45
+
+-- The rewards line of a completed challenge: still readable, clearly spent.
+local CLAIMED_TEXT_TRANSPARENCY = 0.55
+
 local PERIOD_CHECK_INTERVAL = 1
 
 --[=[
@@ -95,6 +102,9 @@ local PERIOD_CHECK_INTERVAL = 1
 	`ChallengeConfig` (the same generation the server runs), completion comes from
 	the profile replica (`Data.Challenges`), and Play only sends "kind, slot":
 	`ChallengeService` checks everything again and teleports.
+
+	Each card's `Rewards` line is written from the challenge's own `Rewards`, so a
+	slot with a `RewardScale` shows its bigger prize, and fades once it is paid.
 
 	A rollover while the board exists rebuilds the cards for the new period.
 ]=]
@@ -132,6 +142,43 @@ local function setText(label : Instance?, text : string)
 	if label and label:IsA("TextLabel") then
 		label.Text = text
 	end
+end
+
+--[=[
+	"1.5K COINS + 15 SHARDS + EPIC": the challenge's rewards in one short line.
+	A single crate shows only its rarity; more show the count too.
+]=]
+local function rewardText(rewards : { [string] : any }?) : string
+	if typeof(rewards) ~= "table" then
+		return ""
+	end
+
+	local parts = {}
+
+	local cash = tonumber(rewards.Cash) or 0
+	if cash > 0 then
+		table.insert(parts, `{UIUtil.formatAbbreviated(cash)} COINS`)
+	end
+
+	local shards = tonumber(rewards.Shards) or 0
+	if shards > 0 then
+		table.insert(parts, `{shards} SHARDS`)
+	end
+
+	local crates = rewards.Crates
+	if typeof(crates) == "table" then
+		for _, rarity in CrateConfig.getOrderedRarities() do
+			local amount = tonumber(crates[rarity]) or 0
+			if amount <= 0 then
+				continue
+			end
+
+			local name = string.upper(rarity)
+			table.insert(parts, if amount == 1 then name else `{amount} {name}`)
+		end
+	end
+
+	return table.concat(parts, " + ")
 end
 
 --[=[
@@ -261,14 +308,20 @@ function ChallengeController:_renderCard(entry)
 
 	setText(body:FindFirstChild(GUI.Gamemode), mode)
 
+	local data = self:_data()
+	local done = ChallengeConfig.isCompleted(data and data[ChallengeConfig.DATA_KEY], challenge)
+	local unlocked = UnlockConfig.isUnlocked(challenge.Difficulty, data and data.Stats)
+
+	local rewards = body:FindFirstChild(GUI.Rewards)
+	if rewards and rewards:IsA("TextLabel") then
+		rewards.Text = rewardText(challenge.Rewards)
+		rewards.TextTransparency = if done then CLAIMED_TEXT_TRANSPARENCY else 0
+	end
+
 	local play = entry.Play
 	if not play then
 		return
 	end
-
-	local data = self:_data()
-	local done = ChallengeConfig.isCompleted(data and data[ChallengeConfig.DATA_KEY], challenge)
-	local unlocked = UnlockConfig.isUnlocked(challenge.Difficulty, data and data.Stats)
 
 	local text = if not unlocked then LOCKED_TEXT elseif done then DONE_TEXT else PLAY_TEXT
 
@@ -468,4 +521,4 @@ function ChallengeController:init()
 	self.WarnedBoard = false
 end
 
-return ChallengeController
+return ChallengeController  
