@@ -30,9 +30,24 @@ local SpeedConfig = SharedConfig.SpeedConfig
 	dialog is dismissed. An `Info` step tells the server it was read
 	(`TutorialStepRead`) when its dialog closes, which is what releases its wave.
 
+	**Placement steps follow the hand.** While the player has not picked the card
+	up, the highlight points at it; the moment a ghost is out (`isPlacing`), the
+	highlight gets out of the way of the map and, with `ArrowOnEquip`, the arrow
+	appears over the spot. Putting the card back brings the highlight back. With a
+	`SnapRadius`, `UnitPlacementController` asks `GetPlacementSnap` every frame and
+	snaps the ghost onto the arrow's spot when the player aims close to it.
+
 	**Purchase steps follow the shop.** The highlight sits on the round card shop's
 	edge button until the player opens the shop, moves to the offer once the cards
 	are on the table, and goes back to the button if the shop is closed unbought.
+
+	**Weather steps follow the popup.** The hand points at the weather button, moves
+	onto the weather popup once it opens, and the step counts as read after the popup
+	has been looked at for `ReadDelay` seconds (or closed).
+
+	**Upgrade steps follow the selection.** Every tower the player owns glows with an
+	arrow over it until one is clicked; once the upgrade card is open, the hand
+	points at its upgrade button.
 
 	**Lesson locks.** `Match.LockedUntil` buttons stay unclickable until the step
 	that teaches them opens, held through `Interactable`, which
@@ -51,6 +66,14 @@ local UI_WAIT_FRAMES = 50
 local SPEECH_TIMEOUT = 120
 local LESSON_LOCK_INTERVAL = 0.5
 local SHOP_WATCH_INTERVAL = 0.15
+local PLACEMENT_WATCH_INTERVAL = 0.1
+local VISUAL_WATCH_INTERVAL = 0.15
+
+-- The glow on the player's towers during an `Upgrade` step.
+local UNIT_HIGHLIGHT_NAME = "TutorialUnitHighlight"
+local UNIT_HIGHLIGHT_FILL = Color3.fromRGB(255, 205, 60)
+local UNIT_HIGHLIGHT_OUTLINE = Color3.fromRGB(255, 255, 255)
+local UNIT_HIGHLIGHT_FILL_TRANSPARENCY = 0.6
 
 local TutorialStepController = {
 	Controllers = {
@@ -75,6 +98,13 @@ TutorialStepController.AllowedUnits = nil :: { [string] : boolean }?
 TutorialStepController.Arrows = {}
 TutorialStepController.StepConnections = {}
 
+-- The placement step whose visuals are up: what `GetPlacementSnap` answers for.
+TutorialStepController.SnapStep = nil :: any
+
+-- The `Upgrade` step's glow and arrows over the towers. See `markUnits`.
+TutorialStepController.UnitHighlights = {} :: { [Model] : Highlight }
+TutorialStepController.UnitArrows = {} :: { [Model] : any }
+
 -- Step Ids that have opened: what releases `LockedUntil` buttons and tower actions.
 TutorialStepController.Opened = {}
 
@@ -86,6 +116,19 @@ TutorialStepController.LessonLoopRunning = false
 
 function TutorialStepController:cardComponent() : any
 	return self.CardComponent
+end
+
+--[=[
+	A controller this one only needs now and then, looked up at the time of use and
+	without waiting: the placement and weather controllers live in this place only,
+	and a waiting lookup during boot could hang.
+]=]
+function TutorialStepController:controller(name : string) : any
+	return Framework:Get(name, false, false)
+end
+
+function TutorialStepController:placement() : any
+	return self:controller("UnitPlacementController")
 end
 
 function TutorialStepController:resolveCardComponent()
@@ -351,11 +394,24 @@ function TutorialStepController:showVisuals(step : any)
 	self:setAllowedCards(self:allowedOf(step))
 
 	local highlight = self.Controllers.HighlightController
+	local followsPlacement = step.Kind == "Place" or step.Kind == "PlaceRest"
+
+	if step.Kind == "Place" then
+		self.SnapStep = step
+	end
 
 	if step.Kind == "Buy" then
 		-- The shop step drives its own highlight: the edge button first, the offer
 		-- only once the shop is open.
 		self:watchShop(step)
+	elseif followsPlacement then
+		-- The placement steps drive their own highlight and arrow, following the card
+		-- in the player's hand.
+		self:watchPlacement(step)
+	elseif step.Kind == "Weather" then
+		self:watchWeather(step)
+	elseif step.Kind == "Upgrade" then
+		self:watchUpgrade(step)
 	elseif highlight then
 		local target = self:cardOf(step.Unit)
 
@@ -379,7 +435,7 @@ function TutorialStepController:showVisuals(step : any)
 	end
 
 	local arrow = self.Controllers.ArrowController
-	if arrow then
+	if arrow and not step.ArrowOnEquip then
 		if typeof(step.Position) == "Vector3" then
 			table.insert(self.Arrows, arrow:Point(step.Position))
 		end
@@ -390,6 +446,233 @@ function TutorialStepController:showVisuals(step : any)
 			end
 		end
 	end
+end
+
+--- What a placement step points at while the card is still in the hotbar.
+function TutorialStepController:placementTarget(step : any) : GuiObject?
+	local target = self:cardOf(step.Unit)
+
+	if not target and step.Highlight then
+		local highlight = self.Controllers.HighlightController
+		target = highlight and highlight:Find(step.Highlight)
+	end
+
+	return target
+end
+
+--[=[
+	A placement step's visuals, following the card in the player's hand.
+
+	Card in the hotbar: the highlight and its finger point at it. Card picked up (a
+	ghost is out): the highlight leaves, because the player needs to see the map, and
+	the arrow over the spot comes in (`ArrowOnEquip`). Card put back: the arrow
+	leaves and the highlight returns.
+]=]
+function TutorialStepController:watchPlacement(step : any)
+	task.spawn(function()
+		local highlight = self.Controllers.HighlightController
+		local arrowController = self.Controllers.ArrowController
+
+		local lastPlacing = nil
+		local arrow = nil
+		local current = nil
+
+		while self.Step == step do
+			local placement = self:placement()
+			local placing = placement ~= nil and placement.isPlacing == true
+
+			if placing ~= lastPlacing then
+				lastPlacing = placing
+
+				if placing then
+					current = nil
+
+					if highlight then
+						highlight:Hide()
+					end
+
+					if step.ArrowOnEquip and typeof(step.Position) == "Vector3" and arrowController and not arrow then
+						arrow = arrowController:Point(step.Position)
+
+						if arrow then
+							table.insert(self.Arrows, arrow)
+						end
+					end
+				else
+					if arrow then
+						local index = table.find(self.Arrows, arrow)
+						if index then
+							table.remove(self.Arrows, index)
+						end
+
+						arrow:Destroy()
+						arrow = nil
+					end
+				end
+			end
+
+			-- Not placing: keep pointing at the card. Retried every pass, because the card
+			-- may not be on screen yet (the hotbar comes back after the dialog).
+			if not placing and highlight then
+				local target = self:placementTarget(step)
+
+				if target and target ~= current and highlight:Show(target) then
+					current = target
+					self:refreshGate()
+				end
+			end
+
+			task.wait(PLACEMENT_WATCH_INTERVAL)
+		end
+	end)
+end
+
+--[=[
+	The weather step's visuals: the hand on the weather button until the popup
+	opens, then on the popup. The step counts as read after the popup has been open
+	for `ReadDelay` seconds, or when the player closes it after opening it.
+]=]
+function TutorialStepController:watchWeather(step : any)
+	task.spawn(function()
+		local highlight = self.Controllers.HighlightController
+		if not highlight then return end
+
+		local current = nil
+		local openedAt = nil
+		local reported = false
+
+		while self.Step == step do
+			local indicator = self:controller("WeatherIndicatorController")
+			local isOpen = indicator ~= nil and indicator.IsOpen == true
+
+			local target
+			if isOpen then
+				openedAt = openedAt or os.clock()
+				target = (indicator and indicator.Panel) or (step.Panel and highlight:Find(step.Panel))
+			else
+				target = step.Highlight and highlight:Find(step.Highlight)
+			end
+
+			if target and target ~= current and highlight:Show(target) then
+				current = target
+				self:refreshGate()
+			end
+
+			if openedAt and not reported then
+				local looked = os.clock() - openedAt >= (step.ReadDelay or 3)
+
+				if looked or not isOpen then
+					reported = true
+					Framework:Fire("TutorialStepRead", step.Id)
+				end
+			end
+
+			task.wait(VISUAL_WATCH_INTERVAL)
+		end
+	end)
+end
+
+--- The player's own placed towers.
+function TutorialStepController:ownedUnits() : { Model }
+	local placement = self:placement()
+	local out = {}
+
+	for model, class in (placement and placement.createdClasses or {}) do
+		if typeof(model) == "Instance" and model.Parent and class and class.isOwner then
+			table.insert(out, model)
+		end
+	end
+
+	return out
+end
+
+--[=[
+	The glow and the arrow over every tower the player owns: "click one of these".
+	Towers placed after the step opened get theirs on the next pass.
+]=]
+function TutorialStepController:markUnits()
+	local arrowController = self.Controllers.ArrowController
+
+	for _, model in self:ownedUnits() do
+		if not self.UnitHighlights[model] then
+			local glow = Instance.new("Highlight")
+			glow.Name = UNIT_HIGHLIGHT_NAME
+			glow.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			glow.FillColor = UNIT_HIGHLIGHT_FILL
+			glow.FillTransparency = UNIT_HIGHLIGHT_FILL_TRANSPARENCY
+			glow.OutlineColor = UNIT_HIGHLIGHT_OUTLINE
+			glow.OutlineTransparency = 0
+			glow.Parent = model
+
+			self.UnitHighlights[model] = glow
+		end
+
+		if arrowController and not self.UnitArrows[model] then
+			local center, size = model:GetBoundingBox()
+			local top = center.Position + Vector3.new(0, size.Y / 2, 0)
+
+			self.UnitArrows[model] = arrowController:Point(top)
+		end
+	end
+end
+
+function TutorialStepController:clearUnitMarks()
+	for model, glow in self.UnitHighlights do
+		glow:Destroy()
+		self.UnitHighlights[model] = nil
+	end
+
+	for model, arrow in self.UnitArrows do
+		if arrow then
+			arrow:Destroy()
+		end
+
+		self.UnitArrows[model] = nil
+	end
+end
+
+--[=[
+	The upgrade step's visuals. Upgrade card closed: the towers glow with an arrow
+	over each. Upgrade card open: the marks leave and the hand points at its upgrade
+	button. Closing the card brings the marks back.
+]=]
+function TutorialStepController:watchUpgrade(step : any)
+	task.spawn(function()
+		local highlight = self.Controllers.HighlightController
+		local pointing = false
+
+		while self.Step == step do
+			local interface = PlayerGui:FindFirstChild("Interface")
+			local card = interface and interface:FindFirstChild("CardUpgrade")
+			local button = step.Highlight and highlight and highlight:Find(step.Highlight)
+			local open = card ~= nil and card:IsA("GuiObject") and card.Visible
+
+			if open and button then
+				if not pointing then
+					self:clearUnitMarks()
+
+					if highlight and highlight:Show(button) then
+						pointing = true
+						self:refreshGate()
+					end
+				end
+			else
+				if pointing then
+					pointing = false
+
+					if highlight then
+						highlight:Hide()
+					end
+				end
+
+				self:markUnits()
+			end
+
+			task.wait(VISUAL_WATCH_INTERVAL)
+		end
+
+		self:clearUnitMarks()
+	end)
 end
 
 --- The round card shop's row of offers, the container of every card on the table.
@@ -665,6 +948,8 @@ function TutorialStepController:setDeckHeld(held : boolean)
 end
 
 function TutorialStepController:clearVisuals()
+	self.SnapStep = nil
+
 	local highlight = self.Controllers.HighlightController
 	if highlight then
 		highlight:Hide()
@@ -675,6 +960,8 @@ function TutorialStepController:clearVisuals()
 	end
 
 	table.clear(self.Arrows)
+
+	self:clearUnitMarks()
 
 	for _, connection in self.StepConnections do
 		connection:Disconnect()
@@ -736,6 +1023,25 @@ function TutorialStepController:AllowsCardUse(cardId : string) : boolean
 	end
 
 	return cardId == step.Card
+end
+
+--[=[
+	Where a ghost of `unitName` should snap to right now, and from how far: the spot
+	under the placement step's arrow and its `SnapRadius`. `nil` when no placement
+	step with a snap is on screen, or the ghost is another unit.
+
+	`UnitPlacementController` asks every frame: aiming within the radius puts the
+	ghost exactly on the spot, aiming further away paints it red.
+]=]
+function TutorialStepController:GetPlacementSnap(unitName : string) : (Vector3?, number?)
+	local step = self.SnapStep
+	if not step or self.Step ~= step then return nil, nil end
+
+	if step.Kind ~= "Place" then return nil, nil end
+	if typeof(step.Position) ~= "Vector3" or typeof(step.SnapRadius) ~= "number" then return nil, nil end
+	if step.Unit and unitName ~= step.Unit then return nil, nil end
+
+	return step.Position, step.SnapRadius
 end
 
 --- Whether upgrading and selling are still locked by the tutorial.

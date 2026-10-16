@@ -94,6 +94,37 @@ HighlightConfig.Tween = {
 }
 
 --[=[
+	The pointing finger that sits next to the hole and jabs at it.
+
+	  - `Enabled`: the default; `Show(target, { Finger = false })` turns it off for
+	    one highlight.
+	  - `Image`: the art, a hand pointing **up**. Below the hole it is used as is;
+	    when there is no room below it is turned upside down and goes above.
+	  - `TipX`: where the fingertip is across the image (0 left, 1 right), so the
+	    tip, not the image's middle, lines up with the target's centre.
+	  - `Aspect`: width over height of the image (216x252).
+	  - `Size`: the finger's height, proportional to the hole's shorter side,
+	    with a floor and ceiling in pixels.
+	  - `Gap`: pixels between the fingertip and the hole.
+	  - `Bob`: the jab. `Amplitude` is a fraction of the finger's height,
+	    `Period` is seconds for one push in.
+]=]
+HighlightConfig.Finger = {
+	Enabled = true,
+	Image = "rbxassetid://111613462761420",
+	TipX = 0.525,
+	Aspect = 216 / 252,
+
+	Size = { Fraction = 0.9, Min = 48, Max = 110 },
+	Gap = 4,
+
+	Bob = {
+		Amplitude = 0.12,
+		Period = 0.45,
+	},
+}
+
+--[=[
 	Click blocking. **Off by default**, and that is the important part.
 
 	The `UIStroke` receives no input (it is an outline, not a surface). When blocking

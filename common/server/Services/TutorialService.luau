@@ -34,6 +34,14 @@ local AnalyticsConfig = ServerConfig.Analytics
 	the Game place). Leaving midway leaves it `false`, so the next Lobby visit
 	starts the map pick again.
 
+	**The shop half waits for the client.** A player coming back from the won
+	match carries the `TutorialDone` ticket. The ticket is read as soon as the
+	profile loads, but the prompt is only sent once the client says its
+	`TutorialShopController` is listening (`TutorialShopReady`): a network event
+	fired at a client that has not hooked it yet is dropped, and the profile
+	usually loads while the client is still on the loading screen. Without the
+	handshake the returning player landed in the Lobby and nothing happened.
+
 	**Lobby only** for the automatic start (`Environment.IsPlace("Lobby")`). In an
 	unpublished place nothing starts on its own; Cmdr's `tutorial` still works.
 
@@ -51,6 +59,12 @@ local DATA_KEY = "Tutorial"
 
 TutorialService.Returned = {}
 TutorialService.Pending = {}
+
+-- Players holding a `TutorialDone` ticket whose shop prompt has not gone out yet.
+TutorialService.ShopTicket = {}
+
+-- Players whose client said its shop flow is listening.
+TutorialService.ShopReady = {}
 
 --[[ INTERNAL ]]
 
@@ -106,25 +120,49 @@ function TutorialService:offer(player : Player)
 		if isDone(data) then return end
 		if not player.Parent then return end
 
+		-- Back from the won match with the ticket: the shop half runs, not the map pick.
+		if self.Returned[player] then return end
+
 		self:BeginMapPick(player)
 	end)
 end
 
-function TutorialService:shopPrompt(player : Player)
-	if not self:isLobby() then return end
-
+--- The ticket the match server attached to the teleport back, if any.
+local function hasTicket(player : Player) : boolean
 	local success, joinData = pcall(function()
 		return player:GetJoinData()
 	end)
 
 	local teleportData = success and typeof(joinData) == "table" and joinData.TeleportData
-	if typeof(teleportData) ~= "table" or teleportData.TutorialDone ~= true then
-		return
-	end
+
+	return typeof(teleportData) == "table" and teleportData.TutorialDone == true
+end
+
+function TutorialService:shopPrompt(player : Player)
+	if not self:isLobby() then return end
+	if self.Returned[player] then return end
+	if not hasTicket(player) then return end
 
 	self.Returned[player] = true
+	self.ShopTicket[player] = true
+
+	log:Debug(`{player.Name} is back from the tutorial match; the shop step waits for the client.`)
 
 	self:funnel(player, "BackToLobby")
+	self:tryShop(player)
+end
+
+--[=[
+	Sends the shop prompt once both halves are there: the ticket, and a client
+	that is listening. Called from either side, whichever comes last.
+]=]
+function TutorialService:tryShop(player : Player)
+	if not self.ShopTicket[player] or not self.ShopReady[player] then return end
+	if not player.Parent then return end
+
+	self.ShopTicket[player] = nil
+
+	log:Debug(`sending the shop step to {player.Name}.`)
 
 	self:PromptShop({ player })
 end
@@ -276,6 +314,14 @@ function TutorialService:construct()
 	Framework:Listen("TutorialShopPrompt", function() end)
 	Framework:Listen("TutorialShopDone", function() end)
 
+	-- The client's shop flow is hooked up and the loading screen is out of the way.
+	Framework:Listen("TutorialShopReady", function(player : Player)
+		if self.ShopReady[player] then return end
+
+		self.ShopReady[player] = true
+		self:tryShop(player)
+	end)
+
 	Framework:Listen("TutorialShopFinished", function(player : Player)
 		if not self.Returned[player] then return end
 
@@ -306,6 +352,8 @@ function TutorialService:construct()
 	Players.PlayerRemoving:Connect(function(player : Player)
 		self.Returned[player] = nil
 		self.Pending[player] = nil
+		self.ShopTicket[player] = nil
+		self.ShopReady[player] = nil
 	end)
 
 	if not self:isLobby() then return end
@@ -319,14 +367,16 @@ function TutorialService:construct()
 		return
 	end
 
+	-- The ticket is read before the map pick check: a player back from the won match
+	-- whose profile write has not landed yet must not be sent to the map pick.
 	dataService.Signals.PlayerDataLoaded:Connect(function(player : Player)
-		self:offer(player)
 		self:shopPrompt(player)
+		self:offer(player)
 	end)
 
 	for _, player in Players:GetPlayers() do
-		self:offer(player)
 		self:shopPrompt(player)
+		self:offer(player)
 	end
 end
 

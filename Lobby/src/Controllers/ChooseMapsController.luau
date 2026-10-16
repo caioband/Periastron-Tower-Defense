@@ -41,6 +41,14 @@ local ENTRY_NAME_PREFIX = "Map_"
 local CHECKMARK_NAME = "CheckMark"
 local ENTRY_SCALE_NAME = "SelectionScale"
 
+-- The Background carries one image per player count as attributes (Select1..Select4):
+-- the art with that many chess pieces on it.
+local BACKGROUND_ATTRIBUTE_FORMAT = "Select%d"
+
+-- A UIGradient on the card that carries this attribute (a ColorSequence) wears it while
+-- the map is locked, and goes back to its authored Color once unlocked.
+local LOCKED_COLOR_ATTRIBUTE = "LockedColor"
+
 --[[
 	The template's lock: the `Frame` covering the card and the label inside it that says
 	how many wins are missing.
@@ -165,6 +173,33 @@ function ChooseMapsController:_findLock(entry : Instance) : (GuiObject?, TextLab
 end
 
 --[=[
+	The card's gradients that know their locked colour: every UIGradient carrying a
+	`LockedColor` attribute, with the authored Color kept so unlocking restores it.
+]=]
+function ChooseMapsController:_findLockGradients(entry : Instance) : { { Gradient : UIGradient, Color : ColorSequence, LockedColor : ColorSequence } }
+	local gradients = {}
+
+	for _, descendant in entry:GetDescendants() do
+		if not descendant:IsA("UIGradient") then
+			continue
+		end
+
+		local lockedColor = descendant:GetAttribute(LOCKED_COLOR_ATTRIBUTE)
+		if typeof(lockedColor) ~= "ColorSequence" then
+			continue
+		end
+
+		table.insert(gradients, {
+			Gradient = descendant,
+			Color = descendant.Color,
+			LockedColor = lockedColor,
+		})
+	end
+
+	return gradients
+end
+
+--[=[
 	Rebuilds one entry per configured map, using the first template inside Scroll as
 	the source. The extra copies the designer left in there are dropped: the list is
 	whatever MapConfig says it is.
@@ -222,6 +257,7 @@ function ChooseMapsController:_buildEntries(scroll : Instance, template : Instan
 			Scale = scale,
 			Locked = locked,
 			LockedLabel = lockedLabel,
+			LockGradients = self:_findLockGradients(entry),
 
 			--[[
 				The button's authored state, read and not assumed: unlocking restores what the
@@ -256,10 +292,10 @@ end
 --[=[
 	Paints each card's lock from the current wins.
 
-	Three things change together, which is why they live in the same function: `Locked`
-	appears, the button stops responding, and the label says how much is missing. Leaving
-	the button alive under a drawn lock would be a map that looks locked and opens on
-	click.
+	Four things change together, which is why they live in the same function: `Locked`
+	appears, the card turns red, the button stops responding, and the label says how
+	much is missing. Leaving the button alive under a drawn lock would be a map that
+	looks locked and opens on click.
 
 	`Active = false` is already enough for `Activated` not to fire; `Select` checks again
 	anyway, because it is also called from outside.
@@ -276,6 +312,10 @@ function ChooseMapsController:_renderLocks()
 
 		if entry.LockedLabel and not unlocked then
 			entry.LockedLabel.Text = string.format(LOCKED_FORMAT, MapConfig.winsMissing(mapName, wins))
+		end
+
+		for _, gradient in entry.LockGradients do
+			gradient.Gradient.Color = unlocked and gradient.Color or gradient.LockedColor
 		end
 
 		local button = entry.Button
@@ -359,6 +399,15 @@ function ChooseMapsController:_renderCount()
 
 	if self.CountLabel and self.CountLabel:IsA("TextLabel") then
 		self.CountLabel.Text = tostring(count)
+	end
+
+	-- The frame art has the chess pieces drawn in: one image per player count.
+	local background = self.Background
+	if background and background:IsA("ImageLabel") then
+		local image = background:GetAttribute(string.format(BACKGROUND_ATTRIBUTE_FORMAT, count))
+		if typeof(image) == "string" and image ~= "" then
+			background.Image = image
+		end
 	end
 
 	-- At either end the step that cannot happen is not greyed out, it is gone.

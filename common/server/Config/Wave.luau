@@ -20,6 +20,10 @@ local Wave = {}
 	between spawns) and answers the questions the rest of the server asks: what the
 	wave spawns, whether it has a boss, and what each wave pays.
 
+	A preset can carry `WaveOverrides` (same format as a `Config.Waves` table, only
+	the waves it replaces): those waves come from there instead of the table. The
+	tutorial uses it to give its Easy match a gentler first wave.
+
 	See docs/game/waves.md.
 ]]
 
@@ -93,6 +97,11 @@ local ENTITY_DATA = {
 	OverseerKing = { Reward = 250, SpawnDelay = 1 },
 }
 
+-- What an override entry gets for an entity missing from `ENTITY_DATA`: overrides
+-- are written at runtime, after the load-time check below, so they need a floor
+-- instead of an error.
+local DEFAULT_ENTITY_DATA = { Reward = 1, SpawnDelay = 0.35 }
+
 --[[
 	`Config.Waves` only knows `SharedConfig.Mob`, so an entity that exists there but
 	not here would pass its check and then spawn with no reward. Checked at load,
@@ -161,6 +170,13 @@ local function getWave(waveNumber : number, difficultyName : string?)
 		return EndlessWaves.Get(waveNumber, preset), preset
 	end
 
+	-- A wave the preset replaces wins over its table.
+	local overrides = preset.WaveOverrides
+	local override = if type(overrides) == "table" then overrides[waveNumber] else nil
+	if type(override) == "table" and #override > 0 then
+		return override, preset
+	end
+
 	local waves = Waves.Get(preset.Name)
 	return (waves and waves[waveNumber]), preset
 end
@@ -202,7 +218,7 @@ function Wave.GetSpawns(waveNumber : number, difficultyName : string?)
 	local spawns = {}
 
 	for _, entry in wave or {} do
-		local data = ENTITY_DATA[entry.Entity]
+		local data = ENTITY_DATA[entry.Entity] or DEFAULT_ENTITY_DATA
 
 		table.insert(spawns, {
 			Entity = entry.Entity,

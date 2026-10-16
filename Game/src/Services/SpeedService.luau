@@ -34,6 +34,12 @@ local SpeedConfig = SharedConfig.SpeedConfig
 	instead of one pushing the other to 2x. The index comes over the network, so it
 	goes through `SpeedConfig.IsValid` before it counts.
 
+	**The tutorial can hold the clock.** `SetHold` freezes the match (scale 0, which
+	`GameClock` floors at its minimum) or slows it below 1x while a lesson is on
+	screen, the way TDS stops the world while it teaches. It wins over the step and
+	over the card override, and goes out to clients through the same
+	`GameSpeedOverride` event, so enemy models freeze and slow along with the server.
+
 	**Back to 1x every round.** The service is in `WaveService`'s round-scoped list: a
 	new match starts at normal speed, not at the 2x someone left on in the previous one.
 
@@ -57,11 +63,26 @@ local SpeedService = {
 	Override = nil,
 	OverrideToken = 0,
 
+	--[[
+		The scale the tutorial holds the clock at (0 pauses, below 1 slows). Nil when
+		nothing is held. See `SetHold`.
+	]]
+	Hold = nil,
+
 	-- [UserId] = os.clock() of the last accepted click.
 	LastClick = {},
 }
 
 --[[ INTERNAL ]]
+
+--- What clients put on their own clock on top of the step: the hold first, then the card.
+function SpeedService:clientOverride() : number?
+	if self.Hold ~= nil then
+		return self.Hold
+	end
+
+	return self.Override
+end
 
 --[=[
 	Sends the current step. With `player`, only to them (someone who just joined or
@@ -70,7 +91,7 @@ local SpeedService = {
 function SpeedService:broadcast(player : Player?)
 	if player then
 		Framework:Fire("GameSpeedChanged", player, self.Index)
-		Framework:Fire("GameSpeedOverride", player, self.Override)
+		Framework:Fire("GameSpeedOverride", player, self:clientOverride())
 		return
 	end
 
@@ -82,16 +103,22 @@ end
 --[=[
 	Sends the scale imposed from outside the button. It goes separately from the step
 	because the two coexist: the button keeps showing the step the room chose while
-	the card speeds up the clock on top.
+	the card (or the tutorial hold) moves the clock on top.
 ]=]
 function SpeedService:broadcastOverride()
+	local scale = self:clientOverride()
+
 	for _, player in Players:GetPlayers() do
-		Framework:Fire("GameSpeedOverride", player, self.Override)
+		Framework:Fire("GameSpeedOverride", player, scale)
 	end
 end
 
---- The scale the clock should be at now: the override if there is one, otherwise the step.
+--- The scale the clock should be at now: the hold, then the override, then the step.
 function SpeedService:effectiveScale() : number
+	if self.Hold ~= nil then
+		return self.Hold
+	end
+
 	return self.Override or SpeedConfig.GetScale(self.Index)
 end
 
@@ -115,8 +142,8 @@ function SpeedService:SetIndex(index : number) : boolean
 
 	self.Index = index
 
-	-- With an override active, the step changes the button's art and not the clock: the
-	-- card rules time until it expires.
+	-- With an override or a hold active, the step changes the button's art and not the
+	-- clock: whatever holds time rules until it lets go.
 	GameClock.SetScale(self:effectiveScale())
 
 	self:broadcast()
@@ -160,10 +187,33 @@ function SpeedService:SetOverride(scale : number?, duration : number?)
 	end)
 end
 
---- A new match starts at 1x, even if the previous one ended sped up.
+--[=[
+	Holds the match clock at `scale` until called again with `nil`.
+
+	It is the tutorial's: `0` pauses (enemies stop, towers stop, waves stop spawning)
+	while the player places a tower or picks a card, and a value below 1 slows the
+	match while the speed button is being taught. Unlike `SetOverride`, there is no
+	floor at 1x and no deadline: the lesson decides when time comes back.
+]=]
+function SpeedService:SetHold(scale : number?)
+	local resolved = if typeof(scale) == "number" then math.max(0, scale) else nil
+	if resolved == self.Hold then return end
+
+	self.Hold = resolved
+
+	GameClock.SetScale(self:effectiveScale())
+	self:broadcastOverride()
+end
+
+function SpeedService:GetHold() : number?
+	return self.Hold
+end
+
+--- A new match starts at 1x, even if the previous one ended sped up or held.
 function SpeedService:ResetRound()
 	table.clear(self.LastClick)
 
+	self.Hold = nil
 	self:SetOverride(nil)
 	self:SetIndex(SpeedConfig.DEFAULT_INDEX)
 end

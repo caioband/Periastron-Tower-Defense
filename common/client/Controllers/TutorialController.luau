@@ -1,6 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
+local TweenService = game:GetService("TweenService")
 
 local Player = Players.LocalPlayer
 
@@ -23,13 +24,22 @@ local PICK = Config.MapPick
 
 local WALK_IN_REASON = "TutorialMapPick"
 
+-- The glow on the portal the guide arrow points at.
+local PORTAL_HIGHLIGHT_NAME = "TutorialPortalHighlight"
+local PORTAL_HIGHLIGHT_FILL = Color3.fromRGB(255, 205, 60)
+local PORTAL_HIGHLIGHT_OUTLINE = Color3.fromRGB(255, 255, 255)
+local PORTAL_HIGHLIGHT_FILL_FROM = 0.85
+local PORTAL_HIGHLIGHT_FILL_TO = 0.55
+local PORTAL_HIGHLIGHT_PULSE = TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+
 --[[
 	The tutorial's Lobby voice.
 
 	**The map pick** (`TutorialMapPick`, sent by `TutorialService` to a first-time
-	player): a welcome, then an arrow at the nearest free portal. Once the map panel
-	opens, the highlight lands on the suggested map, then on Confirm once a map is
-	picked. Opening the portal group ends the pointing with one short line.
+	player): a welcome, then a guide arrow beside the player pointing towards the
+	nearest free portal, which glows while it is the one pointed at. Once the map
+	panel opens, the highlight lands on the suggested map, then on Confirm once a
+	map is picked. Opening the portal group ends the pointing with one short line.
 
 	**The screen is locked for the whole flow.** Through `ButtonGateController`, only
 	what the current phase needs is clickable (`MapPick.Allow` while picking,
@@ -69,9 +79,19 @@ TutorialController.PickSession = 0
 TutorialController.PickMode = nil :: string?
 TutorialController.PickArrow = nil :: any
 TutorialController.PickArrowTarget = nil :: BasePart?
+TutorialController.PickHighlight = nil :: Highlight?
+TutorialController.PickHighlightTween = nil :: Tween?
 TutorialController.PromptsWere = nil :: boolean?
 
 --[[ INTERNAL ]]
+
+--- Where the guide arrow starts from: the player's root part, read every frame.
+local function rootPosition() : Vector3?
+	local character = Player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+
+	return root and root.Position
+end
 
 function TutorialController:escapedName() : string
 	return self.Controllers.RichTextController:Escape(Player.DisplayName)
@@ -187,6 +207,45 @@ function TutorialController:nearestFreePortal() : BasePart?
 	return best
 end
 
+--[=[
+	Lights the portal model the arrow points at. Client-side only: the Highlight is
+	created here and lives under the portal on this client, nobody else sees it.
+]=]
+function TutorialController:highlightPortal(portal : Instance)
+	self:clearPortalHighlight()
+
+	local highlight = Instance.new("Highlight")
+	highlight.Name = PORTAL_HIGHLIGHT_NAME
+	highlight.Adornee = portal
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.FillColor = PORTAL_HIGHLIGHT_FILL
+	highlight.OutlineColor = PORTAL_HIGHLIGHT_OUTLINE
+	highlight.FillTransparency = PORTAL_HIGHLIGHT_FILL_FROM
+	highlight.OutlineTransparency = 0
+	highlight.Parent = portal
+
+	local tween = TweenService:Create(highlight, PORTAL_HIGHLIGHT_PULSE, {
+		FillTransparency = PORTAL_HIGHLIGHT_FILL_TO,
+	})
+	tween:Play()
+
+	self.PickHighlight = highlight
+	self.PickHighlightTween = tween
+end
+
+function TutorialController:clearPortalHighlight()
+	if self.PickHighlightTween then
+		self.PickHighlightTween:Cancel()
+	end
+
+	if self.PickHighlight then
+		self.PickHighlight:Destroy()
+	end
+
+	self.PickHighlight = nil
+	self.PickHighlightTween = nil
+end
+
 function TutorialController:clearArrow()
 	if self.PickArrow then
 		self.PickArrow:Destroy()
@@ -194,18 +253,30 @@ function TutorialController:clearArrow()
 
 	self.PickArrow = nil
 	self.PickArrowTarget = nil
+
+	self:clearPortalHighlight()
 end
 
+--- A guide arrow beside the player, pointing towards the nearest free portal, and
+--- that portal lit up.
 function TutorialController:pointAtPortal()
 	local target = self:nearestFreePortal()
 	if target == self.PickArrowTarget then return end
 
 	self:clearArrow()
 
+	if not target then return end
+
 	local arrow = self.Controllers.ArrowController
-	if arrow and target then
-		self.PickArrow = arrow:Point(target.Position)
-		self.PickArrowTarget = target
+	if arrow then
+		self.PickArrow = arrow:Guide(rootPosition, target.Position)
+	end
+
+	self.PickArrowTarget = target
+
+	local portal = target.Parent
+	if portal and portal:IsA("Model") then
+		self:highlightPortal(portal)
 	end
 end
 

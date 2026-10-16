@@ -130,12 +130,21 @@ TutorialConfig.MapPick = {
 	The tutorial match.
 
 	  - `Difficulty`: the preset the match imposes (the vote is skipped).
-	  - `PresetOverrides`: fields replaced on a copy of that preset, for this match
-	    only. `WeatherChance = 0` leaves weather to the script, and `MobDamage = 0`
-	    means escaped enemies never hurt the base, so the tutorial cannot be lost.
+	  - `PresetOverrides`: fields written over that preset on the tutorial server
+	    (see `TutorialMatchService:GetForcedPreset`), so every service reads them.
+	    `WeatherChance = 0` leaves weather to the script, `MobDamage = 0` means
+	    escaped enemies never hurt the base, so the tutorial cannot be lost,
+	    `MaxWaves = 10` ends the match after wave 10 of the preset's wave table
+	    (the win reward is paid in full at that wave), `IntermissionTime = 0`
+	    starts wave 1 as soon as the first step is done (that step holds it until
+	    then), and `WaveOverrides` replaces whole waves of the table, in the same
+	    format as `Config.Waves`.
 	  - `Map`: only for Cmdr's fallback teleport; a real run uses the map the
 	    player picked at the portal.
-	  - `Deck` / `AllowedUnits`: `nil` means the player's own loadout, all of it.
+	  - `Deck`: the cards this match hands out instead of the player's loadout, in
+	    hotbar order (`Unit` is the unit name, `Amount` how many placements). The
+	    profile is not touched. `nil` means the player's own loadout.
+	  - `AllowedUnits`: `nil` lets every card in the deck be placed.
 	  - `KeepShopCalendar`: the round card shop is always driven by the tutorial
 	    here, so a step can force it open with `OpenShop`. With this `true`, the
 	    difficulty's normal shop waves still open on top of that.
@@ -157,9 +166,29 @@ TutorialConfig.Match = {
 	PresetOverrides = {
 		WeatherChance = 0,
 		MobDamage = 0,
+		MaxWaves = 10,
+		IntermissionTime = 0,
+
+		WaveOverrides = {
+			[1] = {
+				{ Entity = "AstralInitiate", Amount = 3, Health = 3, Speed = 3.6, SpawnDelay = 0.7 },
+			},
+
+			[10] = {
+				{ Entity = "AstralKnight", Amount = 8, Health = 5, Speed = 5.6 },
+				{ Entity = "AstralGuardia", Amount = 9, Health = 11, Speed = 2.13 },
+				{ Entity = "AstralNecromancer", Amount = 3, Health = 20, Speed = 3.73 },
+				{ Entity = "AstralSentry", Amount = 3, Health = 9, Speed = 9.33 },
+				{ Entity = "AstralSentinel", Amount = 1, Health = 180, Speed = 1.9 },
+			},
+		},
 	},
 
-	Deck = nil,
+	Deck = {
+		{ Unit = "Sword", Amount = 1 },
+		{ Unit = "Slasher", Amount = 1 },
+		{ Unit = "Slingshot", Amount = 2 },
+	},
 	AllowedUnits = nil,
 
 	KeepShopCalendar = true,
@@ -178,25 +207,48 @@ TutorialConfig.Match = {
 	--[=[
 		The script. Each step opens before its wave spawns.
 
-		  - `Wave`: the wave it opens on; `0` is the intermission before wave 1.
+		  - `Wave`: the wave it opens on; `0` is the intermission before wave 1. Two
+		    steps on the same wave run one after the other: the second opens as soon
+		    as the first is done.
 		  - `OnShop`: opens on the first wave the round card shop appears instead.
 		  - `OpenShop`: forces the round card shop open on this step's wave.
-		  - `Kind`: `Place`, `Speed`, `Buy`, `Use`, `Ready`, `Info`, or `Lobby`.
+		  - `OpenDelay`: real seconds after the step's wave starts before it shows up
+		    (the wave keeps playing meanwhile).
+		  - `Kind`: `Place`, `PlaceRest`, `Speed`, `Buy`, `Use`, `Ready`, `Info`,
+		    `Weather`, `Upgrade`, or `Lobby`.
 		  - `Hold`: holds its own wave until done. `HoldNext`: holds the **next**
-		    wave until done (for intermission steps, whose countdown cannot wait).
-		  - `Point`: a part name in `Map.PlacementPoints`, or `"@Spawn"` for the
-		    start of the enemy path. `Radius` is the tolerance in studs.
+		    wave until done (for steps that let their own wave play).
+		  - `TimeScale`: the match clock while the step is on screen: `0` pauses it
+		    (TDS-style), below `1` slows it down. Released when the step is done.
+		  - `Unit`: for `Place`, the one tower the step accepts; its card is what
+		    the highlight (and its pointing finger) lands on.
+		  - `Point`: a part name in `Map.PlacementPoints`, `"@Spawn"` for the start of
+		    the enemy path, or `"@NearSpawn"` for a free, valid spot beside the start
+		    of the path, worked out on the server for the step's `Unit`. `Radius` is
+		    the tolerance in studs.
+		  - `SnapRadius`: for `Place`, how close (studs) the player has to aim to the
+		    arrow for the tower to snap onto the spot under it. Further than that the
+		    ghost shows red.
+		  - `ArrowOnEquip`: the arrow over the spot only appears once the card has
+		    been tapped; until then the hand points at the card.
 		  - `Index`: the `SpeedConfig` step a `Speed` step waits for (3 = 2x).
 		  - `Card`: the card a `Buy`/`Use` step asks for; `nil` on `Buy` = any card.
-		  - `Ensure`: tops up match cash so the purchase is always affordable.
+		  - `Ensure`: tops up match cash so the step can always be done (the card on
+		    `Buy`, the rest of the hand on `PlaceRest`, the cheapest upgrade on
+		    `Upgrade`).
 		  - `GrantCash`: a flat amount paid once when the step opens.
 		  - `ScheduleWeather`: weathers to pick from (filtered by the map's pool),
 		    arriving next wave with the usual warning.
+		  - `Panel`: for `Weather`, the screen path of the weather popup the hand
+		    moves to once the weather button opens it.
 		  - `ReadDelay`: for `Info` steps, extra seconds after the dialog closes
-		    before the step counts as read (keeps a highlight up a little longer).
-		  - `AutoComplete`: a fallback, in seconds, that closes an `Info` step if
-		    the read never arrives.
-		  - `Highlight`: a screen path the highlight wraps.
+		    before the step counts as read (keeps a highlight up a little longer);
+		    for `Weather`, how long the popup stays pointed at before it counts.
+		  - `AutoComplete`: a fallback, in seconds, that closes an `Info` or
+		    `Weather` step if the read never arrives.
+		  - `Highlight`: a screen path the highlight (and its pointing finger)
+		    wraps; on a `Place` step with a `Unit`, only used if that card is not
+		    found.
 		  - `Buttons`: the step's click whitelist (aliases: `@Deck`, `@Card`,
 		    `@Hand`, `@Offer`, `@Offers`, `@SpeedOptions`, `@Highlight`).
 		  - `UnlockOnDone`: releases the button lock when the step completes.
@@ -207,16 +259,42 @@ TutorialConfig.Match = {
 			Wave = 0,
 			Kind = "Place",
 			HoldNext = true,
+			TimeScale = 0,
 
-			Point = "@Spawn",
-			Radius = 25,
+			Unit = "Slingshot",
+			Point = "@NearSpawn",
+			Radius = 12,
+			SnapRadius = 10,
+			ArrowOnEquip = true,
+
+			Highlight = "Interface.TowerContainer",
 
 			Buttons = { "@Deck" },
 			UnlockOnDone = true,
 
 			Lines = {
 				"[color=white]Welcome to your first match![/color][pause=0.4] Enemies walk the path towards your base.",
-				"[color=white]Drag a tower from your [/color][gradient=orange]loadout[/gradient][color=white] onto the map near where they come in — follow the arrow.[/color]",
+				"[color=white]Tap the [/color][gradient=orange]Slingshot[/gradient][color=white] card, then place it under the arrow.[/color]",
+			},
+		},
+
+		{
+			Id = "UseSpeed2x",
+			Wave = 1,
+			Kind = "Speed",
+			HoldNext = true,
+			OpenDelay = 2.5,
+			TimeScale = 0.3,
+
+			Index = 3,
+			Highlight = "Interface.Speed",
+
+			Buttons = { "Interface.Speed", "@SpeedOptions" },
+			UnlockOnDone = true,
+
+			Lines = {
+				"[color=white]Here they come![/color][pause=0.3] Want things to move faster?",
+				"[color=white]Tap the speed button and pick [/color][gradient=orange]2x[/gradient][color=white] — it's free for this match.[/color]",
 			},
 		},
 
@@ -225,6 +303,7 @@ TutorialConfig.Match = {
 			Wave = 2,
 			Kind = "Buy",
 			Hold = true,
+			TimeScale = 0,
 
 			OpenShop = true,
 			Ensure = true,
@@ -234,57 +313,32 @@ TutorialConfig.Match = {
 			UnlockOnDone = true,
 
 			Lines = {
-				"[color=white]Round cards just showed up![/color][pause=0.4] Open the [gradient=green]card shop[/gradient][color=white].[/color]",
-				"[color=white]Cards are one-off boosts for this match — buff towers, slow enemies, earn cash.[/color][pause=0.3] Pick any one you like.",
+				"[color=white]Round cards just showed up![/color][pause=0.4] Tap the [gradient=green]card shop[/gradient][color=white] on the right.[/color]",
+				"[color=white]Cards are one-off boosts for this match — buff towers, slow enemies, earn cash.[/color][pause=0.3] Pick one of the three.",
 			},
 		},
 
 		{
-			Id = "UseSpeed2x",
-			Wave = 3,
-			Kind = "Speed",
+			Id = "PlaceRest",
+			Wave = 2,
+			Kind = "PlaceRest",
 			Hold = true,
+			TimeScale = 0,
 
-			Index = 3,
-			Highlight = "Interface.Speed",
+			Ensure = true,
+			Highlight = "Interface.TowerContainer",
 
-			Buttons = { "Interface.Speed", "@SpeedOptions" },
+			Buttons = { "@Deck" },
 			UnlockOnDone = true,
 
 			Lines = {
-				"[color=white]You're doing great![/color][pause=0.3] Want things to move faster?",
-				"[color=white]Tap the speed button and pick [/color][gradient=orange]2x[/gradient][color=white] — it's free for this match.[/color]",
-			},
-		},
-
-		{
-			Id = "CardTip",
-			Wave = 4,
-			Kind = "Info",
-			Hold = true,
-			AutoComplete = 90,
-
-			Lines = {
-				"[color=white]The card shop shows up every few waves.[/color][pause=0.3] Cards you buy wait in your hand next to your towers — tap one whenever you want to use it.",
-			},
-		},
-
-		{
-			Id = "UpgradeTowers",
-			Wave = 5,
-			Kind = "Info",
-			Hold = true,
-			AutoComplete = 90,
-
-			Lines = {
-				"[color=white]Time to get stronger.[/color][pause=0.3] Click one of your towers to [gradient=green]upgrade[/gradient][color=white] it.[/color]",
-				"[color=white]You can also[/color] [gradient=orange]sell[/gradient][color=white] a tower there to get some cash back.[/color]",
+				"[color=white]Nice pick![/color][pause=0.3] Now place the [gradient=orange]rest of your towers[/gradient][color=white] anywhere along the path.[/color]",
 			},
 		},
 
 		{
 			Id = "WeatherWarning",
-			Wave = 6,
+			Wave = 3,
 			Kind = "Info",
 			Hold = true,
 			AutoComplete = 90,
@@ -299,16 +353,51 @@ TutorialConfig.Match = {
 
 		{
 			Id = "WeatherArrived",
-			Wave = 7,
-			Kind = "Info",
+			Wave = 4,
+			Kind = "Weather",
 			Hold = true,
-			ReadDelay = 5,
-			AutoComplete = 90,
+			TimeScale = 0,
+			ReadDelay = 4,
+			AutoComplete = 120,
 
 			Highlight = "Interface.WeatherButton",
+			Panel = "Interface.IndicatorWeather",
+
+			Buttons = { "Interface.WeatherButton" },
+			UnlockOnDone = true,
 
 			Lines = {
-				"[color=white]Here it is![/color][pause=0.3] Tap the weather icon any time to see exactly what it does.",
+				"[color=white]Here it is![/color][pause=0.3] Tap the [gradient=orange]weather icon[/gradient][color=white] on the left to see exactly what it does.[/color]",
+			},
+		},
+
+		{
+			Id = "CardTip",
+			Wave = 5,
+			Kind = "Info",
+			Hold = true,
+			AutoComplete = 90,
+
+			Lines = {
+				"[color=white]The card shop shows up every few waves.[/color][pause=0.3] Cards you buy wait in your hand next to your towers — tap one whenever you want to use it.",
+			},
+		},
+
+		{
+			Id = "UpgradeTowers",
+			Wave = 6,
+			Kind = "Upgrade",
+			Hold = true,
+			TimeScale = 0,
+
+			Ensure = true,
+			Highlight = "Interface.CardUpgrade.UpgradeCost",
+
+			Buttons = { "Interface.CardUpgrade.UpgradeCost" },
+			UnlockOnDone = true,
+
+			Lines = {
+				"[color=white]Time to get stronger.[/color][pause=0.3] Click one of your [gradient=green]towers[/gradient][color=white], then hit [/color][gradient=orange]upgrade[/gradient][color=white].[/color]",
 			},
 		},
 
@@ -320,7 +409,19 @@ TutorialConfig.Match = {
 			AutoComplete = 90,
 
 			Lines = {
-				"[color=white]That's everything you need to know![/color][pause=0.4] Survive every wave to win the match — good luck!",
+				"[color=white]That's everything you need to know![/color][pause=0.4] One more wave after this one.",
+			},
+		},
+
+		{
+			Id = "BossIncoming",
+			Wave = 10,
+			Kind = "Info",
+			Hold = true,
+			AutoComplete = 90,
+
+			Lines = {
+				"[color=white]A[/color] [gradient=orange]boss[/gradient] [color=white]is coming![/color][pause=0.4] Its health bar is at the top of the screen — take it down to win!",
 			},
 		},
 
@@ -338,11 +439,24 @@ TutorialConfig.Match = {
 }
 
 --[=[
-	The Lobby half after the match: open the shop, buy the crate, open it.
+	The Lobby half after the match: buy the crate, open it, equip what came out.
 	It runs once, on the `TutorialDone` ticket the match server sends back.
 
-	`WalkInAllow`: `ProximityPanel` names that may still open by walking into them
-	during this flow. The shop stays allowed because the flow sends the player there.
+	  - `ShopButton` / `Item` / `BuyButton`: the shop on the HUD and the crate it
+	    sells. Once bought, the shop closes and stays shut for the rest of the flow.
+	  - `BackpackButton`, `CrateList`, `CratePrefix`: the backpack and the crate
+	    rows inside it.
+	  - `OpenOneButton`: the "OPEN 1" button the backpack shows after a crate is
+	    picked.
+	  - `CrateHighlight`: the glow on the crate that appears in the world.
+	  - `RevealHold`: seconds to let the unit reveal play before moving on.
+	  - `LoadoutButton`, `InventoryList`, `EquipButton`: the loadout panel, the list
+	    of owned units inside it (one row per unit, named after the unit), and the
+	    button that equips the selected one.
+	  - `LoadoutLines`: `%s` is the unit that came out of the crate.
+	  - `WalkInAllow`: `ProximityPanel` names that may still open by walking into
+	    them before the purchase. The shop is allowed because the flow sends the
+	    player there; after the purchase nothing is.
 ]=]
 TutorialConfig.Lobby = {
 	Lines = {
@@ -354,13 +468,35 @@ TutorialConfig.Lobby = {
 	Item = "CrateOfBeginnings",
 	BuyButton = "Buy",
 
+	BackpackLines = {
+		"[color=white]Your crate is in your[/color] [gradient=orange]Backpack[/gradient][color=white]. Let's open it![/color]",
+	},
+
 	BackpackButton = "HUD.HUDFrame.Wrapper.Backpack",
 
 	CrateList = "backpackui.Frame.Backpack.Content.CratesPage.CrateWrapper",
 	CratePrefix = "Crate_",
 
+	OpenOneButton = "backpackui.Frame.Backpack.BulkOpen.OpenOne",
+
+	CrateHighlight = {
+		Fill = Color3.fromRGB(255, 205, 60),
+		Outline = Color3.fromRGB(255, 255, 255),
+		FillTransparency = 0.55,
+	},
+
+	RevealHold = 2.5,
+
+	LoadoutLines = {
+		"[color=white]You got a[/color] [gradient=green]%s[/gradient][color=white]![/color][pause=0.4] Open your [gradient=orange]Loadout[/gradient][color=white] and equip it.[/color]",
+	},
+
+	LoadoutButton = "HUD.HUDFrame.Wrapper.Deck",
+	InventoryList = "HUD.CardUI.Inventory.ScrollingFrame",
+	EquipButton = "HUD.CardUI.SelectionPanel.Container.EquipToggle",
+
 	ClosingLines = {
-		"[color=white]That's a[/color] [gradient=green]new unit[/gradient][color=white] for your deck.[/color][pause=0.4] You're ready — good luck out there!",
+		"[color=white]That's the end of the tutorial![/color][pause=0.4] You're ready — [gradient=green]have fun[/gradient][color=white] out there![/color]",
 	},
 
 	WalkInAllow = { "ShopController" },
@@ -377,5 +513,5 @@ TutorialConfig.CrateGuarantee = {
 	Crates = 3,
 	Rarity = "Epic",
 }
- 
+
 return TutorialConfig

@@ -62,4 +62,27 @@ IndicatorArrowConfig.Motion = {
 ]]
 IndicatorArrowConfig.Scale = 1
 
+--[=[
+	The guide arrow (`ArrowController:Guide`): lies flat beside the player and
+	points at the target, instead of hanging over it.
+
+	  - `Distance`: studs from the player to the arrow tip.
+	  - `Height`: studs above the player's root part (negative is below it).
+	  - `Scale`: size on top of the authored one.
+	  - `Push`: the nudge towards the target, in studs and cycles per second.
+	  - `HideWithin`: the arrow hides once the player is this close to the target.
+]=]
+IndicatorArrowConfig.Guide = {
+	Distance = 7,
+	Height = -1.5,
+	Scale = 0.8,
+
+	Push = {
+		Amplitude = 0.8,
+		Speed = 1.2,
+	},
+
+	HideWithin = 10,
+}
+
 return IndicatorArrowConfig

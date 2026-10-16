@@ -1218,6 +1218,19 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 	local overlapCheckElapsed = 0
 	local OVERLAP_CHECK_INTERVAL = 0.05
 
+	--[[
+		The tutorial's placement snap.
+
+		While a tutorial placement step points at a spot (the arrow), aiming within its
+		`SnapRadius` puts the ghost exactly on that spot, so a tap anywhere near the arrow
+		lands the tower under it; aiming further away paints the ghost red, because the
+		server would refuse the tower there anyway. `TutorialStepController` answers
+		which spot and how far, and answers nothing outside the tutorial, so a normal
+		match never snaps. Callers that came in through `options` (Zippers) are left out.
+	]]
+	local tutorialSteps = if options.OnConfirm then nil else Framework:Get("TutorialStepController", false, false)
+	local tutorialOutside = false
+
 	maid:GiveTask(RunService.RenderStepped:Connect(function(dt)
 		local character = Player.Character
 		local filterList = {ghost}
@@ -1264,6 +1277,24 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 		local placedPosition = lockedPosition
 		if raycastResult then
 			local position = raycastResult.Position
+
+			local snapTarget, snapRadius = nil, nil
+			if tutorialSteps and tutorialSteps.GetPlacementSnap then
+				snapTarget, snapRadius = tutorialSteps:GetPlacementSnap(unitName)
+			end
+
+			tutorialOutside = false
+
+			if typeof(snapTarget) == "Vector3" and typeof(snapRadius) == "number" then
+				local offset = Vector3.new(position.X - snapTarget.X, 0, position.Z - snapTarget.Z)
+
+				if offset.Magnitude <= snapRadius then
+					position = snapTarget
+				else
+					tutorialOutside = true
+				end
+			end
+
 			currentGroundY = position.Y
 			groundInstance = raycastResult.Instance
 			placedPosition = Vector3.new(position.X, position.Y + halfHeight, position.Z)
@@ -1314,7 +1345,8 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 					overlapParams.FilterDescendantsInstances = characterFilter(filterList)
 					local parts = workspace:GetPartsInPart(ghost.PrimaryPart or ghost:FindFirstChildWhichIsA("BasePart"), overlapParams)
 					for _, part in ipairs(parts) do
-						if part ~= raycastResult.Instance then
+						-- A locked ghost has no raycast this frame: then every part it touches counts.
+						if not raycastResult or part ~= raycastResult.Instance then
 							isObstructed = true
 							reason = "obstruido por " .. part:GetFullName()
 							break
@@ -1356,7 +1388,11 @@ function UnitPlacementController:visualize(unitName : string, options : { [strin
 					end
 				end
 
-				canPlace = not onGrid and not isObstructed
+				if tutorialOutside and reason == "" then
+					reason = "outside the tutorial spot: place it under the arrow"
+				end
+
+				canPlace = not onGrid and not isObstructed and not tutorialOutside
 				blockReason = reason
 			end
 		end

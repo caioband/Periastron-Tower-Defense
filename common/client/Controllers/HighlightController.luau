@@ -36,6 +36,11 @@ local Config = SharedConfig.HighlightConfig
 	or `EditableImage` to keep aligned. It is the solution the DevForum converges on
 	for this effect, and the cheapest of all: one instance.
 
+	**A finger points at it.** A pointing hand sits under the hole (or over it, upside
+	down, when there is no room below) and jabs towards it, so the player's eye goes
+	to the target even when the dark alone is easy to miss. `Show(target, { Finger =
+	false })` leaves it out. See `HighlightConfig.Finger`.
+
 	**Clicking is another matter, and by default the highlight stays out of it.** A
 	stroke receives no input (it is an outline, not a surface), and blocking (four
 	`Active` frames around the hole, the four-mask technique) only comes in when the
@@ -95,6 +100,14 @@ HighlightController.Corner = nil :: UICorner?
 HighlightController.Stroke = nil :: UIStroke?
 HighlightController.Origin = nil :: Frame?
 HighlightController.Blockers = {} :: { Frame }
+
+-- The pointing finger: a frame placed next to the hole, and the image inside it that
+-- bobs. See `placeFinger`.
+HighlightController.Finger = nil :: Frame?
+HighlightController.FingerImage = nil :: ImageLabel?
+HighlightController.FingerMoveTween = nil :: Tween?
+HighlightController.FingerBobTween = nil :: Tween?
+HighlightController.FingerBobKey = nil :: string?
 
 HighlightController.Target = nil :: GuiObject?
 HighlightController.Options = nil :: any
@@ -204,8 +217,30 @@ function HighlightController:build()
 		}, gui)
 	end
 
+	-- The finger draws over the dark and takes no input: a click on it goes to
+	-- whatever is under it, which is usually the target itself.
+	local finger = create("Frame", {
+		Name = "Finger",
+		BackgroundTransparency = 1,
+		Size = UDim2.fromOffset(0, 0),
+		Visible = false,
+		ZIndex = 3,
+		Interactable = false,
+	}, gui)
+
+	self.FingerImage = create("ImageLabel", {
+		Name = "Image",
+		BackgroundTransparency = 1,
+		Image = Config.Finger.Image,
+		Size = UDim2.fromScale(1, 1),
+		ResampleMode = Enum.ResamplerMode.Pixelated,
+		ZIndex = 3,
+		Interactable = false,
+	}, finger)
+
 	self.Gui = gui
 	self.Hole = hole
+	self.Finger = finger
 end
 
 --[=[
@@ -332,6 +367,125 @@ function HighlightController:layoutBlockers(position : Vector2, size : Vector2)
 end
 
 --[=[
+	Whether this highlight wants the finger: the caller's `Finger` option, or the
+	config default.
+]=]
+function HighlightController:fingerWanted() : boolean
+	if self.Options and self.Options.Finger ~= nil then
+		return self.Options.Finger == true
+	end
+
+	return Config.Finger.Enabled == true
+end
+
+function HighlightController:hideFinger()
+	if self.FingerMoveTween then
+		self.FingerMoveTween:Cancel()
+		self.FingerMoveTween = nil
+	end
+
+	if self.FingerBobTween then
+		self.FingerBobTween:Cancel()
+		self.FingerBobTween = nil
+	end
+
+	self.FingerBobKey = nil
+
+	if self.FingerImage then
+		self.FingerImage.Position = UDim2.fromOffset(0, 0)
+	end
+
+	if self.Finger then
+		self.Finger.Visible = false
+	end
+end
+
+--[=[
+	Puts the finger next to the hole, its tip on the hole's horizontal centre.
+
+	Below the hole, pointing up, when it fits on screen; otherwise above it, the
+	image turned upside down, pointing down. The tip is the anchor (`TipX` across,
+	the top edge, or the bottom edge once flipped), so the gap to the hole is the
+	same either way and the tip, not the hand's middle, lines up with the target.
+
+	The jab is a tween on the image inside the frame, towards the hole and back,
+	restarted only when its direction or size changes: the target moving a pixel
+	must not make the finger stutter.
+]=]
+function HighlightController:placeFinger(position : Vector2, size : Vector2, animate : boolean?)
+	local finger = self.Finger
+	local image = self.FingerImage
+	local gui = self.Gui
+	if not finger or not image or not gui then return end
+
+	if not self:fingerWanted() then
+		self:hideFinger()
+		return
+	end
+
+	local settings = Config.Finger
+	local height = self:measure(settings.Size, size)
+	local width = height * settings.Aspect
+	local screen = gui.AbsoluteSize
+
+	local below = position.Y + size.Y + settings.Gap + height <= screen.Y
+	local tipX = if below then settings.TipX else 1 - settings.TipX
+
+	-- Kept on screen sideways: a target at the edge still gets the whole hand.
+	local centerX = math.clamp(position.X + size.X / 2, width * tipX, screen.X - width * (1 - tipX))
+
+	local goal
+	if below then
+		finger.AnchorPoint = Vector2.new(tipX, 0)
+		goal = UDim2.fromOffset(centerX, position.Y + size.Y + settings.Gap)
+		image.Rotation = 0
+	else
+		finger.AnchorPoint = Vector2.new(tipX, 1)
+		goal = UDim2.fromOffset(centerX, position.Y - settings.Gap)
+		image.Rotation = 180
+	end
+
+	finger.Size = UDim2.fromOffset(width, height)
+
+	if self.FingerMoveTween then
+		self.FingerMoveTween:Cancel()
+		self.FingerMoveTween = nil
+	end
+
+	if animate and finger.Visible then
+		local info = TweenInfo.new(Config.Tween.Move, Config.Tween.EasingStyle, Config.Tween.EasingDirection)
+
+		self.FingerMoveTween = TweenService:Create(finger, info, { Position = goal })
+		self.FingerMoveTween:Play()
+	else
+		finger.Position = goal
+	end
+
+	finger.Visible = true
+
+	local amplitude = math.floor(height * settings.Bob.Amplitude + 0.5)
+	local direction = if below then -1 else 1
+	local key = `{direction}:{amplitude}`
+
+	if key == self.FingerBobKey then return end
+
+	self.FingerBobKey = key
+
+	if self.FingerBobTween then
+		self.FingerBobTween:Cancel()
+	end
+
+	image.Position = UDim2.fromOffset(0, 0)
+
+	local info = TweenInfo.new(settings.Bob.Period, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+
+	self.FingerBobTween = TweenService:Create(image, info, {
+		Position = UDim2.fromOffset(0, amplitude * direction),
+	})
+	self.FingerBobTween:Play()
+end
+
+--[=[
 	Removes (or restores) the highlight without forgetting the target.
 
 	It is the "the target exists, but is not in view right now" state: scrolled out of
@@ -354,6 +508,7 @@ function HighlightController:suspend(suspended : boolean)
 			blocker.Visible = false
 		end
 
+		self:hideFinger()
 		self:fade(1, Config.Tween.FadeOut)
 
 		return
@@ -413,6 +568,7 @@ function HighlightController:refresh(animate : boolean?)
 		hole.Size = goalSize
 	end
 
+	self:placeFinger(position, size, animate)
 	self:layoutBlockers(position, size)
 end
 
@@ -584,6 +740,9 @@ export type Options = {
 
 	-- `false` lets the player click what is darkened.
 	BlockInput : boolean?,
+
+	-- `false` leaves the pointing finger out of this highlight.
+	Finger : boolean?,
 }
 
 --[=[
@@ -672,6 +831,7 @@ function HighlightController:Hide()
 		blocker.Visible = false
 	end
 
+	self:hideFinger()
 	self:fade(1, Config.Tween.FadeOut)
 
 	-- The screen is only disabled at the end of the exit: disabling it with the tween
@@ -773,6 +933,10 @@ function HighlightController:start()
 end
 
 function HighlightController:init()
+	for Controller, _ in self.Controllers do
+		self.Controllers[Controller] = Framework:Get(Controller, false, true)
+	end
+
 	self:construct()
 end
 

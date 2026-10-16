@@ -28,9 +28,25 @@ local AnalyticsConfig = ServerConfig.Analytics
 
 local INTERMISSION_WAVE = 0
 local SPAWN_POINT = "@Spawn"
+local NEAR_SPAWN_POINT = "@NearSpawn"
 
 -- How often a held purchase step re-checks that the player can still afford a card.
 local ENSURE_INTERVAL = 0.5
+
+-- How often an open step re-checks whether the player already did what it asks.
+local WATCH_INTERVAL = 0.2
+
+--[[
+	How `@NearSpawn` looks for its spot: along the first `NEAR_SPAWN_NODES` path nodes,
+	at each fraction of a segment in `NEAR_SPAWN_ALONG`, stepping sideways off the path
+	by each distance in `NEAR_SPAWN_OFFSETS` (both sides). The first spot that is on
+	ground roughly level with the path (`NEAR_SPAWN_MAX_STEP` studs) and that the unit
+	really fits on wins.
+]]
+local NEAR_SPAWN_NODES = 6
+local NEAR_SPAWN_ALONG = { 0.5, 0.25, 0.75 }
+local NEAR_SPAWN_OFFSETS = { 6, 7.5, 9, 11 }
+local NEAR_SPAWN_MAX_STEP = 3
 
 --[[
 	The tutorial match: what says this match is the tutorial, and what it imposes.
@@ -45,10 +61,20 @@ local ENSURE_INTERVAL = 0.5
 	the player picked; the deck is their own loadout unless `Match.Deck` says
 	otherwise.
 
-	**Nothing runs ahead of the lesson.** Info steps hold their wave until the
-	client reports the dialog was read (`TutorialStepRead`), purchase steps keep
-	cash topped up while they wait, and upgrading/selling stay refused until the
-	`Match.TowerActionsUntil` step opens.
+	**Nothing runs ahead of the lesson.** Steps hold their wave (`Hold`) or the next
+	one (`HoldNext`) until done, Info steps wait for the client to report the dialog
+	was read (`TutorialStepRead`), steps with `Ensure` keep cash topped up while they
+	wait, and upgrading/selling stay refused until the `Match.TowerActionsUntil` step
+	opens.
+
+	**Time stops for the lesson.** A step's `TimeScale` holds the match clock through
+	`SpeedService:SetHold` while it is on screen: `0` freezes the match while the
+	player places a tower or picks a card, a value below 1 slows it while the speed
+	button is taught. Completing the step lets go.
+
+	**Steps can chain.** Two steps on the same wave run back to back: when the first
+	is done the second opens straight away, still holding the wave (the card shop,
+	then placing the rest of the hand).
 
 	The answer is decided once and cached: a server is a tutorial server or not for
 	its whole life.
@@ -76,6 +102,15 @@ TutorialMatchService.Granted = {}
 TutorialMatchService.Tutorial = nil :: boolean?
 TutorialMatchService.Won = false
 TutorialMatchService.LastWave = nil :: number?
+
+-- The wave whose steps are running: what chained steps open on.
+TutorialMatchService.CurrentWave = nil :: number?
+
+-- Goes up on every opened step: a delayed opening checks it before showing up.
+TutorialMatchService.StepToken = 0
+
+-- The spot `@NearSpawn` resolved to, worked out once per match.
+TutorialMatchService.NearSpawn = nil :: Vector3?
 
 --[[ DETECTION ]]
 
@@ -136,8 +171,17 @@ function TutorialMatchService:IsTutorial() : boolean
 end
 
 --[=[
-	The preset this match imposes, or `nil` for a regular match: a copy of
-	`Match.Difficulty` with `Match.PresetOverrides` written over it.
+	The preset this match imposes, or `nil` for a regular match: `Match.Difficulty`
+	with `Match.PresetOverrides` written over it.
+
+	**Written onto the live preset, not a copy.** `WaveService` uses what this
+	returns, but `MobService` (base damage, spawns, starting cash), the card shop
+	and the weather read the preset through `DifficultyService:GetSelected()`, which
+	hands out `Config.Difficulty`'s own table. A copy only `WaveService` saw left
+	them on the plain preset: escaped enemies hurt the base despite `MobDamage = 0`,
+	and wave overrides never reached the spawner. A tutorial server is a tutorial
+	server for its whole life (see `resolve`), so changing the preset here changes
+	nothing anywhere else. Writing it again on a later call is harmless.
 ]=]
 function TutorialMatchService:GetForcedPreset() : any
 	if not self:IsTutorial() then
@@ -153,12 +197,11 @@ function TutorialMatchService:GetForcedPreset() : any
 		return nil
 	end
 
-	local resolved = table.clone(preset)
 	for field, value in (Config.Match.PresetOverrides or {}) do
-		resolved[field] = value
+		preset[field] = value
 	end
 
-	return resolved
+	return preset
 end
 
 function TutorialMatchService:GetDeck() : { [string] : number }?
@@ -187,6 +230,19 @@ function TutorialMatchService:GetDeckOrder() : { string }?
 	end
 
 	return order
+end
+
+--[[ TIME ]]
+
+--[=[
+	Holds the match clock for the lesson (`0` pauses, below `1` slows), or lets go
+	with `nil`. See `SpeedService:SetHold`.
+]=]
+function TutorialMatchService:setHold(scale : number?)
+	local speed = self.Services.SpeedService
+	if not speed or not speed.SetHold then return end
+
+	speed:SetHold(scale)
 end
 
 --[[ THE SCRIPT ]]
@@ -221,32 +277,154 @@ function TutorialMatchService:pointNamed(name : string) : BasePart?
 	return if part and part:IsA("BasePart") then part else nil
 end
 
---- Where the enemies enter the map: the first node of the path.
-function TutorialMatchService:spawnPosition() : Vector3?
+--[=[
+	The first path nodes, in walking order, as positions. Up to `limit` of them.
+
+	The nodes folder either holds the nodes directly or one folder per route; with
+	routes, the first route is the one used, like `spawnPosition`.
+]=]
+function TutorialMatchService:pathPositions(limit : number) : { Vector3 }
 	local path = workspace:FindFirstChild("PathScriptable")
 	local nodes = path and path:FindFirstChild("Nodes")
-	if not nodes then return nil end
+	if not nodes then return {} end
 
-	local first = PathUtil.GetSortedNodes(nodes)[1]
-	if not first then return nil end
+	local sorted = PathUtil.GetSortedNodes(nodes)
+	local first = sorted[1]
+	if not first then return {} end
 
-	if first:IsA("BasePart") then
-		return first.Position
-	end
+	local list = if first:IsA("BasePart") then sorted else PathUtil.GetSortedNodes(first)
+	local positions = {}
 
-	for _, node in PathUtil.GetSortedNodes(first) do
+	for _, node in list do
 		if node:IsA("BasePart") then
-			return node.Position
+			table.insert(positions, node.Position)
+
+			if #positions >= limit then
+				break
+			end
 		end
 	end
 
-	return nil
+	return positions
+end
+
+--- Where the enemies enter the map: the first node of the path.
+function TutorialMatchService:spawnPosition() : Vector3?
+	return self:pathPositions(1)[1]
+end
+
+--[=[
+	A free spot beside the start of the path where `unitName` can be placed: the
+	ground point the step's arrow points at and the player's tower snaps onto.
+
+	The map is whatever the player picked, so the spot is worked out here instead of
+	being authored: walking the first segments of the path, stepping sideways off it,
+	dropping a ray to the ground and asking `UnitService:isSpotFree` (the same
+	question a real placement asks) plus a clearance check for scenery the unit would
+	stand inside. Found once and kept for the match. With nothing valid in reach, it
+	falls back to the path's first node.
+]=]
+function TutorialMatchService:nearSpawnSpot(unitName : string?) : Vector3?
+	if self.NearSpawn then
+		return self.NearSpawn
+	end
+
+	local unitService = self.Services.UnitService
+	local nodes = self:pathPositions(NEAR_SPAWN_NODES)
+
+	if not unitService or #nodes < 2 or not unitName then
+		return nodes[1]
+	end
+
+	local bounds = unitService.UnitBounds and unitService.UnitBounds[unitName]
+	local size = if typeof(bounds) == "Vector3" then bounds else Vector3.new(2, 4, 2)
+
+	local exclude = {}
+
+	for _, part in (unitService.getGridParts and unitService:getGridParts() or {}) do
+		table.insert(exclude, part)
+	end
+
+	for _, player in Players:GetPlayers() do
+		if player.Character then
+			table.insert(exclude, player.Character)
+		end
+	end
+
+	local pathFolder = workspace:FindFirstChild("PathScriptable")
+	if pathFolder then
+		table.insert(exclude, pathFolder)
+	end
+
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = exclude
+
+	local function groundAt(point : Vector3) : RaycastResult?
+		return workspace:Raycast(point + Vector3.new(0, 40, 0), Vector3.new(0, -120, 0), rayParams)
+	end
+
+	local function clear(cf : CFrame, ground : Instance) : boolean
+		local overlap = OverlapParams.new()
+		overlap.FilterType = Enum.RaycastFilterType.Exclude
+		overlap.FilterDescendantsInstances = { ground, table.unpack(exclude) }
+
+		local probe = cf * CFrame.new(0, 0.25, 0)
+
+		return #workspace:GetPartBoundsInBox(probe, size * 0.8, overlap) == 0
+	end
+
+	for index = 1, #nodes - 1 do
+		local a, b = nodes[index], nodes[index + 1]
+		local flat = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+
+		if flat.Magnitude < 0.5 then
+			continue
+		end
+
+		local direction = flat.Unit
+		local side = Vector3.new(-direction.Z, 0, direction.X)
+
+		for _, along in NEAR_SPAWN_ALONG do
+			local base = a:Lerp(b, along)
+			local pathGround = groundAt(base)
+			local pathY = if pathGround then pathGround.Position.Y else base.Y
+
+			for _, distance in NEAR_SPAWN_OFFSETS do
+				for _, sign in { 1, -1 } do
+					local hit = groundAt(base + side * distance * sign)
+					if not hit or math.abs(hit.Position.Y - pathY) > NEAR_SPAWN_MAX_STEP then
+						continue
+					end
+
+					local cf = CFrame.new(hit.Position + Vector3.new(0, size.Y / 2, 0))
+
+					if unitService:isSpotFree(cf, unitName, "tutorial spot") and clear(cf, hit.Instance) then
+						self.NearSpawn = hit.Position
+
+						log:Debug(string.format("@NearSpawn resolved to (%.1f, %.1f, %.1f), %d stud(s) off segment %d.",
+							hit.Position.X, hit.Position.Y, hit.Position.Z, distance, index))
+
+						return hit.Position
+					end
+				end
+			end
+		end
+	end
+
+	log:StudioWarn("no free spot found beside the start of the path; pointing at the first node instead.")
+
+	return nodes[1]
 end
 
 --- The spot a step points at, as a position.
 function TutorialMatchService:positionFor(step : any) : Vector3?
 	if not step or not step.Point then
 		return nil
+	end
+
+	if step.Point == NEAR_SPAWN_POINT then
+		return self:nearSpawnSpot(step.Unit)
 	end
 
 	if step.Point == SPAWN_POINT then
@@ -270,12 +448,14 @@ function TutorialMatchService:BeginStep(wave : number)
 
 	self:awaitPending()
 
+	self.CurrentWave = wave
 	self:openStep(self:StepFor(wave))
 end
 
 function TutorialMatchService:BeginFinal()
 	if not self:IsTutorial() then return end
 
+	self.CurrentWave = nil
 	self:openStep(self:finalStep())
 end
 
@@ -289,9 +469,18 @@ function TutorialMatchService:finalStep() : any
 	return nil
 end
 
+--[=[
+	Makes `step` the open step. What it holds (its wave, the next one) holds from
+	this instant; what the player sees comes in `presentStep`, right away or after
+	`OpenDelay` real seconds while the wave plays.
+]=]
 function TutorialMatchService:openStep(step : any)
+	self.StepToken += 1
+	local token = self.StepToken
+
 	if not step then
 		self.Step = nil
+		self:setHold(nil)
 
 		return
 	end
@@ -304,6 +493,27 @@ function TutorialMatchService:openStep(step : any)
 	if step.UnlocksDeck then
 		self.DeckUnlocked = true
 	end
+
+	local delay = tonumber(step.OpenDelay)
+	if delay and delay > 0 then
+		task.delay(delay, function()
+			if self.StepToken ~= token or self.Step ~= step or self.Done then return end
+
+			self:presentStep(step, token)
+		end)
+
+		return
+	end
+
+	self:presentStep(step, token)
+end
+
+--[=[
+	Shows the open step: holds the clock, sets up the money and the weather it needs,
+	tells the clients, and starts watching for it to be done.
+]=]
+function TutorialMatchService:presentStep(step : any, token : number)
+	self:setHold(step.TimeScale)
 
 	self:scheduleWeather(step)
 	self:ensureCash(step)
@@ -346,8 +556,11 @@ function TutorialMatchService:openStep(step : any)
 			Index = step.Index,
 			Highlight = step.Highlight,
 			HighlightWait = step.HighlightWait,
+			Panel = step.Panel,
 			Position = position,
 			Positions = positions,
+			SnapRadius = step.SnapRadius,
+			ArrowOnEquip = step.ArrowOnEquip,
 			Lines = step.Lines,
 			HideDeck = step.HideDeck,
 			ReadDelay = step.ReadDelay,
@@ -374,6 +587,47 @@ function TutorialMatchService:openStep(step : any)
 			end
 		end)
 	end
+
+	self:watchStep(step, token)
+end
+
+--[=[
+	Watches an open step for the things only the server can see: the speed the room
+	picked, an upgrade bought, cash that ran short while the step waits.
+
+	It runs whether or not the step holds a wave, on real time (`task.wait`): with the
+	clock held at 0, match time would never advance.
+]=]
+function TutorialMatchService:watchStep(step : any, token : number)
+	task.spawn(function()
+		local baseline = if step.Kind == "Upgrade" then self:upgradeTotal() else 0
+		local lastEnsure = os.clock()
+
+		while self.StepToken == token and self.Step == step and not self.Done do
+			if step.Kind == "Speed" then
+				local speed = self.Services.SpeedService
+
+				if speed and speed:GetIndex() >= (step.Index or 2) then
+					self:CompleteStep()
+
+					break
+				end
+			end
+
+			if step.Kind == "Upgrade" and self:upgradeTotal() > baseline then
+				self:CompleteStep()
+
+				break
+			end
+
+			if step.Ensure and os.clock() - lastEnsure >= ENSURE_INTERVAL then
+				lastEnsure = os.clock()
+				self:ensureCash(step)
+			end
+
+			task.wait(WATCH_INTERVAL)
+		end
+	end)
 end
 
 function TutorialMatchService:BeginIntermission()
@@ -450,8 +704,67 @@ local function maxCardPrice() : number
 	return highest
 end
 
---- What a purchase step needs the player to be able to pay.
-function TutorialMatchService:requiredCash(step : any) : number
+--- What placing every card still in this player's hand costs, at the current weather.
+function TutorialMatchService:handCost(player : Player) : number
+	local unitService = self.Services.UnitService
+	local cards = unitService and unitService.SessionCards and unitService.SessionCards[player.UserId]
+	if not cards then return 0 end
+
+	local weather = unitService.GetWeather and unitService:GetWeather() or nil
+	local total = 0
+
+	for unitName, count in cards do
+		if count > 0 then
+			total += SharedConfig.UnitUpgradeConfig:GetPlaceCost(unitName, weather) * count
+		end
+	end
+
+	return total
+end
+
+--- The cheapest next upgrade among this player's placed units, or 0 with nothing to upgrade.
+function TutorialMatchService:cheapestUpgrade(player : Player) : number
+	local unitService = self.Services.UnitService
+	local upgrades = SharedConfig.UnitUpgradeConfig
+	local cheapest = nil
+
+	for _, entry in (unitService and unitService.PlacedUnits or {}) do
+		if entry.ownerUserId ~= player.UserId then continue end
+
+		local level = entry.upgrades or 0
+		if upgrades:IsMaxed(level) then continue end
+
+		local cost = upgrades:GetCost(entry.unitName, level)
+		if not cheapest or cost < cheapest then
+			cheapest = cost
+		end
+	end
+
+	return cheapest or 0
+end
+
+--- Every upgrade bought on the map so far, summed: what tells an `Upgrade` step it happened.
+function TutorialMatchService:upgradeTotal() : number
+	local unitService = self.Services.UnitService
+	local total = 0
+
+	for _, entry in (unitService and unitService.PlacedUnits or {}) do
+		total += entry.upgrades or 0
+	end
+
+	return total
+end
+
+--- What a step with `Ensure` needs this player to be able to pay.
+function TutorialMatchService:requiredCash(step : any, player : Player) : number
+	if step.Kind == "PlaceRest" then
+		return self:handCost(player)
+	end
+
+	if step.Kind == "Upgrade" then
+		return self:cheapestUpgrade(player)
+	end
+
 	if step.Card then
 		local card = RoundCardConfig.Get(step.Card)
 		return card and RoundCardConfig.GetPrice(card) or 0
@@ -461,9 +774,9 @@ function TutorialMatchService:requiredCash(step : any) : number
 end
 
 --[=[
-	A purchase step that holds the wave must never find a player without money.
-	Tops up only the difference: to the card's price, or, for "any card", to the
-	most expensive card so whatever is on the table is affordable.
+	A step that waits on the player must never find them without money.
+	Tops up only the difference: to the card's price (or, for "any card", the most
+	expensive card), to the cost of the rest of the hand, or to the cheapest upgrade.
 
 	Safe to call repeatedly: a player who already has enough gets nothing.
 ]=]
@@ -473,16 +786,16 @@ function TutorialMatchService:ensureCash(step : any)
 	local mobService = self.Services.MobService
 	if not mobService then return end
 
-	local price = self:requiredCash(step)
-	if price <= 0 then return end
-
 	for _, player in Players:GetPlayers() do
+		local price = self:requiredCash(step, player)
+		if price <= 0 then continue end
+
 		local missing = price - (mobService:getCash(player) or 0)
 
 		if missing > 0 then
 			mobService:addCash(player, missing)
 
-			log:Debug(`topped up {missing} so {player.Name} can afford a card.`)
+			log:Debug(`topped up {missing} so {player.Name} can finish step "{step.Id}".`)
 		end
 	end
 end
@@ -506,38 +819,22 @@ function TutorialMatchService:grantCash(step : any)
 end
 
 --[=[
-	Holds the wave while its step is open.
+	Holds the wave while a step that holds it is open.
 
-	A `Buy` step with `Ensure` keeps topping cash up while it waits: the player can
-	still place towers with the shop up, and spending below every card's price
-	there would leave a held wave with nothing to buy.
+	It follows **whichever step is open**, not the one that was open when the wave
+	started: a step that chains into another on the same wave (the card shop, then
+	placing the rest of the hand) keeps the wave held across both.
 ]=]
 function TutorialMatchService:AwaitStep(wave : number)
-	local step = self.Step
-	if not step or not step.Hold then
-		return
-	end
+	while true do
+		local step = self.Step
 
-	if step.Wave ~= wave and not step.OnShop then
-		return
-	end
-
-	local lastEnsure = os.clock()
-
-	while self.Step == step and not self.Done do
-		if step.Kind == "Speed" then
-			local speed = self.Services.SpeedService
-
-			if speed and speed:GetIndex() >= (step.Index or 2) then
-				self:CompleteStep()
-
-				break
-			end
+		if not step or self.Done or not step.Hold then
+			return
 		end
 
-		if step.Kind == "Buy" and step.Ensure and os.clock() - lastEnsure >= ENSURE_INTERVAL then
-			lastEnsure = os.clock()
-			self:ensureCash(step)
+		if step.Wave ~= wave and not step.OnShop then
+			return
 		end
 
 		task.wait(0.2)
@@ -564,12 +861,19 @@ function TutorialMatchService:handIsEmpty(player : Player) : boolean
 	return true
 end
 
+--[=[
+	Closes the open step: lets go of the clock, reports it, and opens the next step
+	on the same wave when there is one (in the same call, so a held wave never slips
+	through between the two).
+]=]
 function TutorialMatchService:CompleteStep()
 	local step = self.Step
 	if not step or self.Done then return end
 
 	self.Done = true
 	self.Completed[step.Id] = true
+
+	self:setHold(nil)
 
 	log:Debug(`step "{step.Id}" completed.`)
 
@@ -582,15 +886,25 @@ function TutorialMatchService:CompleteStep()
 
 		Framework:Fire("TutorialStepDone", player, step.Id)
 	end
+
+	if step.Kind == "Lobby" or self.CurrentWave == nil then return end
+
+	local nextStep = self:StepFor(self.CurrentWave)
+
+	if nextStep and nextStep ~= step and nextStep.Wave == self.CurrentWave then
+		self:openStep(nextStep)
+	end
 end
 
 --[=[
-	The client finished reading an `Info` step's dialog. Only the open step, only
-	once, and only for `Info`: action steps close on the action itself.
+	The client is done with an `Info` step's dialog, or with the weather popup of a
+	`Weather` step. Only the open step, only once: action steps close on the action
+	itself.
 ]=]
 function TutorialMatchService:NoteRead(id : any)
 	local step = self.Step
-	if not step or self.Done or step.Kind ~= "Info" then return end
+	if not step or self.Done then return end
+	if step.Kind ~= "Info" and step.Kind ~= "Weather" then return end
 	if typeof(id) ~= "string" or step.Id ~= id then return end
 
 	self:CompleteStep()
@@ -750,7 +1064,8 @@ end
 
 --[=[
 	With a placement step open: only its unit (if it names one), and only within
-	`Radius` of its spot. Outside a step, the deck lock still applies.
+	`Radius` of its spot. A `PlaceRest` step with `Points` only takes those spots;
+	without them, anywhere. Outside a step, the deck lock still applies.
 ]=]
 function TutorialMatchService:CanPlace(unitName : string, cf : CFrame) : boolean
 	local allowed = self:allowedUnits()
@@ -764,7 +1079,11 @@ function TutorialMatchService:CanPlace(unitName : string, cf : CFrame) : boolean
 	end
 
 	if step.Kind == "PlaceRest" then
-		for _, name in (step.Points or {}) do
+		if not step.Points or #step.Points == 0 then
+			return true
+		end
+
+		for _, name in step.Points do
 			local part = self:pointNamed(name)
 
 			if part and (cf.Position - part.Position).Magnitude <= (step.Radius or 10) then
@@ -869,5 +1188,5 @@ end
 
 function TutorialMatchService:init()
 end
- 
+
 return TutorialMatchService

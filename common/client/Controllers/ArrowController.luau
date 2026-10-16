@@ -18,6 +18,9 @@ local Config = SharedConfig.IndicatorArrowConfig
 
 local TAU = math.pi * 2
 
+-- Turns the downward arrow so its tip faces forward and its face points up.
+local LAY_FLAT = CFrame.Angles(math.pi / 2, 0, 0)
+
 --[[
 	The arrow that points at a place in the world.
 
@@ -30,6 +33,11 @@ local TAU = math.pi * 2
 	The model is `Shared.Assets.VFX.IndicatorArrow`: a downward arrow, built in the
 	place (`Shared.Assets` is not synced by Rojo) and already configured there:
 	anchored, welded parts with no collision, query, or touch.
+
+	**Two kinds of arrow.** `Point` hangs over the target, spinning and bobbing.
+	`Guide` lies flat beside something that moves (the player) and points from it
+	towards the target, nudging forward; it hides once that thing is close enough
+	(`Guide.HideWithin`).
 
 	**Height is measured, not assumed.** The controller measures, once, the distance
 	from the model's pivot to its bottom tip, and that measurement is what makes
@@ -93,18 +101,25 @@ local Arrow = {}
 Arrow.__index = Arrow
 
 export type Options = {
-	-- Gap between the arrow's tip and the target, in studs.
+	-- Gap between the arrow's tip and the target, in studs. For a guide: studs
+	-- above the origin.
 	Height : number?,
 
-	-- Turns per second.
+	-- Turns per second. Ignored by a guide.
 	Spin : number?,
 
-	-- Studs up and down, and cycles per second.
+	-- Studs up and down, and cycles per second. For a guide: the push towards
+	-- the target.
 	Amplitude : number?,
 	BobSpeed : number?,
 
 	-- Size on top of the authored one.
 	Scale : number?,
+
+	-- Guide only: studs from the origin to the tip, and how close the origin gets
+	-- before the arrow hides.
+	Distance : number?,
+	HideWithin : number?,
 }
 
 export type Arrow = typeof(setmetatable(
@@ -115,6 +130,9 @@ export type Arrow = typeof(setmetatable(
 		PivotToBottom : number,
 		Phase : number,
 		Alive : boolean,
+		Origin : (() -> Vector3?)?,
+		Parts : { BasePart },
+		Hidden : boolean,
 	},
 	Arrow
 ))
@@ -276,6 +294,57 @@ function ArrowController:container() : Folder
 end
 
 --[=[
+	Shows or hides an arrow without destroying it, through
+	`LocalTransparencyModifier` so the authored transparency is left alone.
+]=]
+function ArrowController:setHidden(arrow : Arrow, hidden : boolean)
+	if arrow.Hidden == hidden then return end
+
+	arrow.Hidden = hidden
+
+	for _, part in arrow.Parts do
+		part.LocalTransparencyModifier = if hidden then 1 else 0
+	end
+end
+
+--[=[
+	Places a guide arrow: flat, a few studs from the origin, its tip towards the
+	target, nudging back and forth. Only the horizontal direction counts, so the
+	arrow stays level when the target is higher or lower than the player.
+
+	The tip lands on the computed spot the same way `place` does it: the pivot is
+	offset by the template's measurement, now along the pointing direction.
+]=]
+function ArrowController:placeGuide(arrow : Arrow, clock : number)
+	local guide = Config.Guide
+	local options = arrow.Options
+
+	local origin = arrow.Origin and arrow.Origin()
+	local flat = origin and Vector3.new(arrow.Target.X - origin.X, 0, arrow.Target.Z - origin.Z)
+	local hideWithin = options.HideWithin or guide.HideWithin
+
+	if not origin or not flat or flat.Magnitude <= hideWithin then
+		self:setHidden(arrow, true)
+		return
+	end
+
+	self:setHidden(arrow, false)
+
+	local direction = flat.Unit
+	local distance = options.Distance or guide.Distance
+	local height = options.Height or guide.Height
+	local amplitude = options.Amplitude or guide.Push.Amplitude
+	local speed = options.BobSpeed or guide.Push.Speed
+
+	local push = math.sin((clock + arrow.Phase) * speed * TAU) * amplitude
+
+	local tip = origin + direction * (distance + push) + Vector3.new(0, height, 0)
+	local pivot = tip - direction * arrow.PivotToBottom
+
+	arrow.Model:PivotTo(CFrame.lookAt(pivot, pivot + direction) * LAY_FLAT)
+end
+
+--[=[
 	Places an arrow where it must be **at this instant**.
 
 	`PivotTo` because the model has no `PrimaryPart`, and it does not need one: the
@@ -284,6 +353,11 @@ end
 	studs, wherever the pivot is.
 ]=]
 function ArrowController:place(arrow : Arrow, clock : number)
+	if arrow.Origin then
+		self:placeGuide(arrow, clock)
+		return
+	end
+
 	local options = arrow.Options
 	local motion = Config.Motion
 
@@ -332,16 +406,11 @@ function ArrowController:forget(arrow : Arrow)
 	end
 end
 
---[[ API ]]
-
 --[=[
-	Points at a world position. Returns the arrow, or `nil` if the model does not
-	exist in this place.
-
-	Each call is a new arrow: pointing at two places at once means asking for two. To
-	move an existing one, `arrow:MoveTo(otherPosition)`.
+	Builds an arrow of either kind and puts it on screen. `origin` makes it a
+	guide; without it, it hangs over the target.
 ]=]
-function ArrowController:Point(position : Vector3, options : Options?) : Arrow?
+function ArrowController:spawn(position : Vector3, options : Options?, origin : (() -> Vector3?)?, defaultScale : number) : Arrow?
 	local template = self:template()
 	if not template then
 		return nil
@@ -349,7 +418,7 @@ function ArrowController:Point(position : Vector3, options : Options?) : Arrow?
 
 	local model = template:Clone()
 
-	local scale = (options and options.Scale) or Config.Scale
+	local scale = (options and options.Scale) or defaultScale
 	if scale ~= 1 then
 		model:ScaleTo(scale)
 	end
@@ -357,6 +426,13 @@ function ArrowController:Point(position : Vector3, options : Options?) : Arrow?
 	-- The template's measurement applies to the template's size: a smaller arrow has
 	-- its tip closer to the pivot, in the same proportion.
 	local pivotToBottom = self.PivotToBottom * scale
+
+	local parts = {}
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			table.insert(parts, descendant)
+		end
+	end
 
 	self.Spawned += 1
 
@@ -371,6 +447,9 @@ function ArrowController:Point(position : Vector3, options : Options?) : Arrow?
 		Phase = self.Spawned * 0.5,
 
 		Alive = true,
+		Origin = origin,
+		Parts = parts,
+		Hidden = false,
 	}, Arrow)
 
 	-- Positioned before entering the screen: without this it appears where the model
@@ -382,6 +461,33 @@ function ArrowController:Point(position : Vector3, options : Options?) : Arrow?
 	self:play()
 
 	return arrow
+end
+
+--[[ API ]]
+
+--[=[
+	Points at a world position. Returns the arrow, or `nil` if the model does not
+	exist in this place.
+
+	Each call is a new arrow: pointing at two places at once means asking for two. To
+	move an existing one, `arrow:MoveTo(otherPosition)`.
+]=]
+function ArrowController:Point(position : Vector3, options : Options?) : Arrow?
+	return self:spawn(position, options, nil, Config.Scale)
+end
+
+--[=[
+	A guide arrow: lies flat next to `origin` (read every frame, so it follows the
+	player) and points towards `position`. `origin` returning `nil` (no character
+	yet) hides the arrow until it returns a position again.
+
+		local arrow = Arrow:Guide(function()
+			local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+			return root and root.Position
+		end, portal.Position)
+]=]
+function ArrowController:Guide(origin : () -> Vector3?, position : Vector3, options : Options?) : Arrow?
+	return self:spawn(position, options, origin, Config.Guide.Scale)
 end
 
 --[=[
