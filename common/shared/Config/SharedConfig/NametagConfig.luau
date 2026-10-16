@@ -701,6 +701,8 @@ NametagConfig.Nametags = {
 				}),
 				GradientRotation = 0,
 				Animation = { Mode = "Scroll", Speed = 0.7 },
+				Bounce = { Height = 0.16, Speed = 0.5, Sweep = 0.6, Hop = 0.3 },
+
 			},
 			Username = {
 				TextColor3 = Color3.new(1, 1, 1),
@@ -715,6 +717,8 @@ NametagConfig.Nametags = {
 				}),
 				GradientRotation = 0,
 				Animation = { Mode = "Scroll", Speed = 0.5 },
+				Bounce = { Height = 0.16, Speed = 0.5, Sweep = 0.6, Hop = 0.3 },
+
 			},
 			Level = {
 				TextColor3 = Color3.new(1, 1, 1),
@@ -726,6 +730,8 @@ NametagConfig.Nametags = {
 				}),
 				GradientRotation = 0,
 				Animation = { Mode = "Scroll", Speed = 0.5 },
+				Bounce = { Height = 0.16, Speed = 0.5, Sweep = 0.6, Hop = 0.3 },
+
 			},
 		},
 	},
@@ -781,6 +787,61 @@ NametagConfig.Nametags = {
 			},
 		},
 	},
+
+		Contributor = {
+		DisplayName = "Contributor",
+		Description = "Helped build the game.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "CONTRIBUTOR",
+		Order = 55,
+		Style = {
+			Title = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(6, 18, 36),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 220, 255)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 120, 200)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(80, 220, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.4 },
+				Bounce = { Height = 0.2, Speed = 0.5, Sweep = 0.6, Hop = 0.3 },
+			},
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(6, 18, 36),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(80, 220, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 200, 235)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(80, 220, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.3 },
+				Bounce = { Height = 0.16, Speed = 0.5, Sweep = 0.6, Hop = 0.3 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(6, 18, 36),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(110, 225, 255)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 160, 220)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(110, 225, 255)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.3 },
+			},
+		},
+	},
+
+
 
 	LevelBronze = {
 		DisplayName = "Bronze",

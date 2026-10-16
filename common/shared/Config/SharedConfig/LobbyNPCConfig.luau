@@ -128,6 +128,10 @@ LobbyNPCConfig.Staff = {
 				"It works on my machine.[pause=0.5] Usually.",
 			},
 			{
+				"Psst.. {player}! don't tell anyone but the, [color=255, 191, 0]Fall Periastron[/color] is coming soon..",
+				"Keep an eye out for a certain person very soon..",
+			},			
+			{
 				"I write a lot of the code behind the towers and systems.",
 				"If a tower does something weird, I was never here.",
 			},

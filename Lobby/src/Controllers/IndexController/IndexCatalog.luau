@@ -117,22 +117,41 @@ local C = COLORS
 	unit missing here just shows no line, so a new unit costs one entry, not a crash.
 ]=]
 local UNIT_BEHAVIOR = {
-	Archmage = `Casts a three-step combo: a {paint("meteor", C.Fire)} that blasts an area, a {paint("lightning", C.Electric)} beam down a line, then a {paint("teleport", C.Magic)} that sends the target back along the path.`,
-	Azure = `Unleashes {paint("four quick strikes", C.Fast)} per attack. Huge damage, but only on enemies that come close.`,
-	Electro = `Fires a bolt that {paint("chains", C.Electric)} through up to four enemies, {paint("stunning", C.Electric)} each one for an instant.`,
-	Berserker = `Swings a four-hit combo that cleaves nearby enemies and leaves them {paint("bleeding", C.Bleed)}, so they take more damage from everything.`,
-	Bonfire = `Channels a {paint("fire beam", C.Fire)} that grows stronger the longer it holds a target. Rests when nothing is in range, and {paint("rain", C.Weather)} puts it out.`,
-	Rocket = `Launches rockets from long range that {paint("explode", C.Fire)} on impact, hitting every enemy in the blast.`,
-	["Subspace Tripminer"] = `Throws {paint("mines", C.Magic)} onto the path that explode when enemies step on them, hitting harder the longer they charge.`,
-	Frostione = `Shoots frost bolts that {paint("slow", C.Ice)} enemies; enough hits {paint("freeze", C.Ice)} them solid.`,
-	Entrepreneur = `Does not fight. Earns {paint("cash", C.Cash)} every wave and {paint("boosts the earnings", C.Cash)} of the towers around it.`,
-	Slingshot = `A {paint("long-range", C.Range)} shooter that pelts one enemy at a time from afar.`,
-	Archer = `Fires arrows that {paint("pierce", C.Pierce)} through every enemy in a line, losing a little damage per body.`,
-	Pyre = `Hurls fireballs that set enemies {paint("ablaze", C.Fire)}, burning them over time.`,
-	Sword = `A melee fighter that lands {paint("one heavy strike", C.Health)} at a time. Has to stand right next to the path.`,
-	Slasher = `Quick melee slashes that make enemies {paint("bleed", C.Bleed)}, so every tower hits them harder.`,
-	Cryomancer = `Does not attack. Surrounds itself with a {paint("frigid aura", C.Ice)} that {paint("slows", C.Ice)} every enemy inside it.`,
-	Volt = `Quick zaps that leave enemies {paint("static", C.Electric)}, {paint("stunning", C.Electric)} them every few seconds. Other Electric towers hit charged enemies harder.`,
+	Archmage = `Casts a three-step combo: a {paint("meteor", C.Fire)} that blasts an area, a {paint("lightning", C.Electric)} beam down a line that {paint("stuns", C.Electric)} for 1s, then a {paint("teleport", C.Magic)} that throws the target back to the last corner it passed.[br][br]{paint("Hidden:", C.Threshold)} the teleport works on {paint("bosses", C.Boss)}. The meteor lands where the target was when the cast began, so fast enemies can outrun it. Stacking Archmages will not chain-stun: once stunned, an enemy is immune to every Archmage's lightning stun for 2.5s.`,
+
+	Azure = `Unleashes {paint("four quick strikes", C.Fast)} per attack. Huge damage, but only on enemies that come close.[br][br]{paint("Hidden:", C.Threshold)} it has no type, so weathers that buff or punish a specific type skip it entirely. Only effects on every unit touch it.`,
+
+	Electro = `Fires a bolt that {paint("chains", C.Electric)} through up to four enemies, {paint("stunning", C.Electric)} each one for an instant. Every link takes full damage.[br][br]{paint("Hidden:", C.Threshold)} each jump reaches 8 studs from the last enemy, not from the tower, so a tight queue carries the bolt far past its range. Enemies charged by a {paint("Volt", C.Electric)} take 20% more and stay stunned 50% longer. Weak against a lone target.`,
+
+	Berserker = `Swings a four-hit combo of small areas that cleave nearby enemies, each hit a little weaker than the last. The first hit leaves them {paint("bleeding", C.Bleed)}, taking 30% more damage from everything.[br][br]{paint("Hidden:", C.Threshold)} its wound and the {paint("Slasher", C.Bleed)}'s do not stack. Whoever opens it first keeps it until it runs out.`,
+
+	Bonfire = `Channels a {paint("fire beam", C.Fire)} that ramps up to 4x damage the longer it holds on.[br][br]{paint("Hidden:", C.Threshold)} if the target dies and another enemy is in range, the ramp carries over. If its range empties, it gets tired and restarts from zero, so place it where enemies never stop coming. {paint("Rain", C.Weather)} puts it out completely.`,
+
+	Rocket = `Launches rockets from long range that {paint("explode", C.Fire)} on impact, hitting every enemy in the blast. No tricks, just reliable splash from a safe distance.`,
+
+	["Subspace Tripminer"] = `Throws {paint("mines", C.Magic)} onto the path that explode in a wide area when stepped on.[br][br]{paint("Hidden:", C.Threshold)} a fresh mine only deals 35% damage and charges to full over 5 seconds, so mines laid before a wave arrives hit far harder. It can keep 3 mines down at once, rising to 6 with upgrades.`,
+
+	Frostione = `Shoots frost bolts that {paint("slow", C.Ice)} enemies by 30% and chill those around the target; four hits {paint("freeze", C.Ice)} them solid for 3s.[br][br]{paint("Hidden:", C.Threshold)} stacks are counted per Frostione, so two of them do not freeze faster: each needs its own four hits. Thawed enemies shrug off frost for 2s. Thrives in a {paint("Blizzard", C.Weather)}, nearly useless in a {paint("Drought", C.Weather)}.`,
+
+	Entrepreneur = `Does not fight. Earns {paint("cash", C.Cash)} every wave and {paint("boosts the earnings", C.Cash)} of every tower inside its circle.[br][br]{paint("Hidden:", C.Threshold)} the boost works on teammates' towers too, and the extra cash goes to the tower's owner. The bonus tops out at level 4; the last upgrade is all about the big income jump.`,
+
+	Slingshot = `A {paint("long-range", C.Range)} shooter that pelts one enemy at a time from afar. Cheap and steady, and its damage almost triples by max level.`,
+
+	Archer = `Fires arrows that {paint("pierce", C.Pierce)} through every enemy in a line, losing a little damage per body.[br][br]{paint("Hidden:", C.Threshold)} the arrow keeps going to the end of its range, hitting enemies behind the target too. Aim it down a long straight and it hits the whole queue.`,
+
+	Pyre = `Hurls fireballs that burst on impact, setting every enemy in the splash {paint("ablaze", C.Fire)} for 9 seconds.[br][br]{paint("Hidden:", C.Threshold)} burns never stack or refresh, so hitting a burning enemy only adds the shot. Its value is in lighting new targets, not focusing one. {paint("Rain", C.Weather)} puts it out.`,
+
+	Sword = `A melee fighter that lands {paint("one heavy strike", C.Health)} at a time. The best value per cash of the Commons, but it has to stand right next to the path.[br][br]{paint("Hidden:", C.Threshold)} its range only grows once, at level 3.`,
+
+	Slasher = `Quick melee slashes that make enemies {paint("bleed", C.Bleed)}.[br][br]{paint("Hidden:", C.Threshold)} a bleeding enemy takes 30% more damage from every tower, so the Slasher is worth far more as a marker for your heavy hitters than for its own damage.`,
+
+	Cryomancer = `Does not attack. Surrounds itself with a {paint("frigid aura", C.Ice)} that {paint("slows", C.Ice)} every enemy inside it.[br][br]{paint("Hidden:", C.Threshold)} slows do not stack: an enemy only feels the strongest one, so overlapping rings are wasted. Spread them out instead. Ice towers cost 25% less to place in the {paint("rain", C.Weather)}.`,
+
+	Volt = `Quick zaps that leave enemies {paint("static", C.Electric)}, {paint("stunning", C.Electric)} them every 2 seconds while the charge lasts.[br][br]{paint("Hidden:", C.Threshold)} other Electric towers deal 20% more to charged enemies, and their stuns last 50% longer. The Volt gets no bonus from its own charge, so pair it with an {paint("Electro", C.Electric)}.`,
+
+	Vindicator = `A melee bruiser that {paint("shoves", C.Range)} enemies back along the path, pushing the target and up to two enemies near it.[br][br]{paint("Hidden:", C.Threshold)} after a push it waits 2.5s before pushing again, so it shoves about every other swing. {paint("Bosses", C.Boss)} only budge a quarter as far.`,
+
+	Necromancer = `Fires bolts that splash nearby enemies. Anything it finishes off {paint("rises as a minion", C.Pierce)} that walks back from your base and crashes into incoming enemies.[br][br]{paint("Hidden:", C.Threshold)} only kills it lands itself count. A minion keeps 30% of the fallen enemy's max health (60% at max level), so raising big enemies makes big minions. {paint("Bosses", C.Boss)} cannot be raised.`,
 }
 
 -- The difficulty folders in `Mob.Entities`, easiest first: the enemies page order.

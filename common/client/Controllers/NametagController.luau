@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TextService = game:GetService("TextService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
@@ -27,6 +28,18 @@ local SCROLL_SAMPLES = 16
 
 local EFFECTS_FOLDER = "NametagEffects"
 local EFFECT_HOLDER_SIZE = Vector3.new(0.05, 0.05, 0.05)
+
+local LETTERS_NAME = "Letters"
+local MEASURE_SIZE = 100
+local LETTER_SAMPLES = 6
+local MEASURE_WIDTH = 1e6
+
+local BOUNCE_DEFAULTS = {
+	Height = 0.18,
+	Speed = 0.5,
+	Sweep = 0.6,
+	Hop = 0.3,
+}
 
 --[=[
 	Draws every player's nametag, in every place.
@@ -59,6 +72,22 @@ local EFFECT_HOLDER_SIZE = Vector3.new(0.05, 0.05, 0.05)
 	  The pattern is resampled each frame with a phase shift and wraps from its last
 	  colour back to its first, so make those two keypoints the same colour.
 	  `Rotate` spins the gradient, `Speed` turns per second.
+
+	**Bounce.** A style's `Bounce = { Height, Speed, Sweep, Hop }` splits the label
+	into one TextLabel per letter (in a `Letters` frame inside it) and hops them in a
+	wave, left to right:
+	  `Height` is the share of the label's height the hop uses; the letters shrink by
+	  that much so the hop never leaves the label (the billboard clips).
+	  `Speed` is waves per second.
+	  `Sweep` is the share of a wave it takes to cross the word, whatever its length.
+	  `Hop` is the share of a wave each letter spends in the air.
+	Letters are measured with `TextService` at `MEASURE_SIZE`, then sized in pixels
+	whenever the label's absolute size changes, so they match the label's font at
+	any distance. The gradient is resampled per letter over its slice of the word,
+	so it reads as one gradient; `Scroll` and `Rotate` keep working. A `ScaledSize`
+	stroke becomes a fixed stroke of `Thickness * TextSize`. The original label keeps
+	its place in the layout and is hidden (text, stroke and gradient) once the letters
+	are built, so a new tag shows its normal text until then.
 
 	`Animated` is a strong table on purpose: a weak-keyed one loses Instance keys when
 	the garbage collector runs, which froze animations. Gradients leave it through
@@ -349,9 +378,7 @@ function NametagController:_applyStyle(label : TextLabel?, style : any)
 	end
 end
 
-function NametagController:_step()
-	local now = os.clock()
-
+function NametagController:_step(now : number)
 	for gradient, animation in self.Animated do
 		if not gradient.Parent then
 			if animation.Connection then
@@ -369,10 +396,370 @@ function NametagController:_step()
 	end
 end
 
+--[[ BOUNCE ]]
+
+function NametagController:_measure(font : Font, text : string) : Vector2
+	local key = `{font.Family}|{font.Weight.Name}|{font.Style.Name}|{text}`
+	local cached = self.Glyphs[key]
+	if cached then
+		return cached
+	end
+
+	local params = Instance.new("GetTextBoundsParams")
+	params.Text = text
+	params.Font = font
+	params.Size = MEASURE_SIZE
+	params.Width = MEASURE_WIDTH
+
+	local ok, bounds = pcall(TextService.GetTextBoundsAsync, TextService, params)
+	if ok and typeof(bounds) == "Vector2" then
+		self.Glyphs[key] = bounds
+		return bounds
+	end
+
+	return Vector2.new(MEASURE_SIZE * 0.6 * (utf8.len(text) or #text), MEASURE_SIZE)
+end
+
+function NametagController:_setSourceVisible(record, visible : boolean)
+	local label = record.Label
+	label.TextTransparency = if visible then 0 else 1
+
+	local stroke = label:FindFirstChildOfClass("UIStroke")
+	if stroke then
+		stroke.Enabled = visible
+	end
+
+	if not visible then
+		local gradient = label:FindFirstChildOfClass("UIGradient")
+		if gradient then
+			gradient:Destroy()
+		end
+	end
+end
+
+function NametagController:_dropBounce(label : TextLabel)
+	local record = self.Bouncing[label]
+	if not record then
+		return
+	end
+
+	self.Bouncing[label] = nil
+	record.Maid:DoCleaning()
+
+	if record.Container then
+		record.Container:Destroy()
+		record.Container = nil
+	end
+end
+
+function NametagController:_mountBounce(label : TextLabel?, style : any)
+	if not label or typeof(style) ~= "table" or typeof(style.Bounce) ~= "table" then
+		return
+	end
+
+	self:_dropBounce(label)
+
+	local settings = {}
+	for key, value in BOUNCE_DEFAULTS do
+		settings[key] = tonumber(style.Bounce[key]) or value
+	end
+	settings.Height = math.clamp(settings.Height, 0, 0.9)
+	settings.Hop = math.clamp(settings.Hop, 0.01, 1)
+
+	local stroke = label:FindFirstChildOfClass("UIStroke")
+	local animation = style.Animation
+	local mode = if typeof(animation) == "table" then animation.Mode else nil
+	local rotation = style.GradientRotation or 0
+
+	local record = {
+		Label = label,
+		Settings = settings,
+		Text = nil :: string?,
+		Version = 0,
+		Ready = false,
+		Container = nil :: Frame?,
+		Letters = {},
+		Total = 0,
+		LineHeight = 0,
+		RestY = 0,
+		HopPx = 0,
+		Stroke = if stroke then {
+			Color = stroke.Color,
+			Thickness = stroke.Thickness,
+			Transparency = stroke.Transparency,
+			LineJoinMode = stroke.LineJoinMode,
+			Scaled = stroke.StrokeSizingMode == Enum.StrokeSizingMode.ScaledSize,
+		} else nil,
+		Gradient = style.Gradient,
+		Keypoints = if style.Gradient then style.Gradient.Keypoints else nil,
+		Rotation = rotation,
+		Mode = mode,
+		Speed = if typeof(animation) == "table" then tonumber(animation.Speed) or 0.5 else 0.5,
+		Horizontal = rotation % 180 == 0 and mode ~= "Rotate",
+		Maid = Maid.new(),
+	}
+
+	self.Bouncing[label] = record
+
+	record.Maid:GiveTask(label.Destroying:Connect(function()
+		self:_dropBounce(label)
+	end))
+
+	task.spawn(self._buildLetters, self, record)
+end
+
+function NametagController:_buildLetters(record)
+	local label = record.Label
+	local text = label.Text
+
+	if record.Ready and record.Text == text then
+		return
+	end
+
+	record.Version += 1
+	local version = record.Version
+	record.Text = text
+
+	local glyphs = {}
+	for first, last in utf8.graphemes(text) do
+		table.insert(glyphs, string.sub(text, first, last))
+	end
+
+	local font = label.FontFace
+	local widths = table.create(#glyphs)
+	local total = 0
+
+	for index, glyph in glyphs do
+		local width = self:_measure(font, glyph).X
+		widths[index] = width
+		total += width
+	end
+
+	local lineHeight = if #glyphs > 0 then self:_measure(font, text).Y else 0
+
+	if record.Version ~= version or self.Bouncing[label] ~= record or not label.Parent then
+		return
+	end
+
+	if record.Container then
+		record.Container:Destroy()
+		record.Container = nil
+	end
+
+	if #glyphs == 0 or total <= 0 or lineHeight <= 0 then
+		record.Ready = false
+		record.Letters = {}
+		self:_setSourceVisible(record, true)
+		return
+	end
+
+	local container = Instance.new("Frame")
+	container.Name = LETTERS_NAME
+	container.BackgroundTransparency = 1
+	container.BorderSizePixel = 0
+	container.Size = UDim2.fromScale(1, 1)
+	container.ZIndex = label.ZIndex
+
+	local letters = table.create(#glyphs)
+	local cursor = 0
+
+	for index, glyph in glyphs do
+		local letter = Instance.new("TextLabel")
+		letter.Name = tostring(index)
+		letter.BackgroundTransparency = 1
+		letter.BorderSizePixel = 0
+		letter.Text = glyph
+		letter.FontFace = font
+		letter.TextColor3 = label.TextColor3
+		letter.TextScaled = false
+		letter.RichText = false
+		letter.AutoLocalize = false
+		letter.TextXAlignment = Enum.TextXAlignment.Center
+		letter.TextYAlignment = Enum.TextYAlignment.Center
+		letter.ZIndex = label.ZIndex
+
+		local stroke = nil
+		if record.Stroke then
+			stroke = Instance.new("UIStroke")
+			stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+			stroke.StrokeSizingMode = Enum.StrokeSizingMode.FixedSize
+			stroke.Color = record.Stroke.Color
+			stroke.Transparency = record.Stroke.Transparency
+			stroke.LineJoinMode = record.Stroke.LineJoinMode
+			stroke.Thickness = record.Stroke.Thickness
+			stroke.Parent = letter
+		end
+
+		local gradient = nil
+		if record.Gradient then
+			gradient = Instance.new("UIGradient")
+			gradient.Color = record.Gradient
+			gradient.Rotation = record.Rotation
+			gradient.Parent = letter
+		end
+
+		letter.Parent = container
+
+		letters[index] = {
+			Label = letter,
+			Stroke = stroke,
+			Gradient = gradient,
+			Offset = cursor,
+			Width = widths[index],
+			From = cursor / total,
+			To = (cursor + widths[index]) / total,
+			X = 0,
+		}
+
+		cursor += widths[index]
+	end
+
+	record.Letters = letters
+	record.Total = total
+	record.LineHeight = lineHeight
+	record.Container = container
+
+	container.Parent = label
+
+	container:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		self:_layoutLetters(record)
+	end)
+
+	self:_setSourceVisible(record, false)
+	record.Ready = true
+
+	local now = os.clock()
+	self:_layoutLetters(record)
+	self:_paintLetters(record, now)
+	self:_moveLetters(record, now)
+end
+
+function NametagController:_layoutLetters(record)
+	local container = record.Container
+	if not container or not container.Parent then
+		return
+	end
+
+	local size = container.AbsoluteSize
+	if size.X <= 0 or size.Y <= 0 then
+		return
+	end
+
+	local settings = record.Settings
+	local room = size.Y * (1 - settings.Height)
+	local fit = math.min(room / record.LineHeight, size.X / record.Total)
+	local fontSize = math.clamp(math.floor(fit * MEASURE_SIZE), 1, MEASURE_SIZE)
+	local scale = fontSize / MEASURE_SIZE
+
+	local width = record.Total * scale
+	local height = record.LineHeight * scale
+	local left = (size.X - width) / 2
+
+	record.HopPx = size.Y * settings.Height
+	record.RestY = record.HopPx + (room - height) / 2
+
+	for _, letter in record.Letters do
+		letter.X = left + letter.Offset * scale
+		letter.Label.TextSize = fontSize
+		letter.Label.Size = UDim2.fromOffset(math.ceil(letter.Width * scale), math.ceil(height))
+
+		if letter.Stroke then
+			letter.Stroke.Thickness = if record.Stroke.Scaled
+				then record.Stroke.Thickness * fontSize
+				else record.Stroke.Thickness
+		end
+	end
+
+	self:_moveLetters(record, os.clock())
+end
+
+function NametagController:_moveLetters(record, now : number)
+	local settings = record.Settings
+	local letters = record.Letters
+	local count = #letters
+
+	for index, letter in letters do
+		local lead = if count > 1 then (index - 1) / (count - 1) * settings.Sweep else 0
+		local phase = (now * settings.Speed - lead) % 1
+		local lift = if phase < settings.Hop then math.sin(phase / settings.Hop * math.pi) else 0
+
+		letter.Label.Position = UDim2.fromOffset(letter.X, record.RestY - lift * record.HopPx)
+	end
+end
+
+function NametagController:_paintLetters(record, now : number)
+	local keypoints = record.Keypoints
+	if not keypoints then
+		return
+	end
+
+	if record.Mode == "Rotate" then
+		local angle = (record.Rotation + now * record.Speed * 360) % 360
+		for _, letter in record.Letters do
+			letter.Gradient.Rotation = angle
+		end
+		return
+	end
+
+	local scroll = record.Mode == "Scroll"
+	local phase = if scroll then (now * record.Speed) % 1 else 0
+
+	if not record.Horizontal then
+		if scroll then
+			local color = shiftedSequence(keypoints, phase)
+			for _, letter in record.Letters do
+				letter.Gradient.Color = color
+			end
+		end
+		return
+	end
+
+	for _, letter in record.Letters do
+		local samples = table.create(LETTER_SAMPLES)
+
+		for index = 0, LETTER_SAMPLES - 1 do
+			local position = index / (LETTER_SAMPLES - 1)
+			local source = letter.From + (letter.To - letter.From) * position
+			if scroll then
+				source = (source - phase) % 1
+			end
+			samples[index + 1] = ColorSequenceKeypoint.new(position, sampleSequence(keypoints, source))
+		end
+
+		letter.Gradient.Color = ColorSequence.new(samples)
+	end
+end
+
+function NametagController:_stepBounce(now : number)
+	for label, record in self.Bouncing do
+		if not label.Parent then
+			self:_dropBounce(label)
+			continue
+		end
+
+		if not record.Ready then
+			continue
+		end
+
+		self:_moveLetters(record, now)
+
+		if record.Mode == "Scroll" or record.Mode == "Rotate" then
+			self:_paintLetters(record, now)
+		end
+	end
+end
+
+--[[ TEXT ]]
+
 function NametagController:_writeText(player : Player, tag : BillboardGui)
 	local username = findLabel(tag, USERNAME_NAME)
 	if username then
 		username.Text = player.DisplayName
+
+		local record = self.Bouncing[username]
+		if record and record.Text ~= username.Text then
+			task.spawn(self._buildLetters, self, record)
+		end
 	end
 
 	local levelLabel = findLabel(tag, LEVEL_NAME)
@@ -460,6 +847,12 @@ function NametagController:_attach(player : Player, character : Model)
 	tag.Parent = head
 
 	self:_mountEffects(tag, head, effects)
+
+	if style then
+		self:_mountBounce(findLabel(tag, USERNAME_NAME), style.Username)
+		self:_mountBounce(findLabel(tag, LEVEL_NAME), style.Level)
+		self:_mountBounce(titleLabel, style.Title)
+	end
 end
 
 function NametagController:_rebuild(player : Player)
@@ -582,8 +975,14 @@ function NametagController:start()
 	end
 
 	self.Maid:GiveTask(RunService.RenderStepped:Connect(function()
+		local now = os.clock()
+
 		if next(self.Animated) ~= nil then
-			self:_step()
+			self:_step(now)
+		end
+
+		if next(self.Bouncing) ~= nil then
+			self:_stepBounce(now)
 		end
 
 		if next(self.Effects) ~= nil then
@@ -615,6 +1014,8 @@ function NametagController:init()
 	self.Maid = Maid.new()
 	self.Entries = {}
 	self.Animated = {}
+	self.Bouncing = {}
+	self.Glyphs = {}
 	self.Effects = {}
 	self.EffectsFolder = nil
 	self.LastRequest = 0
@@ -633,6 +1034,10 @@ function NametagController:init()
 		end
 
 		table.clear(self.Animated)
+
+		for label in self.Bouncing do
+			self:_dropBounce(label)
+		end
 
 		for holder in self.Effects do
 			holder:Destroy()
