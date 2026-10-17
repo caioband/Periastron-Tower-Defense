@@ -682,6 +682,13 @@ function UnitPlacementController:getUnitRange(unitName : string, upgrades : numb
 		range *= cards:Multiplier("Range", unitName, position, unitId)
 	end
 
+	if unitId then
+		local bard = Framework:Get("BardController", false, false)
+		if bard and bard.GetBuffMultiplier then
+			range *= bard:GetBuffMultiplier(unitId, "Range")
+		end
+	end
+
 	return range
 end
 
@@ -933,7 +940,7 @@ function UnitPlacementController:replicatePlacedUnit(unitName : string, CF : CFr
 	self.classesById[unitId] = class
 
 	local unitStats = SharedConfig.UnitStats[unitName]
-	local skipTargeting = unitStats and (unitStats.Farm ~= nil or unitStats.Tripmine ~= nil or unitStats.Beam ~= nil or unitStats.SlowAura ~= nil)
+	local skipTargeting = unitStats and (unitStats.Farm ~= nil or unitStats.Tripmine ~= nil or unitStats.Beam ~= nil or unitStats.SlowAura ~= nil or unitStats.Support ~= nil)
 	if not skipTargeting and self.Controllers.TargetingController and self.Controllers.TargetingController.RegisterUnit then
 		self.Controllers.TargetingController:RegisterUnit(class)
 	end

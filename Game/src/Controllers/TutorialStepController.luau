@@ -380,6 +380,8 @@ function TutorialStepController:show(step : any)
 			Blur = false,
 			Duck = false,
 			Auto = not Config.Match.WaitForRead,
+			Locked = Config.Match.LockDialog == true,
+			MinRead = Config.Match.MinReadTime or 0,
 		}))
 
 		return
@@ -487,7 +489,7 @@ function TutorialStepController:watchPlacement(step : any)
 				if placing then
 					current = nil
 
-					if highlight then
+					if highlight then	
 						highlight:Hide()
 					end
 

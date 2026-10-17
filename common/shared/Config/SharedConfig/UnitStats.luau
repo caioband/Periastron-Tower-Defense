@@ -962,6 +962,48 @@ local UnitStats = {
 	},
 
 
+	["Bard"] = {
+		Rarity = "Epic",
+		Cost = 300,
+		Damage = 0,
+		Range = 6,
+		Cooldown = 1,
+		AttackType = "SingleShot",
+		HitInterval = 0,
+		Hits = 1,
+		Support = {
+			Default = "Damage",
+			SwapCooldown = 10,
+			StackLimit = 2,
+			SongFade = 0.4,
+			Order = { "Damage", "Range", "FireRate" },
+			Modes = {
+				Damage = {
+					Stat = "Damage",
+					Label = "DAMAGE",
+					Icon = "Ranged",
+					Song = { SoundId = "rbxassetid://98534080279025", Volume = 0.5, PlaybackSpeed = 1, RollOffMinDistance = 10, RollOffMaxDistance = 80 },
+				},
+				Range = {
+					Stat = "Range",
+					Label = "RANGE",
+					Icon = "Magic",
+					Song = { SoundId = "rbxassetid://80324664804116", Volume = 0.5, PlaybackSpeed = 1, RollOffMinDistance = 10, RollOffMaxDistance = 80 },
+				},
+				FireRate = {
+					Stat = "AttackSpeed",
+					Label = "FIRE RATE",
+					Icon = "Electric",
+					Song = { SoundId = "rbxassetid://96007965823716", Volume = 0.5, PlaybackSpeed = 1, RollOffMinDistance = 10, RollOffMaxDistance = 80 },
+				},
+			},
+		},
+		RangeStats = {
+			Levels = { 6, 6.5, 7, 7.5, 8, 9 },
+		},
+	},
+
+
 
 
 

@@ -36,6 +36,8 @@ local DIALOG_ONLY_OPTIONS = {
 	HideUI = true,
 	Blur = true,
 	Duck = true,
+	Locked = true,
+	MinRead = true,
 }
 
 --[[
@@ -130,6 +132,12 @@ DialogController.Open = false
 
 -- A dialog that advances on its own, without the player.
 DialogController.Auto = false
+-- A dialog the player cannot fast-forward: no skipping the typing, and each line
+-- holds for `MinRead` seconds after it finishes before a click continues.
+DialogController.Locked = false
+DialogController.MinRead = 0
+DialogController.LineStartedAt = 0
+DialogController.LineFinishedAt = nil :: number?
 
 -- One session per `:Play()`: auto mode's `task.delay` only applies while nobody
 -- has started another conversation on top.
@@ -521,9 +529,12 @@ function DialogController:write(session : number)
 
 	local isLast = self.Index >= #self.Lines
 
+	self.LineStartedAt = os.clock()
+	self.LineFinishedAt = nil
+
 	handle:Write(line)
 
-	if not self.Auto and not (isLast and self.PendingButtons) then return end
+	if not self.Auto and not self.Locked and not (isLast and self.PendingButtons) then return end
 
 	-- One subscription per line, undone on the first firing: the next line subscribes
 	-- its own, and without this the third sentence would call three callbacks.
@@ -534,6 +545,8 @@ function DialogController:write(session : number)
 		end
 
 		if self.Session ~= session then return end
+
+		self.LineFinishedAt = os.clock()
 
 		-- The choice only appears once the last sentence finished being written: buttons
 		-- up while the text is still arriving invite the player to answer a question they
@@ -930,6 +943,21 @@ function DialogController:Advance(ignoreDebounce : boolean?) : boolean
 		return false
 	end
 
+	local handle = self.Handle
+
+	-- A locked dialog cannot be fast-forwarded: nothing while the line is typing, and
+	-- nothing until it has been on screen, finished, for `MinRead` seconds.
+	if self.Locked and handle then
+		if handle:IsWriting() then
+			return false
+		end
+
+		local readyAt = (self.LineFinishedAt or self.LineStartedAt) + self.MinRead
+		if os.clock() < readyAt then
+			return false
+		end
+	end
+
 	if not ignoreDebounce then
 		local now = os.clock()
 		if now - self.LastAdvance < Config.Advance.Debounce then
@@ -939,7 +967,6 @@ function DialogController:Advance(ignoreDebounce : boolean?) : boolean
 		self.LastAdvance = now
 	end
 
-	local handle = self.Handle
 	if not handle then
 		self:Close()
 
@@ -978,6 +1005,9 @@ function DialogController:Close()
 	self.Open = false
 	self.Lines = {}
 	self.Index = 0
+	self.Locked = false
+	self.MinRead = 0
+	self.LineFinishedAt = nil
 
 	if self.Handle then
 		self.Handle:Clear(true)

@@ -91,6 +91,7 @@ local UnitService = {
 		CardModifierService = {},
 		TutorialMatchService = {},
 		NecromancerService = {},
+		BardService = {},
 	},
 
 	Signals = {
@@ -664,8 +665,9 @@ end
 ]=]
 function UnitService:cardMultiplier(entry, stat : string) : number
 	local values = entry and entry.CardMult
+	local bard = entry and entry.BardMult
 
-	return (values and values[stat]) or 1
+	return ((values and values[stat]) or 1) * ((bard and bard[stat]) or 1)
 end
 
 --[=[
@@ -1718,6 +1720,11 @@ function UnitService:stepCombat()
 	]]
 	self:refreshCardModifiers()
 
+	local bardService = self.Services.BardService
+	if bardService and bardService.Step then
+		bardService:Step(now, weather)
+	end
+
 	self:collectAuraSources()
 	self:stepTripmines(now, weather)
 	self:stepSlowAuras(now, weather)
@@ -1767,6 +1774,9 @@ function UnitService:stepCombat()
 
 		-- A slow aura attacks nobody: its ring is `stepSlowAuras`, above.
 		if stats and stats.SlowAura then continue end
+
+		-- A support unit attacks nobody: its buff is `BardService:Step`, above.
+		if stats and stats.Support then continue end
 
 		if stats and stats.Tripmine then
 			if now >= (entry.StunnedUntil or 0) then

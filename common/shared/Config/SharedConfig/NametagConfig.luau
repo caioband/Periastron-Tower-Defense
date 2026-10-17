@@ -736,6 +736,65 @@ NametagConfig.Nametags = {
 		},
 	},
 
+
+	QALead = {
+		DisplayName = "QA Lead",
+		Description = "Nothing ships without a sign-off.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "QA LEAD",
+		UserIds = { [132338275] = true },
+		Order = 63,
+		Style = {
+			Title = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(110, 40, 70),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 165, 205)),
+					ColorSequenceKeypoint.new(0.35, Color3.fromRGB(255, 180, 212)),
+					ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255, 248, 252)),
+					ColorSequenceKeypoint.new(0.6, Color3.fromRGB(255, 248, 252)),
+					ColorSequenceKeypoint.new(0.65, Color3.fromRGB(255, 180, 212)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 165, 205)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.6 },
+			},
+			Username = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(110, 40, 70),
+				StrokeThickness = 0.15,
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 165, 205)),
+					ColorSequenceKeypoint.new(0.35, Color3.fromRGB(255, 180, 212)),
+					ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255, 248, 252)),
+					ColorSequenceKeypoint.new(0.6, Color3.fromRGB(255, 248, 252)),
+					ColorSequenceKeypoint.new(0.65, Color3.fromRGB(255, 180, 212)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 165, 205)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.45 },
+			},
+			Level = {
+				TextColor3 = Color3.new(1, 1, 1),
+				StrokeColor = Color3.fromRGB(110, 40, 70),
+				Gradient = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 165, 205)),
+					ColorSequenceKeypoint.new(0.35, Color3.fromRGB(255, 180, 212)),
+					ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255, 248, 252)),
+					ColorSequenceKeypoint.new(0.6, Color3.fromRGB(255, 248, 252)),
+					ColorSequenceKeypoint.new(0.65, Color3.fromRGB(255, 180, 212)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 165, 205)),
+				}),
+				GradientRotation = 0,
+				Animation = { Mode = "Scroll", Speed = 0.45 },
+			},
+		},
+	},
+
+
 	Caio = {
 		DisplayName = "Caio",
 		Description = "The one who started it all.",

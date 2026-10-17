@@ -454,26 +454,64 @@ local NO_CARDS = { Damage = 1, AttackSpeed = 1, Range = 1, Income = 1 }
 	1: the card shows the table number, which is what it always showed.
 ]=]
 local function getCards(unitModel : Model?)
-	local controller = Framework:Get("CardModifierController", false, false)
-	if not controller or not unitModel or not unitModel.Parent then
+	if not unitModel or not unitModel.Parent then
 		return NO_CARDS
 	end
 
+	local controller = Framework:Get("CardModifierController", false, false)
 	local placement = Framework:Get("UnitPlacementController", false, false)
 	local classes = placement and placement.createdClasses
 	local class = classes and classes[unitModel]
 
-	local unitId = class and class.unitId or nil
+	local unitId = (class and class.unitId) or unitModel:GetAttribute("UnitID")
 	local position = unitModel:GetPivot().Position
 	local unitName = unitModel.Name
 
+	local bard = Framework:Get("BardController", false, false)
+	local function bardMultiplier(stat : string) : number
+		if not bard or not bard.GetBuffMultiplier or not unitId then
+			return 1
+		end
+
+		return bard:GetBuffMultiplier(unitId, stat)
+	end
+
+	local bardDamage = bardMultiplier("Damage")
+	local bardSpeed = bardMultiplier("AttackSpeed")
+	local bardRange = bardMultiplier("Range")
+
+	if not controller then
+		if bardDamage == 1 and bardSpeed == 1 and bardRange == 1 then
+			return NO_CARDS
+		end
+
+		return { Damage = bardDamage, AttackSpeed = bardSpeed, Range = bardRange, Income = 1 }
+	end
+
 	return {
-		Damage = controller:Multiplier("Damage", unitName, position, unitId),
-		AttackSpeed = controller:Multiplier("AttackSpeed", unitName, position, unitId),
-		Range = controller:Multiplier("Range", unitName, position, unitId),
+		Damage = controller:Multiplier("Damage", unitName, position, unitId) * bardDamage,
+		AttackSpeed = controller:Multiplier("AttackSpeed", unitName, position, unitId) * bardSpeed,
+		Range = controller:Multiplier("Range", unitName, position, unitId) * bardRange,
 		Income = controller:Multiplier("Income", unitName, position, unitId),
 	}
 end
+
+local function getSupportMode(support) : string
+	local unitModel = module.currentUnit
+	local unitId = unitModel and unitModel:GetAttribute("UnitID")
+	local bard = Framework:Get("BardController", false, false)
+	local mode = bard and unitId and bard:GetMode(unitId) or nil
+
+	if mode and support.Modes[mode] then
+		return mode
+	end
+
+	return support.Default
+end
+
+
+
+
 
 --[=[
 	Damage per hit, or income when the unit is a Farm, which does not attack. The same
@@ -500,6 +538,17 @@ local function formatDamageOrIncome(unitName : string, level : number, weather, 
 	-- A slow aura deals no damage: the line shows how much slower its ring makes enemies.
 	if unitStats and unitStats.SlowAura then
 		return formatNumber(upgradeConfig:GetAuraSlow(unitName, level) * 100, 2) .. "% SLOW"
+	end
+
+	-- A support unit deals no damage: the line shows the boost of the mode it is in.
+	if unitStats and unitStats.Support then
+		local support = unitStats.Support
+		local mode = getSupportMode(support)
+		local modeConfig = support.Modes[mode]
+		local boost = upgradeConfig:GetSupportBoost(unitName, level, mode)
+		local label = (modeConfig and modeConfig.Label) or string.upper(mode)
+
+		return "+" .. formatNumber(boost * 100, 1) .. "% " .. label .. " BOOST"
 	end
 
 	--[[
@@ -542,6 +591,11 @@ local function formatCooldownOrBonus(unitName : string, level : number, weather,
 	local unitStats = SharedConfig.UnitStats[unitName]
 	if unitStats and unitStats.SlowAura then
 		return "SLOWS IN RANGE"
+	end
+
+	-- A support unit has no cycle either: the line is its mode swap cooldown.
+	if unitStats and unitStats.Support then
+		return formatNumber(unitStats.Support.SwapCooldown or 10, 1) .. "s SWAP COOLDOWN"
 	end
 
 	-- Attack speed goes in as a division, like weather: 1.15 is "hits 15% faster",
@@ -1173,12 +1227,12 @@ function module:refreshPriority()
 	if not unitModel or not unitModel.Parent then return end
 
 	--[[
-		Two reasons for the button to leave the screen, and both hold at once: Farms and
-		slow auras target nobody, and the server refuses priority changes on someone
-		else's unit (see `refreshOwnership`).
+		Two reasons for the button to leave the screen, and both hold at once: Farms,
+		slow auras and support units target nobody, and the server refuses priority
+		changes on someone else's unit (see `refreshOwnership`).
 	]]
 	local unitStats = SharedConfig.UnitStats[unitModel.Name]
-	button.Visible = isOwnedByMe(unitModel) and not (unitStats and (unitStats.Farm or unitStats.SlowAura))
+	button.Visible = isOwnedByMe(unitModel) and not (unitStats and (unitStats.Farm or unitStats.SlowAura or unitStats.Support))
 
 	label.Text = withBind(TargetPriority.Label(unitModel:GetAttribute("TargetPriority")), KEYBINDS.Priority)
 

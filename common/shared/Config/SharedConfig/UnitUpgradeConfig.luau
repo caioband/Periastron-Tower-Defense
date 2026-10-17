@@ -394,7 +394,15 @@ UnitUpgradeConfig.Units = {
 		MaxMinions = { 1, 1, 2, 2, 3, 4 },
 	},
 
-
+	["Bard"] = {
+		Costs = { 200, 300, 425, 600, 850 },
+		DamageMultiplier = 1,
+		SupportBoosts = {
+			Damage = { 0.10, 0.12, 0.15, 0.18, 0.22, 0.25 },
+			Range = { 0.10, 0.12, 0.14, 0.16, 0.20, 0.25 },
+			FireRate = { 0.10, 0.12, 0.15, 0.18, 0.22, 0.25 },
+		},
+	},
 	
 
 
@@ -894,6 +902,21 @@ function UnitUpgradeConfig:GetMaxMinions(unitName, level)
 	local ladder = self:GetUnitData(unitName).MaxMinions
 
 	if not (stats and stats.Necromancy) or not ladder or #ladder == 0 then
+		return 0
+	end
+
+	return ladder[math.clamp((level or 0) + 1, 1, #ladder)]
+end
+
+
+
+function UnitUpgradeConfig:GetSupportBoost(unitName, level, mode)
+	local stats = UnitStats[unitName]
+	local support = stats and stats.Support
+	local ladders = self:GetUnitData(unitName).SupportBoosts
+	local ladder = support and ladders and mode and ladders[mode]
+
+	if not ladder or #ladder == 0 then
 		return 0
 	end
 

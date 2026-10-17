@@ -196,6 +196,8 @@ TutorialConfig.Match = {
 	LockTowerActions = false,
 	TowerActionsUntil = "UpgradeTowers",
 	WaitForRead = true,
+	LockDialog = true,
+	MinReadTime = 0.6,
 
 	LockedUntil = {
 		{ Button = "Interface.Speed", Step = "UseSpeed2x" },

@@ -147,6 +147,43 @@ LobbyNPCConfig.Staff = {
 			},
 		},
 	},
+
+		{
+		Key = "F0rggo",
+		UserId = 132338275,
+		DisplayName = "F0rggo",
+		Lines = {
+			{
+				"Hey {player}! I'm F0rggo, the [color=245,222,160]QA Lead[/color] for Periastron TD.",
+				"If it made it into the game, I've probably broken it at least twice.",
+			},
+			{
+				"My job is to find the bugs[pause=0.4] before [shake]you[/shake] do.",
+				"I don't always win that race.",
+			},
+			{
+				"Steps to reproduce:[pause=0.4] place tower.[pause=0.4] Tower explodes.",
+				"Expected:[pause=0.3] tower does not explode.[pause=0.5] Actual:[pause=0.3] [shake]boom[/shake].",
+			},
+			{
+				"Found a bug, {player}? Report it in the Discord.",
+				"Tell us what you did, what you expected, and what actually happened. Clips help a ton!",
+			},
+			{
+				"I've walked into every wall in this lobby on purpose.",
+				"For science.[pause=0.4] And for the bug report.",
+			},
+			{
+				"\"Can't reproduce\" are my two least favourite words.[pause=0.5] Three. Whatever.",
+			},
+			{
+				"The devs say \"it works on my machine\".",
+				"I say [wiggle]\"cool, ship your machine then\"[/wiggle].",
+			},
+		},
+	},
+
+
 }
 
 LobbyNPCConfig.Lines = {
