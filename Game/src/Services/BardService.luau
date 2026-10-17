@@ -11,7 +11,8 @@ local Me = require(Vendor.Me)
 
 local Framework = Me.new()
 
-local DEFAULT_STACK_LIMIT = 2
+local DEFAULT_STACK_PER_MODE = 4
+local STAT_ORDER = { "Damage", "Range", "AttackSpeed" }
 
 local function fireAll(event : string, ...)
 	for _, player in Players:GetPlayers() do
@@ -36,7 +37,10 @@ local BardService = {
 		UnitService = {},
 	},
 	Active = {},
-	Sources = {},
+	Totals = {},
+	Icons = {},
+	Counts = {},
+	Aggregate = {},
 }
 
 function BardService:GetMode(entry) : string?
@@ -98,13 +102,19 @@ function BardService:buffPayload(entry)
 	local payload = {}
 
 	for index, buff in sent do
-		payload[index] = { Stat = buff.Stat, Boost = buff.Boost, Icon = buff.Icon }
+		payload[index] = {
+			Stat = buff.Stat,
+			Boost = buff.Boost,
+			Icon = buff.Icon,
+			Count = buff.Count,
+			Capped = buff.Capped,
+		}
 	end
 
 	return payload
 end
 
-function BardService:sourcesChanged(entry, sources, count : number) : boolean
+function BardService:aggregateChanged(entry, aggregate, count : number) : boolean
 	local sent = entry.BardSent
 	local sentCount = sent and #sent or 0
 
@@ -114,9 +124,14 @@ function BardService:sourcesChanged(entry, sources, count : number) : boolean
 
 	for index = 1, count do
 		local was = sent[index]
-		local now = sources[index]
+		local now = aggregate[index]
 
-		if was.Stat ~= now.Stat or was.Boost ~= now.Boost or was.Icon ~= now.Icon then
+		if was.Stat ~= now.Stat
+			or was.Boost ~= now.Boost
+			or was.Icon ~= now.Icon
+			or was.Count ~= now.Count
+			or was.Capped ~= now.Capped
+		then
 			return true
 		end
 	end
@@ -161,80 +176,109 @@ function BardService:Step(now : number, weather : string?)
 		slot.Stat = modeConfig.Stat
 		slot.Icon = modeConfig.Icon
 		slot.Boost = boost
-		slot.StackLimit = math.max(1, support.StackLimit or DEFAULT_STACK_LIMIT)
+		slot.StackPerMode = math.max(1, support.StackPerMode or DEFAULT_STACK_PER_MODE)
 		slot.X = position.X
 		slot.Z = position.Z
 		slot.RadiusSquared = radius * radius
 	end
 
-	local sources = self.Sources
+	local totals = self.Totals
+	local icons = self.Icons
+	local counts = self.Counts
+	local aggregate = self.Aggregate
 	local changes = nil
 
 	for _, entry in ipairs(units) do
 		if supportOf(entry.unitName) then continue end
 
-		local count = 0
+		local aggregateCount = 0
 
 		if activeCount > 0 and canReceiveBuff(entry.unitName) then
 			local at = entry.cf.Position
-			local limit = DEFAULT_STACK_LIMIT
+			local any = false
+
+			for _, stat in STAT_ORDER do
+				totals[stat] = 0
+				icons[stat] = nil
+				counts[stat] = 0
+			end
 
 			for index = 1, activeCount do
 				local slot = active[index]
+				local stat = slot.Stat
+
+				if (counts[stat] or 0) >= slot.StackPerMode then continue end
+
 				local dx, dz = at.X - slot.X, at.Z - slot.Z
 
 				if dx * dx + dz * dz <= slot.RadiusSquared then
-					count += 1
-					sources[count] = slot
-
-					if count == 1 then
-						limit = slot.StackLimit
-					end
-
-					if count >= limit then
-						break
-					end
+					any = true
+					totals[stat] = (totals[stat] or 0) + slot.Boost
+					icons[stat] = icons[stat] or slot.Icon
+					counts[stat] = (counts[stat] or 0) + 1
 				end
 			end
-		end
 
-		if count > 0 then
-			local mult = entry.BardMultCache
-			if not mult then
-				mult = {}
-				entry.BardMultCache = mult
+			if any then
+				local mult = entry.BardMultCache
+				if not mult then
+					mult = {}
+					entry.BardMultCache = mult
+				end
+
+				for _, stat in STAT_ORDER do
+					local total = totals[stat] or 0
+
+					mult[stat] = 1 + total
+
+					if total > 0 then
+						aggregateCount += 1
+
+						local item = aggregate[aggregateCount]
+						if not item then
+							item = {}
+							aggregate[aggregateCount] = item
+						end
+
+						local support = SharedConfig.UnitStats.Bard and SharedConfig.UnitStats.Bard.Support
+						local limit = (support and support.StackPerMode) or DEFAULT_STACK_PER_MODE
+
+						item.Stat = stat
+						item.Boost = total
+						item.Icon = icons[stat]
+						item.Count = counts[stat] or 0
+						item.Capped = (counts[stat] or 0) >= limit
+					end
+				end
+
+				entry.BardMult = mult
+			else
+				entry.BardMult = nil
 			end
-
-			mult.Damage = 1
-			mult.AttackSpeed = 1
-			mult.Range = 1
-
-			for index = 1, count do
-				local slot = sources[index]
-				mult[slot.Stat] = (mult[slot.Stat] or 1) + slot.Boost
-			end
-
-			entry.BardMult = mult
 		else
 			entry.BardMult = nil
 		end
 
-		if self:sourcesChanged(entry, sources, count) then
+		if self:aggregateChanged(entry, aggregate, aggregateCount) then
 			local sent = {}
 
-			for index = 1, count do
-				local slot = sources[index]
-				sent[index] = { Stat = slot.Stat, Boost = slot.Boost, Icon = slot.Icon }
+			for index = 1, aggregateCount do
+				local item = aggregate[index]
+				sent[index] = {
+					Stat = item.Stat,
+					Boost = item.Boost,
+					Icon = item.Icon,
+					Count = item.Count,
+					Capped = item.Capped,
+				}
 			end
 
-			entry.BardSent = if count > 0 then sent else nil
+			entry.BardSent = if aggregateCount > 0 then sent else nil
 
 			changes = changes or {}
 			changes[entry.unitId] = self:buffPayload(entry)
 		end
 	end
-
-	table.clear(sources)
 
 	if changes then
 		fireAll("BardBuffs", changes)
@@ -277,4 +321,4 @@ end
 function BardService:init()
 end
 
-return BardService --s
+return BardService

@@ -24,13 +24,14 @@ local ICON_HEIGHT = 0.136593476
 local ICON_GAP = 0.02
 local ACTIVE_COLOR = Color3.fromRGB(255, 255, 255)
 local INACTIVE_COLOR = Color3.fromRGB(110, 110, 110)
-local BUFF_COLOR = Color3.fromRGB(120, 255, 120)
+local BUFF_COLOR = Color3.fromRGB(255, 255, 255)
 local ACTIVE_SCALE = 1.1
 local SYNC_INTERVAL = 0.25
 local DEFAULT_SONG_FADE = 0.4
 local BADGE_MAX_DISTANCE = 150
 local BADGE_GROUP_WIDTH = 86
 local BADGE_HEIGHT = 30
+local PIXEL_FONT = Font.new("rbxasset://fonts/families/PressStart2P.json")
 
 local STAT_ORDER = { "Damage", "Range", "AttackSpeed" }
 
@@ -125,10 +126,6 @@ function BardController:IsStatBuffed(unitId : string?, stat : string) : boolean
 	return self:GetBuffMultiplier(unitId, stat) > 1
 end
 
---[=[
-	The buffs folded by stat, in a fixed order, for display: two Damage Bards show as one
-	+50% group, a Damage and a Range Bard as two groups.
-]=]
 function BardController:groupBuffs(buffs)
 	local byStat = {}
 
@@ -137,8 +134,14 @@ function BardController:groupBuffs(buffs)
 
 		if group then
 			group.Boost += buff.Boost or 0
+			group.Capped = group.Capped or buff.Capped == true
 		else
-			byStat[buff.Stat] = { Stat = buff.Stat, Boost = buff.Boost or 0, Icon = buff.Icon }
+			byStat[buff.Stat] = {
+				Stat = buff.Stat,
+				Boost = buff.Boost or 0,
+				Icon = buff.Icon,
+				Capped = buff.Capped == true,
+			}
 		end
 	end
 
@@ -304,7 +307,7 @@ function BardController:badgeKey(groups) : string
 	local parts = {}
 
 	for _, group in groups do
-		table.insert(parts, tostring(group.Stat) .. ":" .. tostring(group.Boost) .. ":" .. tostring(group.Icon))
+		table.insert(parts, tostring(group.Stat) .. ":" .. tostring(group.Boost) .. ":" .. tostring(group.Icon) .. ":" .. tostring(group.Capped))
 	end
 
 	return table.concat(parts, "|")
@@ -323,11 +326,20 @@ function BardController:createBadge(unitId : string, model : Model, groups, key 
 	local root = findRootPart(model)
 	if not root then return end
 
+	local anyCapped = false
+	for _, group in groups do
+		if group.Capped then
+			anyCapped = true
+			break
+		end
+	end
+
+	local badgeHeight = if anyCapped then BADGE_HEIGHT + 14 else BADGE_HEIGHT
 	local height = model:GetExtentsSize().Y * 0.5 + 1.25
 
 	local gui = Instance.new("BillboardGui")
 	gui.Name = BADGE_NAME
-	gui.Size = UDim2.fromOffset(BADGE_GROUP_WIDTH * #groups, BADGE_HEIGHT)
+	gui.Size = UDim2.fromOffset(BADGE_GROUP_WIDTH * #groups, badgeHeight)
 	gui.StudsOffsetWorldSpace = Vector3.new(0, height, 0)
 	gui.AlwaysOnTop = true
 	gui.LightInfluence = 0
@@ -338,46 +350,81 @@ function BardController:createBadge(unitId : string, model : Model, groups, key 
 	local layout = Instance.new("UIListLayout")
 	layout.FillDirection = Enum.FillDirection.Horizontal
 	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
 	layout.Padding = UDim.new(0, 6)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = gui
 
 	for index, group in groups do
-		local holder = Instance.new("Frame")
-		holder.Name = group.Stat
-		holder.LayoutOrder = index
-		holder.BackgroundTransparency = 1
-		holder.AutomaticSize = Enum.AutomaticSize.X
-		holder.Size = UDim2.fromOffset(0, BADGE_HEIGHT)
-		holder.Parent = gui
+		local column = Instance.new("Frame")
+		column.Name = group.Stat
+		column.LayoutOrder = index
+		column.BackgroundTransparency = 1
+		column.AutomaticSize = Enum.AutomaticSize.X
+		column.Size = UDim2.fromOffset(0, badgeHeight)
+		column.Parent = gui
+
+		local stack = Instance.new("UIListLayout")
+		stack.FillDirection = Enum.FillDirection.Vertical
+		stack.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		stack.VerticalAlignment = Enum.VerticalAlignment.Bottom
+		stack.Padding = UDim.new(0, 2)
+		stack.SortOrder = Enum.SortOrder.LayoutOrder
+		stack.Parent = column
+
+		if group.Capped then
+			local maxLabel = Instance.new("TextLabel")
+			maxLabel.Name = "MaxStack"
+			maxLabel.LayoutOrder = 1
+			maxLabel.BackgroundTransparency = 1
+			maxLabel.AutomaticSize = Enum.AutomaticSize.X
+			maxLabel.Size = UDim2.fromOffset(0, 12)
+			maxLabel.FontFace = PIXEL_FONT
+			maxLabel.TextSize = 9
+			maxLabel.TextColor3 = Color3.fromRGB(255, 215, 80)
+			maxLabel.Text = "MAX STACK"
+			maxLabel.Parent = column
+
+			local maxStroke = Instance.new("UIStroke")
+			maxStroke.Thickness = 1.5
+			maxStroke.Color = Color3.fromRGB(0, 0, 0)
+			maxStroke.Parent = maxLabel
+		end
+
+		local row = Instance.new("Frame")
+		row.Name = "Row"
+		row.LayoutOrder = 2
+		row.BackgroundTransparency = 1
+		row.AutomaticSize = Enum.AutomaticSize.X
+		row.Size = UDim2.fromOffset(0, 24)
+		row.Parent = column
 
 		local inner = Instance.new("UIListLayout")
 		inner.FillDirection = Enum.FillDirection.Horizontal
 		inner.VerticalAlignment = Enum.VerticalAlignment.Center
-		inner.Padding = UDim.new(0, 3)
+		inner.Padding = UDim.new(0, 4)
 		inner.SortOrder = Enum.SortOrder.LayoutOrder
-		inner.Parent = holder
+		inner.Parent = row
 
 		local icon = Instance.new("ImageLabel")
 		icon.Name = "Icon"
 		icon.LayoutOrder = 1
 		icon.BackgroundTransparency = 1
-		icon.Size = UDim2.fromOffset(26, 26)
+		icon.Size = UDim2.fromOffset(24, 24)
 		icon.Image = ClassConfig.Icons[group.Icon or ""] or ""
-		icon.Parent = holder
+		icon.Parent = row
 
 		local label = Instance.new("TextLabel")
 		label.Name = "Amount"
 		label.LayoutOrder = 2
 		label.BackgroundTransparency = 1
 		label.AutomaticSize = Enum.AutomaticSize.X
-		label.Size = UDim2.fromOffset(0, 26)
-		label.Font = Enum.Font.GothamBlack
-		label.TextSize = 20
+		label.Size = UDim2.fromOffset(0, 24)
+		label.FontFace = PIXEL_FONT
+		label.TextSize = 14
 		label.TextColor3 = BUFF_COLOR
 		label.Text = "+" .. formatPercent(group.Boost) .. "%"
-		label.Parent = holder
+		label.Parent = row
 
 		local stroke = Instance.new("UIStroke")
 		stroke.Thickness = 2
@@ -546,8 +593,10 @@ function BardController:buildButtons(card : GuiObject, unitName : string, suppor
 		local cooldown = Instance.new("TextLabel")
 		cooldown.Name = "Cooldown"
 		cooldown.BackgroundTransparency = 1
-		cooldown.Size = UDim2.fromScale(1, 1)
-		cooldown.Font = Enum.Font.GothamBlack
+		cooldown.AnchorPoint = Vector2.new(0.5, 0.5)
+		cooldown.Position = UDim2.fromScale(0.5, 0.5)
+		cooldown.Size = UDim2.fromScale(0.8, 0.6)
+		cooldown.FontFace = PIXEL_FONT
 		cooldown.TextScaled = true
 		cooldown.TextColor3 = Color3.fromRGB(255, 255, 255)
 		cooldown.Text = ""
@@ -673,6 +722,8 @@ function BardController:construct()
 						Stat = buff.Stat,
 						Boost = tonumber(buff.Boost) or 0,
 						Icon = buff.Icon,
+						Count = tonumber(buff.Count) or 1,
+						Capped = buff.Capped == true,
 					})
 				end
 			end
@@ -721,4 +772,4 @@ function BardController:init()
 	end)
 end
 
-return BardController --
+return BardController
