@@ -864,6 +864,8 @@ function DialogController:Play(lines : string | { string }, options : PlayOption
 	self.Lines = list
 	self.Index = 1
 	self.Auto = options and options.Auto or false
+	self.Locked = options ~= nil and options.Locked == true
+	self.MinRead = math.max(0, (options and tonumber(options.MinRead)) or 0)
 	self.Open = true
 	self.LastAdvance = os.clock()
 

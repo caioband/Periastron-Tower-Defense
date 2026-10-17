@@ -37,10 +37,13 @@ local REQUEST_COOLDOWN = 0.25
 	**Restricted nametags** (`UserIds` in config) belong only to the listed players.
 	**Gamepass nametags** (`Gamepass` in config) belong to whoever owns that pass,
 	bought (`Gamepasses`) or gifted (`GiftedPasses`), read the same way
-	`MonetizationService` does. Every sync and write grants both kinds to the players
-	they belong to and strips them, owned or equipped, from everyone else; `Grant` and
-	`Equip` refuse them otherwise (Cmdr included). A change to either pass key resyncs,
-	so buying VIP mid-session unlocks its tag and a refund takes it away.
+	`MonetizationService` does. **Leaderboard titles** (`Leaderboard` in config) belong
+	to whoever holds #1 on that store (`LeaderboardService`), ties included. Every sync
+	and write grants all three kinds to the players they belong to and strips them,
+	owned or equipped, from everyone else; `Grant` and `Equip` refuse them otherwise
+	(Cmdr included). A change to either pass key resyncs, and so does a change of
+	champions. While a store's champions are still unknown (server just started), its
+	title is left as it is.
 
 	Every client draws every player's tag, and the replica only reaches its owner, so
 	this publishes on the Player:
@@ -53,6 +56,7 @@ local REQUEST_COOLDOWN = 0.25
 local NametagService = {
 	Services = {
 		DataService = {},
+		LeaderboardService = {},
 	},
 	Signals = {
 		Changed = Signal.new(),
@@ -91,8 +95,22 @@ local function ownsPass(data : any, key : string) : boolean
 	return typeof(gifted) == "table" and gifted[key] ~= nil
 end
 
---- Whether this player may have the nametag: listed for restricted ones, holding the pass for gamepass ones.
-function NametagService:_entitled(player : Player, id : string) : boolean
+--- Whether the player holds #1 on the store: true, false, or nil while it is unknown.
+function NametagService:_isChampion(player : Player, storeKey : string) : boolean?
+	local leaderboard = self.Services.LeaderboardService
+	if not leaderboard or not leaderboard.IsChampion then
+		return nil
+	end
+
+	return leaderboard:IsChampion(storeKey, player.UserId)
+end
+
+--[=[
+	Whether this player may have the nametag: listed for restricted ones, holding the
+	pass for gamepass ones, holding #1 for leaderboard titles. `nil` means not known
+	yet (a leaderboard not read since the server started).
+]=]
+function NametagService:_entitled(player : Player, id : string) : boolean?
 	if not NametagConfig.AllowsUser(id, player.UserId) then
 		return false
 	end
@@ -102,18 +120,33 @@ function NametagService:_entitled(player : Player, id : string) : boolean
 		return ownsPass(self:_profile(player), pass)
 	end
 
+	local store = NametagConfig.LeaderboardOf(id)
+	if store then
+		return self:_isChampion(player, store)
+	end
+
 	return true
 end
 
 --[=[
-	Brings restricted and gamepass nametags in line with the player: granted when they
-	are entitled, removed (and unequipped) when they are not.
+	Brings restricted, gamepass, and leaderboard nametags in line with the player:
+	granted when they are entitled, removed (and unequipped) when they are not, and
+	left alone while it is not known yet.
 ]=]
 function NametagService:_applyEntitlements(player : Player, nametags)
 	for id in NametagConfig.Nametags do
-		if not NametagConfig.IsRestricted(id) and not NametagConfig.GamepassOf(id) then continue end
+		if not NametagConfig.IsRestricted(id)
+			and not NametagConfig.GamepassOf(id)
+			and not NametagConfig.LeaderboardOf(id)
+		then
+			continue
+		end
 
-		if self:_entitled(player, id) then
+		local entitled = self:_entitled(player, id)
+
+		if entitled == nil then
+			continue
+		elseif entitled then
 			nametags.Owned[id] = true
 		else
 			nametags.Owned[id] = nil
@@ -198,6 +231,11 @@ function NametagService:_refusal(player : Player, id : string) : string?
 		return "NeedsGamepass"
 	end
 
+	local store = NametagConfig.LeaderboardOf(id)
+	if store and self:_isChampion(player, store) == false then
+		return "NotChampion"
+	end
+
 	return nil
 end
 
@@ -236,7 +274,7 @@ end
 --[[ API ]]
 
 function NametagService:Owns(player : Player, id : string) : boolean
-	if not self:_entitled(player, id) then
+	if self:_entitled(player, id) == false then
 		return false
 	end
 
@@ -349,6 +387,15 @@ function NametagService:construct()
 			self:_sync(player)
 		end
 	end)
+
+	local leaderboard = self.Services.LeaderboardService
+	if leaderboard and leaderboard.Signals and leaderboard.Signals.ChampionsChanged then
+		leaderboard.Signals.ChampionsChanged:Connect(function()
+			for _, player in Players:GetPlayers() do
+				self:_sync(player)
+			end
+		end)
+	end
 
 	for _, player in Players:GetPlayers() do
 		self:_sync(player)

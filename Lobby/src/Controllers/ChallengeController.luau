@@ -80,6 +80,7 @@ local REASON_TEXT = {
 	DifficultyLocked = "LOCKED",
 	AllBanned = "NO UNITS",
 	TeleportFailed = "FAILED",
+	NoPortal = "PORTALS FULL",
 	Invalid = "EXPIRED",
 }
 
@@ -98,10 +99,16 @@ local PERIOD_CHECK_INTERVAL = 1
 	contracts board. Cards are cloned from `Challenges.Templates.Daily/Weekly`, one
 	per slot, into each scroll; the authored preview cards are removed on bind.
 
+	**Play borrows the portal panel.** The board closes and `ChooseMapsController`
+	opens in challenge mode (the challenge's map only, the usual player stepper).
+	Confirm sends `RequestPlayChallenge(kind, slot, players)`; the server opens a
+	challenge group on a free portal and moves the player into it. A refusal closes
+	the panel and brings the board back with the reason on the card's button.
+
 	**This controller decides nothing.** The challenges themselves come from
 	`ChallengeConfig` (the same generation the server runs), completion comes from
-	the profile replica (`Data.Challenges`), and Play only sends "kind, slot":
-	`ChallengeService` checks everything again and teleports.
+	the profile replica (`Data.Challenges`), and Play only sends "kind, slot,
+	players": `ChallengeService` checks everything again.
 
 	Each card's `Rewards` line is written from the challenge's own `Rewards`, so a
 	slot with a `RewardScale` shows its bigger prize, and fades once it is paid.
@@ -112,6 +119,7 @@ local ChallengeController = {
 	Controllers = {
 		DataController = {},
 		InterfaceController = {},
+		ChooseMapsController = {},
 	},
 }
 
@@ -343,8 +351,27 @@ function ChallengeController:_render()
 	end
 end
 
+--[=[
+	Play: the board steps aside and the portal panel opens for this challenge's player
+	count. Nothing is sent until its Confirm.
+]=]
 function ChallengeController:_requestPlay(kind : string, slot : number)
-	Framework:Fire("RequestPlayChallenge", kind, slot)
+	local challenge = ChallengeConfig.get(kind, ChallengeConfig.currentPeriod(kind), slot)
+	if not challenge then
+		return
+	end
+
+	local chooseMaps = self.Controllers.ChooseMapsController
+	if not chooseMaps or not chooseMaps.OpenChallenge then
+		Framework:Fire("RequestPlayChallenge", kind, slot, 1)
+		return
+	end
+
+	if self.Proximity then
+		self.Proximity:Close()
+	end
+
+	chooseMaps:OpenChallenge(challenge)
 end
 
 --- Rebuilds the cards when a kind rolled over to a new period.
@@ -437,8 +464,24 @@ function ChallengeController:Toggle()
 end
 
 function ChallengeController:construct()
+	local chooseMaps = self.Controllers.ChooseMapsController
+	if chooseMaps and chooseMaps.Signals and chooseMaps.Signals.ChallengeChosen then
+		self.Maid:GiveTask(chooseMaps.Signals.ChallengeChosen:Connect(function(kind : string, slot : number, maxPlayers : number)
+			Framework:Fire("RequestPlayChallenge", kind, slot, maxPlayers)
+		end))
+	end
+
 	Framework:Listen("ChallengePlayResult", function(kind : any, slot : any, ok : boolean, reason : string?)
-		if ok or not ChallengeConfig.isKind(kind) then
+		if chooseMaps and chooseMaps.CloseChallenge then
+			chooseMaps:CloseChallenge()
+		end
+
+		if ok then
+			self:Close()
+			return
+		end
+
+		if not ChallengeConfig.isKind(kind) then
 			return
 		end
 
@@ -453,6 +496,7 @@ function ChallengeController:construct()
 		}
 
 		self:_render()
+		self:Open()
 	end)
 
 	self.Proximity = ProximityPanel.new({
@@ -521,4 +565,4 @@ function ChallengeController:init()
 	self.WarnedBoard = false
 end
 
-return ChallengeController  
+return ChallengeController

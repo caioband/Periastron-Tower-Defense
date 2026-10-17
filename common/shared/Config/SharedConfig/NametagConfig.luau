@@ -23,6 +23,32 @@ local RAINBOW = ColorSequence.new({
 	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 70, 70)),
 })
 
+local CHAMPION_STYLE = {
+	Title = {
+		TextColor3 = Color3.new(1, 1, 1),
+		StrokeColor = Color3.fromRGB(70, 40, 0),
+		StrokeThickness = 0.15,
+		Gradient = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 200, 40)),
+			ColorSequenceKeypoint.new(0.35, Color3.fromRGB(255, 225, 110)),
+			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 252, 230)),
+			ColorSequenceKeypoint.new(0.65, Color3.fromRGB(255, 225, 110)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 200, 40)),
+		}),
+		GradientRotation = 0,
+		Animation = { Mode = "Scroll", Speed = 0.6 },
+	},
+	Username = {
+		TextColor3 = Color3.new(1, 1, 1),
+		StrokeColor = Color3.fromRGB(70, 40, 0),
+		StrokeThickness = 0.15,
+	},
+	Level = {
+		TextColor3 = Color3.fromRGB(255, 225, 130),
+		StrokeColor = Color3.fromRGB(70, 40, 0),
+	},
+}
+
 --[[
 	`UserIds = { [userId] = true }` restricts a nametag to those players: the server
 	grants it to them on load, strips it from everyone else, and refuses to grant or
@@ -31,6 +57,10 @@ local RAINBOW = ColorSequence.new({
 	`Gamepass = "<GamepassConfig key>"` ties a nametag to a pass: the server grants it
 	while the player owns the pass (bought or gifted) and takes it away when they no
 	longer do.
+
+	`Leaderboard = "<Store>"` ties a nametag to #1 on that leaderboard store
+	(`Config.Leaderboard`): the server grants it to everyone holding the top number,
+	ties included, and takes it away when they no longer do.
 ]]
 NametagConfig.Nametags = {
 	Default = {
@@ -847,7 +877,7 @@ NametagConfig.Nametags = {
 		},
 	},
 
-		Contributor = {
+	Contributor = {
 		DisplayName = "Contributor",
 		Description = "Helped build the game.",
 		Template = "Default",
@@ -899,8 +929,6 @@ NametagConfig.Nametags = {
 			},
 		},
 	},
-
-
 
 	LevelBronze = {
 		DisplayName = "Bronze",
@@ -1058,6 +1086,114 @@ NametagConfig.Nametags = {
 			},
 		},
 	},
+
+	ChampionCoins = {
+		DisplayName = "#1 Coins",
+		Description = "Top of the Most Coins leaderboard.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "#1 COINS",
+		Leaderboard = "CoinsEarned",
+		Order = 200,
+		Style = CHAMPION_STYLE,
+	},
+
+	ChampionWins = {
+		DisplayName = "#1 Wins",
+		Description = "Top of the Most Matches Won leaderboard.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "#1 WINS",
+		Leaderboard = "Wins",
+		Order = 201,
+		Style = CHAMPION_STYLE,
+	},
+
+	ChampionNightmare = {
+		DisplayName = "#1 Nightmare",
+		Description = "Top of the Nightmare Wins leaderboard.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "#1 NIGHTMARE",
+		Leaderboard = "NightmareWins",
+		Order = 202,
+		Style = CHAMPION_STYLE,
+	},
+
+	ChampionCrates = {
+		DisplayName = "#1 Crates",
+		Description = "Top of the Most Crates Opened leaderboard.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "#1 CRATES",
+		Leaderboard = "BoxesOpened",
+		Order = 203,
+		Style = CHAMPION_STYLE,
+	},
+
+	ChampionMatches = {
+		DisplayName = "#1 Matches",
+		Description = "Top of the Most Matches Played leaderboard.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "#1 MATCHES",
+		Leaderboard = "MatchesPlayed",
+		Order = 204,
+		Style = CHAMPION_STYLE,
+	},
+
+	ChampionMatchTime = {
+		DisplayName = "#1 Match Time",
+		Description = "Top of the Most Time in Matches leaderboard.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "#1 MATCH TIME",
+		Leaderboard = "TimeInMatches",
+		Order = 205,
+		Style = CHAMPION_STYLE,
+	},
+
+	ChampionPlaytime = {
+		DisplayName = "#1 Playtime",
+		Description = "Top of the Most Time Played leaderboard.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "#1 PLAYTIME",
+		Leaderboard = "TimePlayed",
+		Order = 206,
+		Style = CHAMPION_STYLE,
+	},
+
+	ChampionEndless = {
+		DisplayName = "#1 Endless",
+		Description = "Top of the Highest Endless Wave leaderboard.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "#1 ENDLESS",
+		Leaderboard = "EndlessWave",
+		Order = 207,
+		Style = CHAMPION_STYLE,
+	},
+
+	ChampionAfk = {
+		DisplayName = "#1 AFK",
+		Description = "Top of the Most AFK Time leaderboard.",
+		Template = "Default",
+		Icon = "",
+		Free = false,
+		Title = "#1 AFK",
+		Leaderboard = "TimeInAfkArea",
+		Order = 208,
+		Style = CHAMPION_STYLE,
+	},
 }
 
 function NametagConfig.Get(id : any)
@@ -1098,6 +1234,13 @@ function NametagConfig.GamepassOf(id : any) : string?
 	local nametag = NametagConfig.Get(id)
 	local pass = nametag and nametag.Gamepass
 	return if typeof(pass) == "string" and pass ~= "" then pass else nil
+end
+
+--- The leaderboard store whose #1 holds this nametag, or nil.
+function NametagConfig.LeaderboardOf(id : any) : string?
+	local nametag = NametagConfig.Get(id)
+	local store = nametag and nametag.Leaderboard
+	return if typeof(store) == "string" and store ~= "" then store else nil
 end
 
 function NametagConfig.UnlockLevelOf(id : any) : number?

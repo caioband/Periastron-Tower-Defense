@@ -964,6 +964,7 @@ local UnitStats = {
 
 	["Bard"] = {
 		Rarity = "Epic",
+		Class = "Magic",
 		Cost = 300,
 		Damage = 0,
 		Range = 6,
@@ -981,19 +982,19 @@ local UnitStats = {
 				Damage = {
 					Stat = "Damage",
 					Label = "DAMAGE",
-					Icon = "Ranged",
+					Icon = "rbxassetid://116148223304168",
 					Song = { SoundId = "rbxassetid://98534080279025", Volume = 0.5, PlaybackSpeed = 1, RollOffMinDistance = 10, RollOffMaxDistance = 80 },
 				},
 				Range = {
 					Stat = "Range",
 					Label = "RANGE",
-					Icon = "Magic",
+					Icon = "rbxassetid://95153350715032",
 					Song = { SoundId = "rbxassetid://80324664804116", Volume = 0.5, PlaybackSpeed = 1, RollOffMinDistance = 10, RollOffMaxDistance = 80 },
 				},
 				FireRate = {
 					Stat = "AttackSpeed",
 					Label = "FIRE RATE",
-					Icon = "Electric",
+					Icon = "rbxassetid://108833781664471", --s
 					Song = { SoundId = "rbxassetid://96007965823716", Volume = 0.5, PlaybackSpeed = 1, RollOffMinDistance = 10, RollOffMaxDistance = 80 },
 				},
 			},

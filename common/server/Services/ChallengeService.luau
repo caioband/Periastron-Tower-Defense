@@ -1,7 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 local ServerStorage = game:GetService("ServerStorage")
-local TeleportService = game:GetService("TeleportService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
@@ -34,12 +33,14 @@ local STUDIO_ATTRIBUTE = "StudioChallenge"
 --[[
 	Daily and weekly challenges, server side. Both places run it.
 
-	**Lobby:** `RequestPlayChallenge(kind, slot)` checks the player may play it
-	(current period, profile loaded, not in a portal group, not mid-tutorial,
-	difficulty unlocked, at least `MIN_PLAYABLE_DECK` towers of the equipped deck
-	left after the bans) and teleports them alone to a reserved Game server. The
-	teleport data is the usual portal shape (`Map`, `Players`, `MaxPlayers`) plus
-	`Challenge = { Kind, Period, Slot }`. The answer goes back as
+	**Lobby:** `RequestPlayChallenge(kind, slot, maxPlayers)` checks the player may
+	play it (`CanPlay`: profile loaded, not mid-tutorial, difficulty unlocked, at
+	least `MIN_PLAYABLE_DECK` towers of the equipped deck left after the bans), and
+	that it is the current period and they are not already in a portal group. Then
+	`PortalService:CreateChallengeGroup` opens a group for it on the first free portal
+	with the size they picked (1 to `PortalConfig.MAX_PLAYERS`). Others join by
+	walking in; `PortalService` asks `CanPlay` for each of them too. The portal's
+	teleport carries `Challenge = { Kind, Period, Slot }`. The answer goes back as
 	`ChallengePlayResult(kind, slot, ok, reason)`.
 
 	**Game:** the first player's teleport data resolves the active challenge
@@ -52,8 +53,8 @@ local STUDIO_ATTRIBUTE = "StudioChallenge"
 	  - `UnitService` -> `IsBanned(unitName)`: banned towers start with 0 cards.
 	  - `WeatherRoundService` -> `GetWeather`, `GetWeatherEnd`, `GetNextWeather`.
 	  - `WaveService` on a win -> `Complete(players)`: pays `Rewards` once per
-	    challenge per period, marking the profile first and paying right after,
-	    with nothing yielding in between.
+	    challenge per period, to every winner, marking the profile first and paying
+	    right after, with nothing yielding in between.
 
 	The profile key (`ChallengeConfig.DATA_KEY`) is created on first write.
 ]]
@@ -234,33 +235,14 @@ end
 --[[ LOBBY ]]
 
 --[=[
-	Validates and teleports. Returns `ok, reason`; reasons: `Invalid`, `Cooldown`,
-	`NotLoaded`, `InGroup`, `Tutorial`, `DifficultyLocked`, `AllBanned` (fewer than
-	`MIN_PLAYABLE_DECK` deck towers left after the bans), `TeleportFailed`.
+	Whether this player may play `challenge`, whoever opened the group. Returns
+	`ok, reason`; reasons: `NotLoaded`, `Tutorial`, `DifficultyLocked`, `AllBanned`.
+	`PortalService` asks it for everyone who walks into a challenge portal.
 ]=]
-function ChallengeService:Play(player : Player, kind : any, slot : any) : (boolean, string?)
-	if not Config.isKind(kind) then
-		return false, "Invalid"
-	end
-
-	local challenge = Config.get(kind, Config.currentPeriod(kind), slot)
-	if not challenge then
-		return false, "Invalid"
-	end
-
-	local busy = self.Busy[player]
-	if busy and os.clock() - busy.At < Config.PLAY_COOLDOWN then
-		return false, "Cooldown"
-	end
-
+function ChallengeService:CanPlay(player : Player, challenge) : (boolean, string?)
 	local profile = self:_profileOf(player)
 	if not profile then
 		return false, "NotLoaded"
-	end
-
-	local portalService = Framework:Get("PortalService", false, false)
-	if portalService and portalService.GetPortalOf and portalService:GetPortalOf(player) then
-		return false, "InGroup"
 	end
 
 	local tutorialService = Framework:Get("TutorialService", false, false)
@@ -276,31 +258,48 @@ function ChallengeService:Play(player : Player, kind : any, slot : any) : (boole
 		return false, "AllBanned"
 	end
 
-	self.Busy[player] = { At = os.clock(), Kind = kind, Slot = challenge.Slot }
+	return true, nil
+end
 
-	local options = Instance.new("TeleportOptions")
-	options.ShouldReserveServer = true
-	options:SetTeleportData({
-		Map = challenge.Map,
-		Players = { player.UserId },
-		MaxPlayers = 1,
-		Challenge = {
-			Kind = challenge.Kind,
-			Period = challenge.Period,
-			Slot = challenge.Slot,
-		},
-	})
-
-	local ok, err = pcall(function()
-		return TeleportService:TeleportAsync(Environment.GetPlaceId("Game"), { player }, options)
-	end)
-
-	if not ok then
-		self.Busy[player] = nil
-		log:Warn(`challenge teleport for {player.Name} failed: {tostring(err)}`)
-
-		return false, "TeleportFailed"
+--[=[
+	Validates and opens a challenge group on a free portal. Returns `ok, reason`;
+	reasons: `Invalid`, `Cooldown`, `InGroup`, `NoPortal`, and those of `CanPlay`.
+]=]
+function ChallengeService:Play(player : Player, kind : any, slot : any, maxPlayers : any) : (boolean, string?)
+	if not Config.isKind(kind) then
+		return false, "Invalid"
 	end
+
+	local challenge = Config.get(kind, Config.currentPeriod(kind), slot)
+	if not challenge then
+		return false, "Invalid"
+	end
+
+	local busy = self.Busy[player]
+	if busy and os.clock() - busy.At < Config.PLAY_COOLDOWN then
+		return false, "Cooldown"
+	end
+
+	local portalService = Framework:Get("PortalService", false, false)
+	if not portalService or not portalService.CreateChallengeGroup then
+		return false, "NoPortal"
+	end
+
+	if portalService:GetPortalOf(player) then
+		return false, "InGroup"
+	end
+
+	local ok, reason = self:CanPlay(player, challenge)
+	if not ok then
+		return false, reason
+	end
+
+	local created, refusal = portalService:CreateChallengeGroup(player, challenge, tonumber(maxPlayers))
+	if not created then
+		return false, refusal or "NoPortal"
+	end
+
+	self.Busy[player] = { At = os.clock(), Kind = kind, Slot = challenge.Slot }
 
 	return true, nil
 end
@@ -395,21 +394,9 @@ end
 
 function ChallengeService:construct()
 	if not Environment.IsPlace("Game") then
-		Framework:Listen("RequestPlayChallenge", function(player : Player, kind : any, slot : any)
-			local ok, reason = self:Play(player, kind, slot)
+		Framework:Listen("RequestPlayChallenge", function(player : Player, kind : any, slot : any, maxPlayers : any)
+			local ok, reason = self:Play(player, kind, slot, maxPlayers)
 			Framework:Fire("ChallengePlayResult", player, kind, slot, ok, reason)
-		end)
-
-		TeleportService.TeleportInitFailed:Connect(function(player : Player, result : Enum.TeleportResult, message : string)
-			local busy = self.Busy[player]
-			if not busy then
-				return
-			end
-
-			self.Busy[player] = nil
-			log:Warn(`challenge teleport for {player.Name} failed: {result.Name}: {message}`)
-
-			Framework:Fire("ChallengePlayResult", player, busy.Kind, busy.Slot, false, "TeleportFailed")
 		end)
 	end
 

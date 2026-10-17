@@ -88,6 +88,13 @@ local HIDE_REASON = "ChooseMaps"
 	the map is not sent anywhere until Confirm is pressed. It does not talk to the
 	server either: PortalController is the one that opens the panel, and it hears back
 	through MapChosen.
+
+	**Challenge mode** (`OpenChallenge`): the challenge board borrows the panel for its
+	player count. Only the challenge's map shows, already picked and never locked
+	(challenges ignore map unlocks), and Confirm fires `ChallengeChosen` instead of
+	`MapChosen`. Plain `Close()` calls are ignored while it lasts -- the portal closes
+	the panel whenever the player is not at a portal, and here they are at the board;
+	only Exit, `CloseChallenge`, or the panel's owner ends it.
 ]=]
 local ChooseMapsController = {
 	Controllers = {
@@ -100,6 +107,8 @@ local ChooseMapsController = {
 	Signals = {
 		-- (mapName : string, maxPlayers : number) -- fired by Confirm, not by the card
 		MapChosen = Signal.new(),
+		-- (kind : string, slot : number, maxPlayers : number) -- Confirm in challenge mode
+		ChallengeChosen = Signal.new(),
 		-- (mapName : string?)
 		SelectionChanged = Signal.new(),
 		-- (isOpen : boolean)
@@ -289,6 +298,15 @@ function ChooseMapsController:_getWins() : number
 	return typeof(stats) == "table" and tonumber(stats.Wins) or 0
 end
 
+--- Whether the map can be picked: unlocked by wins, or the challenge's own map.
+function ChooseMapsController:_isPickable(mapName : string, wins : number) : boolean
+	if self.Challenge then
+		return mapName == self.Challenge.Map
+	end
+
+	return MapConfig.isUnlocked(mapName, wins)
+end
+
 --[=[
 	Paints each card's lock from the current wins.
 
@@ -299,18 +317,23 @@ end
 
 	`Active = false` is already enough for `Activated` not to fire; `Select` checks again
 	anyway, because it is also called from outside.
+
+	In challenge mode only the challenge's map shows, and it is never locked.
 ]=]
 function ChooseMapsController:_renderLocks()
 	local wins = self:_getWins()
+	local challengeMap = self.Challenge and self.Challenge.Map
 
 	for mapName, entry in self.Entries do
-		local unlocked = MapConfig.isUnlocked(mapName, wins)
+		local unlocked = if challengeMap then mapName == challengeMap else MapConfig.isUnlocked(mapName, wins)
+
+		entry.Button.Visible = challengeMap == nil or mapName == challengeMap
 
 		if entry.Locked then
 			entry.Locked.Visible = not unlocked
 		end
 
-		if entry.LockedLabel and not unlocked then
+		if entry.LockedLabel and not unlocked and not challengeMap then
 			entry.LockedLabel.Text = string.format(LOCKED_FORMAT, MapConfig.winsMissing(mapName, wins))
 		end
 
@@ -331,7 +354,7 @@ function ChooseMapsController:_renderLocks()
 		a patch with the panel open: `Confirm` goes away with the selection, instead of
 		sending the server a map it will refuse.
 	]]
-	if self.Selected and not MapConfig.isUnlocked(self.Selected, wins) then
+	if self.Selected and not self:_isPickable(self.Selected, wins) then
 		self.Selected = nil
 		self:_renderSelection()
 		self.Signals.SelectionChanged:Fire(nil)
@@ -445,10 +468,11 @@ function ChooseMapsController:_setOpen(open : boolean)
 
 	if open then
 		-- Every opening starts over at one player and no map picked, like the panel
-		-- was never used.
+		-- was never used. A challenge opening picks its own map right after.
 		self.PlayerCount = PortalConfig.MIN_PLAYERS
-		self.Selected = nil
+		self.Selected = if self.Challenge then self.Challenge.Map else nil
 
+		self:_renderLocks()
 		self:_renderCount()
 		self:_renderSelection(true)
 
@@ -468,6 +492,14 @@ function ChooseMapsController:_setOpen(open : boolean)
 			self:_playTween(self.Background, FADE_INFO, { ImageTransparency = 0 })
 		end
 	else
+		-- Leaving challenge mode puts the full map list back for the next portal.
+		if self.Challenge then
+			self.Challenge = nil
+			self.Selected = nil
+			self:_renderLocks()
+			self:_renderSelection(true)
+		end
+
 		-- Given back at the top of the close, not at the end of it: the rest of the UI
 		-- fades in behind the panel instead of popping in after it is gone.
 		self.Controllers.InterfaceController:Show(HIDE_REASON)
@@ -549,7 +581,7 @@ function ChooseMapsController:_bindUI(screenGui : ScreenGui)
 	local closeButton = actions and actions:FindFirstChild(CLOSE_NAME)
 	if closeButton and closeButton:IsA("GuiButton") then
 		self.UiMaid:GiveTask(closeButton.Activated:Connect(function()
-			self:Close()
+			self:_setOpen(false)
 		end))
 	end
 
@@ -568,9 +600,11 @@ function ChooseMapsController:_bindUI(screenGui : ScreenGui)
 	self.IsOpenState = false
 	self.PlayerCount = PortalConfig.MIN_PLAYERS
 	self.Selected = nil
+	self.Challenge = nil
 
 	self.Controllers.InterfaceController:Show(HIDE_REASON)
 
+	self:_renderLocks()
 	self:_renderCount()
 	self:_renderSelection(true)
 
@@ -602,6 +636,11 @@ function ChooseMapsController:IsOpen() : boolean
 	return self.IsOpenState == true
 end
 
+--- Whether the panel is open for a challenge's player count.
+function ChooseMapsController:IsChallengeMode() : boolean
+	return self.Challenge ~= nil
+end
+
 --[=[
 	How many players the panel is currently set to bring along.
 ]=]
@@ -621,9 +660,13 @@ end
 
 	A locked map is not picked: its button is already dead (`_renderLocks`), and the check
 	here is for outside callers: `Select` is public API, and `PortalController` may ask for
-	a map by name.
+	a map by name. In challenge mode the pick is fixed to the challenge's map.
 ]=]
 function ChooseMapsController:Select(mapName : string?)
+	if self.Challenge then
+		return
+	end
+
 	local resolvedMap = MapConfig.resolveMap(mapName)
 	if resolvedMap == self.Selected then
 		return
@@ -641,9 +684,16 @@ end
 
 --[=[
 	Sends the picked map off. Does nothing while no map is picked -- which is also
-	when Confirm is not on screen.
+	when Confirm is not on screen. In challenge mode it sends the challenge and the
+	player count instead.
 ]=]
 function ChooseMapsController:Confirm() : boolean
+	local challenge = self.Challenge
+	if challenge then
+		self.Signals.ChallengeChosen:Fire(challenge.Kind, challenge.Slot, self.PlayerCount)
+		return true
+	end
+
 	if not self.Selected then
 		return false
 	end
@@ -652,16 +702,60 @@ function ChooseMapsController:Confirm() : boolean
 	return true
 end
 
+--[=[
+	Opens the panel for a challenge: its map only, already picked, and Confirm fires
+	`ChallengeChosen`. `challenge` is a `ChallengeConfig` challenge (Kind, Slot, Map).
+]=]
+function ChooseMapsController:OpenChallenge(challenge)
+	if typeof(challenge) ~= "table" or not MapConfig.MAPS[challenge.Map] then
+		return
+	end
+
+	if self.IsOpenState then
+		self:_setOpen(false)
+	end
+
+	self.Challenge = {
+		Kind = challenge.Kind,
+		Slot = challenge.Slot,
+		Map = challenge.Map,
+	}
+
+	self:_setOpen(true)
+end
+
+--- Ends challenge mode and closes the panel.
+function ChooseMapsController:CloseChallenge()
+	if not self.Challenge then
+		return
+	end
+
+	self:_setOpen(false)
+end
+
 function ChooseMapsController:Open()
 	self:_setOpen(true)
 end
 
+--[=[
+	Closes the panel. Ignored in challenge mode: `PortalController` asks for a close
+	whenever the player is not at a portal, and a challenge opening happens at the
+	board. Exit and `CloseChallenge` end it.
+]=]
 function ChooseMapsController:Close()
+	if self.Challenge then
+		return
+	end
+
 	self:_setOpen(false)
 end
 
 function ChooseMapsController:Toggle()
-	self:_setOpen(not self.IsOpenState)
+	if self.IsOpenState then
+		self:Close()
+	else
+		self:Open()
+	end
 end
 
 function ChooseMapsController:construct()
@@ -687,6 +781,7 @@ function ChooseMapsController:init()
 	self.PlayerCount = PortalConfig.MIN_PLAYERS
 	self.Entries = {}
 	self.Selected = nil
+	self.Challenge = nil
 
 	for Controller, _ in self.Controllers do
 		self.Controllers[Controller] = Framework:Get(Controller, false, true)

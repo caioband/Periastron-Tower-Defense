@@ -411,7 +411,7 @@ function BardController:createBadge(unitId : string, model : Model, groups, key 
 		icon.LayoutOrder = 1
 		icon.BackgroundTransparency = 1
 		icon.Size = UDim2.fromOffset(24, 24)
-		icon.Image = ClassConfig.Icons[group.Icon or ""] or ""
+		icon.Image = ClassConfig.Icons[group.Icon or ""] or group.Icon or ""
 		icon.Parent = row
 
 		local label = Instance.new("TextLabel")
@@ -586,7 +586,7 @@ function BardController:buildButtons(card : GuiObject, unitName : string, suppor
 		icon.AnchorPoint = Vector2.new(0.5, 0.5)
 		icon.Position = UDim2.fromScale(0.5, 0.5)
 		icon.Size = UDim2.fromScale(0.8, 0.8)
-		icon.Image = ClassConfig.Icons[modeConfig.Icon] or ""
+		icon.Image = ClassConfig.Icons[modeConfig.Icon] or modeConfig.Icon or ""
 		icon.ZIndex = button.ZIndex + 1
 		icon.Parent = button
 

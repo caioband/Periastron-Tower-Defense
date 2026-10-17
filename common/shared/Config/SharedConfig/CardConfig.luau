@@ -45,7 +45,7 @@ CardConfig.Images = {
 	Vindicator = "rbxassetid://130740288231397",
 	Volt = "rbxassetid://115436373491774",
 	Necromancer = "rbxassetid://133903816622368",
-	Bard = PLACEHOLDER_CARD,
+	Bard = "rbxassetid://105689957004426",
 
 }
 
@@ -95,7 +95,7 @@ CardConfig.Icons = {
 	Necromancer = "rbxassetid://71602492100553",
 	Cryomancer = "rbxassetid://135577855711453",
 	Volt = "rbxassetid://138208228552168", 
-	Bard = PLACEHOLDER_PORTRAIT,
+	Bard = "rbxassetid://99723808698047",
 
 }
 
@@ -147,7 +147,7 @@ CardConfig.IndexImages = {
 	Vindicator = { Locked = "rbxassetid://83846373389394", Unlocked = "rbxassetid://83026555203229" },
 	Volt = { Locked = "rbxassetid://123863331948712", Unlocked = "rbxassetid://99828619754778" },
 	Necromancer = { Locked = "rbxassetid://114705807622416", Unlocked = "rbxassetid://128005768457545" },
-	Bard = PLACEHOLDER_INDEX,
+	Bard =  { Locked = "rbxassetid://72263642089701", Unlocked = "rbxassetid://134314458894856" },
 
 }
 

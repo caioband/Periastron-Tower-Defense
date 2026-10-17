@@ -4,6 +4,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local DataStoreService = game:GetService("DataStoreService")
 local UserService = game:GetService("UserService")
 
+local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Vendor = Shared:WaitForChild("Vendor")
 local Configs = Shared:WaitForChild("Config")
@@ -12,6 +13,7 @@ local ServerConfigs = ServerScriptService:WaitForChild("Config")
 local SharedConfig = require(Configs.SharedConfig)
 local ServerConfig = require(ServerConfigs)
 local UIUtil = require(Shared.Util.UIUtil)
+local Signal = require(Packages.Signal)
 
 local Me = require(Vendor.Me)
 local Log = require(Shared.Util.Log)
@@ -21,6 +23,7 @@ local log = Log.new("LeaderboardService")
 
 local LeaderboardConfig = ServerConfig.Leaderboard
 local LevelConfig = SharedConfig.LevelConfig
+local NametagConfig = SharedConfig.NametagConfig
 
 --[[
 	The global leaderboards: one OrderedDataStore per board (`Config.Leaderboard`).
@@ -47,8 +50,15 @@ local LevelConfig = SharedConfig.LevelConfig
 
 	**Drawing.** The `Frame` inside the `ScrollingFrame` is the template: it leaves
 	the screen and becomes one row per position. Rows are reused between reads (only
-	the text changes), and extra rows stay hidden. The SurfaceGui is in the
-	Workspace, so what the server writes replicates to everyone.
+	the text changes), and extra rows stay hidden. Tied numbers share a position
+	(1, 1, 3). The SurfaceGui is in the Workspace, so what the server writes
+	replicates to everyone.
+
+	**Champions.** Every place keeps who holds #1 on each store a nametag title points
+	at (`Leaderboard` in `NametagConfig`); ties all hold it. Boards this place draws
+	reuse their read, the rest get a small page every `TITLE_INTERVAL`.
+	`ChampionsChanged` fires when a store's holders change, and `NametagService`
+	resyncs. Until the first read, a store's champions are unknown (`nil`), not empty.
 
 	**The store name includes `PROFILE_KEY`.** Changing the key resets profiles, and a
 	leaderboard that kept showing numbers from profiles nobody reads anymore would be
@@ -86,6 +96,10 @@ local LeaderboardService = {
 		DataService = {},
 	},
 
+	Signals = {
+		ChampionsChanged = Signal.new(),
+	},
+
 	-- [Store] = OrderedDataStore
 	Stores = {},
 
@@ -101,6 +115,12 @@ local LeaderboardService = {
 
 	-- This place's boards on the map: { Config, List, Template, Rows }
 	Boards = {},
+
+	-- [Store] = true for the boards this place draws.
+	BoundStores = {},
+
+	-- [Store] = { [UserId] = true }, or nil while unknown.
+	Champions = {},
 
 	-- [key] = `os.clock()` of the last warning
 	Warned = {},
@@ -149,6 +169,20 @@ local function setText(row : Instance, name : string, text : string)
 	if label and label:IsA("TextLabel") then
 		label.Text = text
 	end
+end
+
+--- The stores some nametag title points at.
+local function titledStores() : { [string] : boolean }
+	local stores = {}
+
+	for _, nametag in NametagConfig.Nametags do
+		local store = nametag.Leaderboard
+		if typeof(store) == "string" and store ~= "" then
+			stores[store] = true
+		end
+	end
+
+	return stores
 end
 
 --[[ INTERNAL ]]
@@ -311,6 +345,8 @@ function LeaderboardService:_bindBoards() : boolean
 		-- The template leaves the screen: it stays only as the source for rows.
 		template.Parent = nil
 
+		self.BoundStores[config.Store] = true
+
 		table.insert(self.Boards, {
 			Config = config,
 			List = list,
@@ -322,8 +358,8 @@ function LeaderboardService:_bindBoards() : boolean
 	return #self.Boards > 0
 end
 
---- A board's top, highest to lowest, without zeros.
-function LeaderboardService:_fetch(config) : { { UserId : number, Value : number } }?
+--- A store's top, highest to lowest. `count` defaults to `TOP`.
+function LeaderboardService:_fetch(config, count : number?) : { { UserId : number, Value : number } }?
 	local store = self:_storeOf(config.Store)
 	if not store then return nil end
 
@@ -332,7 +368,7 @@ function LeaderboardService:_fetch(config) : { { UserId : number, Value : number
 	end
 
 	local ok, result = pcall(function()
-		return store:GetSortedAsync(false, LeaderboardConfig.TOP, 1):GetCurrentPage()
+		return store:GetSortedAsync(false, count or LeaderboardConfig.TOP, 1):GetCurrentPage()
 	end)
 
 	if not ok then
@@ -394,37 +430,134 @@ function LeaderboardService:_resolveNames(entries)
 	end
 end
 
+--[=[
+	Draws the rows. Tied numbers share a position, and the next number skips the
+	shared ones: 1, 1, 3.
+]=]
 function LeaderboardService:_render(board, entries)
 	self:_resolveNames(entries)
 
-	for rank, entry in entries do
-		local row = board.Rows[rank]
-		if not row then
-			row = board.Template:Clone()
-			row.Name = string.format("Rank%02d", rank)
-			row.LayoutOrder = rank
-			row.Parent = board.List
-			board.Rows[rank] = row
+	local position = 0
+	local lastValue = nil
+
+	for index, entry in entries do
+		if entry.Value ~= lastValue then
+			position = index
+			lastValue = entry.Value
 		end
 
-		setText(row, "Position", string.format("%dº", rank))
+		local row = board.Rows[index]
+		if not row then
+			row = board.Template:Clone()
+			row.Name = string.format("Rank%02d", index)
+			row.LayoutOrder = index
+			row.Parent = board.List
+			board.Rows[index] = row
+		end
+
+		setText(row, "Position", string.format("%dº", position))
 		setText(row, "Username", self.Names[entry.UserId] or UNKNOWN_NAME)
 		setText(row, "Value", formatValue(board.Config.Format, entry.Value))
 		row.Visible = true
 	end
 
-	for rank = #entries + 1, #board.Rows do
-		board.Rows[rank].Visible = false
+	for index = #entries + 1, #board.Rows do
+		board.Rows[index].Visible = false
 	end
 end
 
 function LeaderboardService:_refreshBoards()
+	local titled = titledStores()
+
 	for _, board in self.Boards do
 		local entries = self:_fetch(board.Config)
 		if entries then
 			self:_render(board, entries)
+
+			if titled[board.Config.Store] then
+				self:_setChampions(board.Config.Store, entries)
+			end
 		end
 	end
+end
+
+--[[ CHAMPIONS ]]
+
+--[=[
+	Everyone holding the top number on a store. Zero is nobody: a store where nobody
+	scored has no champion.
+]=]
+function LeaderboardService:_setChampions(storeKey : string, entries)
+	local champions = {}
+	local top = entries[1] and entries[1].Value or 0
+
+	if top > 0 then
+		for _, entry in entries do
+			if entry.Value ~= top then
+				break
+			end
+
+			champions[entry.UserId] = true
+		end
+	end
+
+	local previous = self.Champions[storeKey]
+	local changed = previous == nil
+
+	if not changed then
+		for userId in champions do
+			if not previous[userId] then
+				changed = true
+				break
+			end
+		end
+	end
+
+	if not changed then
+		for userId in previous do
+			if not champions[userId] then
+				changed = true
+				break
+			end
+		end
+	end
+
+	self.Champions[storeKey] = champions
+
+	if changed then
+		self.Signals.ChampionsChanged:Fire(storeKey)
+	end
+end
+
+--- Reads the champions of every titled store this place does not already draw.
+function LeaderboardService:_refreshTitles()
+	for storeKey in titledStores() do
+		if self.BoundStores[storeKey] then
+			continue
+		end
+
+		local entries = self:_fetch({ Store = storeKey }, LeaderboardConfig.TITLE_PAGE)
+		if entries then
+			self:_setChampions(storeKey, entries)
+		end
+	end
+end
+
+--[[ API ]]
+
+--- The players holding #1 on the store, or nil while it has not been read yet.
+function LeaderboardService:GetChampions(storeKey : string) : { [number] : boolean }?
+	return self.Champions[storeKey]
+end
+
+--- Whether the user holds #1 on the store: true, false, or nil while it is unknown.
+function LeaderboardService:IsChampion(storeKey : string, userId : number) : boolean?
+	local champions = self.Champions[storeKey]
+	if not champions then
+		return nil
+	end
+
+	return champions[userId] == true
 end
 
 --[[ LIFECYCLE ]]
@@ -488,6 +621,13 @@ function LeaderboardService:construct()
 			end
 		end)
 	end
+
+	task.spawn(function()
+		while true do
+			self:_refreshTitles()
+			task.wait(LeaderboardConfig.TITLE_INTERVAL or LeaderboardConfig.READ_INTERVAL)
+		end
+	end)
 end
 
 function LeaderboardService:start()

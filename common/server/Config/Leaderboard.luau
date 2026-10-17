@@ -23,6 +23,11 @@
 	so asking for the top is one page of `TOP` entries: the same cost with a hundred
 	players or a hundred million. Nothing here walks the whole store.
 
+	**Titles.** A nametag with `Leaderboard = "<Store>"` (`NametagConfig`) goes to
+	whoever holds #1 on that store; tied players all hold it. Every place reads the
+	champions every `TITLE_INTERVAL`, a page of `TITLE_PAGE` (how many tied #1s fit).
+	Boards this place already draws reuse that read.
+
 	See docs/common/leaderboards.md.
 ]]
 
@@ -44,6 +49,9 @@ return {
 	WRITE_INTERVAL = 120,
 	READ_INTERVAL = 120,
 
+	TITLE_INTERVAL = 120,
+	TITLE_PAGE = 25,
+
 	Boards = {
 		{ Model = "HighestLevelLB", Store = "XP", Path = { "Stats", "XP" }, Format = "Level" },
 		-- The total earned, not the balance: spending in the shop does not knock anyone off the board.
@@ -59,4 +67,3 @@ return {
 		{ Model = "MostAfkTimeLB", Store = "TimeInAfkArea", Path = { "Stats", "TimeInAfkArea" }, Format = "Time", Place = "Afk" },
 	},
 }
- 
