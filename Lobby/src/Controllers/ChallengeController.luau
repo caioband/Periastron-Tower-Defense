@@ -77,6 +77,7 @@ local REASON_TEXT = {
 	NotLoaded = "WAIT",
 	InGroup = "IN PORTAL",
 	Tutorial = "TUTORIAL",
+	Completed = "DONE",
 	DifficultyLocked = "LOCKED",
 	AllBanned = "NO UNITS",
 	TeleportFailed = "FAILED",
@@ -104,6 +105,10 @@ local PERIOD_CHECK_INTERVAL = 1
 	Confirm sends `RequestPlayChallenge(kind, slot, players)`; the server opens a
 	challenge group on a free portal and moves the player into it. A refusal closes
 	the panel and brings the board back with the reason on the card's button.
+
+	**One run per period.** A challenge already completed this period cannot be
+	played again: its Play does nothing and its button is dimmed like a locked one,
+	until the period rolls over. The server refuses it too (`Completed`).
 
 	**This controller decides nothing.** The challenges themselves come from
 	`ChallengeConfig` (the same generation the server runs), completion comes from
@@ -341,7 +346,7 @@ function ChallengeController:_renderCard(entry)
 	setText(play:FindFirstChild(GUI.PlayText), text)
 
 	if play:IsA("ImageButton") then
-		play.ImageTransparency = if unlocked then 0 else LOCKED_TRANSPARENCY
+		play.ImageTransparency = if unlocked and not done then 0 else LOCKED_TRANSPARENCY
 	end
 end
 
@@ -353,11 +358,17 @@ end
 
 --[=[
 	Play: the board steps aside and the portal panel opens for this challenge's player
-	count. Nothing is sent until its Confirm.
+	count. Nothing is sent until its Confirm. A challenge already completed this
+	period does nothing until it rolls over.
 ]=]
 function ChallengeController:_requestPlay(kind : string, slot : number)
 	local challenge = ChallengeConfig.get(kind, ChallengeConfig.currentPeriod(kind), slot)
 	if not challenge then
+		return
+	end
+
+	local data = self:_data()
+	if ChallengeConfig.isCompleted(data and data[ChallengeConfig.DATA_KEY], challenge) then
 		return
 	end
 

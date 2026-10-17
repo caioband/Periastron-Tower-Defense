@@ -34,14 +34,19 @@ local STUDIO_ATTRIBUTE = "StudioChallenge"
 	Daily and weekly challenges, server side. Both places run it.
 
 	**Lobby:** `RequestPlayChallenge(kind, slot, maxPlayers)` checks the player may
-	play it (`CanPlay`: profile loaded, not mid-tutorial, difficulty unlocked, at
-	least `MIN_PLAYABLE_DECK` towers of the equipped deck left after the bans), and
-	that it is the current period and they are not already in a portal group. Then
-	`PortalService:CreateChallengeGroup` opens a group for it on the first free portal
-	with the size they picked (1 to `PortalConfig.MAX_PLAYERS`). Others join by
-	walking in; `PortalService` asks `CanPlay` for each of them too. The portal's
-	teleport carries `Challenge = { Kind, Period, Slot }`. The answer goes back as
+	play it (`CanPlay`: profile loaded, not mid-tutorial, not already completed this
+	period, difficulty unlocked, at least `MIN_PLAYABLE_DECK` towers of the equipped
+	deck left after the bans), and that it is the current period and they are not
+	already in a portal group. Then `PortalService:CreateChallengeGroup` opens a group
+	for it on the first free portal with the size they picked (1 to
+	`PortalConfig.MAX_PLAYERS`). Others join by walking in; `PortalService` asks
+	`CanPlay` for each of them too. The portal's teleport carries
+	`Challenge = { Kind, Period, Slot }`. The answer goes back as
 	`ChallengePlayResult(kind, slot, ok, reason)`.
+
+	**One run per period.** A challenge completed this period cannot be played again
+	(started or joined) until it rolls over; the next period's challenges are new
+	slots, so they open as usual.
 
 	**Game:** the first player's teleport data resolves the active challenge
 	(`ChallengeConfig.resolveRef`, which rebuilds it from the config, so nothing a
@@ -236,8 +241,8 @@ end
 
 --[=[
 	Whether this player may play `challenge`, whoever opened the group. Returns
-	`ok, reason`; reasons: `NotLoaded`, `Tutorial`, `DifficultyLocked`, `AllBanned`.
-	`PortalService` asks it for everyone who walks into a challenge portal.
+	`ok, reason`; reasons: `NotLoaded`, `Tutorial`, `Completed`, `DifficultyLocked`,
+	`AllBanned`. `PortalService` asks it for everyone who walks into a challenge portal.
 ]=]
 function ChallengeService:CanPlay(player : Player, challenge) : (boolean, string?)
 	local profile = self:_profileOf(player)
@@ -248,6 +253,10 @@ function ChallengeService:CanPlay(player : Player, challenge) : (boolean, string
 	local tutorialService = Framework:Get("TutorialService", false, false)
 	if tutorialService and tutorialService.IsPending and tutorialService:IsPending(player) then
 		return false, "Tutorial"
+	end
+
+	if Config.isCompleted(profile[Config.DATA_KEY], challenge) then
+		return false, "Completed"
 	end
 
 	if not UnlockConfig.isUnlocked(challenge.Difficulty, profile.Stats) then
