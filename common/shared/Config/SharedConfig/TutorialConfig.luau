@@ -20,6 +20,8 @@ TutorialConfig.Text = {
 	Preset = "Dialogue",
 	Font = TutorialConfig.Font,
 	Size = 20,
+	Speed = 45,
+	AnimDuration = 0.15,
 }
 
 --[=[

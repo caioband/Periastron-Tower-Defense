@@ -94,7 +94,7 @@ ChallengeConfig.KINDS = {
 		Length = DAY,
 		Offset = 0,
 
-		Difficulties = { "Easy", "Medium" },
+		Difficulties = { "Medium", "Hard" },
 		Maps = { MinWins = 0 },
 		Bans = { Min = 2, Max = 4, PerRarity = 1 },
 		Weather = { Harsh = false, RotateWaves = 4, ClearWaves = 0 },
@@ -117,7 +117,6 @@ ChallengeConfig.KINDS = {
 
 		Rewards = { Cash = 1500, Shards = 15, Crates = { Epic = 1 } },
 
-		-- Weekly 2: always modified, less time without weather, pays 1.5x.
 		SlotRules = {
 			[2] = {
 				Modifiers = { Min = 1, Max = 2 },
@@ -154,7 +153,9 @@ ChallengeConfig.MODIFIERS = {
 ChallengeConfig.MODIFIER_ORDER = { "GlassBase", "TightBudget", "ShortBreaks", "HeavyHits", "LeanBounty" }
 
 -- Units that are never banned (event-only, unreleased...).
-ChallengeConfig.EXCLUDED_UNITS = {}
+ChallengeConfig.EXCLUDED_UNITS = {
+	Azure = true,
+}
 
 --[[ INTERNAL ]]
 
