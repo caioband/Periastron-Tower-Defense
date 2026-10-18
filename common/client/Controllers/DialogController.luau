@@ -813,9 +813,16 @@ end
 --[=[
 	Notifies `:OnClosed()` subscribers. In `task.spawn` because the callback is external:
 	an error in it must not take down the code closing the box.
+
+	**It walks a copy of the list.** `task.spawn` runs the callback right away, and a
+	callback that unsubscribes itself (the tutorial step does, first thing) removes
+	its entry mid-loop: walking the live list, the next subscriber slides into the
+	freed slot and the loop steps past it, so every second listener was never told the
+	box closed. That is what left the tutorial's wave 3 waiting on a read that never
+	came.
 ]=]
 function DialogController:fireClosed()
-	for _, listener in self.ClosedListeners do
+	for _, listener in table.clone(self.ClosedListeners) do
 		task.spawn(listener)
 	end
 end

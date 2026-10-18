@@ -593,7 +593,12 @@ end
 
 --[=[
 	Watches an open step for the things only the server can see: the speed the room
-	picked, an upgrade bought, cash that ran short while the step waits.
+	picked, an upgrade bought, a hand already empty, cash that ran short while the
+	step waits.
+
+	`PlaceRest` is checked here as well as on `UnitPlaced`: a player who placed the
+	whole hand before the step opened (during the speed lesson, or with the shop up)
+	never places again, and waiting for a placement would hold the wave forever.
 
 	It runs whether or not the step holds a wave, on real time (`task.wait`): with the
 	clock held at 0, match time would never advance.
@@ -615,6 +620,12 @@ function TutorialMatchService:watchStep(step : any, token : number)
 			end
 
 			if step.Kind == "Upgrade" and self:upgradeTotal() > baseline then
+				self:CompleteStep()
+
+				break
+			end
+
+			if step.Kind == "PlaceRest" and self:allHandsEmpty() then
 				self:CompleteStep()
 
 				break
@@ -854,6 +865,17 @@ function TutorialMatchService:handIsEmpty(player : Player) : boolean
 
 	for _, count in cards do
 		if count > 0 then
+			return false
+		end
+	end
+
+	return true
+end
+
+--- Whether nobody in the match has a tower card left to place.
+function TutorialMatchService:allHandsEmpty() : boolean
+	for _, player in Players:GetPlayers() do
+		if not self:handIsEmpty(player) then
 			return false
 		end
 	end

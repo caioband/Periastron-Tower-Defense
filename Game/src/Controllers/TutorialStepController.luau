@@ -30,6 +30,12 @@ local SpeedConfig = SharedConfig.SpeedConfig
 	dialog is dismissed. An `Info` step tells the server it was read
 	(`TutorialStepRead`) when its dialog closes, which is what releases its wave.
 
+	**One dialog subscription, owned by the step.** The step's `OnClosed` lives in
+	`DialogDisconnect` and is dropped when the step reveals, is replaced, or is
+	cleared. A subscription that outlived its step used to sit in front of the next
+	step's and swallow its close, leaving the server holding the wave for a read
+	that never came.
+
 	**Placement steps follow the hand.** While the player has not picked the card
 	up, the highlight points at it; the moment a ghost is out (`isPlacing`), the
 	highlight gets out of the way of the map and, with `ArrowOnEquip`, the arrow
@@ -97,6 +103,12 @@ TutorialStepController.DeckHidden = false
 TutorialStepController.AllowedUnits = nil :: { [string] : boolean }?
 TutorialStepController.Arrows = {}
 TutorialStepController.StepConnections = {}
+
+-- The open step's `DialogController:OnClosed` unsubscribe. See `dropDialogWatch`.
+TutorialStepController.DialogDisconnect = nil :: (() -> ())?
+
+-- The step whose visuals already came in after its dialog. See `reveal`.
+TutorialStepController.RevealedStep = nil :: any
 
 -- The placement step whose visuals are up: what `GetPlacementSnap` answers for.
 TutorialStepController.SnapStep = nil :: any
@@ -333,8 +345,36 @@ function TutorialStepController:reportRead(step : any)
 	end)
 end
 
+--[=[
+	Drops the open step's dialog subscription, if any. Safe to call twice.
+]=]
+function TutorialStepController:dropDialogWatch()
+	local disconnect = self.DialogDisconnect
+	self.DialogDisconnect = nil
+
+	if disconnect then
+		disconnect()
+	end
+end
+
+--[=[
+	What comes in once the step's dialog is gone: its visuals and, for `Info`, the
+	read. Only once per step, whichever path gets here first (the close, the
+	timeout, a failed `Play`).
+]=]
+function TutorialStepController:reveal(step : any)
+	if self.Step ~= step or self.RevealedStep == step then return end
+
+	self.RevealedStep = step
+
+	self:dropDialogWatch()
+	self:showVisuals(step)
+	self:reportRead(step)
+end
+
 function TutorialStepController:show(step : any)
 	self.Step = step
+	self.RevealedStep = nil
 
 	self:setDeckHeld(step.HideDeck == true)
 	self:gateFor(step)
@@ -344,38 +384,20 @@ function TutorialStepController:show(step : any)
 	if dialog and step.Lines then
 		self:setCardsHidden(true)
 
-		local shown = false
-
-		local function reveal()
-			if shown or self.Step ~= step then return end
-
-			shown = true
-			self:showVisuals(step)
-			self:reportRead(step)
-		end
-
-		local disconnect
-		disconnect = dialog:OnClosed(function()
-			if disconnect then
-				disconnect()
-			end
-
-			reveal()
+		self:dropDialogWatch()
+		self.DialogDisconnect = dialog:OnClosed(function()
+			self:reveal(step)
 		end)
 
 		task.delay(SPEECH_TIMEOUT, function()
-			if shown or self.Step ~= step then return end
+			if self.Step ~= step or self.RevealedStep == step then return end
 
 			log:StudioWarn(`the dialog of step "{step.Id}" did not close within {SPEECH_TIMEOUT}s; continuing without it.`)
 
-			if disconnect then
-				disconnect()
-			end
-
-			reveal()
+			self:reveal(step)
 		end)
 
-		dialog:Play(step.Lines, Config.Speech({
+		local played = dialog:Play(step.Lines, Config.Speech({
 			HideUI = false,
 			Blur = false,
 			Duck = false,
@@ -384,11 +406,16 @@ function TutorialStepController:show(step : any)
 			MinRead = Config.Match.MinReadTime or 0,
 		}))
 
+		if not played then
+			log:StudioWarn(`the dialog of step "{step.Id}" could not play; continuing without it.`)
+
+			self:reveal(step)
+		end
+
 		return
 	end
 
-	self:showVisuals(step)
-	self:reportRead(step)
+	self:reveal(step)
 end
 
 function TutorialStepController:showVisuals(step : any)
@@ -489,7 +516,7 @@ function TutorialStepController:watchPlacement(step : any)
 				if placing then
 					current = nil
 
-					if highlight then	
+					if highlight then
 						highlight:Hide()
 					end
 
@@ -935,11 +962,22 @@ function TutorialStepController:handCardOf(cardId : string) : GuiObject?
 	return container and container:FindFirstChild(`RoundCard_{cardId}`) or nil
 end
 
+--[=[
+	Forgets the open step: its dialog subscription, its visuals, and the hand it hid
+	for its dialog. The hand comes back unless the round card shop is the one hiding it.
+]=]
 function TutorialStepController:clear()
 	self.Step = nil
+	self.RevealedStep = nil
 
+	self:dropDialogWatch()
 	self:setDeckHeld(false)
 	self:clearVisuals()
+
+	local shop = self.Controllers.RoundCardShopController
+	if not (shop and shop.ShopOpen == true) then
+		self:setCardsHidden(false)
+	end
 end
 
 function TutorialStepController:setDeckHeld(held : boolean)
@@ -980,17 +1018,14 @@ function TutorialStepController:reassert()
 
 	local dialog = self.Controllers.DialogController
 	if dialog and (dialog:IsOpen() or dialog:IsResuming()) then
-		local disconnect
-		disconnect = dialog:OnClosed(function()
-			if disconnect then
-				disconnect()
-			end
+		self.RevealedStep = nil
 
+		self:dropDialogWatch()
+		self.DialogDisconnect = dialog:OnClosed(function()
 			if self.Step ~= step then return end
 
 			self:clearVisuals()
-			self:showVisuals(step)
-			self:reportRead(step)
+			self:reveal(step)
 		end)
 
 		return

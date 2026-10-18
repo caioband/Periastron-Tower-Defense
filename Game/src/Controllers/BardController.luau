@@ -33,6 +33,9 @@ local BADGE_GROUP_WIDTH = 86
 local BADGE_HEIGHT = 30
 local PIXEL_FONT = Font.new("rbxasset://fonts/families/PressStart2P.json")
 
+-- The setting that turns the buff badges over boosted towers on and off.
+local BADGE_SETTING = "VFX"
+
 local STAT_ORDER = { "Damage", "Range", "AttackSpeed" }
 
 local STAT_LABELS = {
@@ -79,6 +82,7 @@ local BardController = {
 	ToggleTower = nil,
 	Silenced = false,
 	SyncClock = 0,
+	SettingConnection = nil,
 }
 
 --[[ STATE ]]
@@ -194,6 +198,16 @@ end
 function BardController:getClasses()
 	local placement = Framework:Get("UnitPlacementController", false, false)
 	return placement and placement.createdClasses, placement
+end
+
+--[=[
+	The player's "VFX" setting, which the buff badges over boosted towers follow:
+	off, no badge is drawn. The buff itself and the tinted stats on the upgrade
+	card stay, because those are information, not decoration.
+]=]
+function BardController:badgesOn() : boolean
+	local settings = Framework:Get("SettingsController", false, false)
+	return settings == nil or settings:Get(BADGE_SETTING)
 end
 
 --[[ SONGS ]]
@@ -446,7 +460,9 @@ function BardController:syncBadges()
 	local seen = self.SeenBadges
 	table.clear(seen)
 
-	if classes then
+	-- With the "VFX" setting off nothing is marked as seen, so the loop below
+	-- removes every badge on screen.
+	if classes and self:badgesOn() then
 		for model, class in classes do
 			if not model or not model.Parent or not class then continue end
 
@@ -755,6 +771,13 @@ function BardController:construct()
 end
 
 function BardController:start()
+	-- Flipping the setting takes effect at once instead of on the next sync.
+	local settings = Framework:Get("SettingsController", false, false)
+	if settings and settings.Observe then
+		self.SettingConnection = settings:Observe(BADGE_SETTING, function()
+			self:syncBadges()
+		end)
+	end
 end
 
 function BardController:init()
