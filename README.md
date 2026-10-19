@@ -3,6 +3,7 @@
 A Roblox tower defense game made of two places: the **Lobby**, where players build their deck, open crates, and pick a map, and the **Game** ("Main Game"), where they play the match.
 Both places are published to two experiences, Production and QA (see [Environments](docs/common/environments.md)).
 A third place, the **AFK** place, is being set up (see [AFK place](docs/afk/README.md)).
+A fourth, the **Map Editor**, is a standalone builder for new maps (see [Map Editor place](docs/mapeditor/README.md)).
 This monorepo holds every place; code they share lives at the root.
 
 ```text
@@ -11,6 +12,7 @@ vendor/     third-party libraries that do not come from Wally
 Game/       the "Periastron TD: Main Game" place (only what is specific to it)
 Lobby/      the "Periastron Tower Defense" lobby place (only what is specific to it)
 Afk/        the AFK place (only what is specific to it)
+MapEditor/  the Map Editor place (standalone, see docs/mapeditor)
 docs/       documentation
 ```
 
@@ -59,7 +61,7 @@ wally --version   # wally 0.3.2
 
 ### 3. Install the packages
 
-Each place has its own `wally.toml` and its own `Packages/` folder, so install each one:
+Each framework place has its own `wally.toml` and its own `Packages/` folder, so install each one (the Map Editor has no Wally dependencies):
 
 ```bash
 cd Game  && wally install && cd ..
@@ -93,6 +95,7 @@ Use the QA places for day-to-day work:
 | Lobby | `80434020174775` | `132304466547289` | `Lobby/` |
 | Main Game | `131924395601623` | `109030368179494` | `Game/` |
 | AFK | not published yet | not published yet | `Afk/` |
+| Map Editor | not in the universe yet (dev place `131485363672766`) | not published yet | `MapEditor/` |
 
 Start the server from the matching folder:
 
@@ -146,6 +149,6 @@ Git ignores `sourcemap.json`.
 All documentation is in [`docs/`](docs/README.md):
 
 - [Repository overview](docs/architecture/overview.md) and [setup](docs/architecture/setup.md)
-- [Game place](docs/game/README.md), [Lobby place](docs/lobby/README.md), and [AFK place](docs/afk/README.md)
+- [Game place](docs/game/README.md), [Lobby place](docs/lobby/README.md), [AFK place](docs/afk/README.md), and [Map Editor place](docs/mapeditor/README.md)
 - [Shared systems](docs/common/README.md)
 - [Conventions](docs/architecture/conventions.md) for code, comments, logs, and docs

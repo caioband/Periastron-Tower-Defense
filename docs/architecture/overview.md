@@ -1,6 +1,6 @@
 # Repository overview
 
-This repository holds every place of Periastron Tower Defense: the Lobby, the Game, and the AFK place.
+This repository holds every place of Periastron Tower Defense: the Lobby, the Game, the AFK place, and the Map Editor.
 Code used by more than one place lives at the root; each place folder keeps only what belongs to it.
 
 ```text
@@ -9,6 +9,7 @@ vendor/     third-party libraries that do not come from Wally
 Game/       the "Periastron TD: Main Game" place (only what is specific to it)
 Lobby/      the "Periastron Tower Defense" lobby place (only what is specific to it)
 Afk/        the AFK place (only what is specific to it)
+MapEditor/  the Map Editor place (standalone, see docs/mapeditor)
 docs/       this documentation
 ```
 
@@ -81,6 +82,7 @@ The place pages list what is specific to each place, its Wally dependencies, and
 - [Game](../game/README.md)
 - [Lobby](../lobby/README.md)
 - [AFK](../afk/README.md)
+- [Map Editor](../mapeditor/README.md): the exception, it mounts neither `common/` nor `vendor/` and does not run on the `Me` framework
 
 ## Differences between the places (on purpose)
 

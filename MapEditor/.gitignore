@@ -1,0 +1,15 @@
+# wally
+/Packages/
+/ServerPackages/
+/DevPackages/
+
+# rojo / luau-lsp
+sourcemap.json
+
+# place files
+*.rbxl
+*.rbxlx
+*.rbxl.lock
+*.rbxlx.lock
+*.rbxm
+*.rbxmx
