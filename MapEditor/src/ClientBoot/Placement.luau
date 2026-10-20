@@ -1,7 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("MapEditor")
 local Config = require(Shared.Config)
@@ -13,6 +12,7 @@ local Factory = require(Shared.InstanceFactory)
 local State = require(script.Parent.State)
 local Geometry = require(script.Parent.Geometry)
 local Signal = require(script.Parent.Signal)
+local Pointer = require(script.Parent.Pointer)
 
 local player = Players.LocalPlayer
 
@@ -95,7 +95,7 @@ local function update()
 		return
 	end
 	local camera = workspace.CurrentCamera
-	local mouse = UserInputService:GetMouseLocation()
+	local mouse = Pointer.location()
 	local ray = camera:ViewportPointToRay(mouse.X, mouse.Y)
 
 	local params = RaycastParams.new()

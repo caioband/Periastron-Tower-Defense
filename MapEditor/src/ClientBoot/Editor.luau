@@ -24,6 +24,8 @@ local RouteView = require(script.Parent.RouteView)
 local Geometry = require(script.Parent.Geometry)
 local UI = require(script.Parent.UI)
 local Maid = require(script.Parent.Maid)
+local Pointer = require(script.Parent.Pointer)
+local MobileControls = require(script.Parent.MobileControls)
 
 local player = Players.LocalPlayer
 
@@ -38,8 +40,10 @@ local excludeClock = 0
 local savedOnce = false
 local memoryWarned = false
 local enteredAt = 0
+local lastPlacementTap = nil
 
 local BOX_THRESHOLD = 6
+local TAP_CONFIRM_RADIUS = 36
 
 -- Server pushes ---------------------------------------------------------------
 
@@ -363,7 +367,11 @@ function Editor.copy()
 		return
 	end
 	State.clipboard = items
-	UI.toast(string.format("Copied %d object(s). Ctrl+V to place.", #items), "info")
+	if Pointer.isTouch() then
+		UI.toast(string.format("Copied %d object(s). Tap Paste to place.", #items), "info")
+	else
+		UI.toast(string.format("Copied %d object(s). Ctrl+V to place.", #items), "info")
+	end
 end
 
 function Editor.paste()
@@ -744,7 +752,7 @@ local function towerProbe()
 		return nil
 	end
 	local camera = workspace.CurrentCamera
-	local mouse = UserInputService:GetMouseLocation()
+	local mouse = Pointer.location()
 	local ray = camera:ViewportPointToRay(mouse.X, mouse.Y)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Include
@@ -1138,7 +1146,7 @@ local function onInputBegan(input, processed)
 		if processed or UI.modalOpen() or os.clock() - enteredAt < 0.4 then
 			return
 		end
-		local mouse = UserInputService:GetMouseLocation()
+		local mouse = Pointer.location()
 		if UI.isOverGui(mouse) or Gizmos.hovering then
 			return
 		end
@@ -1159,7 +1167,7 @@ end
 
 local function onInputChanged(input)
 	if boxStart and input.UserInputType == Enum.UserInputType.MouseMovement then
-		local mouse = UserInputService:GetMouseLocation()
+		local mouse = Pointer.location()
 		if (mouse - boxStart).Magnitude > BOX_THRESHOLD then
 			boxMoved = true
 			UI.setSelectionRect(boxStart, mouse)
@@ -1168,6 +1176,12 @@ local function onInputChanged(input)
 end
 
 local function onInputEnded(input)
+	if input.UserInputType == Enum.UserInputType.Touch then
+		if Gizmos.isDragging() then
+			Gizmos.finish()
+		end
+		return
+	end
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then
 		return
 	end
@@ -1182,7 +1196,7 @@ local function onInputEnded(input)
 	UI.setSelectionRect(nil)
 	local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
 	if boxMoved then
-		local ids = Selection.boxSelect(start, UserInputService:GetMouseLocation())
+		local ids = Selection.boxSelect(start, Pointer.location())
 		if shift then
 			for _, id in State.selection do
 				table.insert(ids, id)
@@ -1203,19 +1217,62 @@ local function onInputEnded(input)
 	end
 end
 
+local function onTap(position)
+	if not State.active or UI.modalOpen() or os.clock() - enteredAt < 0.4 then
+		return
+	end
+	if UI.isOverGui(position) or Gizmos.isDragging() then
+		return
+	end
+	Pointer.setTouch(position)
+
+	if State.mode == "Playtest" then
+		if State.towerMode then
+			placeTower()
+		end
+		return
+	end
+
+	if Placement.isActive() then
+		if lastPlacementTap and (position - lastPlacementTap).Magnitude <= TAP_CONFIRM_RADIUS then
+			lastPlacementTap = nil
+			confirmPlacement()
+		else
+			lastPlacementTap = position
+		end
+		return
+	end
+
+	local multi = MobileControls.multiSelect()
+	local id = Selection.pick(position)
+	if id then
+		if multi then
+			State.toggleSelection(id)
+		else
+			State.setSelection({ id })
+		end
+	elseif not multi then
+		State.insertAfter = nil
+		RouteView.markDirty()
+		State.clearSelection()
+	end
+end
+
 local function frame(dt)
 	if not State.active then
 		return
 	end
 	local placing = Placement.isActive()
+	local touch = Pointer.isTouch()
 	Selection.render()
 	Gizmos.update(placing)
 	RouteView.update()
 	UI.update()
 	updateTowerGhost()
+	MobileControls.update()
 
-	if State.mode == "Build" and not placing and not BuildCamera.isLooking() and not Gizmos.isDragging() then
-		local mouse = UserInputService:GetMouseLocation()
+	if State.mode == "Build" and not placing and not touch and not BuildCamera.isLooking() and not Gizmos.isDragging() then
+		local mouse = Pointer.location()
 		Selection.setHover(not UI.isOverGui(mouse) and Selection.pick(mouse) or nil)
 	else
 		Selection.setHover(nil)
@@ -1228,7 +1285,9 @@ local function frame(dt)
 			refreshExcluded()
 		end
 		local reason = Placement.reason()
-		local base = "Click to place  |  Q/E rotate  |  Shift+Q/E tilt  |  Esc cancel"
+		local base = if touch
+			then "Tap to move  |  Tap it again or Place to confirm  |  Turn/Tilt to rotate"
+			else "Click to place  |  Q/E rotate  |  Shift+Q/E tilt  |  Esc cancel"
 		if State.insertAfter then
 			base = "Placing waypoints after the highlighted one  |  " .. base
 		end
@@ -1238,7 +1297,7 @@ local function frame(dt)
 			UI.setHint(base)
 		end
 	elseif State.towerMode and State.mode == "Playtest" then
-		UI.setHint("Click to place a test tower  |  Esc to stop")
+		UI.setHint(if touch then "Tap the map to place a test tower" else "Click to place a test tower  |  Esc to stop")
 	elseif State.loading then
 		UI.setHint("Loading map...")
 	else
@@ -1301,12 +1360,14 @@ function Editor.enter()
 	State.developer = data.developer == true
 	State.memoryStorage = data.memoryStorage == true
 	savedOnce = false
+	lastPlacementTap = nil
 
 	BuildCamera.enable(CFrame.lookAt(State.origin.Position + Vector3.new(-45, 50, 45), State.origin.Position))
 	maid:Give(UserInputService.InputBegan:Connect(onInputBegan))
 	maid:Give(UserInputService.InputChanged:Connect(onInputChanged))
 	maid:Give(UserInputService.InputEnded:Connect(onInputEnded))
 	maid:Give(RunService.RenderStepped:Connect(frame))
+	maid:Give(BuildCamera.Tap:Connect(onTap))
 	maid:Give(BuildCamera.RightClick:Connect(function()
 		if Placement.isActive() then
 			Placement.cancel()
@@ -1318,13 +1379,18 @@ function Editor.enter()
 	watchSession()
 
 	UI.setActive(true)
+	MobileControls.setActive(true)
 	UI.refreshStatus()
 	RouteView.markDirty()
 	if State.memoryStorage then
 		memoryWarned = true
 		UI.toast("DataStores are unavailable in this Studio session: saves last until the server stops.", "warn")
 	end
-	UI.toast("Map editor ready. Press H for controls.", "info")
+	if MobileControls.isSupported() and Pointer.isTouch() then
+		UI.toast("Map editor ready. Drag to look, two fingers to pan, pinch to zoom.", "info")
+	else
+		UI.toast("Map editor ready. Press H for controls.", "info")
+	end
 end
 
 local function teardown()
@@ -1335,11 +1401,13 @@ local function teardown()
 	destroyTowerGhost()
 	maid:Clean()
 	BuildCamera.disable()
+	MobileControls.setActive(false)
 	State.active = false
 	State.mode = "Build"
 	State.towerMode = false
 	State.selection = {}
 	State.insertAfter = nil
+	lastPlacementTap = nil
 	History.clear()
 	RouteView.markDirty()
 	RouteView.update()
@@ -1419,6 +1487,57 @@ function Editor.init()
 	Gizmos.Commit:Connect(function(label, records)
 		Editor.change(label, records, {})
 	end)
+
+	BuildCamera.setTouchFilter(function()
+		return Gizmos.isDragging() or Gizmos.hovering
+	end)
+
+	Placement.Changed:Connect(function(on)
+		lastPlacementTap = nil
+		if on then
+			Pointer.centerTouch()
+		end
+	end)
+
+	MobileControls.init({
+		confirm = function()
+			if Placement.isActive() then
+				lastPlacementTap = nil
+				confirmPlacement()
+			end
+		end,
+		cancel = function()
+			Placement.cancel()
+		end,
+		rotate = function(axis, sign)
+			if Placement.isActive() then
+				Placement.rotate(axis, sign * State.rotStep())
+			else
+				Editor.rotateSelection(axis, sign * State.rotStep())
+			end
+		end,
+		delete = function()
+			Editor.delete()
+		end,
+		duplicate = function()
+			Editor.duplicate()
+		end,
+		copy = function()
+			Editor.copy()
+		end,
+		paste = function()
+			Editor.paste()
+		end,
+		deselect = function()
+			State.insertAfter = nil
+			RouteView.markDirty()
+			State.clearSelection()
+		end,
+		exitTowerMode = function()
+			State.towerMode = false
+			UI.setTowerMode(false)
+		end,
+	})
 
 	UI.init({
 		enter = Editor.enter,
