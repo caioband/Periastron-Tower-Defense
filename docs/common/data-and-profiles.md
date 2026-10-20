@@ -2,7 +2,7 @@
 
 Every place runs the same `DataService`, from `common/server/Services`: one ProfileStore session per player, replicated to that player through Replica, and a single hook for anything that must happen before the session closes.
 
-**Runs in:** AFK · Game · Lobby
+**Runs in:** AFK · Game · Lobby · Map Editor
 **Code:** [`DataService`](../../common/server/Services/DataService.luau), [`ProfileEditService`](../../common/server/Services/ProfileEditService.luau), [`DataController`](../../common/client/Controllers/DataController.luau), [`Config.Data`](../../common/server/Config/Data.luau)
 
 ## How it works
@@ -38,7 +38,7 @@ Every write through `Update` also fires `Signals.DataUpdated(player, key, value)
 
 ### What changes per place
 
-The place comes from the `Place` attribute that each place's `default.project.json` sets on `ServerScriptService.Services` (`Lobby`, `Game`, or `Afk`), not from `PlaceId`, so QA copies behave like the place itself.
+The place comes from the `Place` attribute that each place's `default.project.json` sets on `ServerScriptService.Services` (`Lobby`, `Game`, `Afk`, or `MapEditor`), not from `PlaceId`, so QA copies behave like the place itself.
 `Config.Data.Places` holds two settings per place:
 
 | Place | `ReadyTag` | `WaitForClient` |
@@ -46,6 +46,7 @@ The place comes from the `Place` attribute that each place's `default.project.js
 | Lobby | `Loaded` | `true` |
 | Game | `ClientReady` | `false` |
 | AFK | `Loaded` | `true` |
+| Map Editor | `Loaded` | `false` (its client does not run the framework, so nobody fires `Loaded`) |
 
 - `ReadyTag` is the tag `DataService` puts on the player when their client fires `Loaded`. The Game's `WaveService`, `DifficultyService`, and others wait on `ClientReady`.
 - With `WaitForClient`, `Get` only hands out the profile after the player has `ReadyTag`, for up to `MAX_DATA_TIME_OUT` seconds. Without it, `Get` answers as soon as the profile is open.

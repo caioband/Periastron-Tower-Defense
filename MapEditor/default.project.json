@@ -7,14 +7,63 @@
       "$className": "ReplicatedStorage",
       "$ignoreUnknownInstances": true,
 
+      "Packages": {
+        "$path": "Packages"
+      },
+
+      "ReplicaShared": {
+        "$path": "../vendor/ReplicaShared"
+      },
+
       "MapEditor": {
         "$path": "src/Shared"
+      },
+
+      "Shared": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+
+        "Vendor": { "$path": "../vendor/shared" },
+        "Config": { "$path": "../common/shared/Config" },
+        "Util": { "$path": "../common/shared/Util" },
+        "Classes": { "$path": "../common/shared/Classes" }
       }
     },
 
     "ServerScriptService": {
       "$className": "ServerScriptService",
       "$ignoreUnknownInstances": true,
+
+      "Server": { "$path": "../common/server/Server" },
+      "Config": { "$path": "../common/server/Config" },
+      "Vendor": { "$path": "../vendor/server" },
+
+      "CmdrDefinitions": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": false,
+
+        "Types": {
+          "$className": "Folder",
+          "$ignoreUnknownInstances": false,
+
+          "Common": { "$path": "../common/server/CmdrDefinitions/Types" }
+        },
+
+        "Commands": {
+          "$className": "Folder",
+          "$ignoreUnknownInstances": false,
+
+          "Common": { "$path": "../common/server/CmdrDefinitions/Commands" }
+        }
+      },
+
+      "Services": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": false,
+        "$attributes": { "Place": "MapEditor" },
+
+        "Common": { "$path": "../common/server/Services" }
+      },
 
       "MapEditor": {
         "$path": "src/Server"

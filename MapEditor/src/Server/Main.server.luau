@@ -20,6 +20,9 @@ local PlaytestService = require(Modules.PlaytestService)
 local PeriMapAdapter = require(Modules.PeriMapAdapter)
 local RateLimiter = require(Modules.RateLimiter)
 
+local Me = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Vendor"):WaitForChild("Me"))
+local DataService = Me.new():Get("DataService", false, true)
+
 TemplateBuilder.build()
 SessionService.init()
 MapStore.init()
@@ -107,7 +110,7 @@ end
 
 local function saveSession(session: SessionService.Session): (boolean, string?)
 	session.map.modified = os.time()
-	local saved, err = MapStore.save(session.player.UserId, session.map)
+	local saved, err = MapStore.save(session.player, session.map)
 	if saved then
 		session.dirty = false
 		session.savedOnce = true
@@ -152,6 +155,9 @@ local function requireSession(player: Player): SessionService.Session?
 end
 
 handlers.Enter = function(player)
+	if not MapStore.awaitProfile(player) then
+		return fail("Your data is still loading. Try again in a moment.")
+	end
 	local session = SessionService.enter(player, pusher(player))
 	task.defer(SessionService.pushSnapshot, session)
 	return ok({
@@ -242,7 +248,7 @@ handlers.Save = function(player)
 end
 
 handlers.List = function(player)
-	local success, result = MapStore.list(player.UserId)
+	local success, result = MapStore.list(player)
 	if not success then
 		return fail(result :: string)
 	end
@@ -268,7 +274,7 @@ handlers.Load = function(player, payload)
 		return fail("You have unsaved changes.", { confirm = true })
 	end
 	session.lastLoad = os.clock()
-	local success, result = MapStore.load(player.UserId, payload.id)
+	local success, result = MapStore.load(player, payload.id)
 	if not success then
 		return fail(result :: string)
 	end
@@ -293,7 +299,7 @@ handlers.Rename = function(player, payload)
 			return ok({ name = name })
 		end
 	end
-	local success, renameErr = MapStore.rename(player.UserId, payload.id, name)
+	local success, renameErr = MapStore.rename(player, payload.id, name)
 	if not success then
 		return fail(renameErr or "Rename failed.")
 	end
@@ -308,7 +314,7 @@ handlers.Duplicate = function(player, payload)
 	if not name then
 		return fail(err or "Invalid name.")
 	end
-	local success, result = MapStore.duplicate(player.UserId, payload.id, name)
+	local success, result = MapStore.duplicate(player, payload.id, name)
 	if not success then
 		return fail(result :: string)
 	end
@@ -319,7 +325,7 @@ handlers.Delete = function(player, payload)
 	if typeof(payload) ~= "table" or not MapRules.validId(payload.id) then
 		return fail("Invalid map.")
 	end
-	local success, err = MapStore.delete(player.UserId, payload.id)
+	local success, err = MapStore.delete(player, payload.id)
 	if not success then
 		return fail(err or "Delete failed.")
 	end
@@ -381,7 +387,7 @@ handlers.PlaytestTower = function(player, payload)
 end
 
 handlers.PrefabList = function(player)
-	local success, result = MapStore.loadPrefabs(player.UserId)
+	local success, result = MapStore.loadPrefabs(player)
 	if not success then
 		return fail(result)
 	end
@@ -400,18 +406,9 @@ handlers.PrefabSave = function(player, payload)
 	if not objects then
 		return fail(err or "Invalid prefab.")
 	end
-	local success, list = MapStore.loadPrefabs(player.UserId)
-	if not success then
-		return fail(list)
-	end
-	if #list >= Config.MAX_PREFABS then
-		return fail(string.format("You can keep at most %d prefabs.", Config.MAX_PREFABS))
-	end
-	local prefab = { id = Serializer.newId(), name = name, objects = objects }
-	table.insert(list, prefab)
-	local saved, saveErr = MapStore.savePrefabs(player.UserId, list)
+	local saved, list = MapStore.savePrefab(player, name, objects)
 	if not saved then
-		return fail(saveErr or "Could not save prefab.")
+		return fail(list or "Could not save prefab.")
 	end
 	return ok({ prefabs = list })
 end
@@ -420,19 +417,9 @@ handlers.PrefabDelete = function(player, payload)
 	if typeof(payload) ~= "table" or not MapRules.validId(payload.id) then
 		return fail("Invalid prefab.")
 	end
-	local success, list = MapStore.loadPrefabs(player.UserId)
-	if not success then
-		return fail(list)
-	end
-	for i, prefab in list do
-		if prefab.id == payload.id then
-			table.remove(list, i)
-			break
-		end
-	end
-	local saved, err = MapStore.savePrefabs(player.UserId, list)
-	if not saved then
-		return fail(err or "Could not delete prefab.")
+	local deleted, list = MapStore.deletePrefab(player, payload.id)
+	if not deleted then
+		return fail(list or "Could not delete prefab.")
 	end
 	return ok({ prefabs = list })
 end
@@ -532,35 +519,63 @@ Request.OnServerInvoke = function(player: Player, action: any, payload: any)
 	return result
 end
 
-Players.PlayerRemoving:Connect(function(player)
+-- Saves still running from a leave, so the shutdown below waits for them.
+local pendingLeaveSaves = 0
+
+-- [Player] = true while `leave` runs for them, so the fallback below does not start a
+-- second save while the hook's is still in flight.
+local leaving: { [Player]: boolean } = {}
+
+--[[
+	The leave save writes the map list in the profile, so it has to run while the
+	profile is still open: DataService runs this hook right before it ends the
+	session, on a normal leave and on shutdown alike. Connecting our own
+	PlayerRemoving instead would race DataService's and lose the list update.
+]]
+local function leave(player: Player)
+	if leaving[player] then
+		return
+	end
+	leaving[player] = true
 	local session = SessionService.get(player)
 	if session then
 		PlaytestService.stop(session)
 		if session.dirty and session.savedOnce and not session.busy then
-			local saved, err = saveSession(session)
-			if not saved then
-				warn("[MapEditor] Save on leave failed for " .. player.Name .. ": " .. tostring(err))
+			pendingLeaveSaves += 1
+			local success, saved, err = pcall(saveSession, session)
+			pendingLeaveSaves -= 1
+			if not success or not saved then
+				warn("[MapEditor] Save on leave failed for " .. player.Name .. ": " .. tostring(if success then err else saved))
 			end
 		end
 		SessionService.exit(player)
 	end
+	MapStore.forget(player)
+	leaving[player] = nil
+end
+
+DataService:OnBeforeRelease(leave)
+
+Players.PlayerRemoving:Connect(function(player)
 	general:clear(player.UserId)
 	heavy:clear(player.UserId)
+
+	-- Without an open profile the hook above never runs (the profile did not load, or
+	-- another server took it): close the session here. Deferred, so a profile that is
+	-- open goes through the hook first.
+	task.defer(function()
+		if SessionService.get(player) and not leaving[player] then
+			leave(player)
+		end
+	end)
 end)
 
 game:BindToClose(function()
-	local pending = 0
-	for player, session in SessionService.sessions do
-		if session.dirty and session.savedOnce and not session.busy then
-			pending += 1
-			task.spawn(function()
-				saveSession(session)
-				pending -= 1
-			end)
-		end
-	end
+	-- DataService's own BindToClose starts the leave saves; give it a moment, then
+	-- keep the server up until they land.
+	task.wait(1)
 	local deadline = os.clock() + 25
-	while pending > 0 and os.clock() < deadline do
+	while pendingLeaveSaves > 0 and os.clock() < deadline do
 		task.wait(0.2)
 	end
 end)

@@ -1,21 +1,23 @@
 --!strict
 --[[
-	Per-player map persistence.
+	Per-player map persistence, on top of the shared PlayerMapService.
 
-	Keys (one DataStore, Config.DATASTORE_NAME):
-	  idx_<userId>            { maps = { [mapId] = { name, modified, count } } }
-	  map_<userId>_<mapId>    encoded map (Serializer.encodeMap)
-	  prefabs_<userId>        { list = { { id, name, objects = { relative records } } } }
+	Where things live:
+	  profile PlayerMaps.Maps[mapId]        { Name, Created, Modified, Count }
+	  profile PlayerMaps.Prefabs[prefabId]  { Name, Created, Count }
+	  DataStore map_<userId>_<mapId>        encoded map (Serializer.encodeMap)
+	  DataStore prefab_<userId>_<prefabId>  { v, id, name, owner, objects = { relative records } }
+
+	The profile is the list; the DataStore holds the content, so other places can
+	read a map from its key alone (see docs/common/player-maps.md).
 
 	Ownership is the key itself: the userId always comes from the Player object on
 	the server, never from the client, and loaded content is checked against it.
 
-	In Studio without API access the store falls back to memory so the editor
-	stays testable; that is announced once in the output and to the player.
+	Content is written before the index, so the list never shows a map whose save
+	failed. Only this server writes a player's content (the profile session lock
+	keeps them on one server), which is why the prefab list can be cached.
 ]]
-local DataStoreService = game:GetService("DataStoreService")
-local HttpService = game:GetService("HttpService")
-local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("MapEditor")
@@ -23,110 +25,21 @@ local Config = require(Shared.Config)
 local Serializer = require(Shared.Serializer)
 local MapRules = require(Shared.MapRules)
 
+local Me = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Vendor"):WaitForChild("Me"))
+
 type Map = Serializer.Map
 
 local MapStore = {}
 
-local store: DataStore? = nil
-local memory: { [string]: any }? = nil
+local PREFAB_VERSION = 1
+
+local service: any = nil
 MapStore.usingMemory = false
 
-local function withRetry<T>(label: string, fn: () -> T): (boolean, any)
-	local lastError: any = nil
-	for attempt = 1, Config.DATASTORE_RETRIES do
-		local ok, result = pcall(fn)
-		if ok then
-			return true, result
-		end
-		lastError = result
-		warn(string.format("[MapStore] %s failed (attempt %d/%d): %s", label, attempt, Config.DATASTORE_RETRIES, tostring(result)))
-		if attempt < Config.DATASTORE_RETRIES then
-			task.wait(2 ^ (attempt - 1))
-		end
-	end
-	return false, lastError
-end
+-- [userId] = prefab list as the client gets it, filled on the first load.
+local prefabCache: { [number]: { any } } = {}
 
-function MapStore.init()
-	local ok, result = pcall(function()
-		return DataStoreService:GetDataStore(Config.DATASTORE_NAME)
-	end)
-	if ok then
-		local probeOk, probeErr = pcall(function()
-			return (result :: DataStore):GetAsync("probe")
-		end)
-		if probeOk then
-			store = result
-			return
-		end
-		if RunService:IsStudio() then
-			warn("[MapStore] DataStore unavailable in Studio (" .. tostring(probeErr) .. "). Maps are kept in memory for this session. Enable Game Settings > Security > 'Enable Studio Access to API Services' to persist.")
-			memory = {}
-			MapStore.usingMemory = true
-			return
-		end
-		store = result
-		return
-	end
-
-	if RunService:IsStudio() then
-		warn("[MapStore] DataStoreService unavailable (" .. tostring(result) .. "). Using memory.")
-		memory = {}
-		MapStore.usingMemory = true
-	else
-		error("[MapStore] DataStoreService unavailable: " .. tostring(result))
-	end
-end
-
-local function get(key: string): (boolean, any)
-	if memory then
-		return true, Serializer.copy(memory[key])
-	end
-	local ds = store :: DataStore
-	return withRetry("Get " .. key, function()
-		return ds:GetAsync(key)
-	end)
-end
-
-local function update(key: string, transform: (any) -> any): (boolean, any)
-	if memory then
-		local mem = memory
-		local value = transform(Serializer.copy(mem[key]))
-		if value ~= nil then
-			mem[key] = Serializer.copy(value)
-		end
-		return true, value
-	end
-	local ds = store :: DataStore
-	return withRetry("Update " .. key, function()
-		return ds:UpdateAsync(key, transform)
-	end)
-end
-
-local function remove(key: string): (boolean, any)
-	if memory then
-		memory[key] = nil
-		return true, nil
-	end
-	local ds = store :: DataStore
-	return withRetry("Remove " .. key, function()
-		return ds:RemoveAsync(key)
-	end)
-end
-
-local function indexKey(userId: number): string
-	return "idx_" .. userId
-end
-
-local function mapKey(userId: number, mapId: string): string
-	return "map_" .. userId .. "_" .. mapId
-end
-
-local function prefabKey(userId: number): string
-	return "prefabs_" .. userId
-end
-
-local function countEntries(t: { [any]: any }): number
+local function count(t: { [any]: any }): number
 	local n = 0
 	for _ in t do
 		n += 1
@@ -134,29 +47,42 @@ local function countEntries(t: { [any]: any }): number
 	return n
 end
 
-local function countObjects(map: Map): number
-	return countEntries(map.objects)
+local function describe(reason: any, detail: any, fallback: string): string
+	if reason == service.REASONS.TooLarge then
+		return string.format("Map is too large to save (%d KB).", math.floor((tonumber(detail) or 0) / 1024))
+	end
+	if reason == service.REASONS.NotLoaded then
+		return "Your data is still loading. Try again in a moment."
+	end
+	return fallback
+end
+
+function MapStore.init()
+	service = Me.new():Get("PlayerMapService", false, true)
+	service:AwaitReady()
+	MapStore.usingMemory = service.UsingMemory
+end
+
+--- Waits for the player's profile. `false` when it did not open in time.
+function MapStore.awaitProfile(player: Player): boolean
+	return service:AwaitData(player) ~= nil
 end
 
 export type Entry = { id: string, name: string, modified: number, count: number }
 
-function MapStore.list(userId: number): (boolean, { Entry } | string)
-	local ok, index = get(indexKey(userId))
-	if not ok then
-		return false, "Could not reach saved maps. Try again shortly."
+function MapStore.list(player: Player): (boolean, { Entry } | string)
+	local data = service:GetData(player)
+	if not data then
+		return false, describe(service.REASONS.NotLoaded, nil, "")
 	end
 	local entries: { Entry } = {}
-	if typeof(index) == "table" and typeof(index.maps) == "table" then
-		for id, info in index.maps do
-			if typeof(info) == "table" then
-				table.insert(entries, {
-					id = id,
-					name = tostring(info.name),
-					modified = tonumber(info.modified) or 0,
-					count = tonumber(info.count) or 0,
-				})
-			end
-		end
+	for id, info in data.Maps do
+		table.insert(entries, {
+			id = id,
+			name = tostring(info.Name),
+			modified = tonumber(info.Modified) or 0,
+			count = tonumber(info.Count) or 0,
+		})
 	end
 	table.sort(entries, function(a, b)
 		return a.modified > b.modified
@@ -164,54 +90,51 @@ function MapStore.list(userId: number): (boolean, { Entry } | string)
 	return true, entries
 end
 
-function MapStore.save(userId: number, map: Map): (boolean, string?)
-	if map.owner ~= userId then
+function MapStore.save(player: Player, map: Map): (boolean, string?)
+	if map.owner ~= player.UserId then
 		return false, "You do not own this map."
 	end
 
-	local encoded = Serializer.encodeMap(map)
-	local okJson, json = pcall(HttpService.JSONEncode, HttpService, encoded)
-	if not okJson then
-		return false, "Map data could not be encoded."
+	local data = service:GetData(player)
+	if not data then
+		return false, describe(service.REASONS.NotLoaded, nil, "")
 	end
-	if #json > Config.MAX_SAVE_BYTES then
-		return false, string.format("Map is too large to save (%d KB).", math.floor(#json / 1024))
-	end
-
-	local okIndex, index = get(indexKey(userId))
-	if not okIndex then
-		return false, "Could not reach saved maps. Your work is still here; try again."
-	end
-	local maps = (typeof(index) == "table" and typeof(index.maps) == "table") and index.maps or {}
-	if not maps[map.id] and countEntries(maps) >= Config.MAX_MAPS_PER_PLAYER then
+	if not data.Maps[map.id] and count(data.Maps) >= Config.MAX_MAPS_PER_PLAYER then
 		return false, string.format("You can keep at most %d maps. Delete one first.", Config.MAX_MAPS_PER_PLAYER)
 	end
 
-	local okContent = update(mapKey(userId, map.id), function()
-		return encoded
-	end)
-	if not okContent then
-		return false, "Saving failed. Your work is still here; try again."
+	local key = service.MapKey(player.UserId, map.id)
+	if not key then
+		return false, "Invalid map id."
 	end
 
-	local okWrite = update(indexKey(userId), function(old)
-		local value = typeof(old) == "table" and old or {}
-		value.maps = typeof(value.maps) == "table" and value.maps or {}
-		value.maps[map.id] = { name = map.name, modified = map.modified, count = countObjects(map) }
+	local okContent, reason, detail = service:SetAsync(key, Serializer.encodeMap(map))
+	if not okContent then
+		return false, describe(reason, detail, "Saving failed. Your work is still here; try again.")
+	end
+
+	local written = service:Update(player, function(value)
+		value.Maps[map.id] = {
+			Name = map.name,
+			Created = map.created,
+			Modified = map.modified,
+			Count = count(map.objects),
+		}
 		return value
 	end)
-	if not okWrite then
+	if not written then
 		return false, "Map saved, but the map list could not be updated. Save again to fix it."
 	end
 
 	return true, nil
 end
 
-function MapStore.load(userId: number, mapId: string): (boolean, Map | string)
-	if not MapRules.validId(mapId) then
+function MapStore.load(player: Player, mapId: string): (boolean, Map | string)
+	local key = MapRules.validId(mapId) and service.MapKey(player.UserId, mapId)
+	if not key then
 		return false, "Invalid map id."
 	end
-	local ok, data = get(mapKey(userId, mapId))
+	local ok, data = service:GetAsync(key)
 	if not ok then
 		return false, "Could not load the map. Try again shortly."
 	end
@@ -222,25 +145,25 @@ function MapStore.load(userId: number, mapId: string): (boolean, Map | string)
 	if not map then
 		return false, err or "Map data is corrupt."
 	end
-	if map.owner ~= userId then
+	if map.owner ~= player.UserId then
 		return false, "You do not own this map."
 	end
 	return true, map
 end
 
-function MapStore.rename(userId: number, mapId: string, name: string): (boolean, string?)
-	local ok, result = MapStore.load(userId, mapId)
+function MapStore.rename(player: Player, mapId: string, name: string): (boolean, string?)
+	local ok, result = MapStore.load(player, mapId)
 	if not ok then
 		return false, result :: string
 	end
 	local map = result :: Map
 	map.name = name
 	map.modified = os.time()
-	return MapStore.save(userId, map)
+	return MapStore.save(player, map)
 end
 
-function MapStore.duplicate(userId: number, mapId: string, name: string): (boolean, Map | string)
-	local ok, result = MapStore.load(userId, mapId)
+function MapStore.duplicate(player: Player, mapId: string, name: string): (boolean, Map | string)
+	local ok, result = MapStore.load(player, mapId)
 	if not ok then
 		return false, result
 	end
@@ -249,52 +172,141 @@ function MapStore.duplicate(userId: number, mapId: string, name: string): (boole
 	map.name = name
 	map.created = os.time()
 	map.modified = map.created
-	local saved, err = MapStore.save(userId, map)
+	local saved, err = MapStore.save(player, map)
 	if not saved then
 		return false, err or "Duplicate failed."
 	end
 	return true, map
 end
 
-function MapStore.delete(userId: number, mapId: string): (boolean, string?)
-	if not MapRules.validId(mapId) then
+function MapStore.delete(player: Player, mapId: string): (boolean, string?)
+	local key = MapRules.validId(mapId) and service.MapKey(player.UserId, mapId)
+	if not key then
 		return false, "Invalid map id."
 	end
-	local okIndex = update(indexKey(userId), function(old)
-		local value = typeof(old) == "table" and old or {}
-		value.maps = typeof(value.maps) == "table" and value.maps or {}
-		value.maps[mapId] = nil
+	local written = service:Update(player, function(value)
+		value.Maps[mapId] = nil
 		return value
 	end)
-	if not okIndex then
-		return false, "Delete failed. Try again."
+	if not written then
+		return false, describe(service.REASONS.NotLoaded, nil, "")
 	end
-	local okRemove = remove(mapKey(userId, mapId))
+	local okRemove = service:RemoveAsync(key)
 	if not okRemove then
 		return false, "Removed from the list, but the map data could not be deleted."
 	end
 	return true, nil
 end
 
-function MapStore.loadPrefabs(userId: number): (boolean, any)
-	local ok, data = get(prefabKey(userId))
-	if not ok then
+--- Every prefab of the player, `{ { id, name, objects } }`, oldest first.
+function MapStore.loadPrefabs(player: Player): (boolean, any)
+	local cached = prefabCache[player.UserId]
+	if cached then
+		return true, cached
+	end
+
+	local data = service:GetData(player)
+	if not data then
+		return false, describe(service.REASONS.NotLoaded, nil, "")
+	end
+
+	local keys = {}
+	for id in data.Prefabs do
+		local key = service.PrefabKey(player.UserId, id)
+		if key then
+			table.insert(keys, key)
+		end
+	end
+
+	local values, failed = service:GetManyAsync(keys)
+	if #failed > 0 then
 		return false, "Could not load prefabs."
 	end
-	if typeof(data) ~= "table" or typeof(data.list) ~= "table" then
-		return true, {}
+
+	local list = {}
+	for id, info in data.Prefabs do
+		local value = values[service.PrefabKey(player.UserId, id)]
+		if typeof(value) == "table" and value.owner == player.UserId and typeof(value.objects) == "table" then
+			table.insert(list, { id = id, name = tostring(info.Name), objects = value.objects, created = tonumber(info.Created) or 0 })
+		end
 	end
-	return true, data.list
+	table.sort(list, function(a, b)
+		return a.created < b.created
+	end)
+
+	prefabCache[player.UserId] = list
+	return true, list
 end
 
-function MapStore.savePrefabs(userId: number, list: { any }): (boolean, string?)
-	local ok = update(prefabKey(userId), function()
-		return { list = list }
-	end)
-	if not ok then
-		return false, "Could not save prefabs."
+function MapStore.savePrefab(player: Player, name: string, objects: { any }): (boolean, any)
+	local okList, list = MapStore.loadPrefabs(player)
+	if not okList then
+		return false, list
 	end
-	return true, nil
+	if #list >= Config.MAX_PREFABS then
+		return false, string.format("You can keep at most %d prefabs.", Config.MAX_PREFABS)
+	end
+
+	local id = Serializer.newId()
+	local key = service.PrefabKey(player.UserId, id) :: string
+	local created = os.time()
+
+	local okContent, reason, detail = service:SetAsync(key, {
+		v = PREFAB_VERSION,
+		id = id,
+		name = name,
+		owner = player.UserId,
+		objects = objects,
+	})
+	if not okContent then
+		return false, describe(reason, detail, "Could not save prefab.")
+	end
+
+	local written = service:Update(player, function(value)
+		value.Prefabs[id] = { Name = name, Created = created, Count = #objects }
+		return value
+	end)
+	if not written then
+		service:RemoveAsync(key)
+		return false, describe(service.REASONS.NotLoaded, nil, "")
+	end
+
+	table.insert(list, { id = id, name = name, objects = objects, created = created })
+	return true, list
+end
+
+function MapStore.deletePrefab(player: Player, prefabId: string): (boolean, any)
+	local key = MapRules.validId(prefabId) and service.PrefabKey(player.UserId, prefabId)
+	if not key then
+		return false, "Invalid prefab."
+	end
+	local okList, list = MapStore.loadPrefabs(player)
+	if not okList then
+		return false, list
+	end
+
+	local written = service:Update(player, function(value)
+		value.Prefabs[prefabId] = nil
+		return value
+	end)
+	if not written then
+		return false, describe(service.REASONS.NotLoaded, nil, "")
+	end
+
+	for i, prefab in list do
+		if prefab.id == prefabId then
+			table.remove(list, i)
+			break
+		end
+	end
+
+	-- The prefab is already off the list; leftover content is only wasted space.
+	service:RemoveAsync(key)
+	return true, list
+end
+
+function MapStore.forget(player: Player)
+	prefabCache[player.UserId] = nil
 end
 
 return MapStore

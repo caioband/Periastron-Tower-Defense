@@ -39,7 +39,7 @@ local Config = SharedConfig.EnvironmentConfig
 local log = Log.new("Environment")
 
 export type EnvironmentName = "Production" | "QA"
-export type PlaceName = "Lobby" | "Game" | "Afk"
+export type PlaceName = "Lobby" | "Game" | "Afk" | "MapEditor"
 
 local function resolve() : (EnvironmentName, boolean)
 	for name, environment in Config.Environments do
@@ -78,8 +78,8 @@ function Environment.IsQA() : boolean
 	return name == "QA"
 end
 
---- Whether this environment has `place`. `Afk` is optional; check it before
---- `GetPlaceId("Afk")`.
+--- Whether this environment has `place`. `Afk` and `MapEditor` are optional; check
+--- before `GetPlaceId` with one of them.
 function Environment.HasPlace(place : PlaceName) : boolean
 	return places[place] ~= nil
 end

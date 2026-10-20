@@ -34,9 +34,9 @@ local AfkConfig = SharedConfig.AfkConfig
 	The fractional remainder is not lost: `Since` advances only by the whole seconds
 	written, and the fraction goes into the next minute.
 
-	**The AFK place does not count.** Time there goes to its own counter,
-	`Stats.TimeInAfkArea` (`AfkAreaService`), and stays out of MOST TIME PLAYED;
-	here the service does nothing.
+	**Only the Lobby and the Game count.** Time in the AFK place goes to its own
+	counter, `Stats.TimeInAfkArea` (`AfkAreaService`), and the Map Editor counts
+	nothing; in both the service does nothing.
 
 	**AFK time does not count** where `AfkConfig.PausePlaytime` says so (the Lobby).
 	When `AfkService` reports the player AFK, `PausedAt` freezes the clock; when
@@ -64,7 +64,7 @@ local PlaytimeService = {
 -- The place comes from the `Place` attribute each Rojo project sets on `Services`,
 -- not from `PlaceId`, so QA copies of a place behave like the place itself.
 local PLACE_NAME = ServerScriptService:WaitForChild("Services"):GetAttribute("Place")
-local COUNTS_HERE = PLACE_NAME ~= "Afk"
+local COUNTS_HERE = PLACE_NAME == "Lobby" or PLACE_NAME == "Game"
 local PAUSES_WHEN_AFK = AfkConfig.PausePlaytime[PLACE_NAME] == true
 
 --[[ INTERNAL ]]

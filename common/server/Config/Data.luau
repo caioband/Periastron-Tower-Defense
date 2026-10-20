@@ -303,6 +303,28 @@ return {
 		]]
 		Runes = {},
 
+		--[[
+			Maps built in the Map Editor: only the index lives here, the content is in
+			the `Config.PlayerMaps.STORE_NAME` DataStore under each item's key
+			(`PlayerMapService.MapKey` / `PrefabKey`). Any place reads a map with
+			`PlayerMapService:GetAsync(key)`.
+
+			  - `Maps`:      the maps this player created,
+			                 `{ [mapId] = { Name, Created, Modified, Count } }`.
+			  - `Prefabs`:   their prefabs, `{ [prefabId] = { Name, Created, Count } }`.
+			  - `Favorites`: keys of any map, theirs or another player's,
+			                 `{ [mapKey] = { Added } }`. Capped at `MAX_FAVORITES`.
+
+			Each value is a table so a feature can add fields without a migration, and a
+			new list goes in as one more key here: reconcile creates it on older
+			profiles. Only `PlayerMapService` (and the editor through it) writes this.
+		]]
+		PlayerMaps = {
+			Maps = {},
+			Prefabs = {},
+			Favorites = {},
+		},
+
 	},
 
 
@@ -376,12 +398,16 @@ return {
 		    answers as soon as the profile is open.
 
 		Who fires `Loaded`: each place's `ClientBoot` in the Lobby and the AFK place,
-		`WaveController` in the Game.
+		`WaveController` in the Game, nobody in the Map Editor.
 	]]
 	Places = {
 		Lobby = { ReadyTag = "Loaded", WaitForClient = true },
 		Game = { ReadyTag = "ClientReady", WaitForClient = false },
 		Afk = { ReadyTag = "Loaded", WaitForClient = true },
+
+		-- The editor's client does not run the framework, so nothing fires `Loaded`
+		-- there; waiting for it would hand out no profile at all.
+		MapEditor = { ReadyTag = "Loaded", WaitForClient = false },
 	},
 
 	--[[

@@ -7,9 +7,10 @@
 	teleport should use there. Nothing else should read the ids directly.
 
 	Every id here is public (it shows in the experience URL), so it is safe to
-	replicate. The place keys, `Lobby`, `Game`, and `Afk`, are the same names the
-	rest of the repository uses for the places. `Afk` is optional: an environment
-	without it has no AFK place yet (`Environment.HasPlace`).
+	replicate. The place keys, `Lobby`, `Game`, `Afk`, and `MapEditor`, are the
+	same names the rest of the repository uses for the places. `Afk` and
+	`MapEditor` are optional: an environment without one has no such place yet
+	(`Environment.HasPlace`).
 
 	See docs/common/environments.md.
 ]]
@@ -32,6 +33,7 @@ module.Environments = {
 			Lobby = 80434020174775,
 			Game = 131924395601623,
 			Afk = 116470384978275, -- "AFK Station"
+			MapEditor = 131485363672766,
 		},
 	},
 }

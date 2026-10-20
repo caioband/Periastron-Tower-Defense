@@ -9,7 +9,7 @@ vendor/     third-party libraries that do not come from Wally
 Game/       the "Periastron TD: Main Game" place (only what is specific to it)
 Lobby/      the "Periastron Tower Defense" lobby place (only what is specific to it)
 Afk/        the AFK place (only what is specific to it)
-MapEditor/  the Map Editor place (standalone, see docs/mapeditor)
+MapEditor/  the Map Editor place (only what is specific to it)
 docs/       this documentation
 ```
 
@@ -59,7 +59,7 @@ The Game has no place-specific Cmdr types, so its project has no `Types/Game` no
 The AFK place has no place-specific Cmdr definitions, so it has no `Commands/Afk` or `Types/Afk` node.
 Its replicated config lives in `ReplicatedStorage.Afk` (`Afk/src/Shared`), outside the `Shared` package (see [AFK place](../afk/README.md#why-replicatedstorageafk-and-not-shared)).
 
-The `Services` node of each project sets a `Place` attribute (`Lobby`, `Game`, or `Afk`).
+The `Services` node of each project sets a `Place` attribute (`Lobby`, `Game`, `Afk`, or `MapEditor`).
 Shared server code that behaves differently per place reads it (see [Data and profiles](../common/data-and-profiles.md#what-changes-per-place)).
 A node that points at a folder git does not track would break a fresh clone.
 
@@ -82,7 +82,7 @@ The place pages list what is specific to each place, its Wally dependencies, and
 - [Game](../game/README.md)
 - [Lobby](../lobby/README.md)
 - [AFK](../afk/README.md)
-- [Map Editor](../mapeditor/README.md): the exception, it mounts neither `common/` nor `vendor/` and does not run on the `Me` framework
+- [Map Editor](../mapeditor/README.md): mounts the shared server code only; its client and its own server scripts do not run on the `Me` framework
 
 ## Differences between the places (on purpose)
 

@@ -3,22 +3,22 @@
 The game is published to two experiences, Production and QA, and `Environment` tells code which one it is running in and which place ids belong to it.
 Every teleport between the Lobby and the Game takes its destination from here.
 
-**Runs in:** Game · Lobby · AFK (server and client)
+**Runs in:** Game · Lobby · AFK · Map Editor (server and client)
 **Code:** [`Environment`](../../common/shared/Util/Environment.luau), [`EnvironmentConfig`](../../common/shared/Config/SharedConfig/EnvironmentConfig.luau)
 
 ## How it works
 
-Each environment is its own universe, with its own Lobby and Game places, and optionally an AFK place.
+Each environment is its own universe, with its own Lobby and Game places, and optionally an AFK place and a Map Editor.
 When `Environment` is first required, it compares `game.GameId` (the universe id) with the `UniverseId` of each environment in `EnvironmentConfig` and keeps the match.
 
 A teleport has to stay inside its own universe: `TeleportAsync` with `ShouldReserveServer` can only reserve a server in the caller's universe.
 So the QA Lobby must send players to the QA Game, and the QA Game must send them back to the QA Lobby.
 `Environment.GetPlaceId` returns the right id for the universe the server is in.
 
-| Environment | Universe | Lobby | Game | AFK |
-| --- | --- | --- | --- | --- |
-| `Production` | `10340119210` | `132304466547289` | `109030368179494` | `80286820709620` |
-| `QA` | `10767160215` | `80434020174775` | `131924395601623` | `116470384978275` |
+| Environment | Universe | Lobby | Game | AFK | Map Editor |
+| --- | --- | --- | --- | --- | --- |
+| `Production` | `10340119210` | `132304466547289` | `109030368179494` | `80286820709620` | none yet |
+| `QA` | `10767160215` | `80434020174775` | `131924395601623` | `116470384978275` | `131485363672766` |
 
 These are the callers:
 
@@ -48,6 +48,7 @@ If `game.GameId` matches no environment, `Environment` uses `EnvironmentConfig.F
 | `Environments.<Name>.Places.Lobby` | See the table above | The Lobby place id in that universe |
 | `Environments.<Name>.Places.Game` | See the table above | The Game ("Main Game") place id in that universe |
 | `Environments.<Name>.Places.Afk` | See the table above | The AFK place id in that universe; optional |
+| `Environments.<Name>.Places.MapEditor` | See the table above | The Map Editor place id in that universe; optional |
 | `FALLBACK` | `"Production"` | The environment used when the universe is unknown |
 
 All these ids are public, so the config is replicated.
@@ -76,15 +77,15 @@ When a client finishes loading, the `ClientBoot` of each place prints one public
 ```
 
 It prints 1.2 seconds after the controllers load (in the Lobby, right after `Loaded` is sent to the server), once `game:IsLoaded()` is true.
-The place is `Lobby`, `Main Game`, or `AFK`.
+The place is `Lobby`, `Main Game`, or `AFK`; the Map Editor prints no boot line, because its client does not run the framework.
 `Environment.Describe()` gives the environment part, and says `unknown universe <id>, using Production ids` when the universe is not in the config.
 
 Do not hard-code a place id or read `EnvironmentConfig` directly; go through `Environment` so both environments keep working.
 
-`GetPlaceId` errors for a place the environment does not have, so anything that teleports to the AFK place must check `HasPlace("Afk")` first: an environment may have none.
+`GetPlaceId` errors for a place the environment does not have, so anything that teleports to the AFK place or the Map Editor must check `HasPlace` first: an environment may have neither.
 `IsPlace` just answers `false` there.
 
-To add an environment, add an entry to `Environments` with its universe id and the Lobby and Game place ids (and `Afk` when it has one), and add its name to the `EnvironmentName` type in `Environment`.
+To add an environment, add an entry to `Environments` with its universe id and the Lobby and Game place ids (and `Afk` and `MapEditor` when it has them), and add its name to the `EnvironmentName` type in `Environment`.
 
 ## Design notes
 

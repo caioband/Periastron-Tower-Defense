@@ -1,19 +1,24 @@
 # Map Editor place
 
 The Map Editor place: an in-game builder where players lay out a map, draw the enemy routes, check them, playtest them, and export the result in the format the Game loads from `ServerStorage.Maps`.
+It is a place of the QA universe (`EnvironmentConfig`: `MapEditor = 131485363672766`); Production has none yet.
 
 For the repository layout and what is shared between the places, see [Repository overview](../architecture/overview.md).
 
-## Not on the framework (yet)
+## How it is put together
 
-Unlike the Lobby, the Game, and the AFK place, the Map Editor does not mount `common/` or `vendor/` and does not use the [`Me` framework](../architecture/me-framework.md):
+The **server** mounts `common/` and `vendor/` like the other places: every Service in `common/server/Services` loads, `DataService` opens the player's profile, and `PlayerMapService` stores the maps (see [Player maps](../common/player-maps.md)).
+The editor itself is not a framework Service: it starts from its own `Main` Script, which takes `DataService` and `PlayerMapService` from `Me` and requires its modules directly.
 
-- The server starts from its own `Main` Script, not from `ServerScriptService.Server`, and requires its modules directly.
+The **client** does not run the framework.
+The editor's LocalScript is the only client code, so no Controller from `common/client/Controllers` loads here.
+Those Controllers wait on `ReplicatedStorage.Shared.Assets`, which this place does not have.
+Because nothing fires `Loaded`, `Config.Data.Places.MapEditor` has `WaitForClient = false`.
+
+Inside the editor, nothing else changed:
+
 - Client and server talk through their own remotes, `ReplicatedStorage.MapEditor.Remotes.Request` (a RemoteFunction) and `Push` (a RemoteEvent), which `Main` creates on start. Warp is not used.
-- Maps live in a DataStore of their own (`Config.DATASTORE_NAME`), not in the player profile.
-- Logs go through `warn`, not `Shared.Util.Log`.
-
-For the same reason the place has no `wally.toml` and no `Packages/`: nothing it runs comes from Wally.
+- Logs still go through `warn`, not `Shared.Util.Log`.
 
 `Shared/PathUtil.luau` and `Shared/PlacementUtil.luau` are trimmed copies of `common/shared/Util/PathUtil.luau` and `PlacementUtil.luau` (no `Log`, no comments).
 The editor uses them to validate and playtest routes exactly as the Game's `MobService` walks them, so keep them in step when the originals change.
@@ -30,6 +35,41 @@ The editor uses them to validate and playtest routes exactly as the Game's `MobS
 Likewise, `Main` reaches the server modules through `script.Parent`.
 
 The nodes keep the names the place already uses (`MapEditor`), so syncing into the existing place replaces its scripts instead of creating a second copy.
+The `Services` node sets `Place = "MapEditor"`.
+
+There are no place-specific Services, Controllers, or Cmdr definitions, so the project has no `Services.MapEditor`, `Controllers`, `Commands.MapEditor`, or `Types.MapEditor` node.
+
+## Saving
+
+`MapStore` keeps the list of maps and prefabs in the profile (`PlayerMaps`) and their content in the shared DataStore, one key per item; see [Player maps](../common/player-maps.md).
+
+- **Save** (button or Ctrl+S) writes the map. There is a 6 s cooldown between saves.
+- **Autosave** runs every `AUTOSAVE_INTERVAL` (120 s) while building, once the map has been saved by hand at least once.
+- **Exit** saves before leaving and refuses to leave if the save fails.
+- **Leaving the game and shutdown** save through `DataService:OnBeforeRelease`, with the profile still open.
+
+A map that was never saved by hand is not saved on autosave or on leave: the player has to press Save once.
+
+Entering the editor waits up to 10 s for the profile; without it, the editor answers "Your data is still loading".
+
+In Studio without API access, the content stays in memory until the server stops, and the editor says so in a toast and in the status bar.
+Enable **Game Settings > Security > Enable Studio Access to API Services** to save for real.
+
+**Exporting is not saving.** "Export current to Peri format" (developers only) builds a Game-format folder in `ServerStorage.MapEditorExports`, which only lasts while the server runs.
+
+## Shared systems here
+
+Every Service in `common/server/Services` loads here.
+Systems that need content from the place (a board, a part reference, a GUI) log a warning and stay idle when it is missing, as they do in the other places.
+
+- **Data.** `DataService` runs with the `MapEditor` entry of `Config.Data.Places`: `Get` answers as soon as the profile is open.
+- **Playtime.** `PlaytimeService` does nothing here: time in the editor stays out of `Stats.TimePlayed`.
+- **Leaderboards.** No board has `Place = "MapEditor"`, so nothing is drawn.
+
+## Wally
+
+The same four dependencies as the other places, with `wally.lock` pinned to the same resolved versions (Cmdr 1.12.0, Signal 2.0.3).
+Only the server uses them here.
 
 ## Outside the repository
 
@@ -42,11 +82,10 @@ Everything that is not code lives only in the place:
   Exports go to `ServerStorage.MapEditorExports`, which `Main` creates when missing.
 - The map, lighting, and any GUI not built by `UI`.
 
+The place does not have the `ReplicatedStorage.Shared` Package: Rojo creates `Shared` as a plain Folder with the code only, and `Shared.Assets` does not exist here.
+
 ## Running it
 
 ```bash
-cd MapEditor && rojo serve
+cd MapEditor && wally install && rojo serve
 ```
-
-In Studio without API access, `MapStore` keeps maps in memory for the session and says so in the Output and in a toast.
-Enable **Game Settings > Security > Enable Studio Access to API Services** to save for real.

@@ -4,7 +4,7 @@
 	Mounted at `ServerScriptService.Config`, NEVER in ReplicatedStorage. Nothing here
 	replicates to the client: the DataStore key, the profile template, wave tables,
 	summon odds, crate pools, the Cmdr admin list, the analytics funnel numbering,
-	and badge ids.
+	badge ids, and where player-built maps are stored.
 
 	Data the client legitimately needs lives in
 	`ReplicatedStorage.Shared.Config.SharedConfig`.
@@ -24,6 +24,7 @@ type ServerConfig = {
 	Analytics : typeof(require(script.Analytics)),
 	Badges : typeof(require(script.Badges)),
 	Codes : typeof(require(script.Codes)),
+	PlayerMaps : typeof(require(script.PlayerMaps)),
 }
 
 local ServerConfig : ServerConfig = {}

@@ -22,6 +22,7 @@ When a system also has place-specific parts, its page here covers the shared cor
 | [Leaderboards](leaderboards.md) | Global leaderboards and the stats that feed them |
 | [Lighting](lighting.md) | Lighting presets and client-side interpolation |
 | [Logging](logging.md) | The `Log` module |
+| [Player maps](player-maps.md) | `PlayerMapService`: maps built in the Map Editor, the profile index, and reading a map by key from any place |
 | [Proximity panel](proximity-panel.md) | Walk-up panels in the Lobby, and panels opened by a button |
 | [Rich text](rich-text.md) | `RichTextController`: markup, presets, text fitting |
 | [Runes](runes.md) | Temporary buffs: the profile record, the in-game clock, and the match lock |
