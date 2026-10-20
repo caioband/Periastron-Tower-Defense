@@ -18,28 +18,32 @@ local player = Players.LocalPlayer
 local UI = {}
 
 local THEME = {
-	Bg = Color3.fromHex("161A1F"),
-	Bg2 = Color3.fromHex("20262D"),
-	Button = Color3.fromHex("2A313A"),
-	ButtonOn = Color3.fromHex("34C6E6"),
-	Stroke = Color3.fromHex("3A434E"),
-	Text = Color3.fromHex("F2F5F7"),
-	TextDark = Color3.fromHex("0F1215"),
-	Muted = Color3.fromHex("9AA5B1"),
-	Accent = Color3.fromHex("34C6E6"),
-	Danger = Color3.fromHex("E5484D"),
-	Warn = Color3.fromHex("F5A524"),
-	Ok = Color3.fromHex("46C267"),
+	Bg = Color3.fromHex("3D221D"),
+	Bg2 = Color3.fromHex("251411"),
+	Button = Color3.fromHex("59322B"),
+	ButtonOn = Color3.fromHex("DA912B"),
+	Stroke = Color3.fromHex("DA912B"),
+	Edge = Color3.fromHex("251411"),
+	Text = Color3.fromHex("F3DDB6"),
+	TextDark = Color3.fromHex("251411"),
+	Muted = Color3.fromHex("B08A6A"),
+	Accent = Color3.fromHex("DA912B"),
+	Danger = Color3.fromHex("C8372D"),
+	Warn = Color3.fromHex("E9A23B"),
+	Ok = Color3.fromHex("4FC24A"),
 }
 UI.THEME = THEME
+
+local PIXEL_FONT = Enum.Font.Arcade
 
 local actions = nil
 local gui, launcher, topBar, testBar, catalogPanel, inspectorPanel, inspectorScroll
 local validationPanel, validationList, validationHeader, toastHolder, modalLayer, helpPanel
 local tooltip, statusLabel, hintLabel, testStats, towerButton, selectionRect
-local itemsFrame, searchBox, categoryHolder, recentRow
+local itemsFrame, searchBox, categoryHolder, recentRow, gridLabel
 local toolButtons = {}
 local toggleButtons = {}
+local tabSkins = {}
 local currentCategory = "All"
 local tooltipText = nil
 local inspectorKey = nil
@@ -64,11 +68,11 @@ local function new(class, props, children)
 end
 
 local function corner(r)
-	return new("UICorner", { CornerRadius = UDim.new(0, r or 8) })
+	return new("UICorner", { CornerRadius = UDim.new(0, r or 4) })
 end
 
-local function stroke(color, transparency)
-	return new("UIStroke", { Color = color or THEME.Stroke, Transparency = transparency or 0.3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border })
+local function stroke(color, transparency, thickness)
+	return new("UIStroke", { Color = color or THEME.Stroke, Transparency = transparency or 0, Thickness = thickness or 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border })
 end
 
 local function padding(px)
@@ -86,13 +90,29 @@ local function list(direction, gap, hAlign)
 	})
 end
 
+local SPRITE = {
+	button = { "rbxassetid://128217385897821", Rect.new(12, 6, 156, 48) },
+	buttonOn = { "rbxassetid://102211384096278", Rect.new(18, 12, 162, 54) },
+	panel = { "rbxassetid://89677039349224", Rect.new(18, 18, 150, 126) },
+}
+UI.SPRITE = SPRITE
+local SLICE_SCALE = 1 / 3
+local DANGER_TINT = Color3.fromRGB(255, 120, 105)
+
+local function slice(img, key)
+	local s = SPRITE[key]
+	img.Image = s[1]
+	img.ScaleType = Enum.ScaleType.Slice
+	img.SliceCenter = s[2]
+	img.SliceScale = SLICE_SCALE
+	img.ResampleMode = Enum.ResamplerMode.Pixelated
+	img.BackgroundTransparency = 1
+	img.BorderSizePixel = 0
+	return img
+end
+
 local function panel(props)
-	local frame = new("Frame", {
-		BackgroundColor3 = THEME.Bg,
-		BackgroundTransparency = 0.08,
-		BorderSizePixel = 0,
-		Active = true,
-	}, { corner(10), stroke() })
+	local frame = slice(new("ImageLabel", { Active = true }), "panel")
 	for k, v in props do
 		if k ~= "Parent" then
 			frame[k] = v
@@ -102,28 +122,77 @@ local function panel(props)
 	return frame
 end
 
-local function setTooltip(target, text)
+local function setTooltip(target, content)
 	target.MouseEnter:Connect(function()
-		tooltipText = text
+		tooltipText = content
 	end)
 	target.MouseLeave:Connect(function()
-		if tooltipText == text then
+		if tooltipText == content then
 			tooltipText = nil
 		end
 	end)
 end
 
-local function button(text, props)
+local SYNCED = { "Text", "TextColor3", "TextSize", "Font", "TextXAlignment", "TextTruncate", "TextWrapped", "TextScaled", "BackgroundColor3" }
+
+local function dress(b)
+	if b:GetAttribute("Dressed") then
+		return b
+	end
+	b:SetAttribute("Dressed", true)
+	for _, c in b:GetChildren() do
+		if c:IsA("UICorner") or c:IsA("UIStroke") then
+			c:Destroy()
+		end
+	end
+	b.BackgroundTransparency = 1
+	b.BorderSizePixel = 0
+	b.AutoButtonColor = false
+	local skinImg = b:FindFirstChild("Skin") or new("ImageLabel", { Name = "Skin", Size = UDim2.fromScale(1, 1), Parent = b })
+	skinImg.ZIndex = b.ZIndex
+	local label = b:FindFirstChild("Label") or new("TextLabel", { Name = "Label", BackgroundTransparency = 1, Position = UDim2.fromOffset(5, 0), Size = UDim2.new(1, -10, 1, 0), Parent = b })
+	label.ZIndex = b.ZIndex + 1
+	local hovered = false
+	local function sync()
+		local c = b.BackgroundColor3
+		local primary = c == THEME.Accent or c == THEME.ButtonOn or c == THEME.Ok
+		local danger = c == THEME.Danger
+		slice(skinImg, (primary or hovered) and "buttonOn" or "button")
+		skinImg.ImageColor3 = danger and DANGER_TINT or Color3.new(1, 1, 1)
+		label.Text = b.Text
+		label.TextColor3 = if b.TextColor3 == THEME.TextDark then THEME.Text else b.TextColor3
+		label.TextSize = b.TextSize
+		label.Font = b.Font
+		label.TextXAlignment = b.TextXAlignment
+		label.TextTruncate = b.TextTruncate
+		label.TextWrapped = b.TextWrapped
+		label.TextScaled = b.TextScaled
+		b.TextTransparency = 1
+	end
+	for _, prop in SYNCED do
+		b:GetPropertyChangedSignal(prop):Connect(sync)
+	end
+	b.MouseEnter:Connect(function()
+		hovered = true
+		sync()
+	end)
+	b.MouseLeave:Connect(function()
+		hovered = false
+		sync()
+	end)
+	sync()
+	return b
+end
+
+local function button(label, props)
 	local b = new("TextButton", {
-		Text = text,
-		Font = Enum.Font.GothamMedium,
-		TextSize = 13,
+		Text = label,
+		Font = PIXEL_FONT,
+		TextSize = 14,
 		TextColor3 = THEME.Text,
 		BackgroundColor3 = THEME.Button,
-		BorderSizePixel = 0,
-		AutoButtonColor = true,
 		Size = UDim2.fromOffset(60, 30),
-	}, { corner(6) })
+	})
 	for k, v in props or {} do
 		if k == "Tooltip" then
 			setTooltip(b, v)
@@ -133,6 +202,7 @@ local function button(text, props)
 			b[k] = v
 		end
 	end
+	dress(b)
 	if props and props.Parent then
 		b.Parent = props.Parent
 	end
@@ -142,8 +212,8 @@ end
 local function text(content, props)
 	local l = new("TextLabel", {
 		Text = content,
-		Font = Enum.Font.Gotham,
-		TextSize = 13,
+		Font = PIXEL_FONT,
+		TextSize = 14,
 		TextColor3 = THEME.Text,
 		BackgroundTransparency = 1,
 		TextXAlignment = Enum.TextXAlignment.Left,
@@ -162,8 +232,8 @@ end
 
 local function input(props)
 	local box = new("TextBox", {
-		Font = Enum.Font.Gotham,
-		TextSize = 13,
+		Font = PIXEL_FONT,
+		TextSize = 14,
 		TextColor3 = THEME.Text,
 		PlaceholderColor3 = THEME.Muted,
 		BackgroundColor3 = THEME.Bg2,
@@ -171,7 +241,7 @@ local function input(props)
 		ClearTextOnFocus = false,
 		Size = UDim2.new(1, 0, 0, 26),
 		Text = "",
-	}, { corner(6), new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }) })
+	}, { corner(2), stroke(THEME.Button, 0, 2), new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }) })
 	for k, v in props or {} do
 		if k ~= "Parent" then
 			box[k] = v
@@ -183,13 +253,61 @@ local function input(props)
 	return box
 end
 
-local function separator(parent, order)
-	new("Frame", { Size = UDim2.fromOffset(1, 24), BackgroundColor3 = THEME.Stroke, BorderSizePixel = 0, LayoutOrder = order, Parent = parent })
-end
-
 local function setOn(b, on)
 	b.BackgroundColor3 = on and THEME.ButtonOn or THEME.Button
 	b.TextColor3 = on and THEME.TextDark or THEME.Text
+end
+
+local templates
+
+local function skin(b)
+	local baseSize, basePos = b.Size, b.Position
+	local normal = b.Image
+	local hover = b:GetAttribute("Hover")
+	local active = b:GetAttribute("Active")
+	local hoverGrow = b:GetAttribute("HoverGrow") or 0
+	local activeGrow = b:GetAttribute("ActiveGrow") or 0
+	local state = { hovered = false, active = false }
+	local function apply()
+		local image, grow = normal, 0
+		if state.active and active then
+			image, grow = active, activeGrow
+		elseif state.hovered and hover then
+			image, grow = hover, hoverGrow
+		end
+		b.Image = image
+		b.Size = baseSize + UDim2.fromOffset(grow * 2, grow * 2)
+		local ap = b.AnchorPoint
+		b.Position = basePos + UDim2.fromOffset(-grow * (1 - 2 * ap.X), -grow * (1 - 2 * ap.Y))
+	end
+	b.MouseEnter:Connect(function()
+		state.hovered = true
+		apply()
+	end)
+	b.MouseLeave:Connect(function()
+		state.hovered = false
+		apply()
+	end)
+	function state.set(on)
+		state.active = on and true or false
+		apply()
+	end
+	apply()
+	return state
+end
+
+local function tabWidget(label, parent, order, onClick, tip)
+	local holder = templates.Tab:Clone()
+	holder.Name = label
+	holder.Visible = true
+	holder.LayoutOrder = order or 0
+	holder.Label.Text = label
+	local b = holder.Tab
+	local look = skin(b)
+	b.Activated:Connect(onClick)
+	setTooltip(b, tip or label)
+	holder.Parent = parent
+	return holder, look
 end
 
 local function fitPreview(viewport, model)
@@ -232,7 +350,7 @@ function UI.toast(message, kind)
 	if not toastHolder then
 		return
 	end
-	local color = THEME.Accent
+	local color = THEME.Text
 	if kind == "error" then
 		color = THEME.Danger
 	elseif kind == "warn" then
@@ -240,24 +358,27 @@ function UI.toast(message, kind)
 	elseif kind == "ok" then
 		color = THEME.Ok
 	end
-	local frame = new("Frame", {
-		BackgroundColor3 = THEME.Bg,
-		BackgroundTransparency = 0.05,
-		Size = UDim2.fromOffset(0, 32),
+	local frame = slice(new("ImageLabel", {
+		Name = "Toast",
+		Size = UDim2.fromOffset(0, 30),
 		AutomaticSize = Enum.AutomaticSize.X,
-		Parent = toastHolder,
-	}, { corner(8), stroke(color, 0), padding(8) })
-	text(message, { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 16), TextColor3 = THEME.Text, Parent = frame })
+	}, { new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }) }), kind == "ok" and "buttonOn" or "button")
+	if kind == "error" then
+		frame.ImageColor3 = DANGER_TINT
+	end
+	local label = text(message, { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.new(0, 0, 1, 0), TextColor3 = kind == "error" and THEME.Text or color, Parent = frame })
+	frame.Parent = toastHolder
 	task.delay(3.5, function()
 		if frame.Parent then
-			TweenService:Create(frame, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+			TweenService:Create(frame, TweenInfo.new(0.3), { ImageTransparency = 1 }):Play()
+			TweenService:Create(label, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
 			task.wait(0.3)
 			frame:Destroy()
 		end
 	end)
 	while #toastHolder:GetChildren() > 6 do
 		for _, child in toastHolder:GetChildren() do
-			if child:IsA("Frame") then
+			if child:IsA("ImageLabel") then
 				child:Destroy()
 				break
 			end
@@ -270,7 +391,7 @@ local function openModal(width, height, title)
 	modalLayer.Visible = true
 	local box = panel({ Size = UDim2.fromOffset(width, height), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Parent = modalLayer })
 	padding(12).Parent = box
-	text(title, { Font = Enum.Font.GothamBold, TextSize = 16, Size = UDim2.new(1, -40, 0, 22), Parent = box })
+	text(title, { Font = PIXEL_FONT, TextSize = 16, Size = UDim2.new(1, -40, 0, 22), Parent = box })
 	button("X", { Size = UDim2.fromOffset(28, 24), Position = UDim2.new(1, -28, 0, 0), OnClick = function()
 		UI.closeModal()
 	end, Parent = box })
@@ -353,7 +474,7 @@ function UI.showMaps(data)
 	for i, entry in maps do
 		local row = new("Frame", { BackgroundColor3 = THEME.Bg2, Size = UDim2.new(1, -8, 0, 52), LayoutOrder = i, Parent = scroll }, { corner(8), padding(8) })
 		local current = entry.id == data.current
-		text(entry.name .. (current and "  (open)" or ""), { Font = Enum.Font.GothamBold, Size = UDim2.new(1, -250, 0, 18), TextTruncate = Enum.TextTruncate.AtEnd, Parent = row })
+		text(entry.name .. (current and "  (open)" or ""), { Font = PIXEL_FONT, Size = UDim2.new(1, -250, 0, 18), TextTruncate = Enum.TextTruncate.AtEnd, Parent = row })
 		text(string.format("%d objects  |  %s", entry.count, os.date("%d %b %Y %H:%M", entry.modified)), { TextColor3 = THEME.Muted, TextSize = 12, Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, -250, 0, 16), Parent = row })
 		local holder = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.fromScale(1, 0.5), Size = UDim2.fromOffset(244, 28), Parent = row }, { list(Enum.FillDirection.Horizontal, 4, Enum.HorizontalAlignment.Right) })
 		button("Load", { Size = UDim2.fromOffset(56, 28), LayoutOrder = 1, BackgroundColor3 = THEME.Accent, TextColor3 = THEME.TextDark, OnClick = function()
@@ -376,7 +497,7 @@ function UI.showMaps(data)
 
 	if data.developer then
 		local dev = new("Frame", { BackgroundColor3 = THEME.Bg2, AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 70), Parent = body }, { corner(8), padding(8) })
-		text("Developer: Peri map format", { Font = Enum.Font.GothamBold, Parent = dev })
+		text("Developer: Peri map format", { Font = PIXEL_FONT, Parent = dev })
 		local row = new("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 0, 28), Parent = dev }, { list(Enum.FillDirection.Horizontal, 6) })
 		button("Import Peri folder...", { Size = UDim2.fromOffset(160, 28), LayoutOrder = 1, OnClick = function()
 			actions.openImport()
@@ -426,11 +547,11 @@ function UI.showValidation(result)
 	local order = 0
 	local function row(issue, color, prefix)
 		order += 1
-		local b = button(prefix .. issue.msg, {
+		button(prefix .. issue.msg, {
 			Size = UDim2.new(1, -8, 0, 26),
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextColor3 = color,
-			Font = Enum.Font.Gotham,
+			Font = PIXEL_FONT,
 			LayoutOrder = order,
 			TextTruncate = Enum.TextTruncate.AtEnd,
 			OnClick = function()
@@ -438,7 +559,6 @@ function UI.showValidation(result)
 			end,
 			Parent = validationList,
 		})
-		new("UIPadding", { PaddingLeft = UDim.new(0, 8), Parent = b })
 	end
 	for _, issue in result.errors do
 		row(issue, THEME.Danger, "Error: ")
@@ -453,44 +573,59 @@ end
 
 -- Catalog --------------------------------------------------------------------
 
-local function catalogCell(name, order, onClick, buildPreview, favouriteId, onDelete)
-	local cell = new("TextButton", {
-		Text = "",
-		AutoButtonColor = true,
-		BackgroundColor3 = THEME.Bg2,
-		BorderSizePixel = 0,
-		LayoutOrder = order,
-		Parent = itemsFrame,
-	}, { corner(8) })
-	local viewport = new("ViewportFrame", {
-		BackgroundTransparency = 1,
-		Size = UDim2.new(1, -8, 0, 54),
-		Position = UDim2.fromOffset(4, 4),
-		Ambient = Color3.fromRGB(170, 170, 170),
-		LightColor = Color3.new(1, 1, 1),
-		Parent = cell,
-	})
-	text(name, { TextSize = 11, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.new(0, 2, 0, 58), Size = UDim2.new(1, -4, 0, 26), Parent = cell })
-	cell.Activated:Connect(onClick)
+local slotLooks = {}
+
+local function catalogCell(name, order, onClick, buildPreview, favouriteId, onDelete, selected)
+	local cell = templates.Slot:Clone()
+	cell.Name = name
+	cell.Visible = true
+	cell.LayoutOrder = order
+	cell.Label.Text = name
+	local slot = cell.Slot
+	local look = skin(slot)
+	look.set(selected)
+	if favouriteId ~= nil then
+		slotLooks[favouriteId] = look
+	end
+	slot.Activated:Connect(onClick)
+	local fav = cell.Favourite
 	if favouriteId then
-		local star = button(State.favourites[favouriteId] and "*" or "+", {
-			Size = UDim2.fromOffset(18, 18),
-			Position = UDim2.new(1, -20, 0, 2),
-			TextSize = 14,
-			BackgroundTransparency = 0.4,
-			TextColor3 = State.favourites[favouriteId] and THEME.Warn or THEME.Muted,
-			Tooltip = "Favourite",
-			Parent = cell,
-		})
-		star.Activated:Connect(function()
+		local on = State.favourites[favouriteId] and true or false
+		if on then
+			fav.Image = fav:GetAttribute("On") or fav.Image
+		end
+		setTooltip(fav, on and "Remove from favourites" or "Add to favourites")
+		fav.Activated:Connect(function()
 			State.toggleFavourite(favouriteId)
 		end)
+	else
+		fav.Visible = false
 	end
+	local del = cell.Delete
 	if onDelete then
-		button("x", { Size = UDim2.fromOffset(18, 18), Position = UDim2.new(1, -20, 0, 2), TextSize = 12, BackgroundColor3 = THEME.Danger, Tooltip = "Delete prefab", OnClick = onDelete, Parent = cell })
+		del.Visible = true
+		setTooltip(del, "Delete prefab")
+		del.Activated:Connect(onDelete)
+	else
+		del.Visible = false
 	end
-	task.defer(buildPreview, viewport)
-	return cell
+	cell.Parent = itemsFrame
+	task.defer(buildPreview, cell.Preview)
+	return slot
+end
+
+local function emptyNote(message)
+	local note = new("TextLabel", {
+		Text = message,
+		Font = PIXEL_FONT,
+		TextScaled = true,
+		TextWrapped = true,
+		TextColor3 = THEME.Muted,
+		BackgroundTransparency = 1,
+		LayoutOrder = 0,
+	}, { new("UITextSizeConstraint", { MaxTextSize = 8, MinTextSize = 4 }) })
+	note.Parent = itemsFrame
+	return note
 end
 
 function UI.refreshCatalog()
@@ -498,18 +633,18 @@ function UI.refreshCatalog()
 		return
 	end
 	for _, child in itemsFrame:GetChildren() do
-		if not child:IsA("UIGridLayout") then
+		if not child:IsA("UIGridLayout") and not child:IsA("UIPadding") then
 			child:Destroy()
 		end
 	end
-	for name, b in categoryHolder:GetChildren() do
-		if b:IsA("TextButton") then
-			setOn(b, b.Name == currentCategory)
-		end
+	table.clear(slotLooks)
+	for name, look in tabSkins do
+		look.set(name == currentCategory)
 	end
 
 	local query = string.lower(searchBox.Text)
 	local order = 0
+	local lastUsed = State.recent and State.recent[1]
 
 	if currentCategory == "Prefabs" then
 		for _, prefab in State.prefabs do
@@ -525,10 +660,10 @@ function UI.refreshCatalog()
 				UI.confirm("Delete prefab '" .. prefab.name .. "'?", "Delete", function()
 					actions.deletePrefab(prefab.id)
 				end)
-			end)
+			end, false)
 		end
 		if order == 0 then
-			text("Select objects and use 'Save Prefab' in the inspector.", { TextWrapped = true, TextColor3 = THEME.Muted, Size = UDim2.new(1, 0, 0, 40), Parent = itemsFrame })
+			emptyNote("Select objects and use Save Prefab in the inspector.")
 		end
 		return
 	end
@@ -553,12 +688,15 @@ function UI.refreshCatalog()
 				item.s = Serializer.vec(def.size)
 			end
 			previewForRecords(viewport, { item })
-		end, def.id)
+		end, def.id, nil, def.id == lastUsed)
 		local tip = def.name
 		if def.description ~= "" then
 			tip ..= ": " .. def.description
 		end
 		setTooltip(cell, tip)
+	end
+	if order == 0 and currentCategory == "Favourites" then
+		emptyNote("Click the + on an item to favourite it.")
 	end
 end
 
@@ -567,17 +705,21 @@ function UI.refreshRecent()
 		return
 	end
 	for _, child in recentRow:GetChildren() do
-		if child:IsA("TextButton") then
+		if child:IsA("Frame") then
 			child:Destroy()
 		end
 	end
 	for i, typeId in State.recent do
 		local def = Catalog.get(typeId)
 		if def then
-			button(def.name, { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 22), TextSize = 11, LayoutOrder = i, OnClick = function()
+			tabWidget(def.name, recentRow, i, function()
 				actions.selectCatalog(typeId)
-			end, Parent = recentRow }, nil)
+			end, def.name)
 		end
+	end
+	local lastUsed = State.recent and State.recent[1]
+	for typeId, look in slotLooks do
+		look.set(typeId == lastUsed)
 	end
 end
 
@@ -589,7 +731,7 @@ end
 -- Inspector ------------------------------------------------------------------
 
 local function section(title, order)
-	text(title, { Font = Enum.Font.GothamBold, TextColor3 = THEME.Accent, LayoutOrder = order, Parent = inspectorScroll })
+	text(title, { Font = PIXEL_FONT, TextColor3 = THEME.Accent, LayoutOrder = order, Parent = inspectorScroll })
 end
 
 local function numberRow(order, label, fields, values, enabled)
@@ -784,7 +926,7 @@ function UI.refreshInspector(force)
 				anyLocked = true
 			end
 		end
-		text(string.format("%d objects selected", #State.selection), { Font = Enum.Font.GothamBold, TextSize = 15, LayoutOrder = 1, Parent = inspectorScroll })
+		text(string.format("%d objects selected", #State.selection), { Font = PIXEL_FONT, TextSize = 15, LayoutOrder = 1, Parent = inspectorScroll })
 		actionRow(2, { { "Duplicate", actions.duplicate, nil, "Ctrl+D" }, { "Copy", actions.copy, nil, "Ctrl+C" }, { "Delete", actions.delete, THEME.Danger, "Delete" } })
 		actionRow(3, { { anyLocked and "Unlock all" or "Lock all", actions.toggleLock, nil, "L" }, { "Save Prefab", actions.savePrefab, nil, "Save the selection as a reusable prefab" } })
 		if anyColor then
@@ -804,7 +946,7 @@ function UI.refreshInspector(force)
 		return
 	end
 
-	text(def.name, { Font = Enum.Font.GothamBold, TextSize = 15, LayoutOrder = 1, Parent = inspectorScroll })
+	text(def.name, { Font = PIXEL_FONT, TextSize = 15, LayoutOrder = 1, Parent = inspectorScroll })
 	text("id " .. id .. (rec.lk and "  |  LOCKED" or ""), { TextSize = 11, TextColor3 = rec.lk and THEME.Danger or THEME.Muted, LayoutOrder = 2, Parent = inspectorScroll })
 
 	section("Transform", 10)
@@ -875,15 +1017,15 @@ function UI.refreshToolbar()
 	if not topBar then
 		return
 	end
-	for tool, b in toolButtons do
-		setOn(b, State.tool == tool)
+	for tool, look in toolButtons do
+		look.set(State.tool == tool)
 	end
-	local grid = toggleButtons.grid
-	grid.Text = State.gridOn and ("Grid " .. State.gridSize()) or "Grid off"
-	setOn(grid, State.gridOn)
-	toggleButtons.rot.Text = "Rot " .. State.rotStep() .. ""
-	setOn(toggleButtons.snapY, State.snapY)
-	setOn(toggleButtons.align, State.alignSurface)
+	if gridLabel then
+		gridLabel.Text = State.gridOn and tostring(State.gridSize()) or "OFF"
+		gridLabel.TextColor3 = State.gridOn and THEME.Text or THEME.Muted
+	end
+	toggleButtons.snapY.set(State.snapY)
+	toggleButtons.align.set(State.alignSurface)
 end
 
 function UI.refreshStatus()
@@ -979,7 +1121,7 @@ function UI.update()
 		if tooltipText then
 			local mouse = UserInputService:GetMouseLocation()
 			local inset = game:GetService("GuiService"):GetGuiInset()
-			tooltip.Text = tooltipText
+			tooltip.Text = if typeof(tooltipText) == "function" then tooltipText() else tooltipText
 			tooltip.Position = UDim2.fromOffset(mouse.X + 14, mouse.Y - inset.Y + 18)
 			tooltip.Visible = true
 		else
@@ -990,177 +1132,164 @@ end
 
 -- Construction ---------------------------------------------------------------
 
-local HELP = {
-	"Camera: W A S D move, Space / C up and down, hold Right Mouse to look, Shift = faster, wheel = zoom",
-	"Left click: place the chosen object, or select. Shift + click adds to the selection. Drag on empty space to box select",
-	"Esc or right click: cancel placement / clear selection",
-	"Q / E rotate, Shift + Q / E tilt. G toggles grid snapping",
-	"1 Select   2 Move   3 Rotate   4 Scale  (drag the handles)",
-	"Ctrl+Z undo, Ctrl+Y redo, Ctrl+D duplicate, Ctrl+C / Ctrl+V copy and paste, Delete removes",
-	"L lock / unlock, F focus the selection, Ctrl+S save, H this help",
-	"Routes: place an Enemy Spawn and a Base, then Waypoints in order. Select a waypoint to insert after it or add a fork branch",
-	"Test runs your map with the real Peri route and tower rules; Validate lists what would break",
+local DYNAMIC_TIPS = {
+	RotStep = function()
+		return "Rotation step: " .. tostring(State.rotStep()) .. " (click to change)"
+	end,
+	Grid = function()
+		return State.gridOn and ("Grid " .. tostring(State.gridSize()) .. " studs (G or click to turn off)") or "Grid off (G or click to turn on)"
+	end,
 }
 
-function UI.init(handlers)
-	actions = handlers
-	local playerGui = player:WaitForChild("PlayerGui")
-	local existing = playerGui:FindFirstChild("MapEditorUI")
-	if existing then
-		existing:Destroy()
+local function bindToolbar()
+	for _, b in topBar:GetChildren() do
+		if not b:IsA("ImageButton") then
+			continue
+		end
+		local look = skin(b)
+		local tool = b:GetAttribute("Tool")
+		local action = b:GetAttribute("Action")
+		local toggle = b:GetAttribute("Toggle")
+		if tool then
+			toolButtons[tool] = look
+			b.Activated:Connect(function()
+				actions.setTool(tool)
+			end)
+		elseif action then
+			local arg = b:GetAttribute("Arg")
+			b.Activated:Connect(function()
+				local fn = actions[action]
+				if not fn then
+					warn("[MapEditor UI] no action named " .. action)
+					return
+				end
+				if arg ~= nil then
+					fn(arg)
+				else
+					fn()
+				end
+			end)
+		end
+		if toggle then
+			toggleButtons[toggle] = look
+		end
 	end
-
-	gui = new("ScreenGui", { Name = "MapEditorUI", ResetOnSpawn = false, IgnoreGuiInset = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 10, Parent = playerGui })
-
-	local scale = new("UIScale", { Parent = gui })
-	local function rescale()
-		local viewport = workspace.CurrentCamera.ViewportSize
-		scale.Scale = math.clamp(math.min(viewport.X / 1180, viewport.Y / 720), 0.65, 1)
-	end
-	workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale)
-	rescale()
-
-	launcher = button("MAP EDITOR", { Size = UDim2.fromOffset(140, 40), AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -12), Font = Enum.Font.GothamBold, TextSize = 15, BackgroundColor3 = THEME.Accent, TextColor3 = THEME.TextDark, Tooltip = "Open the map editor", OnClick = function()
-		actions.enter()
-	end, Parent = gui })
-
-	topBar = panel({ Name = "TopBar", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 6), Size = UDim2.fromOffset(0, 42), AutomaticSize = Enum.AutomaticSize.X, Visible = false, Parent = gui })
-	padding(5).Parent = topBar
-	list(Enum.FillDirection.Horizontal, 4).Parent = topBar
-	local order = 0
-	local function nextOrder()
-		order += 1
-		return order
-	end
-
-	button("Test", { Size = UDim2.fromOffset(50, 32), BackgroundColor3 = THEME.Ok, TextColor3 = THEME.TextDark, Font = Enum.Font.GothamBold, LayoutOrder = nextOrder(), Tooltip = "Playtest this map", OnClick = function()
-		actions.startTest()
-	end, Parent = topBar })
-	separator(topBar, nextOrder())
-	for i, tool in { "Select", "Move", "Rotate", "Scale" } do
-		toolButtons[tool] = button(tool, { Size = UDim2.fromOffset(52, 32), LayoutOrder = nextOrder(), Tooltip = string.format("%s tool (%d)", tool, i), OnClick = function()
-			actions.setTool(tool)
-		end, Parent = topBar })
-	end
-	separator(topBar, nextOrder())
-	button("Undo", { Size = UDim2.fromOffset(44, 32), LayoutOrder = nextOrder(), Tooltip = "Undo (Ctrl+Z)", OnClick = function()
-		actions.undo()
-	end, Parent = topBar })
-	button("Redo", { Size = UDim2.fromOffset(44, 32), LayoutOrder = nextOrder(), Tooltip = "Redo (Ctrl+Y)", OnClick = function()
-		actions.redo()
-	end, Parent = topBar })
-	separator(topBar, nextOrder())
-	button("-", { Size = UDim2.fromOffset(20, 32), LayoutOrder = nextOrder(), Tooltip = "Smaller grid", OnClick = function()
-		actions.cycleGrid(-1)
-	end, Parent = topBar })
-	toggleButtons.grid = button("Grid", { Size = UDim2.fromOffset(60, 32), LayoutOrder = nextOrder(), Tooltip = "Grid snapping (G)", OnClick = function()
+	gridLabel.Activated:Connect(function()
 		actions.toggleGrid()
-	end, Parent = topBar })
-	button("+", { Size = UDim2.fromOffset(20, 32), LayoutOrder = nextOrder(), Tooltip = "Larger grid", OnClick = function()
-		actions.cycleGrid(1)
-	end, Parent = topBar })
-	toggleButtons.rot = button("Rot", { Size = UDim2.fromOffset(52, 32), LayoutOrder = nextOrder(), Tooltip = "Rotation step", OnClick = function()
-		actions.cycleRot()
-	end, Parent = topBar })
-	toggleButtons.snapY = button("Snap Y", { Size = UDim2.fromOffset(52, 32), LayoutOrder = nextOrder(), Tooltip = "Snap height to the grid", OnClick = function()
-		actions.toggleSnapY()
-	end, Parent = topBar })
-	toggleButtons.align = button("Align", { Size = UDim2.fromOffset(46, 32), LayoutOrder = nextOrder(), Tooltip = "Align new objects to the surface", OnClick = function()
-		actions.toggleAlign()
-	end, Parent = topBar })
-	separator(topBar, nextOrder())
-	button("Validate", { Size = UDim2.fromOffset(60, 32), LayoutOrder = nextOrder(), Tooltip = "Check the map for problems", OnClick = function()
-		actions.validate()
-	end, Parent = topBar })
-	button("Maps", { Size = UDim2.fromOffset(46, 32), LayoutOrder = nextOrder(), Tooltip = "New, load, rename, copy, delete", OnClick = function()
-		actions.openMaps()
-	end, Parent = topBar })
-	button("Save", { Size = UDim2.fromOffset(46, 32), LayoutOrder = nextOrder(), BackgroundColor3 = THEME.Accent, TextColor3 = THEME.TextDark, Tooltip = "Save (Ctrl+S)", OnClick = function()
-		actions.save()
-	end, Parent = topBar })
-	button("?", { Size = UDim2.fromOffset(24, 32), LayoutOrder = nextOrder(), Tooltip = "Controls (H)", OnClick = function()
-		UI.toggleHelp()
-	end, Parent = topBar })
-	button("Exit", { Size = UDim2.fromOffset(40, 32), LayoutOrder = nextOrder(), BackgroundColor3 = THEME.Danger, Tooltip = "Leave the editor", OnClick = function()
-		actions.exit()
-	end, Parent = topBar })
+	end)
+end
 
-	testBar = panel({ Name = "TestBar", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 6), Size = UDim2.fromOffset(0, 42), AutomaticSize = Enum.AutomaticSize.X, Visible = false, Parent = gui })
-	padding(5).Parent = testBar
-	list(Enum.FillDirection.Horizontal, 6).Parent = testBar
-	button("Stop Test", { Size = UDim2.fromOffset(84, 32), BackgroundColor3 = THEME.Danger, Font = Enum.Font.GothamBold, LayoutOrder = 1, OnClick = function()
-		actions.stopTest()
-	end, Parent = testBar })
-	button("Spawn Wave", { Size = UDim2.fromOffset(92, 32), LayoutOrder = 2, Tooltip = "Send a test wave along every route", OnClick = function()
-		actions.spawnWave()
-	end, Parent = testBar })
-	towerButton = button("Towers: off", { Size = UDim2.fromOffset(96, 32), LayoutOrder = 3, Tooltip = "Click the map to place test towers (Peri placement rules)", OnClick = function()
-		actions.toggleTowerMode()
-	end, Parent = testBar })
-	testStats = text("", { Size = UDim2.fromOffset(470, 32), TextSize = 12, LayoutOrder = 4, Parent = testBar })
-
-	catalogPanel = panel({ Name = "Catalog", Position = UDim2.fromOffset(8, 56), Size = UDim2.new(0, 252, 1, -64), Visible = false, Parent = gui })
-	padding(8).Parent = catalogPanel
-	statusLabel = text("", { Font = Enum.Font.GothamBold, TextSize = 13, Size = UDim2.new(1, 0, 0, 20), TextTruncate = Enum.TextTruncate.AtEnd, Parent = catalogPanel })
-	searchBox = input({ PlaceholderText = "Search objects...", Position = UDim2.fromOffset(0, 24), Parent = catalogPanel })
+local function bindCatalog()
 	searchBox:GetPropertyChangedSignal("Text"):Connect(function()
 		UI.refreshCatalog()
 	end)
-	categoryHolder = new("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 56), Size = UDim2.new(1, 0, 0, 100), Parent = catalogPanel }, {
-		new("UIGridLayout", { CellSize = UDim2.new(0.333, -4, 0, 22), CellPadding = UDim2.fromOffset(4, 4), SortOrder = Enum.SortOrder.LayoutOrder }),
-	})
-	local categories = { "All", "Favourites" }
+	local wanted = { "All", "Favourites" }
 	for _, c in Catalog.CATEGORIES do
-		table.insert(categories, c)
+		table.insert(wanted, c)
 	end
-	for i, c in categories do
-		button(c, { Name = c, TextSize = 11, LayoutOrder = i, TextTruncate = Enum.TextTruncate.AtEnd, OnClick = function()
+	for i, c in wanted do
+		local holder = categoryHolder:FindFirstChild(c)
+		local look
+		local function choose()
 			if c == "Prefabs" then
 				actions.loadPrefabs()
 			end
 			UI.setCategory(c)
-		end, Parent = categoryHolder })
+		end
+		if holder and holder:FindFirstChild("Tab") then
+			look = skin(holder.Tab)
+			holder.Tab.Activated:Connect(choose)
+		else
+			holder, look = tabWidget(c, categoryHolder, i, choose, c)
+		end
+		tabSkins[c] = look
 	end
-	text("Recent", { TextColor3 = THEME.Muted, TextSize = 11, Position = UDim2.fromOffset(0, 160), Size = UDim2.new(1, 0, 0, 14), Parent = catalogPanel })
-	recentRow = new("ScrollingFrame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 176), Size = UDim2.new(1, 0, 0, 28), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 3, ScrollingDirection = Enum.ScrollingDirection.X, BorderSizePixel = 0, Parent = catalogPanel }, { list(Enum.FillDirection.Horizontal, 4) })
-	itemsFrame = new("ScrollingFrame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 210), Size = UDim2.new(1, 0, 1, -210), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 5, BorderSizePixel = 0, Parent = catalogPanel }, {
-		new("UIGridLayout", { CellSize = UDim2.fromOffset(74, 88), CellPadding = UDim2.fromOffset(4, 4), SortOrder = Enum.SortOrder.LayoutOrder }),
-	})
+end
 
-	inspectorPanel = panel({ Name = "Inspector", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 56), Size = UDim2.new(0, 262, 1, -64), Visible = false, Parent = gui })
-	inspectorScroll = new("ScrollingFrame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 5, BorderSizePixel = 0, Parent = inspectorPanel }, { list(nil, 6), padding(10) })
+function UI.init(handlers)
+	actions = handlers
+	local playerGui = player:WaitForChild("PlayerGui")
+	gui = playerGui:WaitForChild("MapEditorUI")
+	templates = gui:WaitForChild("Templates")
 
-	validationPanel = panel({ Name = "Validation", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(560, 170), Visible = false, Parent = gui })
-	padding(8).Parent = validationPanel
-	validationHeader = text("Validation", { Font = Enum.Font.GothamBold, Size = UDim2.new(1, -36, 0, 20), Parent = validationPanel })
-	button("X", { Size = UDim2.fromOffset(28, 22), Position = UDim2.new(1, -28, 0, 0), OnClick = function()
+	local scale = gui:FindFirstChildOfClass("UIScale") or new("UIScale", { Parent = gui })
+	local function rescale()
+		local viewport = workspace.CurrentCamera.ViewportSize
+		scale.Scale = math.clamp(math.min(viewport.X / 1000, viewport.Y / 600), 0.6, 1.6)
+	end
+	workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale)
+	rescale()
+
+	launcher = gui:WaitForChild("Launcher")
+	topBar = gui:WaitForChild("TopBar")
+	testBar = gui:WaitForChild("TestBar")
+	catalogPanel = gui:WaitForChild("Catalog")
+	inspectorPanel = gui:WaitForChild("Inspector")
+	inspectorScroll = inspectorPanel:WaitForChild("Scroll")
+	validationPanel = gui:WaitForChild("Validation")
+	validationHeader = validationPanel:WaitForChild("Header")
+	validationList = validationPanel:WaitForChild("List")
+	toastHolder = gui:WaitForChild("Toasts")
+	hintLabel = gui:WaitForChild("Hint")
+	selectionRect = gui:WaitForChild("SelectionRect")
+	helpPanel = gui:WaitForChild("Help")
+	modalLayer = gui:WaitForChild("Modal")
+	tooltip = gui:WaitForChild("Tooltip")
+	statusLabel = catalogPanel:WaitForChild("Status")
+	searchBox = catalogPanel:WaitForChild("Search")
+	categoryHolder = catalogPanel:WaitForChild("Categories")
+	recentRow = catalogPanel:WaitForChild("Recent")
+	itemsFrame = catalogPanel:WaitForChild("Items")
+	gridLabel = topBar:WaitForChild("Grid")
+	testStats = testBar:WaitForChild("Stats")
+	towerButton = testBar:WaitForChild("Towers")
+
+	for name, fn in DYNAMIC_TIPS do
+		local target = topBar:FindFirstChild(name)
+		if target then
+			setTooltip(target, fn)
+		end
+	end
+	for _, d in gui:GetDescendants() do
+		if d:IsA("GuiObject") and not d:IsDescendantOf(templates) and not DYNAMIC_TIPS[d.Name] then
+			local tip = d:GetAttribute("Tooltip")
+			if tip then
+				setTooltip(d, tip)
+			end
+		end
+	end
+
+	launcher.Activated:Connect(function()
+		actions.enter()
+	end)
+	bindToolbar()
+	bindCatalog()
+
+	testBar:WaitForChild("StopTest").Activated:Connect(function()
+		actions.stopTest()
+	end)
+	testBar:WaitForChild("SpawnWave").Activated:Connect(function()
+		actions.spawnWave()
+	end)
+	towerButton.Activated:Connect(function()
+		actions.toggleTowerMode()
+	end)
+	validationPanel:WaitForChild("Close").Activated:Connect(function()
 		validationPanel.Visible = false
-	end, Parent = validationPanel })
-	validationList = new("ScrollingFrame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 26), Size = UDim2.new(1, 0, 1, -26), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 5, BorderSizePixel = 0, Parent = validationPanel }, { list(nil, 4) })
-
-	toastHolder = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 56), Size = UDim2.fromOffset(600, 240), Parent = gui }, { list(nil, 6, Enum.HorizontalAlignment.Center) })
-	local holderLayout = toastHolder:FindFirstChildOfClass("UIListLayout")
-	holderLayout.VerticalAlignment = Enum.VerticalAlignment.Top
-
-	hintLabel = text("", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -190), Size = UDim2.fromOffset(600, 22), TextXAlignment = Enum.TextXAlignment.Center, TextStrokeTransparency = 0.4, Font = Enum.Font.GothamMedium, Visible = false, Parent = gui })
-
-	selectionRect = new("Frame", { BackgroundColor3 = THEME.Accent, BackgroundTransparency = 0.85, BorderSizePixel = 0, Visible = false, Parent = gui }, { stroke(THEME.Accent, 0) })
-
-	helpPanel = panel({ Name = "Help", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(620, 330), Visible = false, Parent = gui })
-	padding(14).Parent = helpPanel
-	list(nil, 8).Parent = helpPanel
-	text("Map Editor controls", { Font = Enum.Font.GothamBold, TextSize = 16, LayoutOrder = 0, Parent = helpPanel })
-	for i, line in HELP do
-		text(line, { TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = i, Parent = helpPanel })
+	end)
+	for _, d in gui:GetDescendants() do
+		if d:IsA("TextButton") and d ~= gridLabel and not d:IsDescendantOf(templates) then
+			dress(d)
+		end
 	end
 
-	modalLayer = new("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.45, Size = UDim2.fromScale(1, 1), Visible = false, Active = true, ZIndex = 50, Parent = gui })
-
-	tooltip = text("", { AutomaticSize = Enum.AutomaticSize.XY, Size = UDim2.fromOffset(0, 0), BackgroundTransparency = 0.05, BackgroundColor3 = THEME.Bg, TextSize = 12, ZIndex = 100, Visible = false, Parent = gui })
-	corner(6).Parent = tooltip
-	padding(6).Parent = tooltip
+	launcher.Visible = true
+	for _, hidden in { topBar, testBar, catalogPanel, inspectorPanel, validationPanel, helpPanel, modalLayer, tooltip, hintLabel, selectionRect } do
+		hidden.Visible = false
+	end
 
 	UI.refreshToolbar()
+	UI.refreshRecent()
 	UI.refreshCatalog()
 	UI.refreshStatus()
 end
@@ -1172,7 +1301,7 @@ function UI.isOverGui(position)
 	local inset = game:GetService("GuiService"):GetGuiInset()
 	local objects = player.PlayerGui:GetGuiObjectsAtPosition(position.X, position.Y - inset.Y)
 	for _, obj in objects do
-		if obj:IsDescendantOf(gui) and obj.Visible and (obj:IsA("GuiButton") or obj:IsA("TextBox") or (obj:IsA("Frame") and obj.Active) or obj:IsA("ScrollingFrame")) then
+		if obj:IsDescendantOf(gui) and obj.Visible and (obj:IsA("GuiButton") or obj:IsA("TextBox") or ((obj:IsA("Frame") or obj:IsA("ImageLabel")) and obj.Active) or obj:IsA("ScrollingFrame")) then
 			return true
 		end
 	end
