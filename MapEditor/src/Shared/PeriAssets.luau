@@ -59,4 +59,37 @@ local PeriAssets: { [string]: Entry } = {
 	House2 = { name = "House (tall)", category = "Structures", blocks = true },
 }
 
+local PATH_STYLES = {
+	{ key = "Cave", label = "Cave" },
+	{ key = "DesertSand", label = "Desert Sand" },
+	{ key = "DesertDirt", label = "Desert Dirt" },
+	{ key = "MountainDirt", label = "Mountain Dirt" },
+	{ key = "Ice", label = "Ice" },
+	{ key = "Snowy", label = "Snowy" },
+	{ key = "Stone", label = "Stone" },
+	{ key = "PaleGarden", label = "Pale Garden" },
+	{ key = "PaleGardenPink", label = "Pale Garden Pink" },
+	{ key = "Swamp", label = "Swamp" },
+	{ key = "Tutorial", label = "Tutorial" },
+	{ key = "Farm", label = "Farm" },
+}
+
+local PATH_PIECES = {
+	{ key = "Straight", label = "Straight" },
+	{ key = "Tile", label = "Tile" },
+	{ key = "Corner", label = "Corner" },
+	{ key = "TJunction", label = "T-Junction" },
+	{ key = "Ramp", label = "Ramp" },
+}
+
+for _, style in PATH_STYLES do
+	for _, piece in PATH_PIECES do
+		PeriAssets["Path_" .. style.key .. "_" .. piece.key] = {
+			name = style.label .. " Path " .. piece.label,
+			category = "Paths",
+			folder = "Path",
+		}
+	end
+end
+
 return PeriAssets
