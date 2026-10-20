@@ -41,12 +41,20 @@ local gui, launcher, topBar, testBar, catalogPanel, inspectorPanel, inspectorScr
 local validationPanel, validationList, validationHeader, toastHolder, modalLayer, helpPanel
 local tooltip, statusLabel, hintLabel, testStats, towerButton, selectionRect
 local itemsFrame, searchBox, categoryHolder, recentRow, gridLabel
+local uiScale = nil
 local toolButtons = {}
 local toggleButtons = {}
 local tabSkins = {}
 local currentCategory = "All"
 local tooltipText = nil
 local inspectorKey = nil
+
+local function currentScale()
+	if uiScale and uiScale.Scale > 0 then
+		return uiScale.Scale
+	end
+	return 1
+end
 
 local function new(class, props, children)
 	local inst = Instance.new(class)
@@ -1054,9 +1062,10 @@ function UI.setSelectionRect(a, b)
 		return
 	end
 	local inset = game:GetService("GuiService"):GetGuiInset()
+	local s = currentScale()
 	local x, y = math.min(a.X, b.X), math.min(a.Y, b.Y) - inset.Y
-	selectionRect.Position = UDim2.fromOffset(x, y)
-	selectionRect.Size = UDim2.fromOffset(math.abs(a.X - b.X), math.abs(a.Y - b.Y))
+	selectionRect.Position = UDim2.fromOffset(x / s, y / s)
+	selectionRect.Size = UDim2.fromOffset(math.abs(a.X - b.X) / s, math.abs(a.Y - b.Y) / s)
 	selectionRect.Visible = true
 end
 
@@ -1121,8 +1130,9 @@ function UI.update()
 		if tooltipText then
 			local mouse = UserInputService:GetMouseLocation()
 			local inset = game:GetService("GuiService"):GetGuiInset()
+			local s = currentScale()
 			tooltip.Text = if typeof(tooltipText) == "function" then tooltipText() else tooltipText
-			tooltip.Position = UDim2.fromOffset(mouse.X + 14, mouse.Y - inset.Y + 18)
+			tooltip.Position = UDim2.fromOffset((mouse.X + 14) / s, (mouse.Y - inset.Y + 18) / s)
 			tooltip.Visible = true
 		else
 			tooltip.Visible = false
@@ -1213,6 +1223,7 @@ function UI.init(handlers)
 	templates = gui:WaitForChild("Templates")
 
 	local scale = gui:FindFirstChildOfClass("UIScale") or new("UIScale", { Parent = gui })
+	uiScale = scale
 	local function rescale()
 		local viewport = workspace.CurrentCamera.ViewportSize
 		scale.Scale = math.clamp(math.min(viewport.X / 1000, viewport.Y / 600), 0.6, 1.6)
