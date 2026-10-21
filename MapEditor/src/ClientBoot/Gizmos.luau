@@ -17,8 +17,14 @@ local proxy = nil
 local moveHandles, arcHandles, resizeHandles = nil, nil, nil
 local dragging = nil
 local hoverCount = 0
+local layoutKey = nil
 
 local MAX_GIZMO_OBJECTS = 400
+
+local function resetHover()
+	hoverCount = 0
+	Gizmos.hovering = false
+end
 
 local function editableSelection()
 	local ids = {}
@@ -61,6 +67,8 @@ end
 local function finishDrag()
 	local drag = dragging
 	dragging = nil
+	resetHover()
+	layoutKey = nil
 	if not drag or not drag.result then
 		return
 	end
@@ -272,6 +280,8 @@ end
 function Gizmos.cancel()
 	restore()
 	dragging = nil
+	resetHover()
+	layoutKey = nil
 end
 
 local function hideAll()
@@ -281,10 +291,8 @@ local function hideAll()
 	moveHandles.Adornee = nil
 	arcHandles.Adornee = nil
 	resizeHandles.Adornee = nil
-	if hoverCount > 0 then
-		hoverCount = 0
-		Gizmos.hovering = false
-	end
+	resetHover()
+	layoutKey = nil
 end
 
 function Gizmos.update(placing)
@@ -343,6 +351,21 @@ function Gizmos.update(placing)
 	end
 	resizeHandles.Visible = resizeTarget ~= nil
 	resizeHandles.Adornee = resizeTarget
+
+	local target = resizeTarget or proxy
+	local center = (lo + hi) / 2
+	local key = string.format(
+		"%s|%s|%.3f,%.3f,%.3f|%.3f,%.3f,%.3f|%.3f,%.3f,%.3f",
+		tool,
+		resizeTarget and resizeTarget:GetFullName() or "proxy",
+		center.X, center.Y, center.Z,
+		size.X, size.Y, size.Z,
+		target.Size.X, target.Size.Y, target.Size.Z
+	)
+	if key ~= layoutKey then
+		layoutKey = key
+		resetHover()
+	end
 end
 
 function Gizmos.hide()
