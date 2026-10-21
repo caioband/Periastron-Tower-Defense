@@ -41,6 +41,7 @@ local gui, launcher, topBar, testBar, catalogPanel, inspectorPanel, inspectorScr
 local validationPanel, validationList, validationHeader, toastHolder, modalLayer, helpPanel
 local tooltip, statusLabel, hintLabel, testStats, towerButton, selectionRect
 local itemsFrame, searchBox, categoryHolder, recentRow, gridLabel
+local settingsHolder = nil
 local uiScale = nil
 local toolButtons = {}
 local toggleButtons = {}
@@ -49,11 +50,23 @@ local currentCategory = "All"
 local tooltipText = nil
 local inspectorKey = nil
 
+local MOVE_PRESETS = { 0.01, 0.1, 0.25, 1, 4, 10, 50 }
+local ROTATE_PRESETS = { 1, 5, 15, 45, 90 }
+local RESIZE_PRESETS = { 0.01, 0.1, 0.25, 0.5, 1, 4, 10 }
+local SCALE_PRESETS = { 0.01, 0.05, 0.1, 0.25, 0.5, 1 }
+
 local function currentScale()
 	if uiScale and uiScale.Scale > 0 then
 		return uiScale.Scale
 	end
 	return 1
+end
+
+local function formatNumber(value)
+	local s = string.format("%.3f", value)
+	s = s:gsub("0+$", "")
+	s = s:gsub("%.$", "")
+	return s
 end
 
 local function new(class, props, children)
@@ -450,6 +463,88 @@ function UI.prompt(title, default, onSubmit)
 	task.defer(function()
 		box:CaptureFocus()
 	end)
+end
+
+-- Settings -------------------------------------------------------------------
+
+local function stepBlock(body, order, title, hint, presets, getValue, setValue)
+	text(title, { Font = PIXEL_FONT, TextColor3 = THEME.Accent, LayoutOrder = order, Parent = body })
+
+	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26), LayoutOrder = order + 1, Parent = body })
+	local box = input({ Text = formatNumber(getValue()), Size = UDim2.new(0, 110, 1, 0), Parent = row })
+	text(hint, { Position = UDim2.fromOffset(118, 0), Size = UDim2.new(1, -118, 1, 0), TextColor3 = THEME.Muted, TextSize = 12, Parent = row })
+
+	local function commit(value)
+		if setValue(value) then
+			UI.refreshToolbar()
+			UI.openSettings()
+		else
+			box.Text = formatNumber(getValue())
+			UI.toast("Enter a number.", "warn")
+		end
+	end
+
+	box.FocusLost:Connect(function()
+		local parsed = tonumber(box.Text)
+		if parsed and math.abs(parsed - getValue()) < 1e-9 then
+			box.Text = formatNumber(getValue())
+			return
+		end
+		commit(parsed)
+	end)
+
+	local presetRow = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26), LayoutOrder = order + 2, Parent = body }, { list(Enum.FillDirection.Horizontal, 4) })
+	local current = getValue()
+	for i, preset in presets do
+		local on = math.abs(preset - current) < 1e-9
+		button(formatNumber(preset), {
+			Size = UDim2.new(1 / #presets, -4, 1, 0),
+			TextSize = 12,
+			LayoutOrder = i,
+			BackgroundColor3 = on and THEME.ButtonOn or THEME.Button,
+			TextColor3 = on and THEME.TextDark or THEME.Text,
+			OnClick = function()
+				commit(preset)
+			end,
+			Parent = presetRow,
+		})
+	end
+end
+
+local function rangeHint(unit, limits)
+	return string.format("%s  (%s - %s)", unit, formatNumber(limits.min), formatNumber(limits.max))
+end
+
+function UI.openSettings()
+	local body = openModal(440, 480, "Settings")
+	local layout = list(nil, 6)
+	layout.VerticalAlignment = Enum.VerticalAlignment.Top
+	layout.Parent = body
+
+	stepBlock(body, 1, "Move step", rangeHint("studs", State.GRID_LIMITS), MOVE_PRESETS, function()
+		return State.gridStep
+	end, State.setGridStep)
+
+	stepBlock(body, 10, "Rotation step", rangeHint("degrees", State.ROT_LIMITS), ROTATE_PRESETS, function()
+		return State.rotDegrees
+	end, State.setRotStep)
+
+	stepBlock(body, 20, "Resize step", rangeHint("studs", State.RESIZE_LIMITS), RESIZE_PRESETS, function()
+		return State.resizeStuds
+	end, State.setResizeStep)
+
+	stepBlock(body, 30, "Scale step", rangeHint("x", State.SCALE_LIMITS), SCALE_PRESETS, function()
+		return State.scaleFactor
+	end, State.setScaleStep)
+
+	text("Move: placing and the Move tool. Resize: part sizes with the Scale tool. Scale: model size with the Scale tool, no upper limit. Snapping follows the grid toggle (G).", {
+		TextWrapped = true,
+		AutomaticSize = Enum.AutomaticSize.Y,
+		TextColor3 = THEME.Muted,
+		TextSize = 12,
+		LayoutOrder = 40,
+		Parent = body,
+	})
 end
 
 -- Maps manager ---------------------------------------------------------------
@@ -1029,7 +1124,7 @@ function UI.refreshToolbar()
 		look.set(State.tool == tool)
 	end
 	if gridLabel then
-		gridLabel.Text = State.gridOn and tostring(State.gridSize()) or "OFF"
+		gridLabel.Text = State.gridOn and formatNumber(State.gridSize()) or "OFF"
 		gridLabel.TextColor3 = State.gridOn and THEME.Text or THEME.Muted
 	end
 	toggleButtons.snapY.set(State.snapY)
@@ -1094,6 +1189,7 @@ function UI.setMode(mode)
 	local building = mode == "Build" and State.active
 	topBar.Visible = building
 	catalogPanel.Visible = building
+	settingsHolder.Visible = building
 	testBar.Visible = mode == "Playtest" and State.active
 	if not building then
 		inspectorPanel.Visible = false
@@ -1114,6 +1210,7 @@ function UI.setActive(active)
 		inspectorPanel.Visible = false
 		validationPanel.Visible = false
 		helpPanel.Visible = false
+		settingsHolder.Visible = false
 		UI.closeModal()
 		UI.setHint(nil)
 	else
@@ -1144,10 +1241,10 @@ end
 
 local DYNAMIC_TIPS = {
 	RotStep = function()
-		return "Rotation step: " .. tostring(State.rotStep()) .. " (click to change)"
+		return "Rotation step: " .. formatNumber(State.rotStep()) .. " (click to change, exact values in Settings)"
 	end,
 	Grid = function()
-		return State.gridOn and ("Grid " .. tostring(State.gridSize()) .. " studs (G or click to turn off)") or "Grid off (G or click to turn on)"
+		return State.gridOn and ("Move step " .. formatNumber(State.gridSize()) .. " studs (G or click to turn off)") or "Grid off (G or click to turn on)"
 	end,
 }
 
@@ -1164,6 +1261,18 @@ local function bindToolbar()
 			toolButtons[tool] = look
 			b.Activated:Connect(function()
 				actions.setTool(tool)
+			end)
+		elseif action == "cycleGrid" then
+			local arg = b:GetAttribute("Arg") or 1
+			b.Activated:Connect(function()
+				State.stepGrid(arg)
+				UI.refreshToolbar()
+			end)
+		elseif action == "cycleRot" then
+			b.Activated:Connect(function()
+				State.stepRot()
+				UI.refreshToolbar()
+				UI.toast("Rotation step: " .. formatNumber(State.rotStep()) .. " degrees", "info")
 			end)
 		elseif action then
 			local arg = b:GetAttribute("Arg")
@@ -1246,6 +1355,7 @@ function UI.init(handlers)
 	helpPanel = gui:WaitForChild("Help")
 	modalLayer = gui:WaitForChild("Modal")
 	tooltip = gui:WaitForChild("Tooltip")
+	settingsHolder = gui:WaitForChild("Settings")
 	statusLabel = catalogPanel:WaitForChild("Status")
 	searchBox = catalogPanel:WaitForChild("Search")
 	categoryHolder = catalogPanel:WaitForChild("Categories")
@@ -1276,6 +1386,9 @@ function UI.init(handlers)
 	bindToolbar()
 	bindCatalog()
 
+	settingsHolder:WaitForChild("Open").Activated:Connect(function()
+		UI.openSettings()
+	end)
 	testBar:WaitForChild("StopTest").Activated:Connect(function()
 		actions.stopTest()
 	end)
@@ -1295,7 +1408,7 @@ function UI.init(handlers)
 	end
 
 	launcher.Visible = true
-	for _, hidden in { topBar, testBar, catalogPanel, inspectorPanel, validationPanel, helpPanel, modalLayer, tooltip, hintLabel, selectionRect } do
+	for _, hidden in { topBar, testBar, catalogPanel, inspectorPanel, validationPanel, helpPanel, modalLayer, tooltip, hintLabel, selectionRect, settingsHolder } do
 		hidden.Visible = false
 	end
 

@@ -167,13 +167,13 @@ local function onResize(face, distance)
 	if not def then
 		return
 	end
-	local delta = distance
-	if State.gridOn then
-		delta = Geometry.snap(distance, State.gridSize())
-	end
 	local out = Serializer.copy(rec)
 
 	if def.kind == "Part" and def.resizable and rec.s then
+		local delta = distance
+		if State.gridOn then
+			delta = Geometry.snap(distance, State.resizeStep())
+		end
 		local axis = Vector3.FromNormalId(face)
 		local absAxis = Vector3.new(math.abs(axis.X), math.abs(axis.Y), math.abs(axis.Z))
 		local startSize = Serializer.toVector(rec.s)
@@ -195,7 +195,11 @@ local function onResize(face, distance)
 		local axis = Vector3.FromNormalId(face)
 		local extent = math.max(0.5, math.abs(dragging.size:Dot(axis)))
 		local startScale = rec.sc or 1
-		local scale = math.clamp(startScale * (1 + delta / extent), def.minScale or 0.25, def.maxScale or 4)
+		local scale = startScale * (1 + distance / extent)
+		if State.gridOn then
+			scale = Geometry.snap(scale, State.scaleStep())
+		end
+		scale = math.clamp(scale, def.minScale or 0.25, def.maxScale or math.huge)
 		out.sc = Serializer.round(scale, 100)
 	else
 		return

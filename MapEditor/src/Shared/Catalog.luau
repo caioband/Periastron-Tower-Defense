@@ -72,7 +72,7 @@ local function define(raw: { [string]: any })
 	end
 	if def.scalable then
 		def.minScale = def.minScale or 0.25
-		def.maxScale = def.maxScale or 4
+		def.maxScale = def.maxScale or math.huge
 	end
 	assert(not Catalog.byId[def.id], "Duplicate catalog id " .. def.id)
 	Catalog.byId[def.id] = def :: Def

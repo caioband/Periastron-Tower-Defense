@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("MapEditor")
 local Config = require(Shared.Config)
@@ -24,6 +25,11 @@ local active = nil
 
 local VALID = Color3.fromHex("46C267")
 local INVALID = Color3.fromHex("E5484D")
+
+local PATH_SNAP_RANGE = 2.5
+local PATH_SNAP_HEIGHT = 6
+local FACE_INSET = 0.05
+local FLAT = Vector3.new(1, 0, 1)
 
 local function ghostify(inst)
 	Factory.forEachPart(inst, function(part)
@@ -90,6 +96,138 @@ local function evaluate(pivot, hit)
 	return true, nil
 end
 
+local function isPathDef(def)
+	return def ~= nil and def.periFolder == "Path" and def.role ~= Catalog.ROLE.NoBuild
+end
+
+local function boxOf(inst)
+	if inst:IsA("BasePart") then
+		return inst.CFrame, inst.Size
+	elseif inst:IsA("Model") then
+		return inst:GetBoundingBox()
+	end
+	return nil, nil
+end
+
+local function isWedge(part)
+	return part:IsA("WedgePart") or (part:IsA("Part") and part.Shape == Enum.PartType.Wedge)
+end
+
+local function topAt(inst, point)
+	local parts = {}
+	if inst:IsA("BasePart") then
+		table.insert(parts, inst)
+	end
+	for _, d in inst:GetDescendants() do
+		if d:IsA("BasePart") then
+			table.insert(parts, d)
+		end
+	end
+	local best = nil
+	for _, part in parts do
+		local cf = part.CFrame
+		if cf.UpVector.Y < 0.99 then
+			continue
+		end
+		local l = cf:PointToObjectSpace(point)
+		local half = part.Size / 2
+		if math.abs(l.X) <= half.X + 0.01 and math.abs(l.Z) <= half.Z + 0.01 then
+			local y = if isWedge(part) then (math.clamp(l.Z, -half.Z, half.Z) / part.Size.Z) * part.Size.Y else half.Y
+			local worldY = (cf * Vector3.new(l.X, y, l.Z)).Y
+			if not best or worldY > best then
+				best = worldY
+			end
+		end
+	end
+	return best
+end
+
+local function pathSnap(pivot)
+	if #active.items ~= 1 or not isPathDef(Catalog.get(active.items[1].t)) then
+		return nil
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt) then
+		return nil
+	end
+
+	local gcf, gsize = active.ghost:GetBoundingBox()
+	if gcf.UpVector.Y < 0.99 then
+		return nil
+	end
+	local gCenter = gcf.Position
+
+	local best, bestDist = nil, PATH_SNAP_RANGE
+	for id, rec in State.map.objects do
+		if not isPathDef(Catalog.get(rec.t)) then
+			continue
+		end
+		local inst = State.instanceFor(id)
+		if not inst then
+			continue
+		end
+		local ncf, nsize = boxOf(inst)
+		if not ncf or ncf.UpVector.Y < 0.99 then
+			continue
+		end
+		local reach = (gsize.Magnitude + nsize.Magnitude) / 2 + PATH_SNAP_RANGE
+		if ((ncf.Position - gCenter) * FLAT).Magnitude > reach then
+			continue
+		end
+
+		local look = ncf:ToObjectSpace(gcf).LookVector
+		local gx, gz
+		if math.abs(look.Z) > 0.999 then
+			gx, gz = gsize.X / 2, gsize.Z / 2
+		elseif math.abs(look.X) > 0.999 then
+			gx, gz = gsize.Z / 2, gsize.X / 2
+		else
+			continue
+		end
+
+		local lp = ncf:PointToObjectSpace(gCenter)
+		local here = Vector2.new(lp.X, lp.Z)
+		local nx, nz = nsize.X / 2, nsize.Z / 2
+		for _, side in { { "X", 1 }, { "X", -1 }, { "Z", 1 }, { "Z", -1 } } do
+			local axis, sign = side[1], side[2]
+			local target = if axis == "X" then Vector2.new(sign * (nx + gx), 0) else Vector2.new(0, sign * (nz + gz))
+			local d = (here - target).Magnitude
+			if d < bestDist then
+				bestDist = d
+				best = {
+					inst = inst,
+					ncf = ncf,
+					nsize = nsize,
+					axis = axis,
+					sign = sign,
+					target = target,
+					nHalf = if axis == "X" then nx else nz,
+					gHalf = if axis == "X" then gx else gz,
+				}
+			end
+		end
+	end
+	if not best then
+		return nil
+	end
+
+	local dirLocal = if best.axis == "X" then Vector3.new(best.sign, 0, 0) else Vector3.new(0, 0, best.sign)
+	local dirWorld = best.ncf:VectorToWorldSpace(dirLocal)
+
+	local nFace = best.ncf:PointToWorldSpace(dirLocal * (best.nHalf - FACE_INSET))
+	local nTop = topAt(best.inst, nFace) or (best.ncf.Position.Y + best.nsize.Y / 2)
+
+	local gFace = gCenter - dirWorld * (best.gHalf - FACE_INSET)
+	local gTop = topAt(active.ghost, gFace) or (gCenter.Y + gsize.Y / 2)
+	local relHeight = gTop - gCenter.Y
+
+	local targetWorld = best.ncf:PointToWorldSpace(Vector3.new(best.target.X, 0, best.target.Y))
+	local newCenter = Vector3.new(targetWorld.X, nTop - relHeight, targetWorld.Z)
+	if math.abs(newCenter.Y - gCenter.Y) > PATH_SNAP_HEIGHT then
+		return nil
+	end
+	return pivot + (newCenter - gCenter)
+end
+
 local function update()
 	if not active then
 		return
@@ -121,6 +259,7 @@ local function update()
 
 	if not surface then
 		active.valid, active.reason = false, "Point at a surface."
+		active.snapped = false
 		active.highlight.FillColor = INVALID
 		active.highlight.OutlineColor = INVALID
 		return
@@ -142,6 +281,14 @@ local function update()
 	local pivot = CFrame.new(world - up * bottom) * align * active.rotation
 
 	active.ghost:PivotTo(pivot)
+	active.snapped = false
+	local snappedPivot = pathSnap(pivot)
+	if snappedPivot then
+		pivot = snappedPivot
+		active.ghost:PivotTo(pivot)
+		active.snapped = true
+	end
+
 	active.pivot = pivot
 	active.valid, active.reason = evaluate(pivot, surface)
 	local color = active.valid and VALID or INVALID
@@ -159,6 +306,10 @@ end
 
 function Placement.reason()
 	return active and active.reason
+end
+
+function Placement.isSnapped()
+	return active ~= nil and active.snapped == true
 end
 
 function Placement.begin(items, info)
@@ -194,6 +345,7 @@ function Placement.begin(items, info)
 		highlight = highlight,
 		valid = false,
 		reason = nil,
+		snapped = false,
 		pivot = CFrame.identity,
 	}
 

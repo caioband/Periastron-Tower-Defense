@@ -11,6 +11,13 @@ local player = Players.LocalPlayer
 
 local State = {}
 
+State.GRID_PRESETS = { 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 50 }
+State.ROT_PRESETS = { 1, 5, 15, 30, 45, 90 }
+State.GRID_LIMITS = { min = 0.01, max = 512 }
+State.ROT_LIMITS = { min = 0.01, max = 360 }
+State.RESIZE_LIMITS = { min = 0.01, max = 512 }
+State.SCALE_LIMITS = { min = 0.01, max = 10 }
+
 State.active = false
 State.mode = "Build"
 State.origin = CFrame.identity
@@ -20,10 +27,14 @@ State.loading = false
 State.selection = {}
 State.tool = "Select"
 State.gridIndex = Config.DEFAULT_GRID_INDEX
+State.gridStep = Config.GRID_SIZES[Config.DEFAULT_GRID_INDEX] or 1
 State.gridOn = true
 State.snapY = false
 State.alignSurface = false
 State.rotIndex = Config.DEFAULT_ROTATION_INDEX
+State.rotDegrees = Config.ROTATION_STEPS[Config.DEFAULT_ROTATION_INDEX] or 15
+State.resizeStuds = State.gridStep
+State.scaleFactor = 0.1
 State.clipboard = nil
 State.recent = {}
 State.favourites = {}
@@ -40,12 +51,108 @@ function State.emit(what, ...)
 	State.Changed:Fire(what, ...)
 end
 
+local function cleanStep(value, limits)
+	if typeof(value) ~= "number" or value ~= value or math.abs(value) == math.huge then
+		return nil
+	end
+	return math.clamp(math.round(value * 1000) / 1000, limits.min, limits.max)
+end
+
 function State.gridSize()
-	return Config.GRID_SIZES[State.gridIndex]
+	return State.gridStep
 end
 
 function State.rotStep()
-	return Config.ROTATION_STEPS[State.rotIndex]
+	return State.rotDegrees
+end
+
+function State.resizeStep()
+	return State.resizeStuds
+end
+
+function State.scaleStep()
+	return State.scaleFactor
+end
+
+function State.setGridStep(value)
+	local step = cleanStep(value, State.GRID_LIMITS)
+	if not step then
+		return false
+	end
+	State.gridStep = step
+	State.gridOn = true
+	State.emit("settings")
+	return true
+end
+
+function State.setRotStep(value)
+	local step = cleanStep(value, State.ROT_LIMITS)
+	if not step then
+		return false
+	end
+	State.rotDegrees = step
+	State.emit("settings")
+	return true
+end
+
+function State.setResizeStep(value)
+	local step = cleanStep(value, State.RESIZE_LIMITS)
+	if not step then
+		return false
+	end
+	State.resizeStuds = step
+	State.emit("settings")
+	return true
+end
+
+function State.setScaleStep(value)
+	local step = cleanStep(value, State.SCALE_LIMITS)
+	if not step then
+		return false
+	end
+	State.scaleFactor = step
+	State.emit("settings")
+	return true
+end
+
+function State.stepGrid(direction)
+	local current = State.gridStep
+	local presets = State.GRID_PRESETS
+	local pick = nil
+	if direction > 0 then
+		for _, preset in presets do
+			if preset > current + 1e-6 then
+				pick = preset
+				break
+			end
+		end
+		pick = pick or presets[#presets]
+	else
+		for i = #presets, 1, -1 do
+			if presets[i] < current - 1e-6 then
+				pick = presets[i]
+				break
+			end
+		end
+		pick = pick or presets[1]
+	end
+	State.gridStep = pick
+	State.gridOn = true
+	State.emit("settings")
+end
+
+function State.stepRot()
+	local current = State.rotDegrees
+	local presets = State.ROT_PRESETS
+	local pick = presets[1]
+	for _, preset in presets do
+		if preset > current + 1e-6 then
+			pick = preset
+			break
+		end
+	end
+	State.rotDegrees = pick
+	State.emit("settings")
 end
 
 function State.sessionFolder()

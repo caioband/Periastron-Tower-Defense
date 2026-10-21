@@ -80,6 +80,10 @@ local PATH_PIECES = {
 	{ key = "Corner", label = "Corner" },
 	{ key = "TJunction", label = "T-Junction" },
 	{ key = "Ramp", label = "Ramp" },
+	{ key = "RaisedStraight", label = "Raised Straight" },
+	{ key = "RaisedTile", label = "Raised Tile" },
+	{ key = "RaisedCorner", label = "Raised Corner" },
+	{ key = "RaisedTJunction", label = "Raised T-Junction" },
 }
 
 for _, style in PATH_STYLES do

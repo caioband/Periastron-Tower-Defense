@@ -26,6 +26,7 @@ local UI = require(script.Parent.UI)
 local Maid = require(script.Parent.Maid)
 local Pointer = require(script.Parent.Pointer)
 local MobileControls = require(script.Parent.MobileControls)
+local Hotkeys = require(script.Parent.Hotkeys)
 
 local player = Players.LocalPlayer
 
@@ -44,6 +45,10 @@ local lastPlacementTap = nil
 
 local BOX_THRESHOLD = 6
 local TAP_CONFIRM_RADIUS = 36
+
+local function shiftDown()
+	return UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+end
 
 -- Server pushes ---------------------------------------------------------------
 
@@ -498,7 +503,7 @@ function Editor.setProperty(field, value)
 				copy.s[index] = clamped
 			end
 		elseif field == "sc" then
-			copy.sc = math.clamp(value, def.minScale or 0.25, def.maxScale or 4)
+			copy.sc = math.clamp(value, def.minScale or 0.25, def.maxScale or math.huge)
 		elseif field == "tr" then
 			copy.tr = math.clamp(value, 0, 0.95)
 		elseif field == "c" then
@@ -577,7 +582,7 @@ function Editor.routeAction(kind)
 		State.insertAfter = id
 		RouteView.markDirty()
 		Editor.selectCatalog(typeDef.id, true)
-		UI.toast("Placing " .. typeDef.name .. "s after the highlighted marker.", "info")
+		UI.toast("Placing " .. typeDef.name .. "s after the highlighted marker. Hold Shift to keep placing.", "info")
 	elseif kind == "unlink" then
 		RouteModel.remove(route, id)
 		Editor.change("Unlink waypoint", {}, {}, route)
@@ -727,7 +732,9 @@ local function confirmPlacement()
 			unique = true
 		end
 	end
-	if unique or info.kind ~= "catalog" then
+
+	local keepPlacing = shiftDown() or (Pointer.isTouch() and info.kind == "catalog")
+	if unique or not keepPlacing then
 		Placement.cancel()
 		local ids = {}
 		for _, rec in records do
@@ -1062,7 +1069,7 @@ local function onInputBegan(input, processed)
 	end
 	local keyCode = input.KeyCode
 	local ctrl = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
-	local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+	local shift = shiftDown()
 
 	if input.UserInputType == Enum.UserInputType.Keyboard then
 		if UserInputService:GetFocusedTextBox() then
@@ -1071,8 +1078,6 @@ local function onInputBegan(input, processed)
 		if keyCode == Enum.KeyCode.Escape then
 			if UI.modalOpen() then
 				UI.closeModal()
-			elseif Placement.isActive() then
-				Placement.cancel()
 			elseif State.towerMode then
 				State.towerMode = false
 				UI.setTowerMode(false)
@@ -1089,6 +1094,15 @@ local function onInputBegan(input, processed)
 		if State.mode ~= "Build" then
 			if keyCode == Enum.KeyCode.T then
 				Editor.toggleTowerMode()
+			elseif keyCode == Enum.KeyCode.X and State.towerMode then
+				State.towerMode = false
+				UI.setTowerMode(false)
+			end
+			return
+		end
+		if keyCode == Enum.KeyCode.X and not ctrl then
+			if Placement.isActive() then
+				Placement.cancel()
 			end
 			return
 		end
@@ -1194,7 +1208,7 @@ local function onInputEnded(input)
 	local start = boxStart
 	boxStart = nil
 	UI.setSelectionRect(nil)
-	local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+	local shift = shiftDown()
 	if boxMoved then
 		local ids = Selection.boxSelect(start, Pointer.location())
 		if shift then
@@ -1270,6 +1284,7 @@ local function frame(dt)
 	UI.update()
 	updateTowerGhost()
 	MobileControls.update()
+	Hotkeys.update()
 
 	if State.mode == "Build" and not placing and not touch and not BuildCamera.isLooking() and not Gizmos.isDragging() then
 		local mouse = Pointer.location()
@@ -1287,7 +1302,10 @@ local function frame(dt)
 		local reason = Placement.reason()
 		local base = if touch
 			then "Tap to move  |  Tap it again or Place to confirm  |  Turn/Tilt to rotate"
-			else "Click to place  |  Q/E rotate  |  Shift+Q/E tilt  |  Esc cancel"
+			else "Click to place  |  Shift+Click to place more  |  Q/E rotate  |  Alt free place  |  X cancel"
+		if Placement.isSnapped() then
+			base = "Snapped to path  |  " .. base
+		end
 		if State.insertAfter then
 			base = "Placing waypoints after the highlighted one  |  " .. base
 		end
@@ -1297,7 +1315,7 @@ local function frame(dt)
 			UI.setHint(base)
 		end
 	elseif State.towerMode and State.mode == "Playtest" then
-		UI.setHint(if touch then "Tap the map to place a test tower" else "Click to place a test tower  |  Esc to stop")
+		UI.setHint(if touch then "Tap the map to place a test tower" else "Click to place a test tower  |  X to stop")
 	elseif State.loading then
 		UI.setHint("Loading map...")
 	else
@@ -1389,7 +1407,7 @@ function Editor.enter()
 	if MobileControls.isSupported() and Pointer.isTouch() then
 		UI.toast("Map editor ready. Drag to look, two fingers to pan, pinch to zoom.", "info")
 	else
-		UI.toast("Map editor ready. Press H for controls.", "info")
+		UI.toast("Map editor ready. Hotkeys are on the right.", "info")
 	end
 end
 
@@ -1402,6 +1420,7 @@ local function teardown()
 	maid:Clean()
 	BuildCamera.disable()
 	MobileControls.setActive(false)
+	Hotkeys.hide()
 	State.active = false
 	State.mode = "Build"
 	State.towerMode = false
@@ -1433,6 +1452,9 @@ function Editor.exit(force)
 end
 
 function Editor.setTool(tool)
+	if Placement.isActive() then
+		Placement.cancel()
+	end
 	State.tool = tool
 	UI.refreshToolbar()
 end
@@ -1443,13 +1465,12 @@ function Editor.toggleGrid()
 end
 
 function Editor.cycleGrid(direction)
-	State.gridIndex = math.clamp(State.gridIndex + direction, 1, #Config.GRID_SIZES)
-	State.gridOn = true
+	State.stepGrid(direction)
 	UI.refreshToolbar()
 end
 
 function Editor.cycleRot()
-	State.rotIndex = State.rotIndex % #Config.ROTATION_STEPS + 1
+	State.stepRot()
 	UI.refreshToolbar()
 end
 
@@ -1584,6 +1605,8 @@ function Editor.init()
 		exportPeri = Editor.exportPeri,
 		focusIssue = Editor.focusIssue,
 	})
+
+	Hotkeys.init()
 
 	State.Changed:Connect(function(what)
 		if what == "map" then
