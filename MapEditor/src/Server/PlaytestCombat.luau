@@ -43,6 +43,7 @@ local CASH_PER_KILL_MIN = Data.CASH_PER_KILL_MIN or 6
 local CASH_PER_KILL_MAX = Data.CASH_PER_KILL_MAX or 12
 
 local PIERCE_WIDTH = 2
+local AURA_VFX_COOLDOWN = 0.35
 local BONFIRE_IDLE_SCAN_INTERVAL = 0.1
 local DEFAULT_CONTACT_RADIUS = 1.5
 local DEFAULT_STACK_PER_MODE = 4
@@ -342,6 +343,7 @@ local function applyFrost(state, enemy, frost, sourceTower)
 		enemy.slowScale = 1
 		refreshSpeed(enemy)
 		stunEnemy(state, enemy, duration)
+		hook(state, "fx", { kind = "iced", mob = enemy.id, duration = duration })
 		return
 	end
 
@@ -368,6 +370,7 @@ local function applyStatic(state, enemy, static, stun: number?)
 	enemy.static = static
 	enemy.staticStun = math.max(0, stun or 0)
 	if charged then
+		hook(state, "fx", { kind = "static", mob = enemy.id, remaining = duration, burst = true })
 		return
 	end
 	enemy.staticToken = (enemy.staticToken or 0) + 1
@@ -377,10 +380,12 @@ local function applyStatic(state, enemy, static, stun: number?)
 		if not live(state, enemy) or enemy.staticToken ~= token then
 			return
 		end
-		if (enemy.staticUntil or 0) - GameClock.Now() <= 0 then
+		local remaining = (enemy.staticUntil or 0) - GameClock.Now()
+		if remaining <= 0 then
 			return
 		end
 		stunEnemy(state, enemy, enemy.staticStun)
+		hook(state, "fx", { kind = "static", mob = enemy.id, remaining = remaining, burst = true })
 		GameClock.Delay(interval, pulse)
 	end
 	pulse()
@@ -619,6 +624,7 @@ local function damageOverTime(state, enemy, damage: number?, ticks: number?, int
 	if kind.vulnerability then
 		enemy.bleedVulnerability = math.max(1, kind.vulnerability)
 	end
+	hook(state, "fx", { kind = kind.fx, mob = enemy.id, duration = tickCount * every })
 	task.spawn(function()
 		for _ = 1, tickCount do
 			GameClock.Wait(every)
@@ -881,6 +887,12 @@ local function creditDamage(state, tower, enemy, damage: number, bonus: number):
 	local dealt = damageEnemy(state, enemy, damage, WeatherConfig.GetClasses(tower.name), bonus, 1)
 	addDamageDone(tower, dealt)
 
+	-- UnitService:playAuraVFX: the money burst, at most once per AURA_VFX_COOLDOWN.
+	if dealt > 0 and bonus > 0 and os.clock() - (tower.lastAuraVFX or 0) >= AURA_VFX_COOLDOWN then
+		tower.lastAuraVFX = os.clock()
+		hook(state, "fx", { kind = "auraBonus", unit = tower.id })
+	end
+
 	if necromancyVictim and dealt > 0 and not enemy.alive then
 		tryConvert(state, tower, necromancyVictim)
 	end
@@ -896,12 +908,14 @@ local function creditDamage(state, tower, enemy, damage: number, bonus: number):
 		damageOverTime(state, enemy, stats.Burn.Damage, stats.Burn.Ticks, stats.Burn.Interval, {
 			untilKey = "burningUntil",
 			class = "Fire",
+			fx = "burning",
 		})
 	end
 	if stats.Bleed then
 		damageOverTime(state, enemy, stats.Bleed.Damage, stats.Bleed.Ticks, stats.Bleed.Interval, {
 			untilKey = "bleedingUntil",
 			class = "Melee",
+			fx = "bleeding",
 			vulnerability = stats.Bleed.Vulnerability or 1,
 		})
 	end
@@ -987,7 +1001,7 @@ local function executeCombo(state, tower, stats, step, target)
 				return
 			end
 			local fallTime = combo.FallTime or 1
-			hook(state, "meteor", tower, startPos, fallTime, combo.Height or 15)
+			hook(state, "meteor", tower, startPos, fallTime, combo.Height or 15, target)
 			local impact, remaining = startPos, fallTime
 			while remaining > 0 do
 				local wait = math.min(0.1, remaining)
@@ -1000,7 +1014,6 @@ local function executeCombo(state, tower, stats, step, target)
 			for _, enemy in inRadius(state, impact, radius) do
 				creditHit(state, tower, hits, enemy, damage, bonus)
 			end
-			hook(state, "blast", impact, radius)
 		elseif step.Combo == "Lightning" then
 			local through = targetPosition() or aimPos
 			if not through then
@@ -1106,9 +1119,13 @@ local function executeAttack(state, tower, stats, target)
 
 			local hits = {}
 			if chain and resolved then
+				-- The bolt the client draws: each link where it stood before the damage.
+				local arc = { unitId = tower.id, origin = origin, targets = {} }
 				for _, enemy in chainTargets(state, resolved, chain.Targets, chain.Radius) do
+					table.insert(arc.targets, { mobId = enemy.id, position = positionOf(state, enemy) })
 					creditHit(state, tower, hits, enemy, hitDamage, bonus)
 				end
+				hook(state, "fx", { kind = "chain", arc = arc })
 			elseif aoe then
 				for _, enemy in inRadius(state, predicted or origin, aoe.Radius) do
 					creditHit(state, tower, hits, enemy, hitDamage, bonus)
@@ -1133,7 +1150,7 @@ local function executeAttack(state, tower, stats, target)
 				creditHit(state, tower, hits, resolved, hitDamage, bonus)
 			end
 
-			hook(state, "shot", tower, hits, chain ~= nil)
+			hook(state, "shot", tower, hits, resolved or target)
 
 			if i < totalHits then
 				GameClock.Wait(schedule and (schedule[i + 1] - schedule[i]) or stats.HitInterval)
@@ -1212,7 +1229,13 @@ local function stepTripminer(state, tower, stats, now: number)
 	local sequence = attackConfig and attackConfig.AttackSequence
 	local windup = sequence and sequence[1] and sequence[1].HitTime or 0
 	local throwTime = config.ThrowTime or 0
-	local mine = { position = position, tower = tower }
+	state.nextMineId = (state.nextMineId or 0) + 1
+	local mine = {
+		id = state.nextMineId,
+		position = position,
+		cf = CFrame.new(position) * CFrame.Angles(0, math.random() * math.pi * 2, 0),
+		tower = tower,
+	}
 
 	hook(state, "swing", tower, 1, cooldown, nil)
 
@@ -1262,7 +1285,6 @@ local function stepTripmines(state, now: number)
 				creditDamage(state, tower, enemy, damage, bonus)
 			end
 			hook(state, "mineRemoved", mine, true)
-			hook(state, "blast", mine.position, radius)
 		end
 	end
 end
@@ -1447,8 +1469,12 @@ local function stepSlowAuras(state, now: number)
 	for _, enemy in state.enemies do
 		local scale = 1 - math.clamp(slows[enemy] or 0, 0, 0.95)
 		if scale ~= enemy.auraSlowScale then
+			local wasSlowed = enemy.auraSlowScale < 1
 			enemy.auraSlowScale = scale
 			refreshSpeed(enemy)
+			if (scale < 1) ~= wasSlowed then
+				hook(state, "fx", { kind = "auraSlow", mob = enemy.id, on = scale < 1 })
+			end
 		end
 	end
 end

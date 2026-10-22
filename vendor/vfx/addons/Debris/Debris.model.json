@@ -1,0 +1,114 @@
+{
+  "className": "Part",
+  "properties": {
+    "Size": [0.029999999329447746, 0.029999999329447746, 0.029999999329447746],
+    "Color": [0.6392157077789307, 0.6352941393852234, 0.6470588445663452],
+    "Material": "Plastic",
+    "Transparency": 0,
+    "Reflectance": 0,
+    "Anchored": false,
+    "CanCollide": true,
+    "CanQuery": false,
+    "CanTouch": true,
+    "CastShadow": true,
+    "Massless": false,
+    "Shape": "Block",
+    "TopSurface": "Smooth",
+    "BottomSurface": "Smooth",
+    "Locked": false,
+    "Tags": { "Tags": ["OneTimeVFX", "SequencedVFX"] }
+  },
+  "attributes": {
+    "EmitDuration": { "NumberRange": [4, 6] },
+    "Size_Value": { "Vector3": [3, 3, 3] },
+    "Size_Sequence": {
+      "NumberSequence": {
+        "keypoints": [
+          { "time": 0, "value": 7.0000000960135367e-06, "envelope": 1.0004501342773438 },
+          { "time": 0.024574797600507736, "value": 0.44732046127319336, "envelope": 1 },
+          { "time": 0.066321738064289093, "value": 0.90558123588562012, "envelope": 1 },
+          { "time": 0.13386142253875732, "value": 1.3424938917160034, "envelope": 1 },
+          { "time": 0.2329317033290863, "value": 1.7046995162963867, "envelope": 1 },
+          { "time": 0.36013171076774597, "value": 1.9300796985626221, "envelope": 1 },
+          { "time": 0.50226247310638428, "value": 2, "envelope": 1.0004546642303467 },
+          { "time": 0.51056987047195435, "value": 1.9998428821563721, "envelope": 1 },
+          { "time": 0.61253666877746582, "value": 1.9690171480178833, "envelope": 1 },
+          { "time": 0.71147161722183228, "value": 1.8727223873138428, "envelope": 1 },
+          { "time": 0.80197656154632568, "value": 1.6955357789993286, "envelope": 1 },
+          { "time": 0.87698185443878174, "value": 1.436143159866333, "envelope": 1 },
+          { "time": 0.93221896886825562, "value": 1.1142425537109375, "envelope": 1 },
+          { "time": 0.96869087219238281, "value": 0.7564089298248291, "envelope": 1 },
+          { "time": 0.99007254838943481, "value": 0.38161039352416992, "envelope": 1 },
+          { "time": 1, "value": 2.7000000045518391e-05, "envelope": 1 }
+        ]
+      }
+    }
+  },
+  "children": [
+    {
+      "name": "0",
+      "className": "Attachment",
+      "properties": {
+        "CFrame": { "CFrame": { "position": [1.5, 0, 0], "orientation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]] } },
+        "Visible": false
+      },
+      "attributes": { "Rojo_Id": "vfx-debris-attachment-0" }
+    },
+    {
+      "name": "1",
+      "className": "Attachment",
+      "properties": {
+        "CFrame": { "CFrame": { "position": [-1.5, 0, 0], "orientation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]] } },
+        "Visible": false
+      },
+      "attributes": { "Rojo_Id": "vfx-debris-attachment-1" }
+    },
+    {
+      "name": "Trail",
+      "className": "Trail",
+      "properties": {
+        "Color": {
+          "ColorSequence": {
+            "keypoints": [
+              { "time": 0, "color": [1, 1, 1] },
+              { "time": 1, "color": [1, 1, 1] }
+            ]
+          }
+        },
+        "Transparency": {
+          "NumberSequence": {
+            "keypoints": [
+              { "time": 0, "value": 1.0000070333480835, "envelope": 0 },
+              { "time": 0.50226247310638428, "value": 0, "envelope": 0 },
+              { "time": 1, "value": 1.0000170469284058, "envelope": 0 }
+            ]
+          }
+        },
+        "WidthScale": {
+          "NumberSequence": {
+            "keypoints": [
+              { "time": 0, "value": 0, "envelope": 0 },
+              { "time": 0.53613448143005371, "value": 1, "envelope": 0 },
+              { "time": 1, "value": 0, "envelope": 0 }
+            ]
+          }
+        },
+        "Lifetime": 1,
+        "MinLength": 0,
+        "MaxLength": 0,
+        "FaceCamera": false,
+        "LightEmission": 0,
+        "LightInfluence": 1,
+        "Brightness": 1,
+        "Texture": "",
+        "TextureLength": 1,
+        "TextureMode": "Stretch",
+        "Enabled": false
+      },
+      "attributes": {
+        "Rojo_Target_Attachment0": "vfx-debris-attachment-0",
+        "Rojo_Target_Attachment1": "vfx-debris-attachment-1"
+      }
+    }
+  ]
+}

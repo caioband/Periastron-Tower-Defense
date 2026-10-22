@@ -416,6 +416,10 @@ local function spawnEnemy(state, entry, routeIndex: number, waveNumber: number)
 		lift = 1.2
 	end
 	model.Name = entry.Entity
+	-- How the client's PlaytestVFX finds this enemy's model (the match's mobId).
+	state.nextEnemyId += 1
+	local id = state.nextEnemyId
+	model:SetAttribute("PlaytestEnemyId", id)
 	local root = rig(model) :: BasePart
 	root.CFrame = CFrame.new(start + Vector3.new(0, lift, 0))
 	model.Parent = state.enemiesFolder
@@ -434,6 +438,7 @@ local function spawnEnemy(state, entry, routeIndex: number, waveNumber: number)
 	-- entity's own, which the per-damage cash divides by.
 	local health = math.max(1, math.floor((entry.Health or (reference and reference.Health) or 1) + 0.5))
 	local enemy = {
+		id = id,
 		model = model,
 		root = root,
 		name = entry.Entity,
@@ -470,54 +475,13 @@ local function removeEnemy(state, enemy)
 end
 
 -- Effects --------------------------------------------------------------------------
--- The match draws these on the client (Unit, VFXController, ProjectileController),
--- which the editor does not load; the playtest draws a plain stand-in from the
--- server at the instant the damage lands.
+-- The match draws attacks on the client (Unit, VFXController, ProjectileController,
+-- TripmineController, BonfireController). The playtest says what happened through
+-- the `PlaytestFx` push, and the client's PlaytestVFX plays it through those same
+-- controllers; enemies and towers carry ids so it can find their models.
 
-local function flash(from: Vector3, to: Vector3, parent: Instance, color: Color3, duration: number?, width: number?)
-	local beam = Instance.new("Part")
-	beam.Name = "Shot"
-	inert(beam)
-	beam.Material = Enum.Material.Neon
-	beam.Color = color
-	local length = (to - from).Magnitude
-	local w = width or 0.15
-	beam.Size = Vector3.new(w, w, math.max(length, 0.05))
-	beam.CFrame = CFrame.lookAt(from, to) * CFrame.new(0, 0, -length / 2)
-	beam.Parent = parent
-	task.delay(duration or 0.08, function()
-		beam:Destroy()
-	end)
-end
-
-local CLASS_COLORS = {
-	Ranged = Color3.fromHex("F5CD30"),
-	Melee = Color3.fromHex("FFFFFF"),
-	Magic = Color3.fromHex("B48CFF"),
-	Fire = Color3.fromHex("FF7A2F"),
-	Ice = Color3.fromHex("8FE3FF"),
-	Electric = Color3.fromHex("FFF36B"),
-}
-
-local function classColor(unitName: string): Color3
-	local class = UnitStats[unitName] and UnitStats[unitName].Class
-	if typeof(class) == "table" then
-		class = class[1]
-	end
-	return CLASS_COLORS[class or ""] or Color3.fromHex("F5CD30")
-end
-
-local function sphere(position: Vector3, diameter: number, color: Color3, parent: Instance): Part
-	local part = Instance.new("Part")
-	part.Name = "Effect"
-	part.Shape = Enum.PartType.Ball
-	inert(part)
-	part.Material = Enum.Material.Neon
-	part.Color = color
-	part.Size = Vector3.one * diameter
-	part.CFrame = CFrame.new(position)
-	part.Parent = parent
-	return part
+local function fx(state, payload)
+	state.session.push("PlaytestFx", payload)
 end
 
 local function flatDistance(a: Vector3, b: Vector3): number
@@ -635,30 +599,14 @@ local function bonfireVisual(tower)
 	end
 end
 
-local function updateBeams(state)
+-- A burning Bonfire keeps turning to its target (BonfireController's setTarget); the
+-- beam itself is drawn by the client.
+local function faceBonfires(state)
 	for _, tower in state.towers do
 		local bonfire = tower.bonfire
 		local target = bonfire and bonfire.state == "Fire" and bonfire.target
 		if target and target.alive and target.root then
-			local beam = tower.beamPart
-			if not beam then
-				beam = Instance.new("Part")
-				beam.Name = "Beam"
-				inert(beam)
-				beam.Material = Enum.Material.Neon
-				beam.Color = classColor(tower.name)
-				beam.Parent = state.effectsFolder
-				tower.beamPart = beam
-			end
-			local from, to = tower.origin, target.root.Position
-			local length = (to - from).Magnitude
-			local width = 0.25 + 0.15 * ((bonfire.stage or 1) - 1)
-			beam.Size = Vector3.new(width, width, math.max(length, 0.05))
-			beam.CFrame = CFrame.lookAt(from, to) * CFrame.new(0, 0, -length / 2)
-			face(tower, to)
-		elseif tower.beamPart then
-			tower.beamPart:Destroy()
-			tower.beamPart = nil
+			face(tower, target.root.Position)
 		end
 	end
 end
@@ -684,71 +632,49 @@ local function combatHooks(state)
 			end
 		end,
 
+		fx = function(payload)
+			fx(state, payload)
+		end,
+
+		-- UnitSwing: the client fires the projectile and attack VFX on the same windup.
 		swing = function(tower, stepIndex, window, target)
 			playSwing(state, tower, stepIndex, window, target)
+			fx(state, { kind = "swing", unit = tower.id, mob = target and target.id, step = stepIndex, window = window })
 		end,
 
-		shot = function(tower, hits, chained)
-			if not tower.model.Parent then
-				return
-			end
-			local color = classColor(tower.name)
-			local from = tower.origin
-			for _, position in hits do
-				flash(from, position, state.effectsFolder, color)
-				if chained then
-					from = position
-				end
+		-- AttackVisual: where `OnHit` effects (the Rocket's explosion) go off.
+		shot = function(tower, hits, target)
+			if target then
+				fx(state, { kind = "hit", unit = tower.id, mob = target.id, position = hits[1] })
 			end
 		end,
 
-		lightning = function(tower, through, range, window)
-			local heading = (through - tower.origin) * Vector3.new(1, 0, 1)
-			if heading.Magnitude > 1e-3 then
-				flash(tower.origin, tower.origin + heading.Unit * range, state.effectsFolder, classColor(tower.name), window, 0.6)
-			end
+		lightning = function(tower, through, _range, window)
+			fx(state, { kind = "archLightning", unit = tower.id, through = through, duration = window })
 		end,
 
-		meteor = function(tower, position, fallTime, height)
-			local ball = sphere(position + Vector3.new(0, height, 0), 2.5, Color3.fromHex("FF7A2F"), state.effectsFolder)
-			TweenService:Create(ball, TweenInfo.new(fallTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-				CFrame = CFrame.new(position),
-			}):Play()
-			task.delay(fallTime, function()
-				ball:Destroy()
-			end)
+		meteor = function(tower, position, fallTime, height, target)
+			fx(state, { kind = "meteor", unit = tower.id, aim = position, fallTime = fallTime, height = height, mob = target and target.id })
 		end,
 
-		blast = function(position, radius)
-			local ring = sphere(position, radius * 2, Color3.fromHex("FFB347"), state.effectsFolder)
-			ring.Transparency = 0.7
-			task.delay(0.15, function()
-				ring:Destroy()
-			end)
+		mineThrown = function(mine, throwTime)
+			fx(state, { kind = "mineThrown", unit = mine.tower.id, mine = mine.id, cf = mine.cf, throwTime = throwTime })
 		end,
 
-		mineThrown = function(mine, _throwTime)
-			local part = Instance.new("Part")
-			part.Name = "Tripmine"
-			part.Shape = Enum.PartType.Cylinder
-			inert(part)
-			part.Material = Enum.Material.Neon
-			part.Color = Color3.fromHex("B48CFF")
-			part.Size = Vector3.new(0.3, 1.6, 1.6)
-			part.CFrame = CFrame.new(mine.position) * CFrame.Angles(0, 0, math.pi / 2)
-			part.Parent = state.effectsFolder
-			mine.part = part
-		end,
-
-		mineRemoved = function(mine, _exploded)
-			if mine.part then
-				mine.part:Destroy()
-				mine.part = nil
-			end
+		mineRemoved = function(mine, exploded)
+			fx(state, { kind = "mineGone", unit = mine.tower.id, mine = mine.id, exploded = exploded })
 		end,
 
 		bonfire = function(tower)
 			bonfireVisual(tower)
+			local bonfire = tower.bonfire
+			fx(state, {
+				kind = "bonfire",
+				unit = tower.id,
+				state = if bonfire and tower.placed then bonfire.state else "Idle",
+				stage = bonfire and bonfire.stage or 1,
+				mob = bonfire and bonfire.target and bonfire.target.id,
+			})
 		end,
 
 		towerStunned = function(tower, duration)
@@ -943,7 +869,7 @@ local function step(state, dt: number)
 
 	state.frame += 1
 	PlaytestCombat.step(state, dt, combatNow)
-	updateBeams(state)
+	faceBonfires(state)
 
 	settleWaves(state)
 
@@ -1044,6 +970,7 @@ function PlaytestService.start(session: Session): (boolean, any)
 		enemies = {},
 		towers = {},
 		nextTowerId = 0,
+		nextEnemyId = 0,
 		phase = "Setup",
 		preset = nil,
 		wave = 0,
@@ -1280,6 +1207,7 @@ function PlaytestService.placeTower(session: Session, raw: any, unitName: any): 
 	PlaytestCombat.initTower(tower)
 	refreshTowerStats(tower)
 	table.insert(state.towers, tower)
+	fx(state, { kind = "place", unit = id })
 	push(state)
 	return true, nil
 end
@@ -1363,9 +1291,6 @@ function PlaytestService.sellTower(session: Session, id: any): (boolean, string?
 	local refund = math.floor(UnitUpgradeConfig:GetInvested(tower.name, tower.level) * SELL_RATIO)
 	table.remove(state.towers, index)
 	PlaytestCombat.removeTower(state, tower)
-	if tower.beamPart then
-		tower.beamPart:Destroy()
-	end
 	tower.model:Destroy()
 	state.cash += refund
 	push(state)

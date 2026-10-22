@@ -26,6 +26,9 @@ local player = Players.LocalPlayer
 local Shared = ReplicatedStorage:WaitForChild("MapEditor")
 local Config = require(Shared:WaitForChild("Config"))
 local TowerFootprint = require(Shared:WaitForChild("TowerFootprint"))
+-- Plays the match's attack effects from the server's PlaytestFx pushes. Loaded on
+-- its own thread: the Game's controllers it requires must never hold up this UI.
+task.spawn(require, script.Parent:WaitForChild("PlaytestVFX"))
 local Remotes = Shared:WaitForChild("Remotes")
 local Request = Remotes:WaitForChild("Request")
 local Push = Remotes:WaitForChild("Push")

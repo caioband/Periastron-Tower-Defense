@@ -15,6 +15,10 @@
         "$path": "../vendor/ReplicaShared"
       },
 
+      "vfx": {
+        "$path": "../vendor/vfx"
+      },
+
       "MapEditor": {
         "$path": "../common/mapeditor"
       },
@@ -78,8 +82,23 @@
         "$className": "StarterPlayerScripts",
         "$ignoreUnknownInstances": true,
 
+        "Client": {
+          "$className": "Folder",
+
+          "Controllers": { "$className": "Folder" }
+        },
+
         "MapEditor": {
-          "$path": "src/ClientBoot"
+          "$path": "src/ClientBoot",
+
+          "GameVFX": {
+            "$className": "Folder",
+
+            "VFXController": { "$path": "../Game/src/Controllers/VFXController.luau" },
+            "ProjectileController": { "$path": "../Game/src/Controllers/ProjectileController.luau" },
+            "TripmineController": { "$path": "../Game/src/Controllers/TripmineController.luau" },
+            "BonfireController": { "$path": "../Game/src/Controllers/BonfireController.luau" }
+          }
         }
       }
     }
