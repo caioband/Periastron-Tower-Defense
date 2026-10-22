@@ -128,11 +128,6 @@ end
 
 local function actionsFor()
 	if State.mode == "Playtest" then
-		if State.towerMode then
-			return "tower", {
-				{ "Stop Towers", handlers.exitTowerMode, "danger" },
-			}
-		end
 		return "playtest", {}
 	end
 

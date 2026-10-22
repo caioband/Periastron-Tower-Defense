@@ -66,21 +66,6 @@ Config.VALIDATION = {
 	MinSpawnBaseDistance = 4,
 }
 
-Config.PLAYTEST = {
-	EnemyCount = 12,
-	EnemySpacing = 1.25,
-	EnemySpeed = 8,
-	EnemyHealth = 12,
-	EnemySize = Vector3.new(1.6, 2.4, 1.6),
-	BaseHealth = 20,
-	TowerSize = Vector3.new(2, 3, 2),
-	TowerRange = 18,
-	TowerDamage = 4,
-	TowerCooldown = 0.5,
-	TowerMinSpacing = 2.5,
-	MaxTowers = 12,
-}
-
 Config.MATERIALS = {
 	"Plastic", "SmoothPlastic", "Wood", "WoodPlanks", "Slate", "Concrete", "Brick", "Cobblestone",
 	"Granite", "Marble", "Grass", "LeafyGrass", "Ground", "Sand", "Sandstone", "Rock", "Basalt",

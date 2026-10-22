@@ -1,4 +1,3 @@
-local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -12,7 +11,6 @@ local Serializer = require(Shared.Serializer)
 local RouteModel = require(Shared.RouteModel)
 local MapRules = require(Shared.MapRules)
 local Factory = require(Shared.InstanceFactory)
-local PlacementUtil = require(Shared.PlacementUtil)
 
 local State = require(script.Parent.State)
 local Net = require(script.Parent.Net)
@@ -37,7 +35,6 @@ local requestInFlight = false
 local pendingSnapshot = nil
 local boxStart = nil
 local boxMoved = false
-local towerGhost = nil
 local excludeClock = 0
 local savedOnce = false
 local memoryWarned = false
@@ -747,92 +744,8 @@ end
 
 -- Playtest ------------------------------------------------------------------------
 
-local function destroyTowerGhost()
-	if towerGhost then
-		towerGhost:Destroy()
-		towerGhost = nil
-	end
-end
-
-local function towerProbe()
-	local mapRoot = workspace:FindFirstChild("Map")
-	if not mapRoot then
-		return nil
-	end
-	local camera = workspace.CurrentCamera
-	local mouse = Pointer.location()
-	local ray = camera:ViewportPointToRay(mouse.X, mouse.Y)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Include
-	params.FilterDescendantsInstances = { mapRoot }
-	local hit = workspace:Raycast(ray.Origin, ray.Direction * 3000, params)
-	if not hit then
-		return nil
-	end
-	local size = Config.PLAYTEST.TowerSize
-	local cf = CFrame.new(hit.Position + Vector3.new(0, size.Y / 2, 0))
-	local probeCF, probeSize = PlacementUtil.PathProbe(cf, size)
-	local grid = {}
-	for _, part in CollectionService:GetTagged(Config.PERI.GridTag) do
-		if part:IsDescendantOf(mapRoot) then
-			table.insert(grid, part)
-		end
-	end
-	local overlap = OverlapParams.new()
-	overlap.FilterType = Enum.RaycastFilterType.Include
-	overlap.FilterDescendantsInstances = grid
-	local onPath = #workspace:GetPartBoundsInBox(probeCF, probeSize, overlap) > 0
-	return hit.Position, cf, not onPath
-end
-
-local function updateTowerGhost()
-	if not State.towerMode or State.mode ~= "Playtest" then
-		destroyTowerGhost()
-		return
-	end
-	if not towerGhost then
-		towerGhost = Instance.new("Part")
-		towerGhost.Name = "EditorTowerGhost"
-		towerGhost.Size = Config.PLAYTEST.TowerSize
-		towerGhost.Anchored = true
-		towerGhost.CanCollide = false
-		towerGhost.CanQuery = false
-		towerGhost.CanTouch = false
-		towerGhost.Material = Enum.Material.Neon
-		towerGhost.Transparency = 0.5
-		towerGhost.Parent = workspace.CurrentCamera
-	end
-	local _, cf, free = towerProbe()
-	if cf then
-		towerGhost.CFrame = cf
-		towerGhost.Color = free and UI.THEME.Ok or UI.THEME.Danger
-		towerGhost.Transparency = 0.5
-	else
-		towerGhost.Transparency = 1
-	end
-end
-
-local function placeTower()
-	local position, _, free = towerProbe()
-	if not position then
-		UI.toast("Point at the map.", "warn")
-		return
-	end
-	if not free then
-		UI.toast("On the path: Peri refuses towers here.", "warn")
-		return
-	end
-	local response = Net.request("PlaytestTower", { position = Serializer.vec(position) })
-	if not response.ok then
-		UI.toast(response.err, "warn")
-	end
-end
-
 function Editor.leavePlaytestLocally()
 	State.mode = "Build"
-	State.towerMode = false
-	destroyTowerGhost()
-	UI.setTowerMode(false)
 	UI.setMode("Build")
 	RouteView.markDirty()
 end
@@ -1103,9 +1016,6 @@ local function onInputBegan(input, processed)
 		if keyCode == Enum.KeyCode.Escape then
 			if UI.modalOpen() then
 				UI.closeModal()
-			elseif State.towerMode then
-				State.towerMode = false
-				UI.setTowerMode(false)
 			else
 				State.insertAfter = nil
 				RouteView.markDirty()
@@ -1116,13 +1026,8 @@ local function onInputBegan(input, processed)
 		if processed or UI.modalOpen() then
 			return
 		end
+		-- Playtest input (tower cards, upgrade card) belongs to MapEditorPlaytest.
 		if State.mode ~= "Build" then
-			if keyCode == Enum.KeyCode.T then
-				Editor.toggleTowerMode()
-			elseif keyCode == Enum.KeyCode.X and State.towerMode then
-				State.towerMode = false
-				UI.setTowerMode(false)
-			end
 			return
 		end
 		if keyCode == Enum.KeyCode.X and not ctrl then
@@ -1190,9 +1095,6 @@ local function onInputBegan(input, processed)
 			return
 		end
 		if State.mode == "Playtest" then
-			if State.towerMode then
-				placeTower()
-			end
 			return
 		end
 		if Placement.isActive() then
@@ -1266,9 +1168,6 @@ local function onTap(position)
 	Pointer.setTouch(position)
 
 	if State.mode == "Playtest" then
-		if State.towerMode then
-			placeTower()
-		end
 		return
 	end
 
@@ -1307,7 +1206,6 @@ local function frame(dt)
 	Gizmos.update(placing)
 	RouteView.update()
 	UI.update()
-	updateTowerGhost()
 	MobileControls.update()
 	Hotkeys.update()
 
@@ -1339,8 +1237,6 @@ local function frame(dt)
 		else
 			UI.setHint(base)
 		end
-	elseif State.towerMode and State.mode == "Playtest" then
-		UI.setHint(if touch then "Tap the map to place a test tower" else "Click to place a test tower  |  X to stop")
 	elseif State.loading then
 		UI.setHint("Loading map...")
 	else
@@ -1414,9 +1310,6 @@ function Editor.enter()
 	maid:Give(BuildCamera.RightClick:Connect(function()
 		if Placement.isActive() then
 			Placement.cancel()
-		elseif State.towerMode then
-			State.towerMode = false
-			UI.setTowerMode(false)
 		end
 	end))
 	watchSession()
@@ -1441,14 +1334,12 @@ local function teardown()
 	Gizmos.cancel()
 	Gizmos.hide()
 	Selection.clear()
-	destroyTowerGhost()
 	maid:Clean()
 	BuildCamera.disable()
 	MobileControls.setActive(false)
 	Hotkeys.hide()
 	State.active = false
 	State.mode = "Build"
-	State.towerMode = false
 	State.selection = {}
 	State.insertAfter = nil
 	lastPlacementTap = nil
@@ -1507,14 +1398,6 @@ end
 function Editor.toggleAlign()
 	State.alignSurface = not State.alignSurface
 	UI.refreshToolbar()
-end
-
-function Editor.toggleTowerMode()
-	if State.mode ~= "Playtest" then
-		return
-	end
-	State.towerMode = not State.towerMode
-	UI.setTowerMode(State.towerMode)
 end
 
 function Editor.spawnWave()
@@ -1579,10 +1462,6 @@ function Editor.init()
 			RouteView.markDirty()
 			State.clearSelection()
 		end,
-		exitTowerMode = function()
-			State.towerMode = false
-			UI.setTowerMode(false)
-		end,
 	})
 
 	UI.init({
@@ -1604,7 +1483,6 @@ function Editor.init()
 		startTest = Editor.startTest,
 		stopTest = Editor.stopTest,
 		spawnWave = Editor.spawnWave,
-		toggleTowerMode = Editor.toggleTowerMode,
 		selectCatalog = function(typeId)
 			Editor.selectCatalog(typeId, false)
 		end,

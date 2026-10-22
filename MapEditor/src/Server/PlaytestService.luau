@@ -13,11 +13,12 @@
 	difficulty (Endless included) spawns exactly what its table says, with the
 	real health, speed, reward and spawn delays. Enemies and towers are the models
 	in ReplicatedStorage.Shared.Assets, and enemies wear the game's own health bar
-	(Assets.UI.HealthAttachment). Towers read UnitStats through UnitUpgradeConfig
-	at their current level, so damage, range, cooldown, slow, income, upgrade cost
-	and sell value follow the same getters the match uses; target priority uses
-	SharedConfig.TargetPriority. Model attributes `Upgrades`, `TargetPriority` and
-	`DamageDone` mirror what UnitService writes, for the upgrade card.
+	(Assets.UI.HealthAttachment). Combat is PlaytestCombat, a port of the match's
+	UnitService and MobService: the same getters, windups, hit shapes, status
+	effects, resistances and cash, so a tower fights here exactly as it does in a
+	match. Upgrade cost and sell value follow UnitUpgradeConfig; target priority
+	uses SharedConfig.TargetPriority. Model attributes `Upgrades`, `TargetPriority`
+	and `DamageDone` mirror what UnitService writes, for the upgrade card.
 
 	The editor's own Instances are parked in ServerStorage for the duration and
 	the saved map table is never touched, so nothing from the test can leak into
@@ -34,11 +35,12 @@ local TweenService = game:GetService("TweenService")
 local Shared = ReplicatedStorage:WaitForChild("MapEditor")
 local Config = require(Shared.Config)
 local PathUtil = require(Shared.PathUtil)
-local PlacementUtil = require(Shared.PlacementUtil)
+local TowerFootprint = require(Shared.TowerFootprint)
 local MapRules = require(Shared.MapRules)
 
 local PeriMapAdapter = require(Shared.PeriMapAdapter)
 local MapValidation = require(script.Parent.MapValidation)
+local PlaytestCombat = require(script.Parent.PlaytestCombat)
 
 local PeriShared = ReplicatedStorage:WaitForChild("Shared")
 local SharedConfigModule = PeriShared:WaitForChild("Config"):WaitForChild("SharedConfig")
@@ -46,7 +48,9 @@ local SharedConfig = require(SharedConfigModule)
 local Mob = SharedConfig.Mob
 local UnitStats = SharedConfig.UnitStats
 local UnitUpgradeConfig = SharedConfig.UnitUpgradeConfig
+local UnitAttackConfig = SharedConfig.UnitAttackConfig
 local TargetPriority = SharedConfig.TargetPriority
+local GameClock = require(PeriShared:WaitForChild("Util"):WaitForChild("GameClock"))
 
 local Assets = PeriShared:WaitForChild("Assets")
 local UnitAssets = Assets:WaitForChild("Units")
@@ -59,13 +63,11 @@ local Wave = require(PeriConfig:WaitForChild("Wave"))
 local Data = require(PeriConfig:WaitForChild("Data"))
 
 local PERI = Config.PERI
-local PT = Config.PLAYTEST
 
 local LOADOUT_SIZE = 6
 local MAX_TOWERS = 40
 local ENDLESS_WAVE_CAP = 1000
 local SELL_RATIO = SharedConfig.SellRefundRatio or 0.5
-local CASH_PER_DAMAGE = Data.CASH_PER_DAMAGE or 0.15
 local PUSH_INTERVAL = 0.25
 local TOWER_TAG = "PlaytestTowerId"
 
@@ -428,7 +430,9 @@ local function spawnEnemy(state, entry, routeIndex: number, waveNumber: number)
 		track = playLoop(animatorFor(model), walk :: Animation?, math.clamp(speed / math.max(referenceSpeed, 0.1), 0.5, 2.5))
 	end
 
-	local health = entry.Health or (reference and reference.Health) or 1
+	-- MobService:SpawnWave rounds the wave's health and keeps its ratio to the
+	-- entity's own, which the per-damage cash divides by.
+	local health = math.max(1, math.floor((entry.Health or (reference and reference.Health) or 1) + 0.5))
 	local enemy = {
 		model = model,
 		root = root,
@@ -437,15 +441,16 @@ local function spawnEnemy(state, entry, routeIndex: number, waveNumber: number)
 		distance = 0,
 		health = health,
 		maxHealth = health,
-		refHealth = (reference and reference.Health) or health,
-		speed = speed,
-		reward = entry.Reward or 1,
+		healthScale = health / ((reference and reference.Health) or health),
+		baseSpeed = speed,
+		reward = entry.Reward,
 		lift = lift,
 		wave = waveNumber,
 		boss = Mob.IsBoss(entry.Entity),
 		track = track,
 		healthUi = healthBar(root, entry.Entity),
 	}
+	PlaytestCombat.initEnemy(state, enemy)
 	setHealthBar(enemy, true)
 	table.insert(state.enemies, enemy)
 	state.waveAlive[waveNumber] = (state.waveAlive[waveNumber] or 0) + 1
@@ -453,6 +458,7 @@ local function spawnEnemy(state, entry, routeIndex: number, waveNumber: number)
 end
 
 local function removeEnemy(state, enemy)
+	enemy.alive = false
 	local index = table.find(state.enemies, enemy)
 	if index then
 		table.remove(state.enemies, index)
@@ -463,38 +469,23 @@ local function removeEnemy(state, enemy)
 	end
 end
 
-local function damageEnemy(state, enemy, amount: number, tower)
-	if enemy.health <= 0 or amount <= 0 then
-		return
-	end
-	local landed = math.min(amount, enemy.health)
-	enemy.health -= landed
-	local healthRatio = math.max(1, enemy.maxHealth / math.max(enemy.refHealth, 1e-3))
-	state.cash += landed * CASH_PER_DAMAGE / healthRatio
-	if tower then
-		tower.damageDealt += landed
-	end
-	setHealthBar(enemy)
-	if enemy.health <= 0 then
-		state.cash += enemy.reward
-		state.killed += 1
-		removeEnemy(state, enemy)
-	end
-end
+-- Effects --------------------------------------------------------------------------
+-- The match draws these on the client (Unit, VFXController, ProjectileController),
+-- which the editor does not load; the playtest draws a plain stand-in from the
+-- server at the instant the damage lands.
 
--- Towers --------------------------------------------------------------------------
-
-local function flash(from: Vector3, to: Vector3, parent: Instance, color: Color3)
+local function flash(from: Vector3, to: Vector3, parent: Instance, color: Color3, duration: number?, width: number?)
 	local beam = Instance.new("Part")
 	beam.Name = "Shot"
 	inert(beam)
 	beam.Material = Enum.Material.Neon
 	beam.Color = color
 	local length = (to - from).Magnitude
-	beam.Size = Vector3.new(0.15, 0.15, math.max(length, 0.05))
+	local w = width or 0.15
+	beam.Size = Vector3.new(w, w, math.max(length, 0.05))
 	beam.CFrame = CFrame.lookAt(from, to) * CFrame.new(0, 0, -length / 2)
 	beam.Parent = parent
-	task.delay(0.08, function()
+	task.delay(duration or 0.08, function()
 		beam:Destroy()
 	end)
 end
@@ -508,41 +499,29 @@ local CLASS_COLORS = {
 	Electric = Color3.fromHex("FFF36B"),
 }
 
+local function classColor(unitName: string): Color3
+	local class = UnitStats[unitName] and UnitStats[unitName].Class
+	if typeof(class) == "table" then
+		class = class[1]
+	end
+	return CLASS_COLORS[class or ""] or Color3.fromHex("F5CD30")
+end
+
+local function sphere(position: Vector3, diameter: number, color: Color3, parent: Instance): Part
+	local part = Instance.new("Part")
+	part.Name = "Effect"
+	part.Shape = Enum.PartType.Ball
+	inert(part)
+	part.Material = Enum.Material.Neon
+	part.Color = color
+	part.Size = Vector3.one * diameter
+	part.CFrame = CFrame.new(position)
+	part.Parent = parent
+	return part
+end
+
 local function flatDistance(a: Vector3, b: Vector3): number
 	return ((a - b) * Vector3.new(1, 0, 1)).Magnitude
-end
-
-local function towerRange(tower): number
-	return tower.range or 0
-end
-
-local function refreshTowerStats(tower)
-	local name, level = tower.name, tower.level
-	tower.damage = UnitUpgradeConfig:GetDamage(name, level)
-	tower.cooldown = UnitUpgradeConfig:GetCooldown(name, level)
-	tower.range = UnitUpgradeConfig:GetRange(name, level)
-	tower.income = UnitUpgradeConfig:GetIncome(name, level)
-	tower.slow = if tower.stats.SlowAura then UnitUpgradeConfig:GetAuraSlow(name, level) else 0
-	tower.model:SetAttribute("Upgrades", level)
-	tower.model:SetAttribute("TargetPriority", tower.priority)
-	tower.model:SetAttribute("Range", tower.range)
-end
-
-local function pickTarget(state, tower)
-	local best, bestCandidate = nil, nil
-	local range = towerRange(tower)
-	for _, enemy in state.enemies do
-		if enemy.health > 0 then
-			local distance = flatDistance(enemy.root.Position, tower.position)
-			if distance <= range then
-				local candidate = { distance = distance, health = enemy.health, progress = enemy.distance }
-				if TargetPriority.IsBetter(tower.priority, candidate, bestCandidate) then
-					best, bestCandidate = enemy, candidate
-				end
-			end
-		end
-	end
-	return best
 end
 
 local function face(tower, point: Vector3)
@@ -553,82 +532,280 @@ local function face(tower, point: Vector3)
 	end
 end
 
-local function hitTargets(state, tower, target)
-	local s = tower.stats
-	local list = { target }
-	if s.AOE and s.AOE.Radius then
-		list = {}
-		for _, enemy in state.enemies do
-			if enemy.health > 0 and flatDistance(enemy.root.Position, target.root.Position) <= s.AOE.Radius then
-				table.insert(list, enemy)
-			end
-		end
-	elseif s.Chain and s.Chain.Targets then
-		list = { target }
-		local last = target
-		for _ = 2, s.Chain.Targets do
-			local nextEnemy, nextDistance = nil, math.huge
-			for _, enemy in state.enemies do
-				if enemy.health > 0 and not table.find(list, enemy) then
-					local d = flatDistance(enemy.root.Position, last.root.Position)
-					if d <= (s.Chain.Radius or 0) and d < nextDistance then
-						nextEnemy, nextDistance = enemy, d
-					end
+-- Tower animations ------------------------------------------------------------------
+
+-- Unit:loadAnimations: every Animation on the model, with `Idle` lowered to
+-- Movement and looped so gestures play over it instead of blending with it.
+local function loadTracks(model: Model): { [string]: AnimationTrack }
+	local animator = animatorFor(model)
+	local tracks = {}
+	for _, child in model:GetChildren() do
+		if child:IsA("Animation") then
+			local ok, track = pcall(animator.LoadAnimation, animator, child)
+			if ok and track then
+				if child.Name == "Idle" then
+					track.Priority = Enum.AnimationPriority.Movement
+					track.Looped = true
 				end
+				tracks[child.Name] = track
 			end
-			if not nextEnemy then
-				break
-			end
-			table.insert(list, nextEnemy)
-			last = nextEnemy
 		end
 	end
-	return list
+	return tracks
 end
 
-local function attack(state, tower, target)
-	local s = tower.stats
-	local hits = math.max(1, s.Hits or 1)
-	local interval = s.HitInterval or 0
-	local origin = tower.root.Position + Vector3.new(0, 0.6, 0)
-	local color = CLASS_COLORS[s.Class or ""] or Color3.fromHex("F5CD30")
-	face(tower, target.root.Position)
-	if tower.attackTrack then
-		tower.attackTrack:Play(0.05)
+-- Unit:playAttackVisual: the step's animation, restarted, squeezed to fit the
+-- attack window the server gave it.
+local function playSwing(state, tower, stepIndex: number, window: number?, target)
+	if not tower.model.Parent then
+		return
 	end
-	for hit = 1, hits do
-		local function strike()
-			if active ~= state then
+	local attackConfig = UnitAttackConfig[tower.name]
+	local sequence = attackConfig and attackConfig.AttackSequence
+	local step = sequence and sequence[stepIndex]
+	local track = tower.tracks[step and step.Animation or "Attack"] or tower.fallbackAttack
+	if track and sequence then
+		for _, other in sequence do
+			local otherTrack = tower.tracks[other.Animation]
+			if otherTrack and otherTrack ~= track and otherTrack.IsPlaying then
+				otherTrack:Stop(0.1)
+			end
+		end
+	end
+	local aim = target and PlaytestCombat.positionOf(state, target)
+	if aim then
+		face(tower, aim)
+	end
+	if track then
+		local fit = 1
+		if window and window > 0 and track.Length > window then
+			fit = track.Length / window
+		end
+		if track.IsPlaying then
+			track.TimePosition = 0
+		else
+			track:Play()
+		end
+		track:AdjustSpeed(fit)
+	end
+end
+
+local function playFarm(tower)
+	local track = tower.tracks.MoneyWave or tower.tracks.Money or tower.tracks.money
+	if track then
+		track:Stop(0)
+		track:Play()
+	end
+end
+
+-- The Bonfire's channel: one looping stage animation while it fires, the charge
+-- slowed to last the charge-up, Tired fit to its lock.
+local function bonfireVisual(tower)
+	local bonfire = tower.bonfire
+	local config = UnitAttackConfig[tower.name] or {}
+	local name, duration = nil, nil
+	if bonfire and tower.placed then
+		if bonfire.state == "Charge" then
+			name = config.Charge and config.Charge.Animation
+			local beam = UnitStats[tower.name].Beam
+			duration = beam and beam.ChargeUpTime
+		elseif bonfire.state == "Fire" then
+			local stage = config.BeamStages and config.BeamStages[bonfire.stage or 1]
+			name = stage and stage.Animation
+		elseif bonfire.state == "Tired" then
+			name = config.Tired and config.Tired.Animation
+			duration = config.Tired and config.Tired.Duration
+		end
+	end
+	if name == tower.channel then
+		return
+	end
+	local old = tower.channel and tower.tracks[tower.channel]
+	if old then
+		old:Stop(0.1)
+	end
+	tower.channel = name
+	local track = name and tower.tracks[name]
+	if track then
+		track.Looped = bonfire.state == "Fire"
+		track:Play(0.1)
+		if duration and duration > 0 and track.Length > 0 then
+			track:AdjustSpeed(track.Length / duration)
+		end
+	end
+end
+
+local function updateBeams(state)
+	for _, tower in state.towers do
+		local bonfire = tower.bonfire
+		local target = bonfire and bonfire.state == "Fire" and bonfire.target
+		if target and target.alive and target.root then
+			local beam = tower.beamPart
+			if not beam then
+				beam = Instance.new("Part")
+				beam.Name = "Beam"
+				inert(beam)
+				beam.Material = Enum.Material.Neon
+				beam.Color = classColor(tower.name)
+				beam.Parent = state.effectsFolder
+				tower.beamPart = beam
+			end
+			local from, to = tower.origin, target.root.Position
+			local length = (to - from).Magnitude
+			local width = 0.25 + 0.15 * ((bonfire.stage or 1) - 1)
+			beam.Size = Vector3.new(width, width, math.max(length, 0.05))
+			beam.CFrame = CFrame.lookAt(from, to) * CFrame.new(0, 0, -length / 2)
+			face(tower, to)
+		elseif tower.beamPart then
+			tower.beamPart:Destroy()
+			tower.beamPart = nil
+		end
+	end
+end
+
+local function combatHooks(state)
+	return {
+		healthChanged = function(enemy)
+			setHealthBar(enemy)
+		end,
+
+		removed = function(enemy)
+			removeEnemy(state, enemy)
+		end,
+
+		enemyAnimation = function(enemy, name)
+			local animation = enemy.model and findAnimation(enemy.model, { name })
+			if animation then
+				local animator = animatorFor(enemy.model)
+				local ok, track = pcall(animator.LoadAnimation, animator, animation)
+				if ok and track then
+					track:Play(0.1)
+				end
+			end
+		end,
+
+		swing = function(tower, stepIndex, window, target)
+			playSwing(state, tower, stepIndex, window, target)
+		end,
+
+		shot = function(tower, hits, chained)
+			if not tower.model.Parent then
 				return
 			end
-			local victim = target
-			if victim.health <= 0 then
-				victim = pickTarget(state, tower)
-				if not victim then
-					return
+			local color = classColor(tower.name)
+			local from = tower.origin
+			for _, position in hits do
+				flash(from, position, state.effectsFolder, color)
+				if chained then
+					from = position
 				end
 			end
-			for _, enemy in hitTargets(state, tower, victim) do
-				flash(origin, enemy.root.Position, state.effectsFolder, color)
-				damageEnemy(state, enemy, tower.damage, tower)
-			end
-		end
-		if hit == 1 or interval <= 0 then
-			strike()
-		else
-			task.delay(interval * (hit - 1), strike)
-		end
-	end
-end
+		end,
 
-local function slowAt(state, position: Vector3): number
-	local slow = 0
-	for _, tower in state.towers do
-		if tower.slow > 0 and flatDistance(position, tower.position) <= towerRange(tower) then
-			slow = math.max(slow, tower.slow)
-		end
-	end
-	return slow
+		lightning = function(tower, through, range, window)
+			local heading = (through - tower.origin) * Vector3.new(1, 0, 1)
+			if heading.Magnitude > 1e-3 then
+				flash(tower.origin, tower.origin + heading.Unit * range, state.effectsFolder, classColor(tower.name), window, 0.6)
+			end
+		end,
+
+		meteor = function(tower, position, fallTime, height)
+			local ball = sphere(position + Vector3.new(0, height, 0), 2.5, Color3.fromHex("FF7A2F"), state.effectsFolder)
+			TweenService:Create(ball, TweenInfo.new(fallTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				CFrame = CFrame.new(position),
+			}):Play()
+			task.delay(fallTime, function()
+				ball:Destroy()
+			end)
+		end,
+
+		blast = function(position, radius)
+			local ring = sphere(position, radius * 2, Color3.fromHex("FFB347"), state.effectsFolder)
+			ring.Transparency = 0.7
+			task.delay(0.15, function()
+				ring:Destroy()
+			end)
+		end,
+
+		mineThrown = function(mine, _throwTime)
+			local part = Instance.new("Part")
+			part.Name = "Tripmine"
+			part.Shape = Enum.PartType.Cylinder
+			inert(part)
+			part.Material = Enum.Material.Neon
+			part.Color = Color3.fromHex("B48CFF")
+			part.Size = Vector3.new(0.3, 1.6, 1.6)
+			part.CFrame = CFrame.new(mine.position) * CFrame.Angles(0, 0, math.pi / 2)
+			part.Parent = state.effectsFolder
+			mine.part = part
+		end,
+
+		mineRemoved = function(mine, _exploded)
+			if mine.part then
+				mine.part:Destroy()
+				mine.part = nil
+			end
+		end,
+
+		bonfire = function(tower)
+			bonfireVisual(tower)
+		end,
+
+		towerStunned = function(tower, duration)
+			if not tower.model.Parent then
+				return
+			end
+			local highlight = Instance.new("Highlight")
+			highlight.FillColor = Color3.fromHex("FFE14D")
+			highlight.FillTransparency = 0.5
+			highlight.OutlineTransparency = 1
+			highlight.Parent = tower.model
+			task.delay(duration, function()
+				highlight:Destroy()
+			end)
+		end,
+
+		minionSpawned = function(minion)
+			local template = findEntityTemplate(minion.name)
+			if not template then
+				return
+			end
+			local model = template:Clone()
+			local root = rig(model)
+			if not root then
+				model:Destroy()
+				return
+			end
+			local highlight = Instance.new("Highlight")
+			highlight.FillColor = Color3.fromHex("7CFF9B")
+			highlight.FillTransparency = 0.6
+			highlight.OutlineTransparency = 1
+			highlight.Parent = model
+			model.Parent = state.effectsFolder
+			minion.model, minion.root, minion.lift = model, root, templateInfo(template).lift
+			playLoop(animatorFor(model), (findAnimation(model, { "Walk" }) or EntityAssets:FindFirstChild("Walk")) :: Animation?)
+		end,
+
+		minionMoved = function(minion, position)
+			if not minion.root then
+				return
+			end
+			local ahead = PathUtil.GetPositionAtDistance(minion.route.smooth, math.max(0, minion.distance - 0.5)) or position
+			local lift = Vector3.new(0, minion.lift, 0)
+			local heading = (ahead - position) * Vector3.new(1, 0, 1)
+			if heading.Magnitude > 1e-3 then
+				minion.root.CFrame = CFrame.lookAt(position + lift, position + lift + heading)
+			else
+				minion.root.CFrame = CFrame.new(position + lift)
+			end
+		end,
+
+		minionRemoved = function(minion)
+			if minion.model then
+				minion.model:Destroy()
+			end
+		end,
+	}
 end
 
 -- Waves ---------------------------------------------------------------------------
@@ -636,7 +813,11 @@ end
 local function waveCash(state, waveNumber: number)
 	local income = Wave.GetWaveCash(waveNumber)
 	for _, tower in state.towers do
-		income += math.floor((tower.income or 0) + 0.5)
+		local unitStats = UnitStats[tower.name]
+		if unitStats and unitStats.Farm then
+			income += math.floor(UnitUpgradeConfig:GetIncome(tower.name, tower.level) + 0.5)
+			playFarm(tower)
+		end
 	end
 	state.cash += income
 end
@@ -650,7 +831,6 @@ local function runWave(state, waveNumber: number)
 	state.runners += 1
 	state.waveRunning[waveNumber] = true
 	task.spawn(function()
-		local routeCursor = 0
 		for _, entry in spawns do
 			for i = 1, entry.Amount or 1 do
 				if active ~= state or state.phase == "Lost" then
@@ -658,9 +838,8 @@ local function runWave(state, waveNumber: number)
 					state.waveRunning[waveNumber] = nil
 					return
 				end
-				routeCursor += 1
-				local routeIndex = ((routeCursor - 1) % #state.routes) + 1
-				spawnEnemy(state, entry, routeIndex, waveNumber)
+				-- MobService:SpawnWave sends each enemy down a random route.
+				spawnEnemy(state, entry, math.random(1, #state.routes), waveNumber)
 				local last = i == (entry.Amount or 1)
 				local delay = if last and entry.GroupDelay then entry.GroupDelay else entry.SpawnDelay
 				task.wait(delay or 0.35)
@@ -723,21 +902,27 @@ local function step(state, dt: number)
 		return
 	end
 	local now = os.clock()
+	local combatNow = GameClock.Now()
 
 	for i = #state.enemies, 1, -1 do
 		local enemy = state.enemies[i]
-		if not enemy or enemy.health <= 0 then
+		if not enemy or not enemy.alive then
 			continue
 		end
 		local smooth = state.routes[enemy.route].smooth
-		local slow = slowAt(state, enemy.root.Position)
-		enemy.distance += enemy.speed * (1 - slow) * dt
+		PlaytestCombat.advanceEnemy(state, enemy, dt, combatNow)
 		if enemy.distance >= smooth.length then
+			-- MobService:mobEscaped: a leak costs the enemy's remaining health, and
+			-- the difficulty's MobDamage only says whether leaks hurt at all.
+			local leakDamage = 0
+			if (state.preset.MobDamage or 20) ~= 0 then
+				leakDamage = math.max(1, math.ceil(enemy.health))
+			end
 			removeEnemy(state, enemy)
 			state.leaked += 1
-			state.baseHealth = math.max(0, state.baseHealth - (state.preset.MobDamage or 0))
+			state.baseHealth = math.max(0, state.baseHealth - leakDamage)
 			setBaseLabel(state)
-			if state.baseHealth <= 0 and (state.preset.MobDamage or 0) > 0 then
+			if state.baseHealth <= 0 and leakDamage > 0 then
 				state.phase = "Lost"
 				state.nextAt = nil
 				state.session.push("Toast", { text = string.format("Base destroyed on wave %d.", state.wave), kind = "error" })
@@ -756,19 +941,9 @@ local function step(state, dt: number)
 		end
 	end
 
-	for _, tower in state.towers do
-		if (tower.damage or 0) <= 0 then
-			continue
-		end
-		if now - tower.lastShot < (tower.cooldown or 1) then
-			continue
-		end
-		local target = pickTarget(state, tower)
-		if target then
-			tower.lastShot = now
-			attack(state, tower, target)
-		end
-	end
+	state.frame += 1
+	PlaytestCombat.step(state, dt, combatNow)
+	updateBeams(state)
 
 	settleWaves(state)
 
@@ -832,6 +1007,7 @@ function PlaytestService.start(session: Session): (boolean, any)
 
 	local mapClone, spawnClone = loadMapFolder(export)
 	local routes = PathUtil.BuildRoutes(pathScriptableNodes())
+	PlaytestCombat.prepareRoutes(routes)
 
 	local root = Instance.new("Folder")
 	root.Name = "MapEditorPlaytest"
@@ -886,6 +1062,8 @@ function PlaytestService.start(session: Session): (boolean, any)
 		label = label,
 		grid = gridParts(mapClone),
 	}
+	state.hooks = combatHooks(state)
+	PlaytestCombat.new(state)
 	active = state
 	setBaseLabel(state)
 
@@ -981,39 +1159,12 @@ function PlaytestService.spawnWave(session: Session): (boolean, string?)
 	return startNextWave(state)
 end
 
-function PlaytestService.checkTower(position: Vector3, grid: { BasePart }, towers: { any }, mapRoot: Instance?): (boolean, string?)
-	local cf = CFrame.new(position + Vector3.new(0, PT.TowerSize.Y / 2, 0))
-	local probeCF, probeSize = PlacementUtil.PathProbe(cf, PT.TowerSize)
-	local gridParams = OverlapParams.new()
-	gridParams.FilterType = Enum.RaycastFilterType.Include
-	gridParams.FilterDescendantsInstances = grid
-	if #workspace:GetPartBoundsInBox(probeCF, probeSize, gridParams) > 0 then
-		return false, "On the path."
+function PlaytestService.checkTower(unitName: string, ground: Vector3, groundPart: Instance?, state): (boolean, string?)
+	local others = {}
+	for _, tower in state.towers do
+		table.insert(others, { name = tower.name, position = tower.position })
 	end
-
-	if mapRoot then
-		local obstruction = OverlapParams.new()
-		obstruction.FilterType = Enum.RaycastFilterType.Include
-		obstruction.FilterDescendantsInstances = { mapRoot }
-		local shrunk = PT.TowerSize - Vector3.new(0.2, 0.4, 0.2)
-		for _, part in workspace:GetPartBoundsInBox(cf * CFrame.new(0, 0.2, 0), shrunk, obstruction) do
-			if part.CanCollide then
-				return false, "Obstructed by " .. part.Name .. "."
-			end
-		end
-	end
-
-	for _, tower in towers do
-		if flatDistance(tower.position, position) < PT.TowerMinSpacing then
-			return false, "Too close to another tower."
-		end
-	end
-
-	if PlacementUtil.FindBlockingCharacter(cf, PT.TowerSize) then
-		return false, "A player is standing there."
-	end
-
-	return true, nil
+	return TowerFootprint.check(UnitAssets, unitName, ground, others, state.grid, state.mapClone, groundPart)
 end
 
 local function facePath(state, position: Vector3): CFrame
@@ -1030,6 +1181,12 @@ local function facePath(state, position: Vector3): CFrame
 		return CFrame.lookAt(position, Vector3.new(best.X, position.Y, best.Z))
 	end
 	return CFrame.new(position)
+end
+
+local function refreshTowerStats(tower)
+	tower.model:SetAttribute("Upgrades", tower.level)
+	tower.model:SetAttribute("TargetPriority", tower.priority)
+	tower.model:SetAttribute("Range", UnitUpgradeConfig:GetRange(tower.name, tower.level))
 end
 
 function PlaytestService.placeTower(session: Session, raw: any, unitName: any): (boolean, string?)
@@ -1075,7 +1232,7 @@ function PlaytestService.placeTower(session: Session, raw: any, unitName: any): 
 		return false, "Towers need ground under them."
 	end
 
-	local ok, reason = PlaytestService.checkTower(hit.Position, state.grid, state.towers, state.mapClone)
+	local ok, reason = PlaytestService.checkTower(unitName, hit.Position, hit.Instance, state)
 	if not ok then
 		return false, reason
 	end
@@ -1101,18 +1258,11 @@ function PlaytestService.placeTower(session: Session, raw: any, unitName: any): 
 
 	model.Parent = state.towersFolder
 
-	local animator = animatorFor(model)
-	playLoop(animator, findAnimation(model, { "Idle" }))
-	local attackAnimation = firstAttackAnimation(model)
-	local attackTrack = nil
-	if attackAnimation then
-		local loaded, track = pcall(animator.LoadAnimation, animator, attackAnimation)
-		if loaded and track then
-			track.Looped = false
-			track.Priority = Enum.AnimationPriority.Action
-			attackTrack = track
-		end
+	local tracks = loadTracks(model)
+	if tracks.Idle then
+		tracks.Idle:Play(0.1)
 	end
+	local attackAnimation = firstAttackAnimation(model)
 
 	local tower = {
 		id = id,
@@ -1120,13 +1270,14 @@ function PlaytestService.placeTower(session: Session, raw: any, unitName: any): 
 		model = model,
 		root = root,
 		position = hit.Position,
-		stats = unitStats,
+		-- Where the match measures the unit from.
+		origin = TowerFootprint.placedPosition(template, hit.Position),
 		level = 0,
 		priority = TargetPriority.Default,
-		lastShot = 0,
-		damageDealt = 0,
-		attackTrack = attackTrack,
+		tracks = tracks,
+		fallbackAttack = attackAnimation and tracks[attackAnimation.Name],
 	}
+	PlaytestCombat.initTower(tower)
 	refreshTowerStats(tower)
 	table.insert(state.towers, tower)
 	push(state)
@@ -1176,7 +1327,29 @@ function PlaytestService.cyclePriority(session: Session, id: any): (boolean, str
 	if not tower then
 		return false, err
 	end
+	-- A Bard has no target, so its button swaps the song instead (BardService:SetMode):
+	-- the next mode in `Support.Order`, then `SwapCooldown` seconds before another.
+	local support = UnitStats[tower.name] and UnitStats[tower.name].Support
+	if support then
+		local now = GameClock.Now()
+		if now < (tower.bardReadyAt or 0) then
+			-- The card ignores failed requests, so the wait is said with a toast.
+			local text = string.format("The Bard can change songs in %ds.", math.ceil(tower.bardReadyAt - now))
+			state.session.push("Toast", { text = text, kind = "warn" })
+			return false, text
+		end
+		local order = support.Order or {}
+		local current = table.find(order, tower.bardMode or support.Default) or 0
+		tower.bardMode = order[current % math.max(#order, 1) + 1] or support.Default
+		tower.bardReadyAt = now + (support.SwapCooldown or 10)
+		tower.model:SetAttribute("BardMode", tower.bardMode)
+		push(state)
+		return true, nil
+	end
+
 	tower.priority = TargetPriority.Next(tower.priority)
+	-- SetUnitPriority drops the current target so the new rule applies at once.
+	tower.target = nil
 	tower.model:SetAttribute("TargetPriority", tower.priority)
 	push(state)
 	return true, nil
@@ -1189,6 +1362,10 @@ function PlaytestService.sellTower(session: Session, id: any): (boolean, string?
 	end
 	local refund = math.floor(UnitUpgradeConfig:GetInvested(tower.name, tower.level) * SELL_RATIO)
 	table.remove(state.towers, index)
+	PlaytestCombat.removeTower(state, tower)
+	if tower.beamPart then
+		tower.beamPart:Destroy()
+	end
 	tower.model:Destroy()
 	state.cash += refund
 	push(state)
@@ -1201,6 +1378,8 @@ function PlaytestService.stop(session: Session): boolean
 		return false
 	end
 	active = nil
+	-- Windups, burns and mines still pending on the GameClock check this and stop.
+	state.stopped = true
 
 	if state.connection then
 		state.connection:Disconnect()

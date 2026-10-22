@@ -25,7 +25,7 @@ local player = Players.LocalPlayer
 
 local Shared = ReplicatedStorage:WaitForChild("MapEditor")
 local Config = require(Shared:WaitForChild("Config"))
-local PlacementUtil = require(Shared:WaitForChild("PlacementUtil"))
+local TowerFootprint = require(Shared:WaitForChild("TowerFootprint"))
 local Remotes = Shared:WaitForChild("Remotes")
 local Request = Remotes:WaitForChild("Request")
 local Push = Remotes:WaitForChild("Push")
@@ -52,7 +52,6 @@ do
 	end
 end
 
-local PT = Config.PLAYTEST
 local PERI = Config.PERI
 
 local gui = player:WaitForChild("PlayerGui"):WaitForChild("MapEditorUI")
@@ -529,8 +528,14 @@ local function refreshCard()
 	cardRange.Text = formatRange(name, level)
 	cardDamageDone.Text = abbreviate(model:GetAttribute("DamageDone") or 0) .. " DMG DONE"
 
-	cardPriority.Visible = not (unitStats and (unitStats.Farm or unitStats.SlowAura or unitStats.Support))
-	cardPriorityLabel.Text = TargetPriority.Label(model:GetAttribute("TargetPriority"))
+	local support = unitStats and unitStats.Support
+	cardPriority.Visible = not (unitStats and (unitStats.Farm or unitStats.SlowAura))
+	if support then
+		local mode = support.Modes[model:GetAttribute("BardMode") or support.Default]
+		cardPriorityLabel.Text = mode and mode.Label or ""
+	else
+		cardPriorityLabel.Text = TargetPriority.Label(model:GetAttribute("TargetPriority"))
+	end
 
 	if towerRing then
 		local range = model:GetAttribute("Range") or UnitUpgradeConfig:GetRange(name, level)
@@ -703,31 +708,33 @@ local function placementReason(position)
 	if not mapRoot then
 		return "Point at the map."
 	end
-	local size = PT.TowerSize
-	local cf = CFrame.new(position + Vector3.new(0, size.Y / 2, 0))
-	local probeCF, probeSize = PlacementUtil.PathProbe(cf, size)
+	-- The same downward ray PlaytestService.placeTower casts, so both sides test the
+	-- same ground part.
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = { mapRoot }
+	local hit = workspace:Raycast(position + Vector3.new(0, 6, 0), Vector3.new(0, -20, 0), params)
+	if not hit then
+		return "Towers need ground under them."
+	end
 	local grid = {}
 	for _, part in CollectionService:GetTagged(PERI.GridTag) do
-		if part:IsDescendantOf(mapRoot) then
+		if part:IsA("BasePart") and part:IsDescendantOf(mapRoot) then
 			table.insert(grid, part)
 		end
 	end
-	local overlap = OverlapParams.new()
-	overlap.FilterType = Enum.RaycastFilterType.Include
-	overlap.FilterDescendantsInstances = grid
-	if #workspace:GetPartBoundsInBox(probeCF, probeSize, overlap) > 0 then
-		return "On the path."
-	end
+	local others = {}
 	local folder = towersFolder()
 	if folder then
 		for _, tower in folder:GetChildren() do
 			if tower:IsA("Model") then
-				local offset = (tower:GetPivot().Position - position) * Vector3.new(1, 0, 1)
-				if offset.Magnitude < PT.TowerMinSpacing then
-					return "Too close to another tower."
-				end
+				table.insert(others, { name = tower.Name, position = tower:GetPivot().Position })
 			end
 		end
+	end
+	local ok, reason = TowerFootprint.check(UnitAssets, selectedUnit, hit.Position, others, grid, mapRoot, hit.Instance)
+	if not ok then
+		return reason
 	end
 	if lastStats and lastStats.cash and selectedUnit and lastStats.cash < unitCost(selectedUnit) then
 		return "Not enough cash."

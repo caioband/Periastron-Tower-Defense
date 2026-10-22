@@ -8,6 +8,10 @@
 
 type Shared = {
 	UnitStats : typeof(require(script.UnitStats)),
+	UnitUpgradeConfig : typeof(require(script.UnitUpgradeConfig)),
+	UnitAttackConfig : typeof(require(script.UnitAttackConfig)),
+	ResistanceConfig : typeof(require(script.ResistanceConfig)),
+	WeatherConfig : typeof(require(script.WeatherConfig)),
 	RarityConfig : typeof(require(script.RarityConfig)),
 	CrateConfig : typeof(require(script.CrateConfig)),
 	MapConfig : typeof(require(script.MapConfig)),

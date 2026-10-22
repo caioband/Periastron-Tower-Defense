@@ -39,7 +39,7 @@ local PIXEL_FONT = Enum.Font.Arcade
 local actions = nil
 local gui, launcher, topBar, testBar, catalogPanel, inspectorPanel, inspectorScroll
 local validationPanel, validationList, validationHeader, toastHolder, modalLayer, helpPanel
-local tooltip, statusLabel, hintLabel, testStats, towerButton, selectionRect
+local tooltip, statusLabel, hintLabel, testStats, selectionRect
 local itemsFrame, searchBox, categoryHolder, recentRow, gridLabel
 local settingsHolder = nil
 local uiScale = nil
@@ -1192,13 +1192,6 @@ function UI.setPlaytestStats(stats)
 		stats.baseHealth, stats.maxHealth, stats.alive, stats.killed, stats.leaked, stats.towers, stats.maxTowers, stats.routes)
 end
 
-function UI.setTowerMode(on)
-	if towerButton then
-		towerButton.Text = on and "Towers: ON" or "Towers: off"
-		setOn(towerButton, on)
-	end
-end
-
 function UI.setMode(mode)
 	if not gui then
 		return
@@ -1380,7 +1373,12 @@ function UI.init(handlers)
 	itemsFrame = catalogPanel:WaitForChild("Items")
 	gridLabel = topBar:WaitForChild("Grid")
 	testStats = testBar:WaitForChild("Stats")
-	towerButton = testBar:WaitForChild("Towers")
+	-- The test bar's old "Towers" toggle placed card-less towers the server always
+	-- refused; MapEditorPlaytest's hotbar places them now.
+	local legacyTowers = testBar:FindFirstChild("Towers")
+	if legacyTowers and legacyTowers:IsA("GuiObject") then
+		legacyTowers.Visible = false
+	end
 
 	for name, fn in DYNAMIC_TIPS do
 		local target = topBar:FindFirstChild(name)
@@ -1411,9 +1409,6 @@ function UI.init(handlers)
 	end)
 	testBar:WaitForChild("SpawnWave").Activated:Connect(function()
 		actions.spawnWave()
-	end)
-	towerButton.Activated:Connect(function()
-		actions.toggleTowerMode()
 	end)
 	validationPanel:WaitForChild("Close").Activated:Connect(function()
 		validationPanel.Visible = false

@@ -23,13 +23,17 @@ Inside the editor, nothing else changed:
 `common/mapeditor/PathUtil.luau` and `PlacementUtil.luau` are trimmed copies of `common/shared/Util/PathUtil.luau` and `PlacementUtil.luau` (no `Log`, no comments).
 The editor uses them to validate and playtest routes exactly as the Game's `MobService` walks them, so keep them in step when the originals change.
 
+`src/Server/PlaytestCombat.luau` is the same kind of copy for combat: a port of the Game's `UnitService`, the enemy half of `MobService`, `BardService:Step` and `NecromancerService`, so towers in a playtest hit as hard, as often and as widely as in a match. A combat change in the Game must be mirrored there.
+It leaves out what a playtest has none of: weather, round cards, the thunder charge and game speed. Hit effects are plain server-drawn stand-ins, since the Game's client VFX controllers are not loaded here. On a Bard, the upgrade card's priority button swaps the song instead.
+Where a test tower may stand is `common/mapeditor/TowerFootprint.luau`, the Game's placement rules (path, obstruction, spacing by model width, characters), asked by both the ghost and the server.
+
 ## What is specific to this place
 
 | Folder | Mounted at | Contents |
 | --- | --- | --- |
 | `src/ClientBoot/` | `StarterPlayerScripts.MapEditor` | Entry LocalScript (`init.client.luau`) and the editor modules under it: `Editor`, `UI`, `State`, `History`, `Selection`, `Placement`, `Gizmos`, `RouteView`, `BuildCamera`, `Geometry`, `Net`, `Signal`, `Maid` |
-| `src/Server/` | `ServerScriptService.MapEditor` | `Main` (entry Script and request handlers), `SessionService`, `MapStore`, `MapValidation`, `PlaytestService`, `RateLimiter` |
-| `../common/mapeditor/` | `ReplicatedStorage.MapEditor` | Code and config the server and the client both read: `Config`, `Catalog`, `PeriAssets`, `Serializer`, `RouteModel`, `MapRules`, `InstanceFactory`, `PathUtil`, `PlacementUtil`, and the server-only `PeriMapAdapter` and `TemplateBuilder` |
+| `src/Server/` | `ServerScriptService.MapEditor` | `Main` (entry Script and request handlers), `SessionService`, `MapStore`, `MapValidation`, `PlaytestService`, `PlaytestCombat`, `RateLimiter` |
+| `../common/mapeditor/` | `ReplicatedStorage.MapEditor` | Code and config the server and the client both read: `Config`, `Catalog`, `PeriAssets`, `Serializer`, `RouteModel`, `MapRules`, `InstanceFactory`, `PathUtil`, `PlacementUtil`, `TowerFootprint`, and the server-only `PeriMapAdapter` and `TemplateBuilder` |
 
 `common/mapeditor` is also mounted in the Game, at `ServerStorage.MapEditor`, which builds published maps with the same code (see [Community matches](../game/community-matches.md)).
 `PeriMapAdapter` and `TemplateBuilder` find their siblings through `script.Parent`, so they work in both places; `Templates` is built next to them.

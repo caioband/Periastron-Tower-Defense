@@ -42,7 +42,6 @@ State.prefabs = {}
 State.developer = false
 State.memoryStorage = false
 State.insertAfter = nil
-State.towerMode = false
 State.validation = nil
 
 State.Changed = Signal.new()
