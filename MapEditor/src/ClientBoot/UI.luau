@@ -443,9 +443,9 @@ function UI.confirm(message, yesText, onYes)
 	end, Parent = body })
 end
 
-function UI.prompt(title, default, onSubmit)
+function UI.prompt(title, default, onSubmit, placeholder)
 	local body = openModal(380, 150, title)
-	local box = input({ Text = default or "", PlaceholderText = "Name", Parent = body })
+	local box = input({ Text = default or "", PlaceholderText = placeholder or "Name", Parent = body })
 	local function submit()
 		local value = box.Text
 		UI.closeModal()
@@ -551,7 +551,7 @@ end
 
 function UI.showMaps(data)
 	local maps = data.maps or {}
-	local body = openModal(520, 470, string.format("My Maps (%d/%d)", #maps, data.max or Config.MAX_MAPS_PER_PLAYER))
+	local body = openModal(600, 470, string.format("My Maps (%d/%d)", #maps, data.max or Config.MAX_MAPS_PER_PLAYER))
 
 	local newRow = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 30), Parent = body })
 	local nameBox = input({ PlaceholderText = "New map name", Size = UDim2.new(1, -110, 1, 0), Parent = newRow })
@@ -577,9 +577,9 @@ function UI.showMaps(data)
 	for i, entry in maps do
 		local row = new("Frame", { BackgroundColor3 = THEME.Bg2, Size = UDim2.new(1, -8, 0, 52), LayoutOrder = i, Parent = scroll }, { corner(8), padding(8) })
 		local current = entry.id == data.current
-		text(entry.name .. (current and "  (open)" or ""), { Font = PIXEL_FONT, Size = UDim2.new(1, -250, 0, 18), TextTruncate = Enum.TextTruncate.AtEnd, Parent = row })
-		text(string.format("%d objects  |  %s", entry.count, os.date("%d %b %Y %H:%M", entry.modified)), { TextColor3 = THEME.Muted, TextSize = 12, Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, -250, 0, 16), Parent = row })
-		local holder = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.fromScale(1, 0.5), Size = UDim2.fromOffset(244, 28), Parent = row }, { list(Enum.FillDirection.Horizontal, 4, Enum.HorizontalAlignment.Right) })
+		text(entry.name .. (current and "  (open)" or ""), { Font = PIXEL_FONT, Size = UDim2.new(1, -330, 0, 18), TextTruncate = Enum.TextTruncate.AtEnd, Parent = row })
+		text(string.format("%d objects  |  %s%s", entry.count, os.date("%d %b %Y %H:%M", entry.modified), entry.published and "  |  Published" or ""), { TextColor3 = THEME.Muted, TextSize = 12, Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, -330, 0, 16), Parent = row })
+		local holder = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.fromScale(1, 0.5), Size = UDim2.fromOffset(324, 28), Parent = row }, { list(Enum.FillDirection.Horizontal, 4, Enum.HorizontalAlignment.Right) })
 		button("Load", { Size = UDim2.fromOffset(56, 28), LayoutOrder = 1, BackgroundColor3 = THEME.Accent, TextColor3 = THEME.TextDark, OnClick = function()
 			actions.loadMap(entry.id)
 		end, Parent = holder })
@@ -591,8 +591,25 @@ function UI.showMaps(data)
 		button("Copy", { Size = UDim2.fromOffset(52, 28), LayoutOrder = 3, OnClick = function()
 			actions.duplicateMap(entry.id, entry.name .. " copy")
 		end, Parent = holder })
-		button("Delete", { Size = UDim2.fromOffset(58, 28), LayoutOrder = 4, BackgroundColor3 = THEME.Danger, OnClick = function()
-			UI.confirm("Delete '" .. entry.name .. "' permanently?", "Delete", function()
+		if entry.published then
+			button("Unpublish", { Size = UDim2.fromOffset(76, 28), LayoutOrder = 4, OnClick = function()
+				UI.confirm("Remove '" .. entry.name .. "' from Community Maps? Its likes are kept if you publish it again.", "Unpublish", function()
+					actions.unpublishMap(entry.id)
+				end)
+			end, Parent = holder })
+		else
+			button("Publish", { Size = UDim2.fromOffset(76, 28), LayoutOrder = 4, OnClick = function()
+				if not current then
+					UI.toast("Load this map to publish it.", "warn")
+					return
+				end
+				UI.prompt("Publish to Community Maps", "", function(value)
+					actions.publishMap(entry.id, value)
+				end, "Description (optional)")
+			end, Parent = holder })
+		end
+		button("Delete", { Size = UDim2.fromOffset(58, 28), LayoutOrder = 5, BackgroundColor3 = THEME.Danger, OnClick = function()
+			UI.confirm("Delete '" .. entry.name .. "' permanently?" .. (entry.published and " It also leaves Community Maps." or ""), "Delete", function()
 				actions.deleteMap(entry.id)
 			end)
 		end, Parent = holder })

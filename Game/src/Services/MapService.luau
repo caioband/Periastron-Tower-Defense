@@ -3,6 +3,7 @@ local Players = game:GetService("Players")
 local ServerScriptService = game:GetService("ServerScriptService")
 local ServerStorage = game:GetService("ServerStorage")
 local RunService = game:GetService("RunService")
+local TeleportService = game:GetService("TeleportService")
 
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -23,6 +24,23 @@ local Maps = ServerStorage:WaitForChild("Maps")
 -- An attribute on the `Maps` folder that forces the map in a Studio play. See `getStudioMap`.
 local STUDIO_MAP_ATTRIBUTE = "StudioMap"
 
+--[[
+	Community maps: built at runtime from what a player published in the Map Editor,
+	under this name in `Maps`, and loaded like any other. The name is fixed and not the
+	map's own, so a community map called "Farm" never picks up Farm's music, weather,
+	or Index entry. See docs/game/community-matches.md.
+]]
+local COMMUNITY_MAP_FOLDER = "CommunityMap"
+
+-- The same as `StudioMap`, for a community map: a map key (`map_<userId>_<mapId>`).
+local STUDIO_COMMUNITY_ATTRIBUTE = "StudioCommunityMap"
+
+-- The editor's map code (`common/mapeditor`), mounted server-only in this place.
+local MAP_EDITOR_MODULES = "MapEditor"
+
+-- How long the round waits for the map before giving up on it (`AwaitLoaded`).
+local LOAD_TIMEOUT = 60
+
 local Configs = Shared:WaitForChild("Config")
 local ServerConfigs = ServerScriptService:WaitForChild("Config")
 
@@ -39,6 +57,7 @@ local Promise = require(Packages.Promise)
 local Warp = require(Vendor.Warp)
 local Me = require(Vendor.Me)
 local Log = require(Shared.Util.Log)
+local Environment = require(Shared.Util.Environment)
 
 local Framework = Me.new()
 local log = Log.new("MapService")
@@ -51,7 +70,19 @@ local ExampleService = {
 		LightingService = {},
 		DataService = {},
 		IndexService = {},
-	}
+	},
+
+	-- `true` once the map is in the Workspace, `false` when a community map failed;
+	-- `nil` while it is being decided. See `AwaitLoaded`.
+	MapReady = nil :: boolean?,
+
+	-- The community map's key and name, when this match runs on one.
+	CommunityMapKey = nil :: string?,
+	CommunityMapName = nil :: string?,
+
+	-- Characters held anchored while the community map is built.
+	HoldSpawns = false,
+	HeldCharacters = {} :: { Model },
 }
 
 --[=[
@@ -295,6 +326,11 @@ end
 function ExampleService:watchSpawns()
 	local function watch(player : Player)
 		player.CharacterAdded:Connect(function(character)
+			if self.HoldSpawns then
+				self:holdCharacter(character)
+				return
+			end
+
 			self:ensureAtSpawn(character)
 		end)
 	end
@@ -303,6 +339,232 @@ function ExampleService:watchSpawns()
 	for _, player in Players:GetPlayers() do
 		watch(player)
 	end
+end
+
+--[[ COMMUNITY MAPS ]]
+
+--- Whether this match runs on a map a player published.
+function ExampleService:IsCommunityMatch() : boolean
+	return self.CommunityMapKey ~= nil
+end
+
+--- The community map's key, or nil on a game map.
+function ExampleService:GetCommunityMapKey() : string?
+	return self.CommunityMapKey
+end
+
+--[=[
+	Waits until the map is in the Workspace. Answers `false` when it never will (the
+	community map failed and the players are on their way back), so the round does not
+	start without a path. Gives up after `LOAD_TIMEOUT` and answers `true`, which is
+	what the round did before it waited at all.
+]=]
+function ExampleService:AwaitLoaded() : boolean
+	local deadline = os.clock() + LOAD_TIMEOUT
+
+	while self.MapReady == nil and os.clock() < deadline do
+		task.wait(0.1)
+	end
+
+	if self.MapReady == nil then
+		log:Warn("the map was not ready in time; starting the round anyway.")
+	end
+
+	return self.MapReady ~= false
+end
+
+--[=[
+	The community map the group asked for, if it did: `TeleportData.CommunityMap` on a
+	server, the `StudioCommunityMap` attribute on `Maps` in Studio. Yields for the first
+	player on a server, like `resolveStartingMap`.
+]=]
+function ExampleService:resolveCommunityMap() : string?
+	if RunService:IsStudio() then
+		local key = Maps:GetAttribute(STUDIO_COMMUNITY_ATTRIBUTE)
+		return if typeof(key) == "string" and key ~= "" then key else nil
+	end
+
+	local player = Players:GetPlayers()[1] or Players.PlayerAdded:Wait()
+
+	local success, joinData = pcall(function()
+		return player:GetJoinData()
+	end)
+
+	local teleportData = success and typeof(joinData) == "table" and joinData.TeleportData
+	local key = typeof(teleportData) == "table" and teleportData.CommunityMap
+
+	return if typeof(key) == "string" then key else nil
+end
+
+--[=[
+	Keeps a character where it spawned, anchored, while the community map is being
+	built: there is no ground under it yet. `releaseCharacters` lets go of them.
+]=]
+function ExampleService:holdCharacter(character : Model)
+	table.insert(self.HeldCharacters, character)
+
+	local root = character:WaitForChild("HumanoidRootPart", 10)
+	if root and root:IsA("BasePart") and self.HoldSpawns then
+		root.Anchored = true
+	end
+end
+
+function ExampleService:releaseCharacters()
+	self.HoldSpawns = false
+
+	for _, character in self.HeldCharacters do
+		local root = character.Parent and character:FindFirstChild("HumanoidRootPart")
+		if root and root:IsA("BasePart") then
+			if self.SpawnCFrame then
+				character:PivotTo(self.SpawnCFrame)
+			end
+			root.Anchored = false
+		end
+	end
+
+	table.clear(self.HeldCharacters)
+end
+
+--[=[
+	Builds the community map `key` into a folder in the format `LoadMap` reads, with
+	the editor's own code (`PeriMapAdapter.export`) and props
+	(`ServerStorage.MapEditorAssets`). Answers the folder and the map's name, or `nil`
+	and why.
+]=]
+function ExampleService:buildCommunityMap(key : string) : (Folder?, string?)
+	local communityMaps = waitForService("CommunityMapService")
+	local playerMaps = waitForService("PlayerMapService")
+	if not communityMaps or not playerMaps then
+		return nil, "CommunityMapService or PlayerMapService did not load"
+	end
+
+	local entry, reason = communityMaps:GetListedEntry(key)
+	if not entry then
+		return nil, `the map is not published ({reason})`
+	end
+
+	local ok, data = playerMaps:GetAsync(key)
+	if not ok or data == nil then
+		return nil, "the map content could not be read"
+	end
+
+	local modules = ServerStorage:FindFirstChild(MAP_EDITOR_MODULES)
+	if not modules then
+		return nil, `ServerStorage.{MAP_EDITOR_MODULES} is missing`
+	end
+
+	local loaded, lib = pcall(function()
+		return {
+			Serializer = require(modules.Serializer),
+			TemplateBuilder = require(modules.TemplateBuilder),
+			PeriMapAdapter = require(modules.PeriMapAdapter),
+		}
+	end)
+	if not loaded then
+		return nil, `the map code failed to load: {lib}`
+	end
+
+	local map, decodeErr = lib.Serializer.decodeMap(data)
+	if not map then
+		return nil, `the map content is invalid: {decodeErr}`
+	end
+
+	local info = playerMaps.ParseKey(key)
+	if not info or map.owner ~= info.UserId then
+		return nil, "the map content does not belong to its key"
+	end
+
+	-- Built once per server, and only on servers that play a community map.
+	local templates = modules:FindFirstChild("Templates") or lib.TemplateBuilder.build()
+
+	local exported, folder, report = pcall(lib.PeriMapAdapter.export, map, COMMUNITY_MAP_FOLDER, templates)
+	if not exported then
+		return nil, `building the map failed: {folder}`
+	end
+
+	if report.skipped > 0 then
+		log:Warn(`community map {key}: {report.skipped} object(s) skipped ({table.concat(report.warnings, "; ")}).`)
+	end
+
+	return folder, map.name
+end
+
+--[=[
+	Sends everyone here (and anyone still arriving) back to the Lobby, which tells
+	them the map could not be loaded (`TeleportData.CommunityMapFailed`).
+]=]
+function ExampleService:returnToLobby()
+	local function send(players : { Player })
+		if #players == 0 then
+			return
+		end
+
+		local options = Instance.new("TeleportOptions")
+		options:SetTeleportData({ CommunityMapFailed = true })
+
+		local success, err = pcall(function()
+			TeleportService:TeleportAsync(Environment.GetPlaceId("Lobby"), players, options)
+		end)
+
+		if not success then
+			log:Warn(`could not send players back to the Lobby after a failed community map: {err}`)
+		end
+	end
+
+	Players.PlayerAdded:Connect(function(player)
+		send({ player })
+	end)
+
+	send(Players:GetPlayers())
+end
+
+--[=[
+	Loads the community map `key`: characters wait anchored while it is read and
+	built, then go to its spawn. On failure the group goes back to the Lobby, except
+	in QA, where it stays (anchored, no round) so the error can be read. Counts the
+	play on success.
+]=]
+function ExampleService:loadCommunityMap(key : string) : boolean
+	self.CommunityMapKey = key
+	self.HoldSpawns = true
+
+	for _, player in Players:GetPlayers() do
+		if player.Character then
+			task.spawn(self.holdCharacter, self, player.Character)
+		end
+	end
+
+	local folder, result = self:buildCommunityMap(key)
+	if not folder then
+		-- QA keeps the group here, still held, with the reason in the console: whoever is
+		-- testing the map needs to read it, not land back in the Lobby.
+		if Environment.IsQA() then
+			log:Warn(`community map {key} could not be loaded: {result}; staying here (QA).`)
+		else
+			log:Warn(`community map {key} could not be loaded: {result}; sending the group back.`)
+			self:returnToLobby()
+		end
+		return false
+	end
+
+	local previous = Maps:FindFirstChild(COMMUNITY_MAP_FOLDER)
+	if previous then
+		previous:Destroy()
+	end
+
+	folder.Parent = Maps
+	self.CommunityMapName = result
+
+	self:LoadMap(COMMUNITY_MAP_FOLDER)
+	self:releaseCharacters()
+
+	local communityMaps = Framework:Get("CommunityMapService")
+	if communityMaps then
+		communityMaps:CountPlay(key)
+	end
+
+	log:Debug(`community map loaded: {result} ({key})`)
+	return true
 end
 
 function ExampleService:LoadMap(Name : string)
@@ -535,7 +797,8 @@ function ExampleService:watchIndex()
 	end
 
 	local function record(player : Player)
-		if not self.CurrentMapName then return end
+		-- A community map is not one of the game's maps: it has no Index page.
+		if not self.CurrentMapName or self.CommunityMapKey then return end
 
 		indexService:UnlockMap(player, self.CurrentMapName)
 	end
@@ -589,13 +852,21 @@ function ExampleService:init()
 	]]
 	self:watchSpawns()
 
+	local communityKey = self:resolveCommunityMap()
+	if communityKey then
+		self.MapReady = self:loadCommunityMap(communityKey)
+		return
+	end
+
 	local mapName = self:resolveStartingMap()
 	if not mapName then
 		log:Warn("no map available to load.")
+		self.MapReady = true
 		return
 	end
 
 	self:LoadMap(mapName)
+	self.MapReady = true
 	log:Debug(string.format("map loaded: %s", mapName))
 end
 

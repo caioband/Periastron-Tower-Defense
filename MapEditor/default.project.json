@@ -16,7 +16,7 @@
       },
 
       "MapEditor": {
-        "$path": "src/Shared"
+        "$path": "../common/mapeditor"
       },
 
       "Shared": {

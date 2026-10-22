@@ -1,8 +1,9 @@
 --!strict
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
-local Shared = ReplicatedStorage:WaitForChild("MapEditor")
+-- The folder this module sits in: `ReplicatedStorage.MapEditor` in the Map Editor,
+-- `ServerStorage.MapEditor` in the Game.
+local Shared = script.Parent
 local Config = require(Shared.Config)
 local Catalog = require(Shared.Catalog)
 local Factory = require(Shared.InstanceFactory)

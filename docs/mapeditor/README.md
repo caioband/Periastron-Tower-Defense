@@ -20,7 +20,7 @@ Inside the editor, nothing else changed:
 - Client and server talk through their own remotes, `ReplicatedStorage.MapEditor.Remotes.Request` (a RemoteFunction) and `Push` (a RemoteEvent), which `Main` creates on start. Warp is not used.
 - Logs still go through `warn`, not `Shared.Util.Log`.
 
-`Shared/PathUtil.luau` and `Shared/PlacementUtil.luau` are trimmed copies of `common/shared/Util/PathUtil.luau` and `PlacementUtil.luau` (no `Log`, no comments).
+`common/mapeditor/PathUtil.luau` and `PlacementUtil.luau` are trimmed copies of `common/shared/Util/PathUtil.luau` and `PlacementUtil.luau` (no `Log`, no comments).
 The editor uses them to validate and playtest routes exactly as the Game's `MobService` walks them, so keep them in step when the originals change.
 
 ## What is specific to this place
@@ -28,8 +28,11 @@ The editor uses them to validate and playtest routes exactly as the Game's `MobS
 | Folder | Mounted at | Contents |
 | --- | --- | --- |
 | `src/ClientBoot/` | `StarterPlayerScripts.MapEditor` | Entry LocalScript (`init.client.luau`) and the editor modules under it: `Editor`, `UI`, `State`, `History`, `Selection`, `Placement`, `Gizmos`, `RouteView`, `BuildCamera`, `Geometry`, `Net`, `Signal`, `Maid` |
-| `src/Server/` | `ServerScriptService.MapEditor` | `Main` (entry Script and request handlers), `SessionService`, `MapStore`, `MapValidation`, `PlaytestService`, `PeriMapAdapter`, `TemplateBuilder`, `RateLimiter` |
-| `src/Shared/` | `ReplicatedStorage.MapEditor` | Code and config the server and the client both read: `Config`, `Catalog`, `PeriAssets`, `Serializer`, `RouteModel`, `MapRules`, `InstanceFactory`, `PathUtil`, `PlacementUtil` |
+| `src/Server/` | `ServerScriptService.MapEditor` | `Main` (entry Script and request handlers), `SessionService`, `MapStore`, `MapValidation`, `PlaytestService`, `RateLimiter` |
+| `../common/mapeditor/` | `ReplicatedStorage.MapEditor` | Code and config the server and the client both read: `Config`, `Catalog`, `PeriAssets`, `Serializer`, `RouteModel`, `MapRules`, `InstanceFactory`, `PathUtil`, `PlacementUtil`, and the server-only `PeriMapAdapter` and `TemplateBuilder` |
+
+`common/mapeditor` is also mounted in the Game, at `ServerStorage.MapEditor`, which builds published maps with the same code (see [Community matches](../game/community-matches.md)).
+`PeriMapAdapter` and `TemplateBuilder` find their siblings through `script.Parent`, so they work in both places; `Templates` is built next to them.
 
 `src/ClientBoot/` keeps the editor modules next to `init.client.luau` because they are children of the LocalScript in the place (`script:WaitForChild("Editor")`, `script.Parent.<Module>`).
 Likewise, `Main` reaches the server modules through `script.Parent`.
@@ -55,6 +58,20 @@ Entering the editor waits up to 10 s for the profile; without it, the editor ans
 In Studio without API access, the content stays in memory until the server stops, and the editor says so in a toast and in the status bar.
 Enable **Game Settings > Security > Enable Studio Access to API Services** to save for real.
 
+## Publishing
+
+The **Publish** button on a row of **My Maps** lists that map in the Lobby's Community Maps, with an optional description; see [Community maps](../common/community-maps.md).
+
+- Only the open map can be published, and only once it is saved with no unsaved changes, no validation errors, and the whole enemy route on Path pieces.
+  The Game hides an enemy that is not over a Path piece (`MobController` checks for a `Grid` part under it), so a spawn or base on the grass means enemies that never show.
+- Saving a published map whose route leaves the Path pieces warns in a toast: the Game plays the saved content at once.
+  On errors, the validation panel opens.
+- A published row shows **Unpublish** instead, which takes the map out of the catalog and keeps its likes for the next publish.
+- Saving or renaming a published map updates its name and object count in the catalog.
+- Deleting a published map also removes it from the catalog.
+
+A player sent here by the edit button of the Lobby's Community Maps (`TeleportData.OpenMap`) enters build mode with that map loaded.
+
 **Exporting is not saving.** "Export current to Peri format" (developers only) builds a Game-format folder in `ServerStorage.MapEditorExports`, which only lasts while the server runs.
 
 ## Shared systems here
@@ -77,6 +94,7 @@ Everything that is not code lives only in the place:
 
 - `ServerStorage.MapEditorAssets`: the props copied from the Game's maps (`Peri`, one child per prop, listed through `PeriAssets`) and optional overrides for the catalog's building blocks.
   On start, `TemplateBuilder` turns them into `ReplicatedStorage.MapEditor.Templates`.
+  The folder is a Package, shared with the Game, which builds community maps from it.
   The two `Script`s inside `MapEditorAssets.Peri.RadioStand` belong to that model, so they stay in the place too.
 - `ServerStorage.MapEditorImports`: Game-format map folders the editor can import.
   Exports go to `ServerStorage.MapEditorExports`, which `Main` creates when missing.

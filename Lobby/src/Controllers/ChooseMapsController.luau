@@ -511,6 +511,14 @@ function ChooseMapsController:_setOpen(open : boolean)
 			-- Reopened mid-fade: the open tween owns the panel now.
 			if state == Enum.PlaybackState.Completed and not self.IsOpenState then
 				panel.Visible = false
+
+				-- The community panel shares this ScreenGui and may be up already.
+				for _, child in self.ScreenGui:GetChildren() do
+					if child ~= panel and child:IsA("GuiObject") and child.Visible then
+						return
+					end
+				end
+
 				--[[
 					Through `SetEnabled`, not `Enabled` directly: the panel closes in 0.18s, and in
 					that interval the portal may ask for the screen for the countdown. Writing

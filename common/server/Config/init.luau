@@ -25,6 +25,7 @@ type ServerConfig = {
 	Badges : typeof(require(script.Badges)),
 	Codes : typeof(require(script.Codes)),
 	PlayerMaps : typeof(require(script.PlayerMaps)),
+	CommunityMaps : typeof(require(script.CommunityMaps)),
 }
 
 local ServerConfig : ServerConfig = {}

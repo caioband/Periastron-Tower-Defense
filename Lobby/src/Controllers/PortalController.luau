@@ -23,6 +23,11 @@ local log = Log.new("PortalController")
 
 --[[ CONSTANTS ]]
 local MAP_FOLDER_NAME = "Map"
+
+-- The portals that open the community maps panel instead of the vanilla one. They
+-- have the same parts as the match portals but no group: PortalService does not
+-- know them.
+local BUILD_PORTALS_FOLDER_NAME = "BuildPortals"
 local EXIT_UI_NAME = "ExitGroupPortal"
 local EXIT_BUTTON_NAME = "Exit"
 
@@ -65,7 +70,8 @@ local FLASH_OUT_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDir
 	The player's side of the lobby portals.
 
 	Walking up to a free portal opens the map panel; walking up to one that already
-	holds a group joins it. The panel and the exit button only ask -- PortalService
+	holds a group joins it. A portal in `BuildPortals` opens the community maps
+	panel instead, and has no group. The panel and the exit button only ask -- PortalService
 	decides, and answers with PortalGroupChanged.
 
 	When the countdown runs out the server says so, and the EnterCutscene asset itself
@@ -74,6 +80,7 @@ local FLASH_OUT_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDir
 local PortalController = {
 	Controllers = {
 		ChooseMapsController = {},
+		CommunityMapsController = {},
 		CutsceneController = {},
 		InterfaceController = {},
 	},
@@ -86,10 +93,13 @@ local PortalController = {
 
 --[[ INTERNAL ]]
 
+--- The portal model with `portalId`, match portal or build portal (the ids never repeat).
 function PortalController:_findPortal(portalId : number) : Model?
-	for _, model in self.PortalsFolder:GetChildren() do
-		if model:GetAttribute("PortalId") == portalId then
-			return model
+	for _, folder in { self.PortalsFolder, self.BuildPortalsFolder } do
+		for _, model in folder:GetChildren() do
+			if model:GetAttribute("PortalId") == portalId then
+				return model
+			end
 		end
 	end
 
@@ -99,6 +109,11 @@ end
 function PortalController:_closePanel()
 	self.PanelPortal = nil
 	self.Controllers.ChooseMapsController:Close()
+	self.Controllers.CommunityMapsController:Close()
+end
+
+function PortalController:_isBuildPortal(model : Model) : boolean
+	return self.BuildPortalsFolder ~= nil and model.Parent == self.BuildPortalsFolder
 end
 
 --[=[
@@ -113,15 +128,17 @@ function PortalController:_findNearestPortal() : Model?
 
 	local nearest, nearestDistance = nil, PortalConfig.PROXIMITY_RADIUS
 
-	for _, model in self.PortalsFolder:GetChildren() do
-		local enter = model:FindFirstChild(PortalConfig.ENTER_NAME)
-		if not enter or not enter:IsA("BasePart") then
-			continue
-		end
+	for _, folder in { self.PortalsFolder, self.BuildPortalsFolder } do
+		for _, model in folder:GetChildren() do
+			local enter = model:FindFirstChild(PortalConfig.ENTER_NAME)
+			if not enter or not enter:IsA("BasePart") then
+				continue
+			end
 
-		local distance = (enter.Position - root.Position).Magnitude
-		if distance <= nearestDistance then
-			nearest, nearestDistance = model, distance
+			local distance = (enter.Position - root.Position).Magnitude
+			if distance <= nearestDistance then
+				nearest, nearestDistance = model, distance
+			end
 		end
 	end
 
@@ -184,7 +201,14 @@ function PortalController:_update()
 	end
 
 	self.PanelPortal = nearest
-	self.Controllers.ChooseMapsController:Open()
+
+	if self:_isBuildPortal(nearest) then
+		self.Controllers.ChooseMapsController:Close()
+		self.Controllers.CommunityMapsController:Open()
+	else
+		self.Controllers.CommunityMapsController:Close()
+		self.Controllers.ChooseMapsController:Open()
+	end
 end
 
 --[=[
@@ -449,9 +473,28 @@ function PortalController:construct()
 	local map = workspace:WaitForChild(MAP_FOLDER_NAME)
 
 	self.PortalsFolder = map:WaitForChild(PortalConfig.PORTALS_FOLDER)
+
+	-- Optional: a lobby without build portals still has its match portals.
+	task.spawn(function()
+		self.BuildPortalsFolder = map:WaitForChild(BUILD_PORTALS_FOLDER_NAME, 30)
+		if not self.BuildPortalsFolder then
+			log:StudioWarn(`no {MAP_FOLDER_NAME}.{BUILD_PORTALS_FOLDER_NAME} folder; the community maps panel has no portal.`)
+		end
+	end)
 	self.Scene = Shared:WaitForChild("Assets"):WaitForChild("Cutscenes"):FindFirstChild(PortalConfig.CUTSCENE_NAME)
 
 	self:_observeUI()
+
+	-- PLAY in the community panel: a group for that map on the build portal here.
+	self.Maid:GiveTask(self.Controllers.CommunityMapsController.Signals.PlayRequested:Connect(function(mapKey : string, maxPlayers : number)
+		local portal = self.PanelPortal
+		if not portal or not portal.Parent or not self:_isBuildPortal(portal) then
+			return
+		end
+
+		Framework:Fire("RequestCreateCommunityGroup", portal:GetAttribute("PortalId"), mapKey, maxPlayers)
+		self:_closePanel()
+	end))
 
 	self.Maid:GiveTask(self.Controllers.ChooseMapsController.Signals.MapChosen:Connect(function(mapName : string, maxPlayers : number)
 		local portal = self.PanelPortal

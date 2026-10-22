@@ -76,6 +76,12 @@ local ContractTrackerService = {
 --[[ INTERNAL ]]
 
 function ContractTrackerService:_record(player : Player, event : string, value : number, context)
+	-- A community map counts for no contract: anyone can publish an easy one.
+	local mapService = self.Services.MapService
+	if mapService and mapService.IsCommunityMatch and mapService:IsCommunityMatch() then
+		return
+	end
+
 	local contracts = self.Services.ContractService
 	if contracts and value > 0 then
 		contracts:Record(player, event, value, context)

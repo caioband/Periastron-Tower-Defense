@@ -46,6 +46,9 @@ local BASE_WINNING_XP = DataConfig.BASE_WINNING_XP
 -- (`WinCash`/`WinShards`), not a multiplied base; only XP still works that way.
 local DifficultyConfig = ServerConfig.Difficulty
 
+-- What a match on a community map pays and counts (see `isCommunityMatch`).
+local CommunityConfig = ServerConfig.CommunityMaps
+
 -- The `RuneConfig` ids that multiply each end-of-match currency in `rewardsFor`.
 local REWARD_RUNES = {
 	coins = "Coins",
@@ -139,6 +142,17 @@ local WaveService = {
 	-- the thread fails.
 	Generation = 0
 }
+
+--[=[
+	Whether this match runs on a community map (`MapService`). Such a match pays
+	`CommunityConfig.REWARD_MULTIPLIER` of the reward and writes no win, no Endless
+	best, no `CoinsEarned`, and no Endless badge: anyone can publish an easy map, so
+	it must not feed the leaderboards. See docs/game/community-matches.md.
+]=]
+function WaveService:isCommunityMatch() : boolean
+	local mapService = Framework:Get("MapService")
+	return mapService ~= nil and mapService.IsCommunityMatch ~= nil and mapService:IsCommunityMatch()
+end
 
 function WaveService:setWave(waveCount : number)
 	self.WaveCount = waveCount
@@ -271,7 +285,7 @@ function WaveService:awardEndlessMilestones(clearedWave : number)
 	if not badgeName then return end
 
 	local badgeService = self.Services.BadgeService
-	if not badgeService then return end
+	if not badgeService or self:isCommunityMatch() then return end
 
 	for _, player in Players:GetPlayers() do
 		task.spawn(badgeService.Award, badgeService, player, badgeName)
@@ -407,6 +421,13 @@ function WaveService:computeReward(preset, lost : boolean?)
 		shards = 0
 	end
 
+	if self:isCommunityMatch() then
+		local multiplier = CommunityConfig.REWARD_MULTIPLIER or 1
+		coins *= multiplier
+		shards *= multiplier
+		xp *= multiplier
+	end
+
 	return {
 		coins = math.max(0, math.floor(coins + 0.5)),
 		shards = math.max(0, math.floor(shards + 0.5)),
@@ -481,13 +502,17 @@ function WaveService:grantReward(player : Player, rewards) : boolean
 		xp = (paid and paid.xp or 0) + xp,
 	}
 
+	local community = self:isCommunityMatch()
+
 	dataService:Update(player, "Stats", function(stats)
 		stats.Cash = (stats.Cash or 0) + coins
 
 		-- The total earned, which never goes down (MOST COINS). The game's coin gains are
 		-- this and contract claims (`ContractService`); the other `+=` on `Cash`
-		-- are purchase refunds and Cmdr.
-		stats.CoinsEarned = (tonumber(stats.CoinsEarned) or 0) + coins
+		-- are purchase refunds and Cmdr. Community maps stay off that leaderboard.
+		if not community then
+			stats.CoinsEarned = (tonumber(stats.CoinsEarned) or 0) + coins
+		end
 
 		stats.Shards = (stats.Shards or 0) + shards
 		stats.XP = (stats.XP or 0) + xp
@@ -503,7 +528,7 @@ end
 ]=]
 function WaveService:recordEndlessBest(player : Player, waveNumber : number)
 	local dataService = self.Services.DataService
-	if not dataService then return end
+	if not dataService or self:isCommunityMatch() then return end
 
 	dataService:Update(player, "Stats", function(stats)
 		if waveNumber > (tonumber(stats.EndlessBestWave) or 0) then
@@ -557,6 +582,8 @@ function WaveService:onRoundEnded(won : boolean)
 	local mobService = self.Services.MobService
 	local mvp = mobService and mobService:GetMVP() or nil
 
+	local community = self:isCommunityMatch()
+
 	for _, player in Players:GetPlayers() do
 		-- One computation per player: the base belongs to the match, the gamepasses to each player.
 		-- This number (what they actually received) is what goes to their screen.
@@ -601,7 +628,9 @@ function WaveService:onRoundEnded(won : boolean)
 				also pays those who leave midway; this is binary and only applies to those in
 				the room when the last wave fell.
 			]]
-			if dataService then
+			-- A community map's win counts for nothing: not the map unlocks, not the
+			-- difficulty unlocks, not the leaderboards.
+			if dataService and not community then
 				dataService:Update(player, "Stats", function(stats)
 					stats.Wins = (stats.Wins or 0) + 1
 
@@ -717,6 +746,12 @@ end
 
 function WaveService:runRound(generation : number)
 	self:waitForAllPlayers()
+	if not self:isCurrent(generation) then return end
+
+	-- A community map is built after the players arrive; the round needs its path. A
+	-- map that failed is sending everyone back, so there is no round to run.
+	local mapService = Framework:Get("MapService")
+	if mapService and mapService.AwaitLoaded and not mapService:AwaitLoaded() then return end
 	if not self:isCurrent(generation) then return end
 
 	-- The tutorial does not vote: its match is designed to be won, and choosing

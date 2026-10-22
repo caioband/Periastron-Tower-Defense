@@ -26,6 +26,15 @@
       }
     },
 
+    "ServerStorage": {
+      "$className": "ServerStorage",
+      "$ignoreUnknownInstances": true,
+
+      "MapEditor": {
+        "$path": "../common/mapeditor"
+      }
+    },
+
     "ServerScriptService": {
       "$className": "ServerScriptService",
       "$ignoreUnknownInstances": true,

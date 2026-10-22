@@ -36,6 +36,7 @@ Commands that depend on a Game-only service live here and not in `common/`.
 | [Weather in a match](weather-in-match.md) | Scheduled weather, the indicator, weather effects, snow freeze, lightning |
 | [Rewards](rewards.md) | Wave cash, leaderstats, end-of-match and early-leave rewards |
 | [Tutorial match](tutorial-match.md) | The scripted five-wave tutorial |
+| [Community matches](community-matches.md) | Building a published Map Editor map at runtime, and its smaller rewards |
 
 ## Outside the repository
 

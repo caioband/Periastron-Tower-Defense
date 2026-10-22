@@ -12,16 +12,17 @@ local Serializer = require(Shared.Serializer)
 local MapRules = require(Shared.MapRules)
 
 local Modules = script.Parent
-local TemplateBuilder = require(Modules.TemplateBuilder)
+local TemplateBuilder = require(Shared.TemplateBuilder)
 local SessionService = require(Modules.SessionService)
 local MapStore = require(Modules.MapStore)
 local MapValidation = require(Modules.MapValidation)
 local PlaytestService = require(Modules.PlaytestService)
-local PeriMapAdapter = require(Modules.PeriMapAdapter)
+local PeriMapAdapter = require(Shared.PeriMapAdapter)
 local RateLimiter = require(Modules.RateLimiter)
 
 local Me = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Vendor"):WaitForChild("Me"))
 local DataService = Me.new():Get("DataService", false, true)
+local CommunityMapService = Me.new():Get("CommunityMapService", false, true)
 
 TemplateBuilder.build()
 SessionService.init()
@@ -47,6 +48,15 @@ local heavy = RateLimiter.new(Config.HEAVY_REQUEST_RATE, Config.HEAVY_REQUEST_BU
 local HEAVY = {
 	Save = true, Load = true, List = true, New = true, Rename = true, Duplicate = true, Delete = true,
 	PlaytestStart = true, PrefabSave = true, PrefabDelete = true, PrefabList = true, ImportPeri = true, ExportPeri = true,
+	Publish = true, Unpublish = true,
+}
+
+-- What the editor says when the community catalog refuses (CommunityMapService.REASONS).
+local PUBLISH_ERRORS = {
+	NotSaved = "Save the map before publishing it.",
+	NotLoaded = "Your data is still loading. Try again in a moment.",
+	Filtered = "The text could not be checked right now. Try again.",
+	Failed = "Publishing failed. Try again shortly.",
 }
 
 local function ok(data: any?): { [string]: any }
@@ -108,6 +118,14 @@ local function isDeveloper(player: Player): boolean
 	return success and rank >= 254
 end
 
+local function countObjects(map: Serializer.Map): number
+	local n = 0
+	for _ in map.objects do
+		n += 1
+	end
+	return n
+end
+
 local function saveSession(session: SessionService.Session): (boolean, string?)
 	session.map.modified = os.time()
 	local saved, err = MapStore.save(session.player, session.map)
@@ -116,6 +134,13 @@ local function saveSession(session: SessionService.Session): (boolean, string?)
 		session.savedOnce = true
 		session.lastSave = os.clock()
 		SessionService.syncMeta(session)
+		-- A published map shows its new name and size in the Lobby too.
+		if CommunityMapService:IsPublished(session.player, session.map.id) then
+			task.spawn(CommunityMapService.Refresh, CommunityMapService, session.player, session.map.id, {
+				Name = session.map.name,
+				Count = countObjects(session.map),
+			})
+		end
 	end
 	return saved, err
 end
@@ -244,6 +269,10 @@ handlers.Save = function(player)
 	if not saved then
 		return fail(err or "Save failed.")
 	end
+	-- Saving a published map changes what the Lobby plays right away.
+	if validation.unpaved > 0 and CommunityMapService:IsPublished(player, session.map.id) then
+		toast(player, "This map is published, and part of its enemy route is off Path pieces: enemies are hidden there in a match.", "warn")
+	end
 	return ok({ id = session.map.id, name = session.map.name, validation = validation, memoryStorage = MapStore.usingMemory })
 end
 
@@ -303,6 +332,9 @@ handlers.Rename = function(player, payload)
 	if not success then
 		return fail(renameErr or "Rename failed.")
 	end
+	if CommunityMapService:IsPublished(player, payload.id) then
+		task.spawn(CommunityMapService.Refresh, CommunityMapService, player, payload.id, { Name = name })
+	end
 	return ok({ name = name })
 end
 
@@ -325,15 +357,73 @@ handlers.Delete = function(player, payload)
 	if typeof(payload) ~= "table" or not MapRules.validId(payload.id) then
 		return fail("Invalid map.")
 	end
+	local published = CommunityMapService:IsPublished(player, payload.id)
 	local success, err = MapStore.delete(player, payload.id)
 	if not success then
 		return fail(err or "Delete failed.")
+	end
+	if published then
+		task.spawn(CommunityMapService.Unpublish, CommunityMapService, player, payload.id, true)
 	end
 	local session = requireSession(player)
 	if session and session.map.id == payload.id then
 		session.savedOnce = false
 		session.dirty = true
 		SessionService.syncMeta(session)
+	end
+	return ok()
+end
+
+--[[
+	Lists the open map in the Lobby's community catalog. Only the open map, saved and
+	without errors: validation needs the built map, and what goes public is what is
+	on disk.
+]]
+handlers.Publish = function(player, payload)
+	local session = requireSession(player)
+	if not session then
+		return fail("Not in build mode.")
+	end
+	if typeof(payload) ~= "table" or not MapRules.validId(payload.id) then
+		return fail("Invalid map.")
+	end
+	if payload.id ~= session.map.id then
+		return fail("Load this map to publish it.")
+	end
+	if session.busy then
+		return fail("Wait for the map to finish loading.")
+	end
+	if not session.savedOnce or session.dirty then
+		return fail("Save the map before publishing it.")
+	end
+	local validation = MapValidation.run(session)
+	if #validation.errors > 0 then
+		return fail("Fix the problems in the map before publishing it.", { validation = validation })
+	end
+	-- The Game hides an enemy that is not over a Path piece, so a route that leaves
+	-- them would show enemies vanishing (or never appearing, if the spawn is off).
+	if validation.unpaved > 0 then
+		return fail("The whole enemy route, from the spawn to the base, must be on Path pieces to publish.", { validation = validation })
+	end
+	local description = if typeof(payload.description) == "string" then payload.description else ""
+	local success, reason = CommunityMapService:Publish(player, session.map.id, {
+		Name = session.map.name,
+		Description = description,
+		Count = countObjects(session.map),
+	})
+	if not success then
+		return fail(PUBLISH_ERRORS[reason] or PUBLISH_ERRORS.Failed)
+	end
+	return ok()
+end
+
+handlers.Unpublish = function(player, payload)
+	if typeof(payload) ~= "table" or not MapRules.validId(payload.id) then
+		return fail("Invalid map.")
+	end
+	local success, reason = CommunityMapService:Unpublish(player, payload.id)
+	if not success then
+		return fail(PUBLISH_ERRORS[reason] or PUBLISH_ERRORS.Failed)
 	end
 	return ok()
 end

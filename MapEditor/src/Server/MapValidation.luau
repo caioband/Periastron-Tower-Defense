@@ -20,7 +20,7 @@ local Serializer = require(Shared.Serializer)
 local PathUtil = require(Shared.PathUtil)
 local MapRules = require(Shared.MapRules)
 
-local PeriMapAdapter = require(script.Parent.PeriMapAdapter)
+local PeriMapAdapter = require(Shared.PeriMapAdapter)
 
 type Session = any
 
@@ -31,6 +31,9 @@ export type Result = {
 	routes: number,
 	lengths: { number },
 	objects: number,
+	-- Studs of route not over Path pieces. In a Game match enemies are hidden there
+	-- (MobController drops a mob that is not over a Grid part), so publishing needs 0.
+	unpaved: number,
 }
 
 local MapValidation = {}
@@ -42,7 +45,7 @@ end
 function MapValidation.run(session: Session): Result
 	local map = session.map
 	local origin: CFrame = session.origin
-	local result: Result = { errors = {}, warnings = {}, routes = 0, lengths = {}, objects = 0 }
+	local result: Result = { errors = {}, warnings = {}, routes = 0, lengths = {}, objects = 0, unpaved = 0 }
 
 	local function err(msg: string, ids: { string }?, at: Vector3?)
 		table.insert(result.errors, { msg = msg, ids = ids or {}, at = at and vec(at) or nil })
@@ -259,7 +262,8 @@ function MapValidation.run(session: Session): Result
 		err(string.format("Route crosses about %d stud(s) with no ground under it.", gapCount * step), {}, localPos(gapAt))
 	end
 	if unpavedCount > 0 and unpavedAt then
-		warnIssue(string.format("About %d stud(s) of route are not on Path pieces; towers can be placed on the route there.", unpavedCount * step), {}, localPos(unpavedAt))
+		result.unpaved = unpavedCount * step
+		warnIssue(string.format("About %d stud(s) of route are not on Path pieces: towers can be placed there, enemies are hidden there in a match, and the map cannot be published.", unpavedCount * step), {}, localPos(unpavedAt))
 	end
 
 	return result

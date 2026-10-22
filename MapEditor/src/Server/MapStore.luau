@@ -68,7 +68,7 @@ function MapStore.awaitProfile(player: Player): boolean
 	return service:AwaitData(player) ~= nil
 end
 
-export type Entry = { id: string, name: string, modified: number, count: number }
+export type Entry = { id: string, name: string, modified: number, count: number, published: boolean }
 
 function MapStore.list(player: Player): (boolean, { Entry } | string)
 	local data = service:GetData(player)
@@ -82,6 +82,7 @@ function MapStore.list(player: Player): (boolean, { Entry } | string)
 			name = tostring(info.Name),
 			modified = tonumber(info.Modified) or 0,
 			count = tonumber(info.Count) or 0,
+			published = info.Published ~= nil,
 		})
 	end
 	table.sort(entries, function(a, b)

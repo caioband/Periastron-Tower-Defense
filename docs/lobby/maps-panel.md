@@ -1,6 +1,7 @@
 # Maps panel
 
 The panel where a player picks the map for the next match (`StarterGui.ChooseMaps`), opened from the portals.
+The same ScreenGui also holds the [community maps panel](community-maps.md), opened from the build portals.
 
 **Runs in:** Lobby
 **Code:** [`ChooseMapsController`](../../Lobby/src/Controllers/ChooseMapsController.luau), [`PortalController`](../../Lobby/src/Controllers/PortalController.luau), [`PortalService`](../../Lobby/src/Services/PortalService.luau), [`MapConfig`](../../common/shared/Config/SharedConfig/MapConfig.luau)

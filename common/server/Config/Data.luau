@@ -314,15 +314,22 @@ return {
 			  - `Prefabs`:   their prefabs, `{ [prefabId] = { Name, Created, Count } }`.
 			  - `Favorites`: keys of any map, theirs or another player's,
 			                 `{ [mapKey] = { Added } }`. Capped at `MAX_FAVORITES`.
+			  - `Likes`:     keys of the community maps they liked, `{ [mapKey] = { Added } }`.
+			                 Capped at `Config.CommunityMaps.MAX_LIKES`.
+
+			A map the player published carries `Published` (the time) in its `Maps`
+			entry; see `CommunityMapService`.
 
 			Each value is a table so a feature can add fields without a migration, and a
 			new list goes in as one more key here: reconcile creates it on older
-			profiles. Only `PlayerMapService` (and the editor through it) writes this.
+			profiles. Only `PlayerMapService` (and the editor and `CommunityMapService`
+			through it) writes this.
 		]]
 		PlayerMaps = {
 			Maps = {},
 			Prefabs = {},
 			Favorites = {},
+			Likes = {},
 		},
 
 	},

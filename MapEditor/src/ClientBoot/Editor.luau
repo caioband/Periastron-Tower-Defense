@@ -2,6 +2,7 @@ local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TeleportService = game:GetService("TeleportService")
 local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("MapEditor")
@@ -989,6 +990,30 @@ function Editor.duplicateMap(id, name)
 	Editor.openMaps()
 end
 
+function Editor.publishMap(id, description)
+	local response = Net.request("Publish", { id = id, description = description })
+	if not response.ok then
+		UI.toast(response.err, "error")
+		if response.validation then
+			UI.closeModal()
+			UI.showValidation(response.validation)
+		end
+		return
+	end
+	UI.toast("Published to Community Maps.", "ok")
+	Editor.openMaps()
+end
+
+function Editor.unpublishMap(id)
+	local response = Net.request("Unpublish", { id = id })
+	if not response.ok then
+		UI.toast(response.err, "error")
+		return
+	end
+	UI.toast("Removed from Community Maps.", "info")
+	Editor.openMaps()
+end
+
 function Editor.deleteMap(id)
 	local response = Net.request("Delete", { id = id })
 	if not response.ok then
@@ -1600,6 +1625,8 @@ function Editor.init()
 		renameMap = Editor.renameMap,
 		duplicateMap = Editor.duplicateMap,
 		deleteMap = Editor.deleteMap,
+		publishMap = Editor.publishMap,
+		unpublishMap = Editor.unpublishMap,
 		openImport = Editor.openImport,
 		importPeri = Editor.importPeri,
 		exportPeri = Editor.exportPeri,
@@ -1634,6 +1661,19 @@ function Editor.init()
 		BuildCamera.disable()
 		BuildCamera.enable(cf)
 	end)
+
+	-- Sent here by the edit button of the Lobby's Community Maps: straight into build
+	-- mode with that map open. The server only loads the player's own maps.
+	local success, teleportData = pcall(TeleportService.GetLocalPlayerTeleportData, TeleportService)
+	local openMap = success and typeof(teleportData) == "table" and teleportData.OpenMap
+	if MapRules.validId(openMap) then
+		task.defer(function()
+			Editor.enter()
+			if State.active then
+				Editor.loadMap(openMap)
+			end
+		end)
+	end
 end
 
 return Editor

@@ -83,6 +83,12 @@ function MatchStatsService:_close(player : Player)
 
 	self.Signals.Closed:Fire(player, seconds)
 
+	-- Time and matches on a community map stay off the leaderboards.
+	local mapService = Framework:Get("MapService")
+	if mapService and mapService.IsCommunityMatch and mapService:IsCommunityMatch() then
+		return
+	end
+
 	dataService:Update(player, "Stats", function(stats)
 		stats.TimeInMatches = (tonumber(stats.TimeInMatches) or 0) + seconds
 

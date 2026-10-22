@@ -37,7 +37,7 @@ local PathUtil = require(Shared.PathUtil)
 local PlacementUtil = require(Shared.PlacementUtil)
 local MapRules = require(Shared.MapRules)
 
-local PeriMapAdapter = require(script.Parent.PeriMapAdapter)
+local PeriMapAdapter = require(Shared.PeriMapAdapter)
 local MapValidation = require(script.Parent.MapValidation)
 
 local PeriShared = ReplicatedStorage:WaitForChild("Shared")

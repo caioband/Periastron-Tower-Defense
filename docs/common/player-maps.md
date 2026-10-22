@@ -17,9 +17,10 @@ A player map is split in two:
 
 ```lua
 PlayerMaps = {
-    Maps = { [mapId] = { Name, Created, Modified, Count } },  -- maps this player created
-    Prefabs = { [prefabId] = { Name, Created, Count } },      -- their prefabs
-    Favorites = { [mapKey] = { Added } },                     -- keys of any map, theirs or another player's
+    Maps = { [mapId] = { Name, Created, Modified, Count, Published? } },  -- maps this player created
+    Prefabs = { [prefabId] = { Name, Created, Count } },                  -- their prefabs
+    Favorites = { [mapKey] = { Added } },                                 -- keys of any map, theirs or another player's
+    Likes = { [mapKey] = { Added } },                                     -- community maps they liked
 }
 ```
 
@@ -55,6 +56,8 @@ On shutdown the editor's `BindToClose` keeps the server up (up to 25 s) until th
 When the DataStore cannot be opened in Studio, the content is kept in memory and `UsingMemory` is `true`; the editor warns the player.
 Everything is gone when the server stops.
 The profile goes through ProfileStore's own mock in that case.
+
+`Published` and `Likes` belong to the community catalog; see [Community maps](community-maps.md).
 
 ## Configuration
 

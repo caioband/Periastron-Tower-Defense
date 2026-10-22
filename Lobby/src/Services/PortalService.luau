@@ -28,6 +28,10 @@ local log = Log.new("PortalService")
 --[[ CONSTANTS ]]
 local MAP_FOLDER_NAME = "Map"
 
+-- The portals of the community maps panel. Same parts as the match portals; their
+-- groups carry a community map's key instead of a game map.
+local BUILD_PORTALS_FOLDER_NAME = "BuildPortals"
+
 local MAP_IMAGE_NAME = "MapImage"
 local PLAYER_COUNT_NAME = "PlayerCount"
 local TIMER_NAME = "Timer"
@@ -73,6 +77,13 @@ local KIND_TEXT = {
 	only if `ChallengeService:CanPlay` lets them; the teleport carries
 	`Challenge = { Kind, Period, Slot }`. A group whose period rolled over while it
 	waited is put back instead of teleported.
+
+	**Community groups.** The portals in `Map.BuildPortals` (`Community` on the record)
+	only open groups for a published community map (`CreateCommunityGroup`), checked
+	with `CommunityMapService`. The group's `Map` is the map's name, for the billboard
+	and the clients; the teleport carries `CommunityMap = key` instead of `Map`. Only
+	where `CommunityMapService:IsEnabled()` (QA for now). Challenge groups never take
+	a build portal, and a game map never opens on one.
 ]=]
 local PortalService = {
 	Services = {
@@ -81,6 +92,9 @@ local PortalService = {
 
 		-- Whether the group opener is mid-tutorial.
 		TutorialService = {},
+
+		-- Whether a community map is published, and whether this universe plays them.
+		CommunityMapService = {},
 	},
 
 	Signals = {
@@ -260,7 +274,8 @@ function PortalService:_updateBillboard(portal)
 		portal.PlayerCountLabel.Text = `{#group.Members}/{group.MaxPlayers}`
 	end
 
-	if portal.MapImage and portal.MapImage:IsA("ImageLabel") then
+	-- A community map has no picture: the billboard keeps its authored one.
+	if portal.MapImage and portal.MapImage:IsA("ImageLabel") and not group.CommunityMap then
 		portal.MapImage.Image = MapConfig.getImage(group.Map)
 	end
 
@@ -358,7 +373,8 @@ function PortalService:_teleportGroup(portal, group)
 	local options = Instance.new("TeleportOptions")
 	options.ShouldReserveServer = true
 	options:SetTeleportData({
-		Map = group.Map,
+		Map = if group.CommunityMap then nil else group.Map,
+		CommunityMap = group.CommunityMap,
 		Players = userIds,
 		MaxPlayers = group.MaxPlayers,
 		Tutorial = group.Tutorial == true or nil,
@@ -501,7 +517,7 @@ function PortalService:CreateGroup(player : Player, portalId : number, mapName :
 	end
 
 	local portal = self:_resolveRequest(player, portalId)
-	if not portal or portal.Group then
+	if not portal or portal.Group or portal.Community then
 		return false
 	end
 
@@ -564,7 +580,7 @@ function PortalService:CreateChallengeGroup(player : Player, challenge, maxPlaye
 
 	local portal = nil
 	for _, candidate in self.Portals do
-		if not candidate.Group then
+		if not candidate.Group and not candidate.Community then
 			portal = candidate
 			break
 		end
@@ -606,6 +622,60 @@ function PortalService:CreateChallengeGroup(player : Player, challenge, maxPlaye
 	self:_notify(player, portal)
 
 	return true, nil
+end
+
+--[=[
+	Opens a group on a build portal for the published community map `mapKey`.
+	`CommunityMapService` confirms the map is still listed, which yields, so the
+	portal and the player are checked again after it.
+]=]
+function PortalService:CreateCommunityGroup(player : Player, portalId : number, mapKey : string, maxPlayers : number?) : boolean
+	local communityMaps = self.Services.CommunityMapService
+	if not communityMaps or not communityMaps:IsEnabled() then
+		return false
+	end
+
+	local portal = self:_resolveRequest(player, portalId)
+	if not portal or portal.Group or not portal.Community or self:GetPortalOf(player) then
+		return false
+	end
+
+	local entry, reason = communityMaps:GetListedEntry(mapKey)
+	if not entry then
+		log:StudioWarn(`{player.Name} asked for community map {tostring(mapKey)}, which cannot be played ({reason}).`)
+		return false
+	end
+
+	-- The check above yielded: someone may have taken the portal, or the player left.
+	if portal.Group or self:GetPortalOf(player) or not self:_resolveRequest(player, portalId) then
+		return false
+	end
+
+	local requested = typeof(maxPlayers) == "number" and math.floor(maxPlayers) or PortalConfig.MIN_PLAYERS
+	local clamped = math.clamp(requested, PortalConfig.MIN_PLAYERS, PortalConfig.MAX_PLAYERS)
+
+	portal.Group = {
+		Owner = player,
+		Map = entry.Name,
+		CommunityMap = mapKey,
+		MaxPlayers = clamped,
+		Members = { player },
+		Deadline = os.clock() + PortalConfig.COUNTDOWN,
+		Shown = nil,
+		SavedRemaining = nil,
+		FullSince = nil,
+		Launching = false,
+		Tutorial = false,
+	}
+
+	self:_setGate(portal, true)
+	portal.Billboard.Enabled = true
+
+	self:_place(player, portal.Enter.CFrame, 1)
+	self:_onMembersChanged(portal)
+	self:_notify(player, portal)
+
+	return true
 end
 
 function PortalService:JoinGroup(player : Player, portalId : number) : boolean
@@ -682,20 +752,35 @@ function PortalService:construct()
 
 	self.Portals = {}
 
-	for _, model in portals:GetChildren() do
-		if not model:IsA("Model") then
-			continue
-		end
+	local function readFolder(folder : Instance, community : boolean)
+		for _, model in folder:GetChildren() do
+			if not model:IsA("Model") then
+				continue
+			end
 
-		local portal = self:_readPortal(model, #self.Portals + 1)
-		if portal then
-			table.insert(self.Portals, portal)
-			self:_resetPortal(portal)
+			local portal = self:_readPortal(model, #self.Portals + 1)
+			if portal then
+				portal.Community = community
+				table.insert(self.Portals, portal)
+				self:_resetPortal(portal)
+			end
 		end
+	end
+
+	readFolder(portals, false)
+
+	-- Ids follow the match portals, so they never change when build portals are added.
+	local buildPortals = map:FindFirstChild(BUILD_PORTALS_FOLDER_NAME)
+	if buildPortals then
+		readFolder(buildPortals, true)
 	end
 
 	Framework:Listen("RequestCreateGroup", function(player : Player, portalId : number, mapName : string, maxPlayers : number)
 		self:CreateGroup(player, portalId, mapName, maxPlayers)
+	end)
+
+	Framework:Listen("RequestCreateCommunityGroup", function(player : Player, portalId : number, mapKey : string, maxPlayers : number)
+		self:CreateCommunityGroup(player, portalId, mapKey, maxPlayers)
 	end)
 
 	Framework:Listen("RequestJoinGroup", function(player : Player, portalId : number)
