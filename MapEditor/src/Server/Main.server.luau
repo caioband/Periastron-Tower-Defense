@@ -353,6 +353,26 @@ handlers.PlaytestStart = function(player)
 	return ok(result)
 end
 
+handlers.PlaytestOptions = function(player)
+	local session = requireSession(player)
+	if not session then
+		return fail("Not in build mode.")
+	end
+	return ok(PlaytestService.options())
+end
+
+handlers.PlaytestConfigure = function(player, payload)
+	local session = requireSession(player)
+	if not session then
+		return fail("Not in build mode.")
+	end
+	local success, err = PlaytestService.configure(session, payload)
+	if not success then
+		return fail(err or "Could not set up the test.")
+	end
+	return ok()
+end
+
 handlers.PlaytestStop = function(player)
 	local session = requireSession(player)
 	if not session then
@@ -379,9 +399,60 @@ handlers.PlaytestTower = function(player, payload)
 	if not session then
 		return fail("Not in build mode.")
 	end
-	local success, err = PlaytestService.placeTower(session, typeof(payload) == "table" and payload.position)
+	local position = typeof(payload) == "table" and payload.position or nil
+	local unit = typeof(payload) == "table" and payload.unit or nil
+	local success, err = PlaytestService.placeTower(session, position, unit)
 	if not success then
+		toast(player, err or "Cannot place there.", "warn")
 		return fail(err or "Cannot place there.")
+	end
+	return ok()
+end
+
+handlers.PlaytestSell = function(player, payload)
+	local session = requireSession(player)
+	if not session then
+		return fail("Not in build mode.")
+	end
+	if typeof(payload) ~= "table" then
+		return fail("Malformed request.")
+	end
+	local success, message = PlaytestService.sellTower(session, payload.id)
+	if not success then
+		toast(player, message or "Cannot sell that.", "warn")
+		return fail(message or "Cannot sell that.")
+	end
+	toast(player, message or "Sold.", "ok")
+	return ok()
+end
+
+handlers.PlaytestUpgrade = function(player, payload)
+	local session = requireSession(player)
+	if not session then
+		return fail("Not in build mode.")
+	end
+	if typeof(payload) ~= "table" then
+		return fail("Malformed request.")
+	end
+	local success, err = PlaytestService.upgradeTower(session, payload.id)
+	if not success then
+		toast(player, err or "Cannot upgrade that.", "warn")
+		return fail(err or "Cannot upgrade that.")
+	end
+	return ok()
+end
+
+handlers.PlaytestPriority = function(player, payload)
+	local session = requireSession(player)
+	if not session then
+		return fail("Not in build mode.")
+	end
+	if typeof(payload) ~= "table" then
+		return fail("Malformed request.")
+	end
+	local success, err = PlaytestService.cyclePriority(session, payload.id)
+	if not success then
+		return fail(err or "Cannot change that.")
 	end
 	return ok()
 end

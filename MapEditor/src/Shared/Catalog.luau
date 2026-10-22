@@ -40,7 +40,7 @@ export type Def = {
 
 local Catalog = {}
 
-Catalog.CATEGORIES = { "Ground", "Paths", "Ramps & Stairs", "Walls", "Nature", "Props", "Furniture", "Structures", "Gameplay", "Prefabs" }
+Catalog.CATEGORIES = { "Ground", "Parts", "Paths", "Ramps & Stairs", "Walls", "Nature", "Props", "Furniture", "Structures", "Gameplay", "Prefabs" }
 
 Catalog.ROLE = {
 	EnemySpawn = "EnemySpawn",
@@ -94,6 +94,43 @@ editablePart({ id = "ground_sand", name = "Sand Plate", category = "Ground", per
 editablePart({ id = "ground_snow", name = "Snow Plate", category = "Ground", periFolder = "Locked", size = Vector3.new(16, 1, 16), color = Color3.fromHex("F2F3F3"), material = Enum.Material.Snow })
 editablePart({ id = "platform_wood", name = "Wood Platform", category = "Ground", periFolder = "Terrain", size = Vector3.new(12, 1, 12), color = Color3.fromHex("AA5500"), material = Enum.Material.WoodPlanks })
 editablePart({ id = "water_plane", name = "Water Plane", category = "Ground", periFolder = "Terrain", size = Vector3.new(16, 0.5, 16), color = Color3.fromHex("0D69AC"), material = Enum.Material.Glass, transparency = 0.35, collide = false, towerPlaceable = false })
+
+--[[
+	Basic parts: one of each classic Roblox part, to build your own props.
+
+	Each entry's look (surface types, shape, class) comes from its template in
+	ServerStorage.MapEditorAssets (part_block, part_studs, ...), which
+	TemplateBuilder uses as the override for that id. Surface textures only
+	render on Plastic, so these default to it; size, colour, material and
+	transparency stay editable like any other part.
+]]
+local PART_GREY = Color3.fromHex("A3A2A5")
+local BRICK = Vector3.new(4, 1.2, 2)
+local PART_MAX = Vector3.new(512, 512, 512)
+local function basicPart(raw: { [string]: any })
+	raw.category = "Parts"
+	raw.periFolder = "Terrain"
+	raw.color = raw.color or PART_GREY
+	raw.material = raw.material or Enum.Material.Plastic
+	raw.size = raw.size or BRICK
+	raw.maxSize = raw.maxSize or PART_MAX
+	editablePart(raw)
+end
+
+basicPart({ id = "part_block", name = "Part", description = "Classic brick: studs on top, inlets underneath." })
+basicPart({ id = "part_smooth", name = "Smooth Part", description = "Smooth on every face." })
+basicPart({ id = "part_studs", name = "Stud Part", description = "Studs on every face." })
+basicPart({ id = "part_inlet", name = "Inlet Part", description = "Inlets on every face." })
+basicPart({ id = "part_weld", name = "Weld Part", description = "Weld surface on every face." })
+basicPart({ id = "part_glue", name = "Glue Part", description = "Glue surface on every face." })
+basicPart({ id = "part_universal", name = "Universal Part", description = "Universal surface on every face." })
+basicPart({ id = "part_hinge", name = "Hinge Part", description = "Hinge on the top face. Decorative: map parts are anchored." })
+basicPart({ id = "part_motor", name = "Motor Part", description = "Motor on the top face. Decorative: map parts are anchored." })
+basicPart({ id = "part_cylinder", name = "Cylinder", size = Vector3.new(2, 2, 2) })
+basicPart({ id = "part_ball", name = "Ball", size = Vector3.new(2, 2, 2), uniform = true })
+basicPart({ id = "part_wedge", name = "Wedge" })
+basicPart({ id = "part_cornerwedge", name = "Corner Wedge Part", size = Vector3.new(2, 2, 2) })
+basicPart({ id = "part_truss", name = "Truss", size = Vector3.new(2, 2, 2), minSize = Vector3.new(2, 2, 2), allowMaterial = false, allowTransparency = false, description = "Truss segment. Lengths snap to 2-stud steps." })
 
 local PATH_COLOR = Color3.fromHex("7C5C46")
 local PATH_MIN = Vector3.new(1, 0.1, 1)

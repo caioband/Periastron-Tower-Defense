@@ -1,13 +1,23 @@
---!strict
 --[[
-	Playtest harness.
+	Playtest harness, running Peri's real data.
 
 	The map is exported through PeriMapAdapter and loaded with a mirror of Peri's
 	MapService:LoadMap (Content.Map -> workspace.Map, Nodes ->
 	workspace.PathScriptable.Nodes + PublishNodeCounts, BaseHP and BoundingBox
-	forced inert). Routes come from the same PathUtil.BuildRoutes MobService uses,
-	enemies advance by distance along the smoothed route like MobService, and
-	tower placement uses Peri's PlacementUtil.PathProbe against Grid parts.
+	forced inert). Routes come from the same PathUtil.BuildRoutes MobService uses.
+
+	A test opens in the "Setup" phase: the client shows PlaytestSetup, the player
+	picks a difficulty, a start wave and a loadout, and `configure` applies the
+	preset from ServerScriptService.Config.Difficulty (cash, base health, leak
+	damage, wave pacing). Waves come from Config.Wave.GetSpawns, so every
+	difficulty (Endless included) spawns exactly what its table says, with the
+	real health, speed, reward and spawn delays. Enemies and towers are the models
+	in ReplicatedStorage.Shared.Assets, and enemies wear the game's own health bar
+	(Assets.UI.HealthAttachment). Towers read UnitStats through UnitUpgradeConfig
+	at their current level, so damage, range, cooldown, slow, income, upgrade cost
+	and sell value follow the same getters the match uses; target priority uses
+	SharedConfig.TargetPriority. Model attributes `Upgrades`, `TargetPriority` and
+	`DamageDone` mirror what UnitService writes, for the upgrade card.
 
 	The editor's own Instances are parked in ServerStorage for the duration and
 	the saved map table is never touched, so nothing from the test can leak into
@@ -17,7 +27,9 @@
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local ServerScriptService = game:GetService("ServerScriptService")
 local ServerStorage = game:GetService("ServerStorage")
+local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("MapEditor")
 local Config = require(Shared.Config)
@@ -28,35 +40,41 @@ local MapRules = require(Shared.MapRules)
 local PeriMapAdapter = require(script.Parent.PeriMapAdapter)
 local MapValidation = require(script.Parent.MapValidation)
 
+local PeriShared = ReplicatedStorage:WaitForChild("Shared")
+local SharedConfigModule = PeriShared:WaitForChild("Config"):WaitForChild("SharedConfig")
+local SharedConfig = require(SharedConfigModule)
+local Mob = SharedConfig.Mob
+local UnitStats = SharedConfig.UnitStats
+local UnitUpgradeConfig = SharedConfig.UnitUpgradeConfig
+local TargetPriority = SharedConfig.TargetPriority
+
+local Assets = PeriShared:WaitForChild("Assets")
+local UnitAssets = Assets:WaitForChild("Units")
+local EntityAssets = Assets:WaitForChild("Entities")
+local DifficultyAssets = EntityAssets:WaitForChild("Difficulties")
+
+local PeriConfig = ServerScriptService:WaitForChild("Config")
+local Difficulty = require(PeriConfig:WaitForChild("Difficulty"))
+local Wave = require(PeriConfig:WaitForChild("Wave"))
+local Data = require(PeriConfig:WaitForChild("Data"))
+
 local PERI = Config.PERI
 local PT = Config.PLAYTEST
 
+local LOADOUT_SIZE = 6
+local MAX_TOWERS = 40
+local ENDLESS_WAVE_CAP = 1000
+local SELL_RATIO = SharedConfig.SellRefundRatio or 0.5
+local CASH_PER_DAMAGE = Data.CASH_PER_DAMAGE or 0.15
+local PUSH_INTERVAL = 0.25
+local TOWER_TAG = "PlaytestTowerId"
+
 type Session = any
 
-type Enemy = { part: BasePart, route: number, distance: number, health: number }
-type Tower = { part: BasePart, position: Vector3, lastShot: number }
-
-type State = {
-	session: Session,
-	export: Folder,
-	parked: Instance?,
-	mapClone: Instance?,
-	spawnClone: Instance?,
-	enemiesFolder: Folder,
-	routes: { any },
-	enemies: { Enemy },
-	towers: { Tower },
-	baseHealth: number,
-	killed: number,
-	leaked: number,
-	spawning: boolean,
-	connection: RBXScriptConnection?,
-	label: TextLabel?,
-	grid: { BasePart },
-}
-
 local PlaytestService = {}
-local active: State? = nil
+local active = nil
+
+local templateCache = {}
 
 local function templates(): Instance
 	return Shared:WaitForChild("Templates")
@@ -95,7 +113,6 @@ local function inert(part: BasePart)
 	part.CanTouch = false
 end
 
---[[ Mirror of MapService:LoadMap for a map folder, without lighting. ]]
 local function loadMapFolder(mapFolder: Folder): (Instance?, Instance?)
 	local content = mapFolder:FindFirstChild("Content")
 	local clone: Instance? = nil
@@ -173,48 +190,308 @@ local function gridParts(mapRoot: Instance?): { BasePart }
 	return parts
 end
 
-local function stats(state: State): { [string]: any }
+-- Models ---------------------------------------------------------------------
+
+local function findEntityTemplate(name: string): Model?
+	local entity = Mob.Entities[name]
+	if entity and entity.Folder then
+		local folder = DifficultyAssets:FindFirstChild(entity.Folder)
+		local model = folder and folder:FindFirstChild(name)
+		if model and model:IsA("Model") then
+			return model
+		end
+	end
+	for _, folder in DifficultyAssets:GetChildren() do
+		local model = folder:FindFirstChild(name)
+		if model and model:IsA("Model") then
+			return model
+		end
+	end
+	return nil
+end
+
+local function templateInfo(model: Model)
+	local cached = templateCache[model]
+	if cached then
+		return cached
+	end
+	local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+	local cf, size = model:GetBoundingBox()
+	local lift = 1.2
+	if root and root:IsA("BasePart") then
+		lift = root.Position.Y - (cf.Position.Y - size.Y / 2)
+	end
+	local info = { lift = lift, height = size.Y }
+	templateCache[model] = info
+	return info
+end
+
+local function findAnimation(model: Instance, names: { string }): Animation?
+	for _, name in names do
+		local anim = model:FindFirstChild(name)
+		if anim and anim:IsA("Animation") then
+			return anim
+		end
+	end
+	return nil
+end
+
+local function firstAttackAnimation(model: Instance): Animation?
+	local anim = findAnimation(model, { "Attack", "Slash1", "Attack2", "StartAttack", "MoneyWave", "Meteor", "Lighting" })
+	if anim then
+		return anim
+	end
+	for _, child in model:GetChildren() do
+		if child:IsA("Animation") and child.Name ~= "Idle" and child.Name ~= "Walk" then
+			return child
+		end
+	end
+	return nil
+end
+
+local function animatorFor(model: Model): Animator
+	local controller = model:FindFirstChildOfClass("AnimationController")
+	if not controller then
+		controller = Instance.new("AnimationController")
+		controller.Parent = model
+	end
+	local animator = controller:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = controller
+	end
+	return animator
+end
+
+local function rig(model: Model): BasePart?
+	local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+	if not root or not root:IsA("BasePart") then
+		return nil
+	end
+	model.PrimaryPart = root
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.CanCollide = false
+			d.CanTouch = false
+			d.CanQuery = false
+			d.Massless = true
+			d.Anchored = d == root
+		end
+	end
+	return root
+end
+
+local function playLoop(animator: Animator, animation: Animation?, speed: number?): AnimationTrack?
+	if not animation then
+		return nil
+	end
+	local ok, track = pcall(animator.LoadAnimation, animator, animation)
+	if not ok or not track then
+		return nil
+	end
+	track.Looped = true
+	track:Play(0.1)
+	if speed then
+		track:AdjustSpeed(speed)
+	end
+	return track
+end
+
+local function healthBar(root: BasePart, name: string)
+	local folder = Assets:FindFirstChild("UI")
+	local template = folder and folder:FindFirstChild("HealthAttachment")
+	if not template then
+		return nil
+	end
+	local attachment = template:Clone()
+	attachment.Parent = root
+	local billboard = attachment:FindFirstChildOfClass("BillboardGui")
+	if not billboard then
+		return nil
+	end
+	billboard.Enabled = true
+	local bar = billboard:FindFirstChild("Bar")
+	local mobName = billboard:FindFirstChild("MobName")
+	if mobName and mobName:IsA("TextLabel") then
+		mobName.Text = name
+	end
+	return {
+		clip = bar and bar:FindFirstChild("ScaleThis"),
+		text = bar and bar:FindFirstChildOfClass("TextLabel"),
+	}
+end
+
+local HEALTH_TWEEN_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local function setHealthBar(enemy, instant: boolean?)
+	local ui = enemy.healthUi
+	if not ui then
+		return
+	end
+	local ratio = math.clamp(enemy.health / math.max(enemy.maxHealth, 1), 0, 1)
+	local target = UDim2.new(ratio, 0, 1, 0)
+	if ui.clip then
+		if instant then
+			ui.clip.Size = target
+		else
+			TweenService:Create(ui.clip, HEALTH_TWEEN_INFO, { Size = target }):Play()
+		end
+	end
+	if ui.text then
+		ui.text.Text = math.ceil(math.max(enemy.health, 0)) .. "/" .. enemy.maxHealth
+	end
+end
+
+-- Stats ------------------------------------------------------------------------
+
+local function placedCounts(state): { [string]: number }
+	local counts = {}
+	for _, tower in state.towers do
+		counts[tower.name] = (counts[tower.name] or 0) + 1
+	end
+	return counts
+end
+
+local function stats(state): { [string]: any }
+	local nextIn = 0
+	if state.nextAt then
+		nextIn = math.max(0, math.ceil(state.nextAt - os.clock()))
+	end
 	return {
 		state = "Running",
-		baseHealth = state.baseHealth,
-		maxHealth = PT.BaseHealth,
+		phase = state.phase,
+		difficulty = state.preset and state.preset.Name or nil,
+		wave = state.wave,
+		maxWaves = state.maxWaves,
+		cash = math.floor(state.cash),
+		baseHealth = math.max(0, math.ceil(state.baseHealth)),
+		maxHealth = state.maxHealth,
 		alive = #state.enemies,
 		killed = state.killed,
 		leaked = state.leaked,
 		towers = #state.towers,
-		maxTowers = PT.MaxTowers,
+		maxTowers = MAX_TOWERS,
 		routes = #state.routes,
-		spawning = state.spawning,
+		spawning = state.runners > 0,
+		nextIn = nextIn,
+		loadout = state.loadout,
+		placed = placedCounts(state),
 	}
 end
 
-local function setBaseLabel(state: State)
+local function setBaseLabel(state)
 	if state.label then
-		state.label.Text = tostring(state.baseHealth)
+		state.label.Text = tostring(math.max(0, math.ceil(state.baseHealth)))
 	end
 end
 
-local function newEnemy(state: State, routeIndex: number): Enemy
-	local part = Instance.new("Part")
-	part.Name = "TestEnemy"
-	part.Size = PT.EnemySize
-	part.Color = Color3.fromHex("C4281C")
-	part.Material = Enum.Material.SmoothPlastic
-	inert(part)
-	local start = PathUtil.GetPositionAtDistance(state.routes[routeIndex].smooth, 0) or Vector3.zero
-	part.CFrame = CFrame.new(start + Vector3.new(0, PT.EnemySize.Y / 2, 0))
-	part.Parent = state.enemiesFolder
-	return { part = part, route = routeIndex, distance = 0, health = PT.EnemyHealth }
+local function push(state)
+	for _, tower in state.towers do
+		tower.model:SetAttribute("DamageDone", math.floor(tower.damageDealt))
+	end
+	state.session.push("Playtest", stats(state))
 end
 
-local function flash(from: Vector3, to: Vector3, parent: Instance)
+-- Enemies -------------------------------------------------------------------------
+
+local function spawnEnemy(state, entry, routeIndex: number, waveNumber: number)
+	local template = findEntityTemplate(entry.Entity)
+	local smooth = state.routes[routeIndex].smooth
+	local start = PathUtil.GetPositionAtDistance(smooth, 0) or Vector3.zero
+
+	local model: Model
+	local lift = 1.2
+	if template then
+		model = template:Clone()
+		lift = templateInfo(template).lift
+	else
+		model = Instance.new("Model")
+		local part = Instance.new("Part")
+		part.Name = "HumanoidRootPart"
+		part.Size = Vector3.new(1.6, 2.4, 1.6)
+		part.Color = Color3.fromHex("C4281C")
+		part.Parent = model
+		lift = 1.2
+	end
+	model.Name = entry.Entity
+	local root = rig(model) :: BasePart
+	root.CFrame = CFrame.new(start + Vector3.new(0, lift, 0))
+	model.Parent = state.enemiesFolder
+
+	local reference = Mob.Entities[entry.Entity]
+	local referenceSpeed = Mob.BaseSpeed * ((reference and reference.SpeedMultiplier) or 1)
+	local speed = entry.Speed or referenceSpeed
+
+	local track = nil
+	if template then
+		local walk = findAnimation(model, { "Walk" }) or EntityAssets:FindFirstChild("Walk")
+		track = playLoop(animatorFor(model), walk :: Animation?, math.clamp(speed / math.max(referenceSpeed, 0.1), 0.5, 2.5))
+	end
+
+	local health = entry.Health or (reference and reference.Health) or 1
+	local enemy = {
+		model = model,
+		root = root,
+		name = entry.Entity,
+		route = routeIndex,
+		distance = 0,
+		health = health,
+		maxHealth = health,
+		refHealth = (reference and reference.Health) or health,
+		speed = speed,
+		reward = entry.Reward or 1,
+		lift = lift,
+		wave = waveNumber,
+		boss = Mob.IsBoss(entry.Entity),
+		track = track,
+		healthUi = healthBar(root, entry.Entity),
+	}
+	setHealthBar(enemy, true)
+	table.insert(state.enemies, enemy)
+	state.waveAlive[waveNumber] = (state.waveAlive[waveNumber] or 0) + 1
+	return enemy
+end
+
+local function removeEnemy(state, enemy)
+	local index = table.find(state.enemies, enemy)
+	if index then
+		table.remove(state.enemies, index)
+	end
+	state.waveAlive[enemy.wave] = math.max(0, (state.waveAlive[enemy.wave] or 1) - 1)
+	if enemy.model then
+		enemy.model:Destroy()
+	end
+end
+
+local function damageEnemy(state, enemy, amount: number, tower)
+	if enemy.health <= 0 or amount <= 0 then
+		return
+	end
+	local landed = math.min(amount, enemy.health)
+	enemy.health -= landed
+	local healthRatio = math.max(1, enemy.maxHealth / math.max(enemy.refHealth, 1e-3))
+	state.cash += landed * CASH_PER_DAMAGE / healthRatio
+	if tower then
+		tower.damageDealt += landed
+	end
+	setHealthBar(enemy)
+	if enemy.health <= 0 then
+		state.cash += enemy.reward
+		state.killed += 1
+		removeEnemy(state, enemy)
+	end
+end
+
+-- Towers --------------------------------------------------------------------------
+
+local function flash(from: Vector3, to: Vector3, parent: Instance, color: Color3)
 	local beam = Instance.new("Part")
 	beam.Name = "Shot"
 	inert(beam)
 	beam.Material = Enum.Material.Neon
-	beam.Color = Color3.fromHex("F5CD30")
+	beam.Color = color
 	local length = (to - from).Magnitude
-	beam.Size = Vector3.new(0.2, 0.2, length)
+	beam.Size = Vector3.new(0.15, 0.15, math.max(length, 0.05))
 	beam.CFrame = CFrame.lookAt(from, to) * CFrame.new(0, 0, -length / 2)
 	beam.Parent = parent
 	task.delay(0.08, function()
@@ -222,64 +499,312 @@ local function flash(from: Vector3, to: Vector3, parent: Instance)
 	end)
 end
 
-local function step(state: State, dt: number)
+local CLASS_COLORS = {
+	Ranged = Color3.fromHex("F5CD30"),
+	Melee = Color3.fromHex("FFFFFF"),
+	Magic = Color3.fromHex("B48CFF"),
+	Fire = Color3.fromHex("FF7A2F"),
+	Ice = Color3.fromHex("8FE3FF"),
+	Electric = Color3.fromHex("FFF36B"),
+}
+
+local function flatDistance(a: Vector3, b: Vector3): number
+	return ((a - b) * Vector3.new(1, 0, 1)).Magnitude
+end
+
+local function towerRange(tower): number
+	return tower.range or 0
+end
+
+local function refreshTowerStats(tower)
+	local name, level = tower.name, tower.level
+	tower.damage = UnitUpgradeConfig:GetDamage(name, level)
+	tower.cooldown = UnitUpgradeConfig:GetCooldown(name, level)
+	tower.range = UnitUpgradeConfig:GetRange(name, level)
+	tower.income = UnitUpgradeConfig:GetIncome(name, level)
+	tower.slow = if tower.stats.SlowAura then UnitUpgradeConfig:GetAuraSlow(name, level) else 0
+	tower.model:SetAttribute("Upgrades", level)
+	tower.model:SetAttribute("TargetPriority", tower.priority)
+	tower.model:SetAttribute("Range", tower.range)
+end
+
+local function pickTarget(state, tower)
+	local best, bestCandidate = nil, nil
+	local range = towerRange(tower)
+	for _, enemy in state.enemies do
+		if enemy.health > 0 then
+			local distance = flatDistance(enemy.root.Position, tower.position)
+			if distance <= range then
+				local candidate = { distance = distance, health = enemy.health, progress = enemy.distance }
+				if TargetPriority.IsBetter(tower.priority, candidate, bestCandidate) then
+					best, bestCandidate = enemy, candidate
+				end
+			end
+		end
+	end
+	return best
+end
+
+local function face(tower, point: Vector3)
+	local position = tower.root.Position
+	local flat = Vector3.new(point.X, position.Y, point.Z)
+	if (flat - position).Magnitude > 1e-3 then
+		tower.root.CFrame = CFrame.lookAt(position, flat)
+	end
+end
+
+local function hitTargets(state, tower, target)
+	local s = tower.stats
+	local list = { target }
+	if s.AOE and s.AOE.Radius then
+		list = {}
+		for _, enemy in state.enemies do
+			if enemy.health > 0 and flatDistance(enemy.root.Position, target.root.Position) <= s.AOE.Radius then
+				table.insert(list, enemy)
+			end
+		end
+	elseif s.Chain and s.Chain.Targets then
+		list = { target }
+		local last = target
+		for _ = 2, s.Chain.Targets do
+			local nextEnemy, nextDistance = nil, math.huge
+			for _, enemy in state.enemies do
+				if enemy.health > 0 and not table.find(list, enemy) then
+					local d = flatDistance(enemy.root.Position, last.root.Position)
+					if d <= (s.Chain.Radius or 0) and d < nextDistance then
+						nextEnemy, nextDistance = enemy, d
+					end
+				end
+			end
+			if not nextEnemy then
+				break
+			end
+			table.insert(list, nextEnemy)
+			last = nextEnemy
+		end
+	end
+	return list
+end
+
+local function attack(state, tower, target)
+	local s = tower.stats
+	local hits = math.max(1, s.Hits or 1)
+	local interval = s.HitInterval or 0
+	local origin = tower.root.Position + Vector3.new(0, 0.6, 0)
+	local color = CLASS_COLORS[s.Class or ""] or Color3.fromHex("F5CD30")
+	face(tower, target.root.Position)
+	if tower.attackTrack then
+		tower.attackTrack:Play(0.05)
+	end
+	for hit = 1, hits do
+		local function strike()
+			if active ~= state then
+				return
+			end
+			local victim = target
+			if victim.health <= 0 then
+				victim = pickTarget(state, tower)
+				if not victim then
+					return
+				end
+			end
+			for _, enemy in hitTargets(state, tower, victim) do
+				flash(origin, enemy.root.Position, state.effectsFolder, color)
+				damageEnemy(state, enemy, tower.damage, tower)
+			end
+		end
+		if hit == 1 or interval <= 0 then
+			strike()
+		else
+			task.delay(interval * (hit - 1), strike)
+		end
+	end
+end
+
+local function slowAt(state, position: Vector3): number
+	local slow = 0
+	for _, tower in state.towers do
+		if tower.slow > 0 and flatDistance(position, tower.position) <= towerRange(tower) then
+			slow = math.max(slow, tower.slow)
+		end
+	end
+	return slow
+end
+
+-- Waves ---------------------------------------------------------------------------
+
+local function waveCash(state, waveNumber: number)
+	local income = Wave.GetWaveCash(waveNumber)
+	for _, tower in state.towers do
+		income += math.floor((tower.income or 0) + 0.5)
+	end
+	state.cash += income
+end
+
+local function isFinalWave(state, waveNumber: number): boolean
+	return state.maxWaves > 0 and waveNumber >= state.maxWaves
+end
+
+local function runWave(state, waveNumber: number)
+	local spawns = Wave.GetSpawns(waveNumber, state.preset.Name)
+	state.runners += 1
+	state.waveRunning[waveNumber] = true
+	task.spawn(function()
+		local routeCursor = 0
+		for _, entry in spawns do
+			for i = 1, entry.Amount or 1 do
+				if active ~= state or state.phase == "Lost" then
+					state.runners -= 1
+					state.waveRunning[waveNumber] = nil
+					return
+				end
+				routeCursor += 1
+				local routeIndex = ((routeCursor - 1) % #state.routes) + 1
+				spawnEnemy(state, entry, routeIndex, waveNumber)
+				local last = i == (entry.Amount or 1)
+				local delay = if last and entry.GroupDelay then entry.GroupDelay else entry.SpawnDelay
+				task.wait(delay or 0.35)
+			end
+		end
+		state.runners -= 1
+		state.waveRunning[waveNumber] = nil
+	end)
+end
+
+local function startNextWave(state): (boolean, string?)
+	if state.phase == "Setup" then
+		return false, "Pick a difficulty and towers first."
+	end
+	if state.phase == "Lost" then
+		return false, "The base fell. Stop the test to try again."
+	end
+	if state.phase == "Won" then
+		return false, "Every wave is cleared."
+	end
+	local nextWave = state.wave + 1
+	if state.maxWaves > 0 and nextWave > state.maxWaves then
+		return false, "No more waves in " .. state.preset.Name .. "."
+	end
+	if #state.routes == 0 then
+		return false, "The map has no route."
+	end
+	state.wave = nextWave
+	state.nextAt = nil
+	state.phase = "Wave"
+	state.pendingWaves[nextWave] = true
+	runWave(state, nextWave)
+	push(state)
+	return true, nil
+end
+
+local function settleWaves(state)
+	for waveNumber in state.pendingWaves do
+		if not state.waveRunning[waveNumber] and (state.waveAlive[waveNumber] or 0) == 0 then
+			state.pendingWaves[waveNumber] = nil
+			waveCash(state, waveNumber)
+			if isFinalWave(state, waveNumber) then
+				state.phase = "Won"
+				state.nextAt = nil
+				state.session.push("Toast", { text = string.format("%s cleared: all %d waves.", state.preset.Name, state.maxWaves), kind = "ok" })
+				return
+			end
+		end
+	end
+	if state.phase == "Wave" and next(state.pendingWaves) == nil then
+		state.phase = "Intermission"
+		state.nextAt = os.clock() + (state.preset.WaveInterval or 1.25)
+	end
+end
+
+-- Loop ----------------------------------------------------------------------------
+
+local function step(state, dt: number)
+	if state.phase == "Setup" or state.phase == "Lost" then
+		return
+	end
 	local now = os.clock()
 
 	for i = #state.enemies, 1, -1 do
 		local enemy = state.enemies[i]
+		if not enemy or enemy.health <= 0 then
+			continue
+		end
 		local smooth = state.routes[enemy.route].smooth
-		enemy.distance += PT.EnemySpeed * dt
+		local slow = slowAt(state, enemy.root.Position)
+		enemy.distance += enemy.speed * (1 - slow) * dt
 		if enemy.distance >= smooth.length then
-			enemy.part:Destroy()
-			table.remove(state.enemies, i)
+			removeEnemy(state, enemy)
 			state.leaked += 1
-			state.baseHealth = math.max(0, state.baseHealth - 1)
+			state.baseHealth = math.max(0, state.baseHealth - (state.preset.MobDamage or 0))
 			setBaseLabel(state)
+			if state.baseHealth <= 0 and (state.preset.MobDamage or 0) > 0 then
+				state.phase = "Lost"
+				state.nextAt = nil
+				state.session.push("Toast", { text = string.format("Base destroyed on wave %d.", state.wave), kind = "error" })
+				return
+			end
 		else
 			local position = PathUtil.GetPositionAtDistance(smooth, enemy.distance) :: Vector3
 			local ahead = PathUtil.GetPositionAtDistance(smooth, math.min(smooth.length, enemy.distance + 0.5)) :: Vector3
-			local lift = Vector3.new(0, PT.EnemySize.Y / 2, 0)
+			local lift = Vector3.new(0, enemy.lift, 0)
 			local flat = (ahead - position) * Vector3.new(1, 0, 1)
 			if flat.Magnitude > 1e-3 then
-				enemy.part.CFrame = CFrame.lookAt(position + lift, position + lift + flat)
+				enemy.root.CFrame = CFrame.lookAt(position + lift, position + lift + flat)
 			else
-				enemy.part.CFrame = CFrame.new(position + lift)
+				enemy.root.CFrame = CFrame.new(position + lift)
 			end
 		end
 	end
 
 	for _, tower in state.towers do
-		if now - tower.lastShot < PT.TowerCooldown then
+		if (tower.damage or 0) <= 0 then
 			continue
 		end
-		local best, bestDistance = nil, -1
-		for _, enemy in state.enemies do
-			local offset = (enemy.part.Position - tower.position) * Vector3.new(1, 0, 1)
-			if offset.Magnitude <= PT.TowerRange and enemy.distance > bestDistance then
-				best, bestDistance = enemy, enemy.distance
-			end
+		if now - tower.lastShot < (tower.cooldown or 1) then
+			continue
 		end
-		if best then
+		local target = pickTarget(state, tower)
+		if target then
 			tower.lastShot = now
-			best.health -= PT.TowerDamage
-			flash(tower.position + Vector3.new(0, PT.TowerSize.Y / 2, 0), best.part.Position, state.enemiesFolder)
-			if best.health <= 0 then
-				local index = table.find(state.enemies, best)
-				if index then
-					table.remove(state.enemies, index)
-				end
-				best.part:Destroy()
-				state.killed += 1
-			end
+			attack(state, tower, target)
 		end
 	end
+
+	settleWaves(state)
+
+	if state.phase == "Intermission" and state.nextAt and now >= state.nextAt then
+		startNextWave(state)
+	end
 end
+
+-- API -------------------------------------------------------------------------------
 
 function PlaytestService.isActive(session: Session?): boolean
 	if not active then
 		return false
 	end
 	return session == nil or active.session == session
+end
+
+function PlaytestService.options(): { [string]: any }
+	local list = {}
+	for _, name in Difficulty.Order do
+		local preset = Difficulty.Presets[name]
+		if preset then
+			table.insert(list, {
+				name = name,
+				maxWaves = if preset.Endless then 0 else preset.MaxWaves,
+				startingCash = preset.StartingCash,
+				baseHealth = preset.BaseHealth,
+			})
+		end
+	end
+	return {
+		difficulties = list,
+		default = Difficulty.Default,
+		loadoutSize = LOADOUT_SIZE,
+		endlessCap = ENDLESS_WAVE_CAP,
+	}
 end
 
 function PlaytestService.start(session: Session): (boolean, any)
@@ -308,9 +833,18 @@ function PlaytestService.start(session: Session): (boolean, any)
 	local mapClone, spawnClone = loadMapFolder(export)
 	local routes = PathUtil.BuildRoutes(pathScriptableNodes())
 
+	local root = Instance.new("Folder")
+	root.Name = "MapEditorPlaytest"
 	local enemiesFolder = Instance.new("Folder")
-	enemiesFolder.Name = "MapEditorPlaytest"
-	enemiesFolder.Parent = workspace
+	enemiesFolder.Name = "Enemies"
+	enemiesFolder.Parent = root
+	local towersFolder = Instance.new("Folder")
+	towersFolder.Name = "Towers"
+	towersFolder.Parent = root
+	local effectsFolder = Instance.new("Folder")
+	effectsFolder.Name = "Effects"
+	effectsFolder.Parent = root
+	root.Parent = workspace
 
 	local label: TextLabel? = nil
 	if mapClone then
@@ -321,19 +855,34 @@ function PlaytestService.start(session: Session): (boolean, any)
 		end
 	end
 
-	local state: State = {
+	local state = {
 		session = session,
 		export = export,
 		mapClone = mapClone,
 		spawnClone = spawnClone,
+		rootFolder = root,
 		enemiesFolder = enemiesFolder,
+		towersFolder = towersFolder,
+		effectsFolder = effectsFolder,
 		routes = routes,
 		enemies = {},
 		towers = {},
-		baseHealth = PT.BaseHealth,
+		nextTowerId = 0,
+		phase = "Setup",
+		preset = nil,
+		wave = 0,
+		maxWaves = 0,
+		cash = 0,
+		baseHealth = 0,
+		maxHealth = 0,
 		killed = 0,
 		leaked = 0,
-		spawning = false,
+		runners = 0,
+		waveRunning = {},
+		waveAlive = {},
+		pendingWaves = {},
+		nextAt = nil,
+		loadout = {},
 		label = label,
 		grid = gridParts(mapClone),
 	}
@@ -344,9 +893,9 @@ function PlaytestService.start(session: Session): (boolean, any)
 	state.connection = RunService.Heartbeat:Connect(function(dt)
 		step(state, dt)
 		local now = os.clock()
-		if now - lastPush > 0.25 then
+		if now - lastPush > PUSH_INTERVAL then
 			lastPush = now
-			session.push("Playtest", stats(state))
+			push(state)
 		end
 	end)
 
@@ -364,33 +913,75 @@ function PlaytestService.start(session: Session): (boolean, any)
 	}
 end
 
+function PlaytestService.configure(session: Session, raw: any): (boolean, string?)
+	local state = active
+	if not state or state.session ~= session then
+		return false, "No playtest running."
+	end
+	if state.phase ~= "Setup" then
+		return false, "This test is already set up."
+	end
+	if typeof(raw) ~= "table" then
+		return false, "Malformed request."
+	end
+
+	local name = raw.difficulty
+	if typeof(name) ~= "string" or not table.find(Difficulty.Order, name) or not Difficulty.Exists(name) then
+		return false, "Pick a difficulty."
+	end
+	local preset = Difficulty.Get(name)
+	local maxWaves = if preset.Endless then 0 else preset.MaxWaves
+	local cap = if maxWaves > 0 then maxWaves else ENDLESS_WAVE_CAP
+
+	local startWave = tonumber(raw.startWave)
+	if not startWave or startWave ~= startWave then
+		return false, "Enter a start wave."
+	end
+	startWave = math.clamp(math.floor(startWave), 1, cap)
+
+	if typeof(raw.towers) ~= "table" then
+		return false, "Pick at least one tower."
+	end
+	local loadout = {}
+	for _, unit in raw.towers do
+		if typeof(unit) == "string" and UnitStats[unit] and UnitAssets:FindFirstChild(unit) and not table.find(loadout, unit) then
+			table.insert(loadout, unit)
+		end
+		if #loadout >= LOADOUT_SIZE then
+			break
+		end
+	end
+	if #loadout == 0 then
+		return false, "Pick at least one tower."
+	end
+
+	local cash = preset.StartingCash or Data.STARTING_CASH or 500
+	for w = 1, startWave - 1 do
+		cash += Wave.GetWaveCash(w)
+	end
+
+	state.preset = preset
+	state.maxWaves = maxWaves
+	state.wave = startWave - 1
+	state.cash = cash
+	state.baseHealth = preset.BaseHealth or 100
+	state.maxHealth = state.baseHealth
+	state.loadout = loadout
+	state.phase = "Ready"
+	setBaseLabel(state)
+	push(state)
+	return true, nil
+end
+
 function PlaytestService.spawnWave(session: Session): (boolean, string?)
 	local state = active
 	if not state or state.session ~= session then
 		return false, "No playtest running."
 	end
-	if state.spawning then
-		return false, "A wave is already spawning."
-	end
-	if #state.routes == 0 then
-		return false, "The map has no route."
-	end
-	state.spawning = true
-	task.spawn(function()
-		for i = 1, PT.EnemyCount do
-			if active ~= state then
-				return
-			end
-			local routeIndex = ((i - 1) % #state.routes) + 1
-			table.insert(state.enemies, newEnemy(state, routeIndex))
-			task.wait(PT.EnemySpacing)
-		end
-		state.spawning = false
-	end)
-	return true, nil
+	return startNextWave(state)
 end
 
-function PlaytestService.checkTower(position: Vector3, grid: { BasePart }, towers: { Tower }, mapRoot: Instance?): (boolean, string?)
+function PlaytestService.checkTower(position: Vector3, grid: { BasePart }, towers: { any }, mapRoot: Instance?): (boolean, string?)
 	local cf = CFrame.new(position + Vector3.new(0, PT.TowerSize.Y / 2, 0))
 	local probeCF, probeSize = PlacementUtil.PathProbe(cf, PT.TowerSize)
 	local gridParams = OverlapParams.new()
@@ -413,7 +1004,7 @@ function PlaytestService.checkTower(position: Vector3, grid: { BasePart }, tower
 	end
 
 	for _, tower in towers do
-		if ((tower.position - position) * Vector3.new(1, 0, 1)).Magnitude < PT.TowerMinSpacing then
+		if flatDistance(tower.position, position) < PT.TowerMinSpacing then
 			return false, "Too close to another tower."
 		end
 	end
@@ -425,13 +1016,47 @@ function PlaytestService.checkTower(position: Vector3, grid: { BasePart }, tower
 	return true, nil
 end
 
-function PlaytestService.placeTower(session: Session, raw: any): (boolean, string?)
+local function facePath(state, position: Vector3): CFrame
+	local best, bestDistance = nil, math.huge
+	for _, route in state.routes do
+		for _, point in route.smooth.points do
+			local d = flatDistance(point, position)
+			if d < bestDistance then
+				best, bestDistance = point, d
+			end
+		end
+	end
+	if best and bestDistance > 1e-3 then
+		return CFrame.lookAt(position, Vector3.new(best.X, position.Y, best.Z))
+	end
+	return CFrame.new(position)
+end
+
+function PlaytestService.placeTower(session: Session, raw: any, unitName: any): (boolean, string?)
 	local state = active
 	if not state or state.session ~= session then
 		return false, "No playtest running."
 	end
-	if #state.towers >= PT.MaxTowers then
+	if state.phase == "Setup" then
+		return false, "Finish the playtest setup first."
+	end
+	if state.phase == "Lost" then
+		return false, "The base fell."
+	end
+	if typeof(unitName) ~= "string" or not table.find(state.loadout, unitName) then
+		return false, "Pick a tower card first."
+	end
+	local unitStats = UnitStats[unitName]
+	local template = UnitAssets:FindFirstChild(unitName)
+	if not unitStats or not template or not template:IsA("Model") then
+		return false, "Unknown tower."
+	end
+	if #state.towers >= MAX_TOWERS then
 		return false, "Tower limit reached for this test."
+	end
+	local cost = UnitUpgradeConfig:GetPlaceCost(unitName)
+	if state.cash < cost then
+		return false, string.format("Not enough cash: %s costs $%d.", unitName, cost)
 	end
 	local aim = MapRules.readVector(raw)
 	if not aim then
@@ -455,28 +1080,119 @@ function PlaytestService.placeTower(session: Session, raw: any): (boolean, strin
 		return false, reason
 	end
 
-	local part = Instance.new("Part")
-	part.Name = "TestTower"
-	part.Size = PT.TowerSize
-	part.CFrame = CFrame.new(hit.Position + Vector3.new(0, PT.TowerSize.Y / 2, 0))
-	part.Color = Color3.fromHex("0D69AC")
-	part.Material = Enum.Material.SmoothPlastic
-	part.Anchored = true
-	part.CanQuery = false
-	part.Parent = state.enemiesFolder
+	state.cash -= cost
+	state.nextTowerId += 1
+	local id = state.nextTowerId
 
-	local ring = Instance.new("Part")
-	ring.Name = "Range"
-	ring.Shape = Enum.PartType.Cylinder
-	ring.Size = Vector3.new(0.05, PT.TowerRange * 2, PT.TowerRange * 2)
-	ring.CFrame = CFrame.new(hit.Position + Vector3.new(0, 0.05, 0)) * CFrame.Angles(0, 0, math.rad(90))
-	ring.Transparency = 0.85
-	ring.Color = Color3.fromHex("6E99CA")
-	inert(ring)
-	ring.Parent = part
+	local model = template:Clone()
+	model.Name = unitName
+	model:SetAttribute(TOWER_TAG, id)
+	local root = rig(model) :: BasePart
+	local lift = templateInfo(template).lift
+	local position = hit.Position + Vector3.new(0, lift, 0)
+	root.CFrame = facePath(state, position)
 
-	table.insert(state.towers, { part = part, position = hit.Position, lastShot = 0 })
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.CanQuery = true
+		end
+	end
+	model:SetAttribute("GroundY", hit.Position.Y)
+
+	model.Parent = state.towersFolder
+
+	local animator = animatorFor(model)
+	playLoop(animator, findAnimation(model, { "Idle" }))
+	local attackAnimation = firstAttackAnimation(model)
+	local attackTrack = nil
+	if attackAnimation then
+		local loaded, track = pcall(animator.LoadAnimation, animator, attackAnimation)
+		if loaded and track then
+			track.Looped = false
+			track.Priority = Enum.AnimationPriority.Action
+			attackTrack = track
+		end
+	end
+
+	local tower = {
+		id = id,
+		name = unitName,
+		model = model,
+		root = root,
+		position = hit.Position,
+		stats = unitStats,
+		level = 0,
+		priority = TargetPriority.Default,
+		lastShot = 0,
+		damageDealt = 0,
+		attackTrack = attackTrack,
+	}
+	refreshTowerStats(tower)
+	table.insert(state.towers, tower)
+	push(state)
 	return true, nil
+end
+
+local function findTower(session: Session, id: any)
+	local state = active
+	if not state or state.session ~= session then
+		return nil, nil, "No playtest running."
+	end
+	if typeof(id) ~= "number" then
+		return state, nil, "Pick a tower."
+	end
+	for index, tower in state.towers do
+		if tower.id == id then
+			return state, tower, index
+		end
+	end
+	return state, nil, "That tower is gone."
+end
+
+function PlaytestService.upgradeTower(session: Session, id: any): (boolean, string?)
+	local state, tower, err = findTower(session, id)
+	if not tower then
+		return false, err
+	end
+	if state.phase == "Lost" then
+		return false, "The base fell."
+	end
+	if UnitUpgradeConfig:IsMaxed(tower.level) then
+		return false, tower.name .. " is already max level."
+	end
+	local cost = UnitUpgradeConfig:GetCost(tower.name, tower.level)
+	if state.cash < cost then
+		return false, string.format("Not enough cash: the upgrade costs $%d.", cost)
+	end
+	state.cash -= cost
+	tower.level += 1
+	refreshTowerStats(tower)
+	push(state)
+	return true, nil
+end
+
+function PlaytestService.cyclePriority(session: Session, id: any): (boolean, string?)
+	local state, tower, err = findTower(session, id)
+	if not tower then
+		return false, err
+	end
+	tower.priority = TargetPriority.Next(tower.priority)
+	tower.model:SetAttribute("TargetPriority", tower.priority)
+	push(state)
+	return true, nil
+end
+
+function PlaytestService.sellTower(session: Session, id: any): (boolean, string?)
+	local state, tower, index = findTower(session, id)
+	if not tower then
+		return false, index
+	end
+	local refund = math.floor(UnitUpgradeConfig:GetInvested(tower.name, tower.level) * SELL_RATIO)
+	table.remove(state.towers, index)
+	tower.model:Destroy()
+	state.cash += refund
+	push(state)
+	return true, string.format("Sold %s for $%d.", tower.name, refund)
 end
 
 function PlaytestService.stop(session: Session): boolean
@@ -489,7 +1205,7 @@ function PlaytestService.stop(session: Session): boolean
 	if state.connection then
 		state.connection:Disconnect()
 	end
-	state.enemiesFolder:Destroy()
+	state.rootFolder:Destroy()
 	if state.mapClone then
 		state.mapClone:Destroy()
 	end
@@ -509,7 +1225,13 @@ function PlaytestService.stop(session: Session): boolean
 	end
 	session.mode = "Build"
 	session.folder:SetAttribute("Mode", "Build")
-	session.push("Playtest", { state = "Stopped", killed = state.killed, leaked = state.leaked, baseHealth = state.baseHealth })
+	session.push("Playtest", {
+		state = "Stopped",
+		killed = state.killed,
+		leaked = state.leaked,
+		baseHealth = math.max(0, math.ceil(state.baseHealth)),
+		wave = state.wave,
+	})
 	return true
 end
 
