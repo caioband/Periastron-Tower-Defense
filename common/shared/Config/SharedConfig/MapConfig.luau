@@ -119,6 +119,13 @@ module.MAPS = {
 		Image = "rbxassetid://119383142532337",
 		IndexImage = "rbxassetid://91937010857732",
 	},
+
+	["AutumnValley"] = {
+		DisplayName = "Autumn Valley",
+		WinsRequired = 0,
+		Image = "rbxassetid://0",
+		IndexImage = "rbxassetid://0",
+	},
 }
 
 --[=[

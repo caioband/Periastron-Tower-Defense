@@ -150,6 +150,19 @@ Mob.Entities = {
 	OverseerMage = { Folder = "Nightmare", Health = 40, SpeedMultiplier = 1.5 },
 	OverseerKnight = { Folder = "Nightmare", Health = 120, SpeedMultiplier = 1 / 1.75 },
 	OverseerKing = { Folder = "Nightmare", Boss = true, Health = 900, SpeedMultiplier = 1 / 2, Gimmicks = { BOSS_STUN } },
+
+		-- Fall Part 1 (`FallPart1`).
+	HallowSlasher = { Folder = "FallPart1", Health = 5, SpeedMultiplier = 1 },
+	ScareCrow = { Folder = "FallPart1", Health = 10, SpeedMultiplier = 1 },
+	HoodedStalker = { Folder = "FallPart1", Health = 6, SpeedMultiplier = 1.5 },
+	CryingGhoul = { Folder = "FallPart1", Health = 20, SpeedMultiplier = 1 / 1.75 },
+	HallowWraith = { Folder = "FallPart1", Health = 15, SpeedMultiplier = 1, Gimmicks = { CHARGE } },
+	HallowSpectre = { Folder = "FallPart1", Health = 15, SpeedMultiplier = 2.5, Gimmicks = { TIRE } },
+	HoodedVigilante = { Folder = "FallPart1", Health = 40, SpeedMultiplier = 1.5 },
+	SpookyNecromancer = { Folder = "FallPart1", Boss = true, Health = 900, SpeedMultiplier = 1 / 2, Gimmicks = { BOSS_STUN } },
+	HeadlessHorseman = { Folder = "FallPart1", Boss = true, Health = 900, SpeedMultiplier = 1 / 2, Gimmicks = { BOSS_STUN } },
+
+
 }
 
 --- Whether the entity is a boss: its wave switches to the boss music, and killing it

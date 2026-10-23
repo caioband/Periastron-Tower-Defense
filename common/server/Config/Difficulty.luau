@@ -122,16 +122,16 @@ Difficulty.Presets = {
 		`Config.Waves.FallPart1`).
 	]]
 	FallPart1 = {
-		WeatherChance = 0.15,
-		RewardMultiplier = 1.1,
-		WinCash = 225,
-		WinShards = 2,
-		WinXpMultiplier = 1,
-		SpawnDelayMultiplier = 1.1,
-		StartingCash = 500,
-		BaseHealth = 140,
-		MobDamage = 20,
-		IntermissionTime = 60,
+		WeatherChance = 0.28,
+		RewardMultiplier = 0.9,
+		WinCash = 600,
+		WinShards = 4,
+		WinXpMultiplier = 1.7,
+		SpawnDelayMultiplier = 1,
+		StartingCash = 400,
+		BaseHealth = 100,
+		MobDamage = 25,
+		IntermissionTime = 40,
 		WaveInterval = 1.25,
 	},
 
