@@ -122,6 +122,7 @@ module.MAPS = {
 
 	["AutumnValley"] = {
 		DisplayName = "Autumn Valley",
+		Music = "FallMap1",
 		WinsRequired = 0,
 		Image = "rbxassetid://0",
 		IndexImage = "rbxassetid://0",

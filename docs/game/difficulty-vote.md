@@ -31,7 +31,7 @@ The check lives there and not in the bind because the preset list is server conf
 
 Only the names in `Config.Difficulty.Order` are on the board, counted in the tally, or drawn by contracts and quests.
 `Tutorial` and `FallPart1` (Fall PART 1, placeholder waves and numbers) are presets left out of `Order` on purpose: they can only be imposed, through `DifficultyService:Force`/`ForcePreset`.
-How players get into Fall PART 1 is not decided yet.
+Maps listed in `Config.Difficulty.MapPresets` impose their preset instead of opening the vote: Autumn Valley always plays Fall PART 1. `WaveService` calls `ForcePreset` and `DifficultyService:AnnounceImposed`, the client shows a "Gamemode chosen" notification, and the match goes straight to the usual intermission (the preset's `IntermissionTime`, with the Ready button).
 
 ## Difficulty locks
 

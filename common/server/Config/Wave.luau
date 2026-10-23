@@ -95,6 +95,17 @@ local ENTITY_DATA = {
 	OverseerMage = { Reward = 18, SpawnDelay = 0.32 },
 	OverseerKnight = { Reward = 45, SpawnDelay = 0.45 },
 	OverseerKing = { Reward = 250, SpawnDelay = 1 },
+
+	-- Fall Part 1
+	HallowSlasher = { Reward = 3, SpawnDelay = 0.35 },
+	ScareCrow = { Reward = 5, SpawnDelay = 0.35 },
+	HoodedStalker = { Reward = 4, SpawnDelay = 0.3 },
+	CryingGhoul = { Reward = 9, SpawnDelay = 0.4 },
+	HallowWraith = { Reward = 7, SpawnDelay = 0.32 },
+	HallowSpectre = { Reward = 7, SpawnDelay = 0.32 },
+	HoodedVigilante = { Reward = 18, SpawnDelay = 0.32 },
+	SpookyNecromancer = { Reward = 250, SpawnDelay = 1 },
+	HeadlessHorseman = { Reward = 250, SpawnDelay = 1 },
 }
 
 -- What an override entry gets for an entity missing from `ENTITY_DATA`: overrides

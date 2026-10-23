@@ -154,6 +154,20 @@ function WaveService:isCommunityMatch() : boolean
 	return mapService ~= nil and mapService.IsCommunityMatch ~= nil and mapService:IsCommunityMatch()
 end
 
+--[=[
+	The preset this map imposes (`DifficultyConfig.MapPresets`), or nil when the map
+	votes as usual. A community map never imposes one.
+]=]
+function WaveService:getMapPreset()
+	if self:isCommunityMatch() then return nil end
+
+	local mapService = Framework:Get("MapService")
+	local name = mapService and DifficultyConfig.MapPresets[mapService.CurrentMapName]
+	if not name then return nil end
+
+	return DifficultyConfig.Get(name)
+end
+
 function WaveService:setWave(waveCount : number)
 	self.WaveCount = waveCount
 
@@ -765,7 +779,10 @@ function WaveService:runRound(generation : number)
 	local challengeService = if forced then nil else Framework:Get("ChallengeService", false, false)
 	local challengePreset = challengeService and challengeService:IsActive() and challengeService:GetForcedPreset() or nil
 
-	local preset = forced or challengePreset or self.Services.DifficultyService:RunSelection(SELECTION_TIME)
+	-- Some maps play a single mode (`DifficultyConfig.MapPresets`): no vote there either.
+	local mapPreset = if forced or challengePreset then nil else self:getMapPreset()
+
+	local preset = forced or challengePreset or mapPreset or self.Services.DifficultyService:RunSelection(SELECTION_TIME)
 	if not self:isCurrent(generation) then return end
 	self.Difficulty = preset
 
@@ -775,6 +792,9 @@ function WaveService:runRound(generation : number)
 		self.Services.DifficultyService:Force(TutorialConfig.Match.Difficulty)
 	elseif challengePreset then
 		self.Services.DifficultyService:ForcePreset(challengePreset)
+	elseif mapPreset then
+		self.Services.DifficultyService:ForcePreset(mapPreset)
+		self.Services.DifficultyService:AnnounceImposed(mapPreset)
 	end
 
 	--[[

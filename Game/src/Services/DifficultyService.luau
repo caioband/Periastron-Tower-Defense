@@ -217,6 +217,19 @@ function DifficultyService:ForcePreset(preset)
 	end
 end
 
+--[=[
+	Tells every player which mode the match imposed in place of the vote (a map that
+	only plays one mode, see `Config.Difficulty.MapPresets`). The client shows it as a
+	notification; the intermission that follows is the usual one.
+]=]
+function DifficultyService:AnnounceImposed(preset)
+	local displayName = preset.DisplayName or preset.Name
+
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("DifficultyImposed", player, displayName)
+	end
+end
+
 function DifficultyService:RunSelection(duration)
 	self.ForcedPreset = nil
 	self.Votes = {}
@@ -317,6 +330,7 @@ end
 function DifficultyService:init()
 	Framework:Listen("DifficultySelection", function() end)
 	Framework:Listen("DifficultyLocked", function() end)
+	Framework:Listen("DifficultyImposed", function() end)
 end
 
 return DifficultyService

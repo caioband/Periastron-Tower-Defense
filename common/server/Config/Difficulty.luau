@@ -112,16 +112,16 @@ Difficulty.Presets = {
 		Fall PART 1, the first of the fall event's modes.
 
 		**Left out of `Order` on purpose**, like the tutorial: it is not on the
-		difficulty vote, and how players get into it is still to be decided. Being off
-		`Order` also keeps it out of contracts and quests, which draw from that list.
-		`Difficulty.Get` still finds it, so whatever starts the mode later only needs
-		`DifficultyService:ForcePreset(Difficulty.Get("FallPart1"))`.
+		difficulty vote. Players get into it by playing Autumn Valley, which imposes it
+		(see `Difficulty.MapPresets`). Being off `Order` also keeps it out of contracts
+		and quests, which draw from that list.
 
 		**Placeholder numbers**: a copy of Medium, so the mode plays and pays like a
 		normal match until it is tuned. The waves are a placeholder too (see
 		`Config.Waves.FallPart1`).
 	]]
 	FallPart1 = {
+		DisplayName = "Fall PART 1",
 		WeatherChance = 0.28,
 		RewardMultiplier = 0.9,
 		WinCash = 600,
@@ -263,6 +263,21 @@ for name, preset in Difficulty.Presets do
 	preset.MaxWaves = Waves.Count(name)
 	if preset.MaxWaves == 0 then
 		error(`Config.Difficulty: preset "{name}" has no wave table in Config.Waves`, 0)
+	end
+end
+
+--[[
+	Maps that always play one preset. On these the difficulty vote does not open:
+	`WaveService` imposes the preset, tells the players which mode was chosen, and
+	goes straight to the intermission. The key is the map's name in `MapConfig.MAPS`.
+]]
+Difficulty.MapPresets = {
+	AutumnValley = "FallPart1",
+}
+
+for map, name in Difficulty.MapPresets do
+	if not Difficulty.Presets[name] then
+		error(`Config.Difficulty: map "{map}" imposes preset "{name}", which does not exist`, 0)
 	end
 end
 

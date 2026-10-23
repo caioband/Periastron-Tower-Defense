@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
 
 local Player = Players.LocalPlayer
 local PlayerGui = Player:WaitForChild("PlayerGui")
@@ -23,6 +24,14 @@ local IDLE_TRANSPARENCY = 0.4
 -- button the art declared as always open; see `collectLock`.
 local LOCK_NAME = "Locked"
 local LOCK_LABEL_NAME = "Time"
+
+-- The notification for a mode the map imposed (`DifficultyImposed`). `SetCore` can
+-- fail while the CoreGui is still loading, hence the retries.
+local IMPOSED_TITLE = "Gamemode chosen"
+local IMPOSED_TEXT = "This map plays %s. Press Ready when you're set!"
+local IMPOSED_DURATION = 8
+local SETCORE_ATTEMPTS = 10
+local SETCORE_RETRY = 0.5
 
 local DifficultyController = {
 	Buttons = {},
@@ -264,6 +273,28 @@ function DifficultyController:updateUI(state)
 	end
 end
 
+--[=[
+	Tells the player the map chose the mode for them, so the missing vote does not
+	look like a bug.
+]=]
+function DifficultyController:announceImposed(displayName : string)
+	local notification = {
+		Title = IMPOSED_TITLE,
+		Text = string.format(IMPOSED_TEXT, displayName),
+		Duration = IMPOSED_DURATION,
+	}
+
+	for _ = 1, SETCORE_ATTEMPTS do
+		if pcall(StarterGui.SetCore, StarterGui, "SendNotification", notification) then
+			return
+		end
+
+		task.wait(SETCORE_RETRY)
+	end
+
+	log:StudioWarn(`could not send the "{displayName}" gamemode notification.`)
+end
+
 function DifficultyController:construct()
 	local Interface = PlayerGui:WaitForChild("Interface", 60)
 	local clock = Interface and Interface:WaitForChild("Clock", 60)
@@ -320,6 +351,10 @@ function DifficultyController:construct()
 		if self.clock then
 			self.clock.Visible = false
 		end
+	end)
+
+	Framework:Listen("DifficultyImposed", function(displayName)
+		task.spawn(self.announceImposed, self, displayName)
 	end)
 end
 
