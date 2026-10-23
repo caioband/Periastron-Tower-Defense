@@ -65,6 +65,37 @@ local function broadcastSpeed(self, mobId, mob)
 	end
 end
 
+--[[
+	Plays the rush animation and, once it reaches `MarkerTime`, multiplies the speed
+	by `1 + Amount` for `Duration` seconds. Shared by the threshold rush (the Astral
+	Sentinel) and the spawn rush (the Hallow Spectre).
+]]
+local function startRush(self, mobId, mob, gimmick)
+	local animation = gimmick.Animation or "Rush"
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("MobPlayAnim", player, mobId, animation)
+	end
+
+	mob.RushToken = (mob.RushToken or 0) + 1
+	local token = mob.RushToken
+
+	GameClock.Delay(math.max(0, gimmick.MarkerTime or 0), function()
+		if self.ActiveMobs[mobId] ~= mob or mob.RushToken ~= token then return end
+
+		mob.RushScale = 1 + (gimmick.Amount or 0)
+		mob.CurrentSpeed = computeSpeed(self, mob)
+		broadcastSpeed(self, mobId, mob)
+
+		GameClock.Delay(math.max(0, gimmick.Duration or 0), function()
+			if self.ActiveMobs[mobId] ~= mob or mob.RushToken ~= token then return end
+
+			mob.RushScale = 1
+			mob.CurrentSpeed = computeSpeed(self, mob)
+			broadcastSpeed(self, mobId, mob)
+		end)
+	end)
+end
+
 local GimmickHandlers = {
 	PerTurnSpeedMultiplier = {
 		OnTurn = function(self, mobId, mob, gimmick)
@@ -91,28 +122,20 @@ local GimmickHandlers = {
 
 			mob.GimmickState[gimmick] = true
 
-			local animation = gimmick.Animation or "Rush"
-			for _, player in Players:GetPlayers() do
-				Framework:Fire("MobPlayAnim", player, mobId, animation)
-			end
+			startRush(self, mobId, mob, gimmick)
+		end,
+	},
 
-			mob.RushToken = (mob.RushToken or 0) + 1
-			local token = mob.RushToken
+	--[[
+		The rush right after spawning. `Delay` gives the client time to build the model
+		first: an animation fired at a model that does not exist yet is lost.
+	]]
+	SpawnRush = {
+		OnSpawn = function(self, mobId, mob, gimmick)
+			GameClock.Delay(math.max(0, gimmick.Delay or 0), function()
+				if self.ActiveMobs[mobId] ~= mob then return end
 
-			GameClock.Delay(math.max(0, gimmick.MarkerTime or 0), function()
-				if self.ActiveMobs[mobId] ~= mob or mob.RushToken ~= token then return end
-
-				mob.RushScale = 1 + (gimmick.Amount or 0)
-				mob.CurrentSpeed = computeSpeed(self, mob)
-				broadcastSpeed(self, mobId, mob)
-
-				GameClock.Delay(math.max(0, gimmick.Duration or 0), function()
-					if self.ActiveMobs[mobId] ~= mob or mob.RushToken ~= token then return end
-
-					mob.RushScale = 1
-					mob.CurrentSpeed = computeSpeed(self, mob)
-					broadcastSpeed(self, mobId, mob)
-				end)
+				startRush(self, mobId, mob, gimmick)
 			end)
 		end,
 	},
@@ -987,6 +1010,112 @@ function MobService:processDamageGimmicks(mobId, mob)
 	end
 end
 
+function MobService:processSpawnGimmicks(mobId, mob)
+	for _, gimmick in mob.Gimmicks do
+		local handler = GimmickHandlers[gimmick.Type]
+		if handler and handler.OnSpawn then
+			handler.OnSpawn(self, mobId, mob, gimmick)
+		end
+	end
+end
+
+--[=[
+	Spawns one enemy partway along a route, outside the wave's spawn list: the
+	Deathspeaker's converts and the necromancers' summons.
+
+	Its health and speed are the current wave's numbers for that entity when the
+	wave has it; otherwise they scale from `sourceMob` (the enemy that made it),
+	keeping the same ratio to the reference stats in `SharedConfig.Mob`.
+
+	Returns the id and record, or nil if nothing spawned.
+]=]
+function MobService:SpawnOnPath(entityName : string, routeIndex : number, startDistance : number, sourceMob, reward : number?)
+	local mobConfig = SharedConfig.Mob
+	local definition = mobConfig.Entities[entityName]
+	if not definition then
+		log:StudioWarn(`SpawnOnPath: unknown entity '{tostring(entityName)}'`)
+		return nil
+	end
+
+	local route = self:getRoutes()[routeIndex]
+	if not route then
+		return nil
+	end
+
+	startDistance = math.clamp(startDistance, 0, route.smooth.length)
+
+	local maxHealth, baseSpeed, healthScale
+	local waveStats = self:GetWaveStats(entityName)
+	if waveStats then
+		maxHealth = waveStats.MaxHealth
+		baseSpeed = waveStats.BaseSpeed
+		healthScale = waveStats.HealthScale
+	else
+		healthScale = sourceMob.HealthScale or 1
+		maxHealth = math.max(1, math.floor(((definition.Health or 10) * healthScale) + 0.5))
+
+		local sourceDefinition = mobConfig.Entities[sourceMob.Name]
+		local sourceBase = mobConfig.BaseSpeed * ((sourceDefinition and sourceDefinition.SpeedMultiplier) or 1)
+		local speedScale = if sourceBase > 0 then sourceMob.BaseSpeed / sourceBase else 1
+		baseSpeed = mobConfig.BaseSpeed * (definition.SpeedMultiplier or 1) * speedScale
+	end
+
+	local frozenUntil = self.FreezeUntil or 0
+	local spawnSpeed = baseSpeed * self.WeatherSpeedScale * (self.CardSpeedScale or 1)
+
+	local turnDistances = route.turnDistances or {}
+	local nextTurn = #turnDistances + 1
+	for index, at in ipairs(turnDistances) do
+		if at > startDistance then
+			nextTurn = index
+			break
+		end
+	end
+
+	local mobId = HttpService:GenerateGUID(false)
+
+	local mob = {
+		Name = entityName,
+		Health = maxHealth,
+		MaxHealth = maxHealth,
+		BaseSpeed = baseSpeed,
+		SpeedScale = 1,
+		SlowScale = 1,
+		CurrentSpeed = spawnSpeed,
+		Distance = startDistance,
+		LastDistance = startDistance,
+		StunnedUntil = frozenUntil,
+		RouteIndex = routeIndex,
+		PathLength = route.smooth.length,
+		TurnDistances = route.turnDistances,
+		NextTurnIndex = nextTurn,
+		Gimmicks = mobConfig.GetGimmicks(entityName),
+		GimmickState = {},
+		Reward = math.max(0, reward or 0),
+		HealthScale = healthScale,
+	}
+	self.ActiveMobs[mobId] = mob
+	self.ActiveMobCount += 1
+
+	for _, player in Players:GetPlayers() do
+		Framework:Fire("SpawnClientMob", player, {
+			Id = mobId,
+			Name = entityName,
+			Speed = if frozenUntil > GameClock.Now() then 0 else spawnSpeed,
+			MaxHealth = maxHealth,
+			Route = routeIndex,
+		})
+
+		if startDistance > 0 then
+			Framework:Fire("MobTeleported", player, mobId, startDistance)
+		end
+	end
+
+	self:processSpawnGimmicks(mobId, mob)
+
+	return mobId, mob
+end
+
 function MobService:SpawnWave(waveNumber)
 	local mobConfig = SharedConfig.Mob
 	local preset = self:getDifficulty()
@@ -1077,6 +1206,8 @@ function MobService:SpawnWave(waveNumber)
 							indexService:UnlockEnemy(player, spawnEntry.Entity)
 						end
 					end
+
+					self:processSpawnGimmicks(mobId, self.ActiveMobs[mobId])
 
 					local isLast = i == (spawnEntry.Amount or 1)
 					GameClock.Wait(if isLast and spawnEntry.GroupDelay then spawnEntry.GroupDelay else (spawnEntry.SpawnDelay or 1))

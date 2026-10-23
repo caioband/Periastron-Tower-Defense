@@ -1,7 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local HttpService = game:GetService("HttpService")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -144,19 +143,11 @@ function SuffocateAbilityService:removeUnit(entry)
 	fireAll("RemoveUnit", entry.unitId)
 end
 
--- Mirrors MobService:SpawnWave, for a single enemy placed mid-path. Returns its id
+-- Places the convert on the route point nearest the suffocated unit. Returns its id
 -- and record, or nil if nothing spawned.
 function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 	local mobService = self.Services.MobService
-	local mobConfig = SharedConfig.Mob
 	local spawn = Settings.Spawn
-
-	local entityName = spawn.Entity
-	local definition = mobConfig.Entities[entityName]
-	if not definition then
-		warn("SuffocateAbilityService: unknown spawn entity '" .. tostring(entityName) .. "'")
-		return
-	end
 
 	local routes = mobService:getRoutes()
 	local routeIndex, startDistance, bestSquared = 1, 0, math.huge
@@ -174,77 +165,7 @@ function SuffocateAbilityService:spawnConverted(position : Vector3, sourceMob)
 		end
 	end
 
-	local route = routes[routeIndex]
-	if not route then
-		return
-	end
-
-	local maxHealth, baseSpeed, healthScale
-	local waveStats = mobService:GetWaveStats(entityName)
-	if waveStats then
-		maxHealth = waveStats.MaxHealth
-		baseSpeed = waveStats.BaseSpeed
-		healthScale = waveStats.HealthScale
-	else
-		healthScale = sourceMob.HealthScale or 1
-		maxHealth = math.max(1, math.floor(((definition.Health or 10) * healthScale) + 0.5))
-
-		local sourceDefinition = mobConfig.Entities[sourceMob.Name]
-		local sourceBase = mobConfig.BaseSpeed * ((sourceDefinition and sourceDefinition.SpeedMultiplier) or 1)
-		local speedScale = if sourceBase > 0 then sourceMob.BaseSpeed / sourceBase else 1
-		baseSpeed = mobConfig.BaseSpeed * (definition.SpeedMultiplier or 1) * speedScale
-	end
-
-	local frozenUntil = mobService.FreezeUntil or 0
-	local spawnSpeed = baseSpeed * mobService.WeatherSpeedScale * (mobService.CardSpeedScale or 1)
-
-	local turnDistances = route.turnDistances or {}
-	local nextTurn = #turnDistances + 1
-	for index, at in ipairs(turnDistances) do
-		if at > startDistance then
-			nextTurn = index
-			break
-		end
-	end
-
-	local mobId = HttpService:GenerateGUID(false)
-
-	local mob = {
-		Name = entityName,
-		Health = maxHealth,
-		MaxHealth = maxHealth,
-		BaseSpeed = baseSpeed,
-		SpeedScale = 1,
-		SlowScale = 1,
-		CurrentSpeed = spawnSpeed,
-		Distance = startDistance,
-		LastDistance = startDistance,
-		StunnedUntil = frozenUntil,
-		RouteIndex = routeIndex,
-		PathLength = route.smooth.length,
-		TurnDistances = route.turnDistances,
-		NextTurnIndex = nextTurn,
-		Gimmicks = mobConfig.GetGimmicks(entityName),
-		GimmickState = {},
-		Reward = math.max(0, spawn.Reward or 0),
-		HealthScale = healthScale,
-	}
-	mobService.ActiveMobs[mobId] = mob
-	mobService.ActiveMobCount += 1
-
-	fireAll("SpawnClientMob", {
-		Id = mobId,
-		Name = entityName,
-		Speed = if frozenUntil > GameClock.Now() then 0 else spawnSpeed,
-		MaxHealth = maxHealth,
-		Route = routeIndex,
-	})
-
-	if startDistance > 0 then
-		fireAll("MobTeleported", mobId, startDistance)
-	end
-
-	return mobId, mob
+	return mobService:SpawnOnPath(spawn.Entity, routeIndex, startDistance, sourceMob, spawn.Reward)
 end
 
 --[[

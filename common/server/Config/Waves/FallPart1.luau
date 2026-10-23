@@ -126,7 +126,14 @@ return {
 		{ Entity = "CryingGhoul", Amount = 20, Health = 254, Speed = 3.31, SpawnDelay = 0.3, GroupDelay = 0.8 },
 		{ Entity = "HoodedVigilante", Amount = 12, Health = 444, Speed = 9.28, SpawnDelay = 0.4, GroupDelay = 1.5 },
 		{ Entity = "SpookyNecromancer", Amount = 2, Health = 5000, Speed = 3.48, SpawnDelay = 3, GroupDelay = 4 },
-		{ Entity = "HeadlessHorseman", Amount = 1, Health = 125000, Speed = 3.19, SpawnDelay = 1, GroupDelay = 3 },
+		--[[
+			The Headless Horseman: 100k health at 1.5 studs/s, about 200 s on Autumn
+			Valley's 297-stud path, so ~500 damage per second over the whole walk. That
+			sits between Hard's last wave (2 bosses, ~100 DPS) and Impossible's (5
+			bosses, ~800 DPS), where the mode's rewards sit too. The old 125k at 3.19
+			asked for ~1,340, more than Impossible on a lighter economy.
+		]]
+		{ Entity = "HeadlessHorseman", Amount = 1, Health = 100000, Speed = 1.5, SpawnDelay = 1, GroupDelay = 3 },
 		{ Entity = "HallowSpectre", Amount = 20, Health = 159, Speed = 15.08, SpawnDelay = 0.25 },
 	},
 }

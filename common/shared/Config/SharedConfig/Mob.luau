@@ -85,6 +85,25 @@ local SENTINEL_RUSH = {
 }
 
 --[[
+	The Hallow Spectre's jolt: right after spawning it plays the Sentinel's `Rush` and
+	lunges forward along the path. Short on purpose: the Spectre is already the
+	sprinter (`TIRE`), so the jolt is a burst of about one second at double speed,
+	roughly one extra second of path, not a second sprint.
+
+	`Delay` lets the client build the model before the animation arrives;
+	`MarkerTime` is the same measured frame as `SENTINEL_RUSH`, since it is the same
+	asset.
+]]
+local SPECTRE_JOLT = {
+	Type = "SpawnRush",
+	Delay = 0.3,
+	Animation = "Rush",
+	MarkerTime = 0.5667,
+	Amount = 1,
+	Duration = 1,
+}
+
+--[[
 	Every enemy, by the Model name in `Assets.Entities.Difficulties.<Folder>`.
 
 	The Lobby's Index shows the key split at its capitals ("RedcliffChampion" ->
@@ -157,10 +176,15 @@ Mob.Entities = {
 	HoodedStalker = { Folder = "FallPart1", Health = 6, SpeedMultiplier = 1.5 },
 	CryingGhoul = { Folder = "FallPart1", Health = 20, SpeedMultiplier = 1 / 1.75 },
 	HallowWraith = { Folder = "FallPart1", Health = 15, SpeedMultiplier = 1, Gimmicks = { CHARGE } },
-	HallowSpectre = { Folder = "FallPart1", Health = 15, SpeedMultiplier = 2.5, Gimmicks = { TIRE } },
+	HallowSpectre = { Folder = "FallPart1", Health = 15, SpeedMultiplier = 2.5, Gimmicks = { TIRE, SPECTRE_JOLT } },
 	HoodedVigilante = { Folder = "FallPart1", Health = 40, SpeedMultiplier = 1.5 },
+
+	-- Summons the cast every few seconds; see `Config.EnemySummon`.
 	SpookyNecromancer = { Folder = "FallPart1", Boss = true, Health = 900, SpeedMultiplier = 1 / 2, Gimmicks = { BOSS_STUN } },
-	HeadlessHorseman = { Folder = "FallPart1", Boss = true, Health = 900, SpeedMultiplier = 1 / 2, Gimmicks = { BOSS_STUN } },
+
+	-- The event's final boss: a wall of health that walks slowly. See its wave-25
+	-- entry in `Config.Waves.FallPart1` for the balance.
+	HeadlessHorseman = { Folder = "FallPart1", Boss = true, Health = 900, SpeedMultiplier = 1 / 2.75, Gimmicks = { BOSS_STUN } },
 
 
 }
