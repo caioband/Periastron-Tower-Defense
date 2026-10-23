@@ -28,6 +28,9 @@ local MAP_FOLDER_NAME = "Map"
 -- have the same parts as the match portals but no group: PortalService does not
 -- know them.
 local BUILD_PORTALS_FOLDER_NAME = "BuildPortals"
+
+-- The fall event's portals: match portals whose panel lists the event maps only.
+local EVENT_PORTALS_FOLDER_NAME = "EventPortals"
 local EXIT_UI_NAME = "ExitGroupPortal"
 local EXIT_BUTTON_NAME = "Exit"
 
@@ -71,7 +74,8 @@ local FLASH_OUT_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDir
 
 	Walking up to a free portal opens the map panel; walking up to one that already
 	holds a group joins it. A portal in `BuildPortals` opens the community maps
-	panel instead, and has no group. The panel and the exit button only ask -- PortalService
+	panel instead, and has no group. A portal in `EventPortals` opens the map panel
+	on the event maps ("PART 1 - Autumn Valley"); past that it is a match portal. The panel and the exit button only ask -- PortalService
 	decides, and answers with PortalGroupChanged.
 
 	When the countdown runs out the server says so, and the EnterCutscene asset itself
@@ -93,9 +97,21 @@ local PortalController = {
 
 --[[ INTERNAL ]]
 
---- The portal model with `portalId`, match portal or build portal (the ids never repeat).
+--- Every portal folder the lobby has; the optional ones only once they showed up.
+function PortalController:_folders() : { Instance }
+	local folders = {}
+	for _, folder in { "PortalsFolder", "BuildPortalsFolder", "EventPortalsFolder" } do
+		if self[folder] then
+			table.insert(folders, self[folder])
+		end
+	end
+
+	return folders
+end
+
+--- The portal model with `portalId`, from any portal folder (the ids never repeat).
 function PortalController:_findPortal(portalId : number) : Model?
-	for _, folder in { self.PortalsFolder, self.BuildPortalsFolder } do
+	for _, folder in self:_folders() do
 		for _, model in folder:GetChildren() do
 			if model:GetAttribute("PortalId") == portalId then
 				return model
@@ -116,6 +132,10 @@ function PortalController:_isBuildPortal(model : Model) : boolean
 	return self.BuildPortalsFolder ~= nil and model.Parent == self.BuildPortalsFolder
 end
 
+function PortalController:_isEventPortal(model : Model) : boolean
+	return self.EventPortalsFolder ~= nil and model.Parent == self.EventPortalsFolder
+end
+
 --[=[
 	The portal the player is standing at, or nil when they are not close to any.
 ]=]
@@ -128,7 +148,7 @@ function PortalController:_findNearestPortal() : Model?
 
 	local nearest, nearestDistance = nil, PortalConfig.PROXIMITY_RADIUS
 
-	for _, folder in { self.PortalsFolder, self.BuildPortalsFolder } do
+	for _, folder in self:_folders() do
 		for _, model in folder:GetChildren() do
 			local enter = model:FindFirstChild(PortalConfig.ENTER_NAME)
 			if not enter or not enter:IsA("BasePart") then
@@ -205,6 +225,9 @@ function PortalController:_update()
 	if self:_isBuildPortal(nearest) then
 		self.Controllers.ChooseMapsController:Close()
 		self.Controllers.CommunityMapsController:Open()
+	elseif self:_isEventPortal(nearest) then
+		self.Controllers.CommunityMapsController:Close()
+		self.Controllers.ChooseMapsController:OpenEvent()
 	else
 		self.Controllers.CommunityMapsController:Close()
 		self.Controllers.ChooseMapsController:Open()
@@ -480,6 +503,11 @@ function PortalController:construct()
 		if not self.BuildPortalsFolder then
 			log:StudioWarn(`no {MAP_FOLDER_NAME}.{BUILD_PORTALS_FOLDER_NAME} folder; the community maps panel has no portal.`)
 		end
+	end)
+
+	-- Optional too: the event portals only exist while an event runs.
+	task.spawn(function()
+		self.EventPortalsFolder = map:WaitForChild(EVENT_PORTALS_FOLDER_NAME, 30)
 	end)
 	self.Scene = Shared:WaitForChild("Assets"):WaitForChild("Cutscenes"):FindFirstChild(PortalConfig.CUTSCENE_NAME)
 

@@ -32,6 +32,12 @@
 	Zero (or no field) is an open map: Farm is the only one today, where every new
 	player starts.
 
+	`Event` marks an event map and is the part it belongs to ("PART 1"). An event
+	map is played from the lobby's `EventPortals` only: it is left out of
+	`getOrderedMaps` (the normal picker, random picks, contracts, quests and
+	challenges) and listed by `getEventMaps` instead. The picker card reads
+	"PART 1 - Autumn Valley" (`getPickerName`).
+
 	Nothing here is secret. The client reads it to draw the padlock, and
 	`PortalService` checks the same thing with the same config when the group
 	opens; see `isUnlocked` and docs/lobby/maps-panel.md.
@@ -120,8 +126,10 @@ module.MAPS = {
 		IndexImage = "rbxassetid://91937010857732",
 	},
 
+	-- An event map: only the `EventPortals` offer it (see `Event` above).
 	["AutumnValley"] = {
 		DisplayName = "Autumn Valley",
+		Event = "PART 1",
 		Music = "FallMap1",
 		WinsRequired = 0,
 		Image = "rbxassetid://0",
@@ -257,13 +265,6 @@ function module.winsMissing(mapName : string?, wins : number?) : number
 end
 
 --[=[
-	Map names for UI iteration, in the order the picker shows them: ascending by
-	`WinsRequired`, and alphabetical by key among maps with the same requirement.
-
-	The tiebreak only exists to keep the order **stable**: two screens built from
-	the same config list the same way, and the list does not change between openings.
-]=]
---[=[
 	The map's track in `SoundService.SharedSounds.Musics`.
 
 	Falls back to the key when the map declares no `Music` (most maps, where both
@@ -282,10 +283,31 @@ function module.getMusic(mapName : string?) : string?
 	return typeof(track) == "string" and track or resolved
 end
 
-function module.getOrderedMaps() : { string }
+--- Whether the map is an event map, played only from the `EventPortals`.
+function module.isEventMap(mapName : string?) : boolean
+	local resolved = module.resolveMap(mapName)
+
+	return resolved ~= nil and module.MAPS[resolved].Event ~= nil
+end
+
+--- "PART 1 - Autumn Valley" for an event map, the display name otherwise.
+function module.getPickerName(mapName : string) : string
+	local entry = module.MAPS[mapName]
+	local name = entry and entry.DisplayName or mapName
+
+	if entry and entry.Event then
+		return `{entry.Event} - {name}`
+	end
+
+	return name
+end
+
+local function sorted(eventMaps : boolean) : { string }
 	local ordered = {}
-	for name in module.MAPS do
-		table.insert(ordered, name)
+	for name, entry in module.MAPS do
+		if (entry.Event ~= nil) == eventMaps then
+			table.insert(ordered, name)
+		end
 	end
 
 	table.sort(ordered, function(a, b)
@@ -299,6 +321,23 @@ function module.getOrderedMaps() : { string }
 	end)
 
 	return ordered
+end
+
+--[=[
+	The normal map names for UI iteration, in the order the picker shows them:
+	ascending by `WinsRequired`, and alphabetical by key among maps with the same
+	requirement. Event maps are not in it: see `getEventMaps`.
+
+	The tiebreak only exists to keep the order **stable**: two screens built from
+	the same config list the same way, and the list does not change between openings.
+]=]
+function module.getOrderedMaps() : { string }
+	return sorted(false)
+end
+
+--- The event maps, in the same order rule: what the `EventPortals` offer.
+function module.getEventMaps() : { string }
+	return sorted(true)
 end
 
 return module

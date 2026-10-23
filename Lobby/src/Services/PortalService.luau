@@ -32,6 +32,9 @@ local MAP_FOLDER_NAME = "Map"
 -- groups carry a community map's key instead of a game map.
 local BUILD_PORTALS_FOLDER_NAME = "BuildPortals"
 
+-- The fall event's portals. Same parts again; they only open groups for an event map.
+local EVENT_PORTALS_FOLDER_NAME = "EventPortals"
+
 local MAP_IMAGE_NAME = "MapImage"
 local PLAYER_COUNT_NAME = "PlayerCount"
 local TIMER_NAME = "Timer"
@@ -84,6 +87,12 @@ local KIND_TEXT = {
 	and the clients; the teleport carries `CommunityMap = key` instead of `Map`. Only
 	where `CommunityMapService:IsEnabled()` (QA for now). Challenge groups never take
 	a build portal, and a game map never opens on one.
+
+	**Event groups.** The portals in `Map.EventPortals` (`Event` on the record) open
+	ordinary groups through `CreateGroup`, but only for an event map
+	(`MapConfig.isEventMap`, Autumn Valley today), and an event map never opens on
+	another portal. The teleport is the usual one; the Game place imposes the map's
+	mode (`Difficulty.MapPresets`). Challenge groups never take an event portal.
 ]=]
 local PortalService = {
 	Services = {
@@ -274,9 +283,11 @@ function PortalService:_updateBillboard(portal)
 		portal.PlayerCountLabel.Text = `{#group.Members}/{group.MaxPlayers}`
 	end
 
-	-- A community map has no picture: the billboard keeps its authored one.
-	if portal.MapImage and portal.MapImage:IsA("ImageLabel") and not group.CommunityMap then
-		portal.MapImage.Image = MapConfig.getImage(group.Map)
+	-- A community map has no picture, and neither does a map whose art is still
+	-- `rbxassetid://0`: the billboard keeps its authored one.
+	local image = if group.CommunityMap then "" else MapConfig.getImage(group.Map)
+	if portal.MapImage and portal.MapImage:IsA("ImageLabel") and image ~= "" and image ~= "rbxassetid://0" then
+		portal.MapImage.Image = image
 	end
 
 	self:_renderChallenge(portal)
@@ -527,6 +538,12 @@ function PortalService:CreateGroup(player : Player, portalId : number, mapName :
 		return false
 	end
 
+	-- Event maps on event portals, and nothing else on them.
+	if MapConfig.isEventMap(resolvedMap) ~= (portal.Event == true) then
+		log:StudioWarn(`{player.Name} asked for map {resolvedMap} on a portal that does not offer it.`)
+		return false
+	end
+
 	if not MapConfig.isUnlocked(resolvedMap, self:_winsOf(player)) then
 		log:StudioWarn(string.format(
 			"%s asked for map %s, which needs %d wins.",
@@ -580,7 +597,7 @@ function PortalService:CreateChallengeGroup(player : Player, challenge, maxPlaye
 
 	local portal = nil
 	for _, candidate in self.Portals do
-		if not candidate.Group and not candidate.Community then
+		if not candidate.Group and not candidate.Community and not candidate.Event then
 			portal = candidate
 			break
 		end
@@ -752,7 +769,7 @@ function PortalService:construct()
 
 	self.Portals = {}
 
-	local function readFolder(folder : Instance, community : boolean)
+	local function readFolder(folder : Instance, community : boolean, event : boolean)
 		for _, model in folder:GetChildren() do
 			if not model:IsA("Model") then
 				continue
@@ -761,18 +778,25 @@ function PortalService:construct()
 			local portal = self:_readPortal(model, #self.Portals + 1)
 			if portal then
 				portal.Community = community
+				portal.Event = event
 				table.insert(self.Portals, portal)
 				self:_resetPortal(portal)
 			end
 		end
 	end
 
-	readFolder(portals, false)
+	readFolder(portals, false, false)
 
 	-- Ids follow the match portals, so they never change when build portals are added.
 	local buildPortals = map:FindFirstChild(BUILD_PORTALS_FOLDER_NAME)
 	if buildPortals then
-		readFolder(buildPortals, true)
+		readFolder(buildPortals, true, false)
+	end
+
+	-- Event portals come last, so adding or removing them never moves the other ids.
+	local eventPortals = map:FindFirstChild(EVENT_PORTALS_FOLDER_NAME)
+	if eventPortals then
+		readFolder(eventPortals, false, true)
 	end
 
 	Framework:Listen("RequestCreateGroup", function(player : Player, portalId : number, mapName : string, maxPlayers : number)

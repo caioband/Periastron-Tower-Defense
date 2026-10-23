@@ -95,6 +95,11 @@ local HIDE_REASON = "ChooseMaps"
 	`MapChosen`. Plain `Close()` calls are ignored while it lasts -- the portal closes
 	the panel whenever the player is not at a portal, and here they are at the board;
 	only Exit, `CloseChallenge`, or the panel's owner ends it.
+
+	**Event mode** (`OpenEvent`): an event portal's panel. Only the event maps show
+	(`MapConfig.getEventMaps`, "PART 1 - Autumn Valley"), and a lone one is already
+	picked. Confirm fires `MapChosen` as usual. `Open` shows the normal maps, which
+	never include an event map.
 ]=]
 local ChooseMapsController = {
 	Controllers = {
@@ -223,7 +228,16 @@ function ChooseMapsController:_buildEntries(scroll : Instance, template : Instan
 	template.Visible = false
 	self.Entries = {}
 
-	for index, mapName in MapConfig.getOrderedMaps() do
+	-- Both lists get cards; `_renderLocks` shows the one the panel was opened for.
+	local maps = {}
+	for _, mapName in MapConfig.getOrderedMaps() do
+		table.insert(maps, mapName)
+	end
+	for _, mapName in MapConfig.getEventMaps() do
+		table.insert(maps, mapName)
+	end
+
+	for index, mapName in maps do
 		local info = MapConfig.MAPS[mapName]
 
 		local entry = template:Clone()
@@ -243,7 +257,7 @@ function ChooseMapsController:_buildEntries(scroll : Instance, template : Instan
 		-- Optional: a template that grows a label named MapName gets it filled in.
 		local nameLabel = entry:FindFirstChild("MapName", true)
 		if nameLabel and nameLabel:IsA("TextLabel") then
-			nameLabel.Text = info.DisplayName or mapName
+			nameLabel.Text = MapConfig.getPickerName(mapName)
 		end
 
 		local scale = Instance.new("UIScale")
@@ -262,6 +276,7 @@ function ChooseMapsController:_buildEntries(scroll : Instance, template : Instan
 
 		self.Entries[mapName] = {
 			Button = entry,
+			IsEvent = MapConfig.isEventMap(mapName),
 			CheckMark = self:_findCheckMark(entry),
 			Scale = scale,
 			Locked = locked,
@@ -298,13 +313,22 @@ function ChooseMapsController:_getWins() : number
 	return typeof(stats) == "table" and tonumber(stats.Wins) or 0
 end
 
---- Whether the map can be picked: unlocked by wins, or the challenge's own map.
+--- Whether the card belongs to the list the panel is showing.
+function ChooseMapsController:_isListed(mapName : string) : boolean
+	if self.Challenge then
+		return mapName == self.Challenge.Map
+	end
+
+	return MapConfig.isEventMap(mapName) == self.EventMode
+end
+
+--- Whether the map can be picked: listed and unlocked by wins, or the challenge's own map.
 function ChooseMapsController:_isPickable(mapName : string, wins : number) : boolean
 	if self.Challenge then
 		return mapName == self.Challenge.Map
 	end
 
-	return MapConfig.isUnlocked(mapName, wins)
+	return self:_isListed(mapName) and MapConfig.isUnlocked(mapName, wins)
 end
 
 --[=[
@@ -318,7 +342,8 @@ end
 	`Active = false` is already enough for `Activated` not to fire; `Select` checks again
 	anyway, because it is also called from outside.
 
-	In challenge mode only the challenge's map shows, and it is never locked.
+	In challenge mode only the challenge's map shows, and it is never locked. In event
+	mode only the event maps show; otherwise only the normal ones.
 ]=]
 function ChooseMapsController:_renderLocks()
 	local wins = self:_getWins()
@@ -327,7 +352,7 @@ function ChooseMapsController:_renderLocks()
 	for mapName, entry in self.Entries do
 		local unlocked = if challengeMap then mapName == challengeMap else MapConfig.isUnlocked(mapName, wins)
 
-		entry.Button.Visible = challengeMap == nil or mapName == challengeMap
+		entry.Button.Visible = self:_isListed(mapName)
 
 		if entry.Locked then
 			entry.Locked.Visible = not unlocked
@@ -468,9 +493,14 @@ function ChooseMapsController:_setOpen(open : boolean)
 
 	if open then
 		-- Every opening starts over at one player and no map picked, like the panel
-		-- was never used. A challenge opening picks its own map right after.
+		-- was never used. A challenge opening picks its own map right after, and so
+		-- does an event opening with a single event map.
+		local eventMaps = MapConfig.getEventMaps()
+
 		self.PlayerCount = PortalConfig.MIN_PLAYERS
-		self.Selected = if self.Challenge then self.Challenge.Map else nil
+		self.Selected = if self.Challenge then self.Challenge.Map
+			elseif self.EventMode and #eventMaps == 1 then eventMaps[1]
+			else nil
 
 		self:_renderLocks()
 		self:_renderCount()
@@ -609,6 +639,7 @@ function ChooseMapsController:_bindUI(screenGui : ScreenGui)
 	self.PlayerCount = PortalConfig.MIN_PLAYERS
 	self.Selected = nil
 	self.Challenge = nil
+	self.EventMode = false
 
 	self.Controllers.InterfaceController:Show(HIDE_REASON)
 
@@ -680,7 +711,7 @@ function ChooseMapsController:Select(mapName : string?)
 		return
 	end
 
-	if resolvedMap and not MapConfig.isUnlocked(resolvedMap, self:_getWins()) then
+	if resolvedMap and not self:_isPickable(resolvedMap, self:_getWins()) then
 		return
 	end
 
@@ -741,8 +772,28 @@ function ChooseMapsController:CloseChallenge()
 	self:_setOpen(false)
 end
 
-function ChooseMapsController:Open()
+--- Opens the panel on `eventMode`'s list, closing it first if it shows the other one.
+function ChooseMapsController:_openList(eventMode : boolean)
+	if self.IsOpenState and self.EventMode ~= eventMode then
+		self:_setOpen(false)
+	end
+
+	self.EventMode = eventMode
 	self:_setOpen(true)
+end
+
+function ChooseMapsController:Open()
+	self:_openList(false)
+end
+
+--- Opens the panel on the event maps: an event portal's panel.
+function ChooseMapsController:OpenEvent()
+	self:_openList(true)
+end
+
+--- Whether the panel is open on the event maps.
+function ChooseMapsController:IsEventMode() : boolean
+	return self.EventMode == true
 end
 
 --[=[
@@ -790,6 +841,7 @@ function ChooseMapsController:init()
 	self.Entries = {}
 	self.Selected = nil
 	self.Challenge = nil
+	self.EventMode = false
 
 	for Controller, _ in self.Controllers do
 		self.Controllers[Controller] = Framework:Get(Controller, false, true)

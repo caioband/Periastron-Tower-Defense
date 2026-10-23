@@ -45,3 +45,19 @@ The controller turns on its `Visible`, disables the button underneath (`Active` 
 - **The lock is not just a drawing.**
   The client picks the map, and a map name is something any client can send, so `PortalService:CreateGroup` checks the same rule with the same config before opening the group.
   The client makes the choice; the server grants the permission, as with deck slots and level.
+
+### Event portals
+
+The portals in `Workspace.Map.EventPortals` open the same panel in **event mode** (`ChooseMapsController:OpenEvent`).
+Only the event maps show, the maps with an `Event` field in `MapConfig.MAPS`; today that is Autumn Valley, whose card reads **"PART 1 - Autumn Valley"** (`MapConfig.getPickerName`).
+When there is only one event map, it is already picked when the panel opens.
+
+- **Event maps stay off the normal list.**
+  `getOrderedMaps` leaves them out, so the normal portals, random picks, contracts, Halloween quests and challenges never offer them; `getEventMaps` lists them.
+- **The server checks the portal too.**
+  `PortalService:CreateGroup` opens a group for an event map only on an event portal, and never opens a normal map there.
+  Challenge groups never take an event portal.
+- **The rest is a normal group.** Joining, the countdown, the cutscene and the teleport are unchanged.
+  The Game place plays Autumn Valley in the Fall PART 1 mode (`Difficulty.MapPresets`).
+- **Ids come last.** Event portals are numbered after the match portals and the build portals, so adding or removing one never changes the other ids.
+- **The billboard keeps its authored picture** while a map's `Image` is still `rbxassetid://0`.

@@ -1,5 +1,5 @@
 return {
-	Enabled = false,
+	Enabled = true,
 	Season = 1,
 	DisplayName = "Event Currency",
 	StatKey = "EventCurrency",
