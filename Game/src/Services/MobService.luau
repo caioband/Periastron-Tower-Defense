@@ -1060,7 +1060,9 @@ function MobService:SpawnWave(waveNumber)
 					}
 					self.ActiveMobCount += 1
 
-					local indexService = self.Services.IndexService
+					-- A community map unlocks nothing in the Index.
+					local waveService = self.Services.WaveService
+					local indexService = if waveService and waveService:isCommunityMatch() then nil else self.Services.IndexService
 
 					for _, player in Players:GetPlayers() do
 						Framework:Fire("SpawnClientMob", player, {

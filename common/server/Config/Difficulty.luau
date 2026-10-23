@@ -108,6 +108,33 @@ Difficulty.Presets = {
 		WaveInterval = 1.5,
 	},
 
+	--[[
+		Fall PART 1, the first of the fall event's modes.
+
+		**Left out of `Order` on purpose**, like the tutorial: it is not on the
+		difficulty vote, and how players get into it is still to be decided. Being off
+		`Order` also keeps it out of contracts and quests, which draw from that list.
+		`Difficulty.Get` still finds it, so whatever starts the mode later only needs
+		`DifficultyService:ForcePreset(Difficulty.Get("FallPart1"))`.
+
+		**Placeholder numbers**: a copy of Medium, so the mode plays and pays like a
+		normal match until it is tuned. The waves are a placeholder too (see
+		`Config.Waves.FallPart1`).
+	]]
+	FallPart1 = {
+		WeatherChance = 0.15,
+		RewardMultiplier = 1.1,
+		WinCash = 225,
+		WinShards = 2,
+		WinXpMultiplier = 1,
+		SpawnDelayMultiplier = 1.1,
+		StartingCash = 500,
+		BaseHealth = 140,
+		MobDamage = 20,
+		IntermissionTime = 60,
+		WaveInterval = 1.25,
+	},
+
 	Easy = {
 		WeatherChance = 0.10,
 		RewardMultiplier = 1.35,

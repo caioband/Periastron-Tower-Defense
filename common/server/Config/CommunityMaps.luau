@@ -69,8 +69,8 @@ return {
 
 	--[[
 		A match on a community map pays this fraction of the coins, shards, and XP, and
-		counts for no win, leaderboard, contract, or Index entry: anyone can publish an
-		easy map, so it must not be a farm. See docs/game/community-matches.md.
+		counts for no win, leaderboard, contract, event pumpkin, or Index entry: anyone
+		can publish an easy map, so it must not be a farm. See docs/game/community-matches.md.
 	]]
-	REWARD_MULTIPLIER = 0.5,
+	REWARD_MULTIPLIER = 0,
 }

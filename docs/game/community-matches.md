@@ -1,6 +1,6 @@
 # Community matches
 
-A match on a map a player built in the Map Editor and published: the Game builds it at runtime and plays it like any other map, with smaller rewards.
+A match on a map a player built in the Map Editor and published: the Game builds it at runtime and plays it like any other map, but pays nothing to the profile.
 
 **Runs in:** Game (server)
 **Code:** [`MapService`](../../Game/src/Services/MapService.luau), [`WaveService`](../../Game/src/Services/WaveService.luau), [`ContractTrackerService`](../../Game/src/Services/ContractTrackerService.luau), [`MatchStatsService`](../../Game/src/Services/MatchStatsService.luau), [`common/mapeditor`](../../common/mapeditor) (`PeriMapAdapter`, `TemplateBuilder`), [`Config.CommunityMaps`](../../common/server/Config/CommunityMaps.luau)
@@ -38,7 +38,7 @@ The map is always `CommunityMap` in `Maps`, never its own name, so a community m
 | Lighting | The place's own (the map has no `Lighting` folder) |
 | Music | None of the game maps' (`MapConfig.getMusic` does not know the name) |
 | Weather | None (`WeatherConfig.GetPool` has no pool for it) |
-| Index | Not recorded |
+| Index | Neither the map nor its enemies are recorded |
 
 ### Rewards
 
@@ -46,20 +46,21 @@ Anyone can publish an easy map, so a community match must not be a farm:
 
 | What | On a community map |
 | --- | --- |
-| Coins, shards, XP | `REWARD_MULTIPLIER` of the usual (`WaveService:computeReward`) |
+| Coins, shards, XP | `REWARD_MULTIPLIER` (0: none) of the usual (`WaveService:computeReward`), also when leaving early |
 | `Stats.Wins` and `DifficultyWins` | Not counted: no map or difficulty unlock, no wins leaderboard |
 | `Stats.CoinsEarned` | Not counted (Most Coins leaderboard) |
 | `Stats.EndlessBestWave` and Endless badges | Not counted |
 | `Stats.MatchesPlayed`, `Stats.TimeInMatches` | Not counted |
-| Contracts | Nothing is recorded (`ContractTrackerService:_record`) |
+| Contracts and Halloween quests | Nothing is recorded (`ContractTrackerService:_record`) |
+| Event pumpkins | None drop (`PumpkinDropService:_beginWave`) |
 
-XP still raises the player's level, at the reduced rate.
+Round cash (wave and kill cash) is paid as usual: it is spent inside the match, not saved.
 
 ## Configuration
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `Config.CommunityMaps.REWARD_MULTIPLIER` | `0.5` | Fraction of coins, shards, and XP a community match pays |
+| `Config.CommunityMaps.REWARD_MULTIPLIER` | `0` | Fraction of coins, shards, and XP a community match pays |
 | `LOAD_TIMEOUT` (in `MapService`) | `60` | Seconds the round waits for the map before starting anyway |
 
 ## Studio setup

@@ -94,6 +94,12 @@ function PumpkinDropService:_beginWave(mobService, waveNumber : number)
 		return
 	end
 
+	-- A community map drops no pumpkins: anyone can publish an easy one.
+	local waveService = self.Services.WaveService
+	if waveService and waveService:isCommunityMatch() then
+		return
+	end
+
 	local preset = mobService:getDifficulty()
 	local amount = preset and PumpkinConfig.PerWave[preset.Name] or 0
 	if amount <= 0 then

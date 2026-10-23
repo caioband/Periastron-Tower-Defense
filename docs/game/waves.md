@@ -9,7 +9,7 @@ Every wave of every difficulty is written out by hand: which enemies, in what or
 
 ### One table per difficulty
 
-`common/server/Config/Waves/` has one module per preset in `Config.Difficulty`, named after it: `Tutorial`, `Easy`, `Medium`, `Hard`, `Impossible`, `Nightmare`.
+`common/server/Config/Waves/` has one module per preset in `Config.Difficulty`, named after it: `Tutorial`, `FallPart1`, `Easy`, `Medium`, `Hard`, `Impossible`, `Nightmare`.
 It is server config (`ServerScriptService.Config.Waves`), so no client ever sees a wave before it spawns.
 
 ```lua
