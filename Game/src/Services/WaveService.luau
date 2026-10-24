@@ -769,6 +769,14 @@ function WaveService:runRound(generation : number)
 	if mapService and mapService.AwaitLoaded and not mapService:AwaitLoaded() then return end
 	if not self:isCurrent(generation) then return end
 
+	-- The map's intro cutscene, once per server, before anyone votes. It yields until
+	-- every player finished watching. See docs/game/map-cutscenes.md.
+	local mapCutscenes = Framework:Get("MapCutsceneService")
+	if mapCutscenes then
+		mapCutscenes:PlayIntro()
+		if not self:isCurrent(generation) then return end
+	end
+
 	-- The tutorial does not vote: its match is designed to be won, and choosing
 	-- `Nightmare` there would be choosing to lose. Receiving a preset from
 	-- `TutorialMatchService`, the vote does not even open, and the client, which only shows
@@ -1172,6 +1180,15 @@ end
 
 function WaveService:sendToLobby(player : Player)
 	if not player or not player.Parent then return end
+
+	--[[
+		The map's outro plays first, for this player alone, and the teleport waits for
+		it. `false` means it is already playing for them (a second click): the request
+		that started it will teleport. See docs/game/map-cutscenes.md.
+	]]
+	local mapCutscenes = Framework:Get("MapCutsceneService")
+	if mapCutscenes and not mapCutscenes:PlayOutro(player) then return end
+	if not player.Parent then return end
 
 	-- Match cash is volatile, but the round reward already went to the profile:
 	-- saving before leaving avoids losing the last reward. `Save` waits for the

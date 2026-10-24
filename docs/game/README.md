@@ -10,8 +10,8 @@ For the repository layout and what is shared between the places, see [Repository
 | Folder | Mounted at | Contents |
 | --- | --- | --- |
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | Entry LocalScript |
-| `src/Controllers/` | `Client.Controllers.Game` | BaseHealth, Card, CardModifier, Difficulty, Loading, Mob, Projectile, Ready, Result, RoundCardShop, SkipPrompt, Speed, Targeting, Tripmine, TutorialStep, UILibrary, UnitPlacement, VFX, Wave, WeatherFeedback, WeatherIndicator, WeatherWarning |
-| `src/Services/` | `ServerScriptService.Services.Game` | CardModifier, CardShop, Collision, ContractTracker, Difficulty, Leaderstats, Map, MatchStats, Mob, Skip, Snow, Speed, Thunder, TutorialMatch, Unit, Wave, WeatherRound |
+| `src/Controllers/` | `Client.Controllers.Game` | BaseHealth, Card, CardModifier, Difficulty, Loading, MapCutscene, Mob, Projectile, Ready, Result, RoundCardShop, SkipPrompt, Speed, Targeting, Tripmine, TutorialStep, UILibrary, UnitPlacement, VFX, Wave, WeatherFeedback, WeatherIndicator, WeatherWarning |
+| `src/Services/` | `ServerScriptService.Services.Game` | CardModifier, CardShop, Collision, ContractTracker, Difficulty, Leaderstats, Map, MapCutscene, MatchStats, Mob, Skip, Snow, Speed, Thunder, TutorialMatch, Unit, Wave, WeatherRound |
 | `src/CmdrDefinitions/Commands/` | `ServerScriptService.CmdrDefinitions.Commands.Game` | `roundcash`, `roundshop`, `strike` |
 
 Commands that depend on a Game-only service live here and not in `common/`.
@@ -28,6 +28,7 @@ Commands that depend on a Game-only service live here and not in `common/`.
 | [Waves](waves.md) | The hard-coded wave tables per difficulty: order, count, health, and speed |
 | [Upgrade card](upgrade-card.md) | The upgrade panel, next-level preview, target priority |
 | [Hotbar](hotbar.md) | The deck brought from the Lobby and the card arc |
+| [Map cutscenes](map-cutscenes.md) | A map's intro before the first round and its outro on the way to the Lobby |
 | [Difficulty vote](difficulty-vote.md) | The `DifficultyBoard` vote |
 | [Skip wave](skip-wave.md) | The skip prompt and its vote |
 | [Match speed](match-speed.md) | The speed button and `GameClock` |

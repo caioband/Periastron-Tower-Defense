@@ -12,6 +12,7 @@ When a system also has place-specific parts, its page here covers the shared cor
 | [Codes](codes.md) | Redeemable codes with an expiry date, for members of the group |
 | [Community maps](community-maps.md) | `CommunityMapService`: published Map Editor maps, their counters, and the orderings the Lobby lists |
 | [Contracts](contracts.md) | Hourly, daily, and weekly objectives |
+| [Cutscenes](cutscenes.md) | `CutsceneController` and `CutsceneFormat`: Moon Animator and Eclipse Animator scenes, the bake, subtitles and effects |
 | [Controls](controls.md) | `PointerUtil` (mouse and touch) and the mobile button cluster |
 | [Data and profiles](data-and-profiles.md) | Profile sessions, `OnBeforeRelease`, editing profiles across servers |
 | [Dialog](dialog.md) | The dialog box |
