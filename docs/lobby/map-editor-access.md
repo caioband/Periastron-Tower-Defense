@@ -1,13 +1,13 @@
 # Map Editor access
 
-A prompt by the build portals sends the player straight to the Map Editor (build mode) of the current environment, with no map open.
+A prompt by the build portals sends the player straight to a private server of the Map Editor (build mode) of the current environment, with no map open.
 
 **Runs in:** Lobby (server)
 **Code:** [`MapEditorTeleportService`](../../Lobby/src/Services/MapEditorTeleportService.luau)
 
 ## How it works
 
-Triggering `Workspace.Map.BuildPortals.MapEditorAccess.ProximityPrompt` teleports the player to `Environment.GetPlaceId("MapEditor")`, so a QA Lobby sends to the QA editor and Production to Production (see [Environments](../common/environments.md)).
+Triggering `Workspace.Map.BuildPortals.MapEditorAccess.ProximityPrompt` teleports the player to a new private server (`ShouldReserveServer`) of `Environment.GetPlaceId("MapEditor")`, for them alone, so a QA Lobby sends to the QA editor and Production to Production (see [Environments](../common/environments.md)).
 The server ignores repeat triggers from the same player for 10 seconds, and logs (in every server) the environment and the place id it sent the player to.
 In Studio the prompt only warns, since teleports do not work there.
 

@@ -4,10 +4,13 @@ local RunService = game:GetService("RunService")
 local TeleportService = game:GetService("TeleportService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Vendor = Shared:WaitForChild("Vendor")
 
+local Me = require(Vendor.Me)
 local Log = require(Shared.Util.Log)
 local Environment = require(Shared.Util.Environment)
 
+local Framework = Me.new()
 local log = Log.new("MapEditorTeleportService")
 
 --[[ CONSTANTS ]]
@@ -42,12 +45,18 @@ local TELEPORT_COOLDOWN = 10
 	are disabled (`CommunityMapService:IsEnabled()`, the same switch as the Edit
 	button).
 
-	Unlike the Edit button (`CommunityMapService:Edit`), no map is opened: the
-	player lands in the editor as if they had joined it.
+	Each trigger reserves a new private server of the editor for the player alone
+	(`ShouldReserveServer`), so nobody else builds alongside them. Unlike the Edit
+	button (`CommunityMapService:Edit`), no map is opened.
 
 	See docs/lobby/map-editor-access.md.
 ]=]
 local MapEditorTeleportService = {
+	Services = {
+		-- Whether community maps (and so the editor) are open in this universe.
+		CommunityMapService = {},
+	},
+
 	-- [Player] = true while a teleport is in flight or cooling down.
 	Leaving = {},
 }
@@ -62,10 +71,13 @@ function MapEditorTeleportService:_teleport(player : Player)
 
 	-- Public on purpose: which environment this server resolved and where the
 	-- player is going, readable from a live server's console.
-	log:Info(`sending {player.Name} to the {Environment.Describe()} Map Editor ({placeId}) from universe {game.GameId}`)
+	log:Info(`sending {player.Name} to a private server of the {Environment.Describe()} Map Editor ({placeId}) from universe {game.GameId}`)
+
+	local options = Instance.new("TeleportOptions")
+	options.ShouldReserveServer = true
 
 	local ok, err = pcall(function()
-		return TeleportService:TeleportAsync(placeId, { player })
+		return TeleportService:TeleportAsync(placeId, { player }, options)
 	end)
 
 	if not ok then
@@ -126,6 +138,10 @@ function MapEditorTeleportService:construct()
 end
 
 function MapEditorTeleportService:start()
+	for Service, _ in self.Services do
+		self.Services[Service] = Framework:Get(Service, false, true)
+	end
+
 	-- `findPrompt` yields on the map; keep it off the loader.
 	task.spawn(self.construct, self)
 end
