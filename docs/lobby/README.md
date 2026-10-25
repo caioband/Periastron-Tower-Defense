@@ -10,7 +10,7 @@ For the repository layout and what is shared between the places, see [Repository
 | --- | --- | --- |
 | `src/ClientBoot/` | `StarterPlayerScripts.Client` | Entry LocalScript |
 | `src/Controllers/` | `Client.Controllers.Lobby` | ChooseMaps, CommunityMaps, Contract, Crate, CratePity, CrateUI, Deck, FriendInvite, HUD, HUDBadge, HUDButton, Index, LobbyMusic, NextEvent, PlayButton, Portal, RobuxShop, RoundCardShop, RuneShop, Shop, ShopKeeper, UILibrary, Unboxing |
-| `src/Services/` | `ServerScriptService.Services.Lobby` | AfkTeleport, Crate, Deck, FriendInvite, Leaderstats, Portal, RoundCardShop, RuneShop, Shop, Summoning, WelcomeBadge |
+| `src/Services/` | `ServerScriptService.Services.Lobby` | AfkTeleport, Crate, Deck, FriendInvite, Leaderstats, MapEditorTeleport, Portal, RoundCardShop, RuneShop, Shop, Summoning, WelcomeBadge |
 | `src/CmdrDefinitions/Commands/` | `ServerScriptService.CmdrDefinitions.Commands.Lobby` | `friendinvite`, `friendinvitestats`, `setcrates`, `unbox` |
 | `src/CmdrDefinitions/Types/` | `ServerScriptService.CmdrDefinitions.Types.Lobby` | `crateRarity` |
 
@@ -21,6 +21,7 @@ For the repository layout and what is shared between the places, see [Repository
 | [HUD](hud.md) | Level, XP, currencies, column buttons, `New` badges, leaderstats, the welcome badge |
 | [Maps panel](maps-panel.md) | Choosing the map and the win locks |
 | [Community maps panel](community-maps.md) | Browsing published player maps from the build portals |
+| [Map Editor access](map-editor-access.md) | The prompt by the build portals that teleports to the Map Editor |
 | [Deck](deck.md) | The loadout: inventory, equipped cards, slot unlocks |
 | [Index](index.md) | The book of discovered units, enemies, weathers, and maps |
 | [Crates and unboxing](crates-and-unboxing.md) | Crate names, odds, and the shared unboxing |

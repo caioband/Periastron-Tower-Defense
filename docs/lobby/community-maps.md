@@ -16,7 +16,7 @@ Walking up to a portal in `Workspace.Map.BuildPortals` opens the panel, with the
 `PortalService:CreateCommunityGroup` checks the map is still published, then the usual countdown, joining, cutscene, and teleport follow.
 The teleport carries `CommunityMap = key` instead of `Map`, and the Game builds the map (see [Community matches](../game/community-matches.md)).
 Build portals only take community groups, and challenge groups never take a build portal.
-Only where `CommunityMapService:IsEnabled()`: QA for now.
+Only where `CommunityMapService:IsEnabled()`: QA always, Production while `PRODUCTION_ENABLED` is on.
 While the panel is open, the rest of the Lobby UI leaves the screen (request `CommunityMaps`, see [Interface visibility](../common/interface-visibility.md)).
 
 ```text
@@ -46,8 +46,8 @@ BuildPortal ─► CommunityMaps
 - **PLAY** fires `PlayRequested(key, playerCount)`, which `PortalController` sends as the group request.
 - **The player count** starts at 1 on every opening.
   An authored `CommunityMaps.PlayerCount` frame (with `LowerPlrs`, `MaxPlrs`, `IncreasePlrs`) is used when there is one; otherwise the controller builds one on the top edge of `MapDetails` from the vanilla panel's controls.
-- **EditButton** asks the server (`Edit`) to teleport the owner to the Map Editor with the map open; nothing happens outside QA.
-- **A failed community match** (outside QA) sends the group back with `TeleportData.CommunityMapFailed`, and the panel's controller shows "THAT COMMUNITY MAP COULD NOT BE LOADED" through `WarningController`.
+- **EditButton** asks the server (`Edit`) to teleport the owner to the Map Editor with the map open; nothing happens where community maps are disabled.
+- **A failed community match** sends the group back with `TeleportData.CommunityMapFailed`, and the panel's controller shows "THAT COMMUNITY MAP COULD NOT BE LOADED" through `WarningController`.
 - **Loading, empty, and error** lines are a `Status` label the controller adds at the end of the list.
 - A list answer for a tab, filter, or search no longer on screen is dropped (`ListToken`).
 - The gamepad's B button closes the panel (registered with `GamepadController:RegisterPanel`).

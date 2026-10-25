@@ -59,6 +59,11 @@ Config.PERI = {
 	PointCountAttribute = "PointCount",
 }
 
+-- Units the playtest loadout never offers (and the server refuses).
+Config.PLAYTEST_EXCLUDED_UNITS = {
+	Azure = true,
+}
+
 Config.VALIDATION = {
 	SampleStep = 2,
 	BodyHeight = 1.5,

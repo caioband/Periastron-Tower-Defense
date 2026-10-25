@@ -1,7 +1,7 @@
 # Map Editor place
 
 The Map Editor place: an in-game builder where players lay out a map, draw the enemy routes, check them, playtest them, and export the result in the format the Game loads from `ServerStorage.Maps`.
-It is a place of the QA universe (`EnvironmentConfig`: `MapEditor = 131485363672766`); Production has none yet.
+Each universe has its own copy (`EnvironmentConfig`: `MapEditor = 131485363672766` in QA, `70918383889606` in Production).
 
 For the repository layout and what is shared between the places, see [Repository overview](../architecture/overview.md).
 
@@ -26,6 +26,7 @@ The editor uses them to validate and playtest routes exactly as the Game's `MobS
 `src/Server/PlaytestCombat.luau` is the same kind of copy for combat: a port of the Game's `UnitService`, the enemy half of `MobService`, `BardService:Step` and `NecromancerService`, so towers in a playtest hit as hard, as often and as widely as in a match. A combat change in the Game must be mirrored there.
 It leaves out what a playtest has none of: weather, round cards, the thunder charge and game speed. Attack effects are the Game's own: the server sends `PlaytestFx` pushes and the client's `PlaytestVFX` plays them through the Game's `VFXController`, `ProjectileController`, `TripmineController` and `BonfireController`, which the project mounts under `StarterPlayerScripts.MapEditor.GameVFX` (plus an empty `StarterPlayerScripts.Client.Controllers`, so the Me framework they require starts on the editor client). `VFXController` also needs `ReplicatedStorage.vfx`, the third-party VFX module the Game's place keeps in Studio; the editor gets a copy from `vendor/vfx` (unmodified: its license requires that). If the Game's copy is updated, copy it into `vendor/vfx` again. On a Bard, the upgrade card's priority button swaps the song instead.
 Where a test tower may stand is `common/mapeditor/TowerFootprint.luau`, the Game's placement rules (path, obstruction, spacing by model width, characters), asked by both the ghost and the server.
+The loadout offers every unit with stats and a model, except those in `Config.PLAYTEST_EXCLUDED_UNITS` (the Azure today); the server refuses them too.
 
 ## What is specific to this place
 

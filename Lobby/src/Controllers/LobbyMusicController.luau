@@ -42,6 +42,11 @@ local EVENT_TRACK = "Halloween"
 -- How many other tracks play between two plays of `EVENT_TRACK`.
 local EVENT_EVERY = 1
 
+-- HALLOWEEN EVENT OFF, but its music stays: the priority no longer follows
+-- `EventCurrencyConfig.Enabled`. Swap back to it when the event currency returns.
+-- local EVENT_MUSIC = EventCurrencyConfig.Enabled
+local EVENT_MUSIC = true
+
 local LobbyMusicController = {
 	Controllers = {
 		MusicController = {},
@@ -115,7 +120,7 @@ function LobbyMusicController:play()
 		end
 	end
 
-	if EventCurrencyConfig.Enabled and hasEventTrack then
+	if EVENT_MUSIC and hasEventTrack then
 		shuffle(others)
 
 		self.Controllers.MusicController:PlayPlaylist(eventQueue(others), {
@@ -127,7 +132,7 @@ function LobbyMusicController:play()
 		return
 	end
 
-	if EventCurrencyConfig.Enabled and not hasEventTrack then
+	if EVENT_MUSIC and not hasEventTrack then
 		log:StudioWarn(`the event is on but there is no {EVENT_TRACK} in Musics.{FOLDER}; playing the normal queue.`)
 	end
 

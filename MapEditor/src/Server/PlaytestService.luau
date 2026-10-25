@@ -1049,7 +1049,13 @@ function PlaytestService.configure(session: Session, raw: any): (boolean, string
 	end
 	local loadout = {}
 	for _, unit in raw.towers do
-		if typeof(unit) == "string" and UnitStats[unit] and UnitAssets:FindFirstChild(unit) and not table.find(loadout, unit) then
+		if
+			typeof(unit) == "string"
+			and UnitStats[unit]
+			and UnitAssets:FindFirstChild(unit)
+			and not Config.PLAYTEST_EXCLUDED_UNITS[unit]
+			and not table.find(loadout, unit)
+		then
 			table.insert(loadout, unit)
 		end
 		if #loadout >= LOADOUT_SIZE then

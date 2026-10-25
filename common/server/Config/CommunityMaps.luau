@@ -62,10 +62,9 @@ return {
 
 	--[[
 		Whether playing and editing community maps works in Production too. Off: only
-		the QA universe opens community groups and sends players to the Map Editor
-		(which Production does not have yet).
+		the QA universe opens community groups and sends players to the Map Editor.
 	]]
-	PRODUCTION_ENABLED = false,
+	PRODUCTION_ENABLED = true,
 
 	--[[
 		A match on a community map pays this fraction of the coins, shards, and XP, and

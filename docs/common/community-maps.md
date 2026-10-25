@@ -105,7 +105,7 @@ The Lobby and the Map Editor are separate servers, so a map published in a Studi
 | `MAX_DESCRIPTION_LENGTH` | `200` | Longest description |
 | `MAX_SEARCH_RESULTS` | `100` | Maps a catalog search can answer |
 | `MAX_PENDING_REQUESTS` | `2` | Requests per player waiting on the DataStore |
-| `PRODUCTION_ENABLED` | `false` | Whether community groups and the edit button work outside QA (`IsEnabled`) |
+| `PRODUCTION_ENABLED` | `true` | Whether community groups and the edit button work outside QA (`IsEnabled`) |
 | `REWARD_MULTIPLIER` | `0` | What a community match pays (see [Community matches](../game/community-matches.md)) |
 
 ## Usage

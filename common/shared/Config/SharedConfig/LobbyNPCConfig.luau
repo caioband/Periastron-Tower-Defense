@@ -187,10 +187,11 @@ LobbyNPCConfig.Staff = {
 }
 
 LobbyNPCConfig.Lines = {
-	{
-		"Have you tried the [color=255,125,60]Halloween event[/color] yet?",
-		"Pumpkins drop in matches, trade them at the spooky shop!",
-	},
+	-- HALLOWEEN EVENT OFF in the Lobby.
+	-- {
+	-- 	"Have you tried the [color=255,125,60]Halloween event[/color] yet?",
+	-- 	"Pumpkins drop in matches, trade them at the spooky shop!",
+	-- },
 	{
 		"Heads up: [color=135,220,255]BLIZZARD[/color] freezes your towers every so often.",
 		"Magic units don't care though.",
@@ -269,9 +270,10 @@ LobbyNPCConfig.Lines = {
 		"Who else is grinding for that Cosmic?",
 		"Respect the grind, {player}.",
 	},
-	{
-		"Is it just me or is it [wiggle]always[/wiggle] Halloween in here?",
-	},
+	-- HALLOWEEN EVENT OFF in the Lobby.
+	-- {
+	-- 	"Is it just me or is it [wiggle]always[/wiggle] Halloween in here?",
+	-- },
 	{
 		"Brb, getting snacks.[pause=0.6] ...I'll be right here though. Forever.",
 	},

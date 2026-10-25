@@ -1,3 +1,8 @@
+-- HALLOWEEN EVENT OFF: the whole module is commented out below.
+-- To bring it back, delete this header, the opening `--[==[` and the closing
+-- `]==]` + `return {}` at the end of the file.
+
+--[==[
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local ServerScriptService = game:GetService("ServerScriptService")
@@ -420,3 +425,6 @@ function PumpkinDropService:init()
 end
 
 return PumpkinDropService
+]==]
+
+return {}

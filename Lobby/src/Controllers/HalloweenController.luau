@@ -1,3 +1,8 @@
+-- HALLOWEEN EVENT OFF in the Lobby: the whole module is commented out below.
+-- To bring it back, delete this header, the opening `--[==[` and the closing
+-- `]==]` + `return {}` at the end of the file.
+
+--[==[
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -870,3 +875,6 @@ function HalloweenController:init()
 end
 
 return HalloweenController
+]==]
+
+return {}

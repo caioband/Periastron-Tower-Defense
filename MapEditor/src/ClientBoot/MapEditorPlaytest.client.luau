@@ -207,7 +207,7 @@ end
 local function sortedUnits()
 	local list = {}
 	for name, s in UnitStats do
-		if typeof(s) == "table" and UnitAssets:FindFirstChild(name) then
+		if typeof(s) == "table" and UnitAssets:FindFirstChild(name) and not Config.PLAYTEST_EXCLUDED_UNITS[name] then
 			table.insert(list, name)
 		end
 	end

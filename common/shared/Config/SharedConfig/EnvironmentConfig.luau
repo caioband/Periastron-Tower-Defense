@@ -24,6 +24,7 @@ module.Environments = {
 			Lobby = 132304466547289, -- "Periastron Tower Defense", the start place
 			Game = 109030368179494, -- "Main Game"
 			Afk = 80286820709620,
+			MapEditor = 70918383889606,
 		},
 	},
 

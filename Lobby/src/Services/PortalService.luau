@@ -85,7 +85,7 @@ local KIND_TEXT = {
 	only open groups for a published community map (`CreateCommunityGroup`), checked
 	with `CommunityMapService`. The group's `Map` is the map's name, for the billboard
 	and the clients; the teleport carries `CommunityMap = key` instead of `Map`. Only
-	where `CommunityMapService:IsEnabled()` (QA for now). Challenge groups never take
+	where `CommunityMapService:IsEnabled()`. Challenge groups never take
 	a build portal, and a game map never opens on one.
 
 	**Event groups.** The portals in `Map.EventPortals` (`Event` on the record) open
